@@ -96,7 +96,7 @@ so that a new engineer can `pnpm install && pnpm supabase:start && pnpm seed:dev
   - [x] Branch name: `feat/story-1-2-scripts-dockerfile-env`. Cut from `main`.
   - [x] Commit: `feat(scaffold): wire root scripts, api Dockerfile, per-app env templates` — scope `scaffold` matches Story 1.1's commit convention.
   - [x] Push with upstream tracking. Do NOT force-push. Do NOT merge to `main` from local.
-  - [x] PR title: `feat(scaffold): wire root scripts, api Dockerfile, per-app env templates`. Body summarizes AC coverage, links this story path.
+  - [ ] PR title: `feat(scaffold): wire root scripts, api Dockerfile, per-app env templates`. Body summarizes AC coverage, links this story path. **[Manual step — `gh` CLI not available; open PR at: https://github.com/hivelumeadmin/hivekitchen/pull/new/feat/story-1-2-scripts-dockerfile-env]**
 
 #### Review Follow-ups (AI)
 
