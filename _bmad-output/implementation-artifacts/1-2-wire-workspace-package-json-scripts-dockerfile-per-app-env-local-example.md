@@ -1,6 +1,6 @@
 # Story 1.2: Wire workspace package.json scripts + Dockerfile + per-app .env.local.example
 
-Status: review
+Status: done
 
 <!-- Note: Validation is optional. Run validate-create-story for quality check before dev-story. -->
 
@@ -101,6 +101,18 @@ so that a new engineer can `pnpm install && pnpm supabase:start && pnpm seed:dev
 #### Review Follow-ups (AI)
 
 <!-- Reviewer notes applied during code-review land here as [AI-Review][Patch] / [AI-Review][Defer] / [AI-Review][Dismiss] entries. Empty on story creation. -->
+
+### Review Findings
+
+_Code review run: 2026-04-23. Layers: Blind Hunter, Edge Case Hunter, Acceptance Auditor. 0 decision-needed · 0 patch · 7 deferred · 14 dismissed._
+
+- [x] [Review][Defer] No `HEALTHCHECK` instruction in runner stage [apps/api/Dockerfile] — deferred: Fly.io deploy config is out of scope; healthcheck requires a `/healthz` endpoint that doesn't exist yet. Revisit with the fly.toml story.
+- [x] [Review][Defer] `node:22-alpine` base image is a floating tag — no digest pin [apps/api/Dockerfile] — deferred: standard for dev-stage Dockerfiles; harden with a digest pin in the productionization/deploy story.
+- [x] [Review][Defer] `packages/contracts` and `packages/types` TypeScript sources in Docker deploy closure [apps/api/Dockerfile] — deferred: documented forward concern in Dev Notes. Current `server.ts` imports only `fastify`; issue surfaces when Story 1.3/1.6 introduce workspace-package imports.
+- [x] [Review][Defer] `PORT` hardcoded in `apps/api/src/server.ts`, not read from env [apps/api/src/server.ts] — deferred: pre-existing from Story 1.1; `apps/api/src/**` is a zero-change zone for Story 1.2. Story 1.6 owns Zod env validation and server binding.
+- [x] [Review][Defer] `JWT_SECRET` placeholder lacks a generation command hint [apps/api/.env.local.example] — deferred: enhancement beyond AC scope. Consider `# Generate: openssl rand -hex 32` in Story 1.6's env template alignment pass.
+- [x] [Review][Defer] `test/helpers/` has no `tsconfig.json` [test/helpers/] — deferred: latent issue; current stub has zero imports. Surfaces when real seed logic adds workspace-package imports or path aliases.
+- [x] [Review][Defer] Pre-existing `rm -rf dist` in `apps/api/package.json` clean script [apps/api/package.json] — deferred: not introduced by this diff; cross-platform chore for Story 1.5 (lint/script hygiene).
 
 ## Dev Notes
 
