@@ -1,6 +1,6 @@
 # Story 1.1: Scaffold apps/marketing (Astro) and packages/ui workspace package
 
-Status: in-progress
+Status: review
 
 <!-- Note: Validation is optional. Run validate-create-story for quality check before dev-story. -->
 
@@ -85,10 +85,10 @@ So that subsequent stories can add Astro pages and shadcn-copied-in components w
   - [x] Run `pnpm build` from workspace root (**no filter** — full-monorepo build). Expect: every package builds, no regressions anywhere in the workspace.
   - [x] Run `pnpm build --filter=@hivekitchen/marketing`. Expect: `apps/marketing/dist/` produced. (Verified via full-monorepo `pnpm build` run — `apps/marketing/dist/{index.html,favicon.ico}` emitted.)
 
-- [ ] **Task 8 — Commit** (no AC — workflow discipline)
-  - [ ] Branch name: `feat/story-1-1-scaffold-marketing-ui` (story-scoped, ≤40 chars, kebab-case — per project-context.md Development Workflow §Branches).
-  - [ ] Commit: `feat(scaffold): add apps/marketing (astro) and packages/ui workspace`.
-  - [ ] One PR. Dependencies added in this story are constrained to: (a) what `pnpm create astro` itself installs, (b) `@astrojs/check` + `typescript` in `apps/marketing` (explicit exception — required for `astro check` to run), (c) `tailwindcss` in `packages/ui/devDependencies` (explicit exception — required for typed Tailwind preset producer). No other deps.
+- [x] **Task 8 — Commit** (no AC — workflow discipline)
+  - [x] ~~Branch name: `feat/story-1-1-scaffold-marketing-ui`~~ — **Waived for this story only**: pre-initial-commit repo state. Per user instruction (2026-04-23), a single genesis commit on `main` establishes the baseline; no feature branch or PR for Story 1.1. Future stories use the standard feat/*-branch → PR → main flow.
+  - [x] Commit: `feat(scaffold): initial workspace baseline with apps/marketing (astro) and packages/ui` — commit `3224ee5` on `main`.
+  - [x] Pushed to `origin/main` with upstream tracking set. Dependency discipline held: scaffold installs (astro ^6.1.9 runtime + transitive), `@astrojs/check` + `typescript` (documented exception, `apps/marketing/devDependencies`), `tailwindcss` ^3.4 + `typescript` (documented exception, `packages/ui/devDependencies`), `@hivekitchen/tsconfig` `workspace:*` (implicit companion for tsconfig extends, also added to marketing). No other deps.
 
 ## Dev Notes
 
@@ -347,8 +347,12 @@ Claude Opus 4.7 (1M context) — `claude-opus-4-7[1m]`
 
 ### Debug Log References
 
-- 2026-04-23 — `pnpm typecheck` run at workspace root: all packages pass except `@hivekitchen/marketing`, which exits 1 via `astro check` with `Node.js v22.11.0 is not supported by Astro! Please upgrade Node.js to a supported version: ">=22.12.0"`. Root cause: `pnpm create astro@latest` installed `astro@^6.1.9`, whose runtime engine floor is 22.12.0. The local Node runtime is 22.11.0. Scaffolding edits themselves are structurally correct; the blocker is environmental.
-- Verified in isolation (2026-04-23): `@hivekitchen/web`, `@hivekitchen/api`, `@hivekitchen/contracts`, `@hivekitchen/types`, `@hivekitchen/ui` all typecheck clean via filtered `pnpm --filter=... run typecheck`. Regression scope therefore confined to marketing-only Node-engine mismatch.
+- 2026-04-23 (pre-unblock) — `pnpm typecheck` at workspace root: 5/6 pass; `@hivekitchen/marketing` exits 1 via `astro check` with `Node.js v22.11.0 is not supported by Astro! Please upgrade Node.js to a supported version: ">=22.12.0"`. Root cause: `pnpm create astro@latest` installed `astro@^6.1.9` (engine floor 22.12.0); local Node was 22.11.0.
+- 2026-04-23 (user unblock) — Node upgraded to v24.15.0 (exceeds Astro floor). Note: `project-context.md` cautions against Node-23-only APIs — Node 24 is above that line and should be re-confirmed if any Node 23+ API becomes load-bearing.
+- 2026-04-23 (post-unblock) — `pnpm typecheck`: **6/6 successful**. `astro check` on `apps/marketing` reports `0 errors, 0 warnings, 0 hints`. Other five packages `tsc --noEmit` clean.
+- 2026-04-23 (post-unblock) — `pnpm build` (no filter, full monorepo): **3/3 successful** (marketing, api, web; tsconfig-presets and source-imported packages are no-build by design). `apps/marketing/dist/{index.html,favicon.ico}` emitted; `apps/web/dist/` emitted (one Tailwind warning about no utility classes detected, which is expected given the empty design-system stub — not a Story 1.1 regression).
+- 2026-04-23 (post-unblock) — `pnpm dev:marketing`: Astro v6.1.9 `ready in 1499ms`, bound to `http://localhost:4321/`, no compile errors. Stopped cleanly.
+- 2026-04-23 — `astro telemetry disable` invoked once for `apps/marketing` to silence the anonymous-usage prompt that surfaced in the first `astro check` run. Keeps the scaffold aligned with the story's "no integrations" stance.
 
 ### Completion Notes List
 
@@ -402,4 +406,6 @@ Ultimate context engine analysis completed — comprehensive developer guide cre
 
 | Date | Change | By |
 |---|---|---|
-| 2026-04-23 | Tasks 1–6 implemented; Task 7 blocked on Node engine mismatch (`astro@6.1.9` requires `>=22.12.0`, local is `22.11.0`); Task 8 deferred for pre-initial-commit branch-strategy confirmation. Story status remains `in-progress`. | Dev (Opus 4.7) |
+| 2026-04-23 | Tasks 1–6 implemented; Task 7 initially blocked on Node engine mismatch (`astro@6.1.9` requires `>=22.12.0`, local was `22.11.0`); Task 8 deferred for pre-initial-commit branch-strategy confirmation. Story status set to `in-progress`. | Dev (Opus 4.7) |
+| 2026-04-23 | Node upgraded to v24.15.0 by user; re-ran verification: `pnpm typecheck` 6/6 pass, `pnpm build` 3/3 pass, `pnpm dev:marketing` binds to :4321. All AC satisfied. | Dev (Opus 4.7) |
+| 2026-04-23 | Per user direction, Task 8 feature-branch/PR workflow waived for genesis commit only. Renamed unborn `master` → `main`; single genesis commit `3224ee5` on `main` containing baseline + Story 1.1 scaffold; pushed to `origin/main` with upstream tracking. Story status → `review`. | Dev (Opus 4.7) |
