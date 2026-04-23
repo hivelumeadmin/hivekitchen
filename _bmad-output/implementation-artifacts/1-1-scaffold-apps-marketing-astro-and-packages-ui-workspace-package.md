@@ -1,6 +1,6 @@
 # Story 1.1: Scaffold apps/marketing (Astro) and packages/ui workspace package
 
-Status: review
+Status: done
 
 <!-- Note: Validation is optional. Run validate-create-story for quality check before dev-story. -->
 
@@ -84,6 +84,12 @@ So that subsequent stories can add Astro pages and shadcn-copied-in components w
   - [x] Run `pnpm typecheck` from workspace root. Expect: all packages pass — including existing `apps/web`, `apps/api`, `packages/contracts`, `packages/types` (no regression from `packages/tsconfig/package.json` `files` array edit).
   - [x] Run `pnpm build` from workspace root (**no filter** — full-monorepo build). Expect: every package builds, no regressions anywhere in the workspace.
   - [x] Run `pnpm build --filter=@hivekitchen/marketing`. Expect: `apps/marketing/dist/` produced. (Verified via full-monorepo `pnpm build` run — `apps/marketing/dist/{index.html,favicon.ico}` emitted.)
+
+#### Review Follow-ups (AI)
+
+- [x] [AI-Review][Patch] Fix duplicate `<meta name="generator">` tag in index.astro — was a false positive (prompt artifact); actual file had one tag; no change needed
+- [x] [AI-Review][Patch] Fix missing `favicon.svg` — removed broken `<link rel="icon" type="image/svg+xml" href="/favicon.svg" />` from index.astro; only .ico shipped
+- [x] [AI-Review][Patch] Fix `.gitignore` pattern `.env.*` silently ignoring `.env.local.example` — replaced with explicit `.env.local`, `.env.production`, `.env.staging` patterns
 
 - [x] **Task 8 — Commit** (no AC — workflow discipline)
   - [x] ~~Branch name: `feat/story-1-1-scaffold-marketing-ui`~~ — **Waived for this story only**: pre-initial-commit repo state. Per user instruction (2026-04-23), a single genesis commit on `main` establishes the baseline; no feature branch or PR for Story 1.1. Future stories use the standard feat/*-branch → PR → main flow.
@@ -402,6 +408,38 @@ Ultimate context engine analysis completed — comprehensive developer guide cre
 - `apps/marketing/public/favicon.svg`
 - `apps/marketing/.vscode/` (editor config; not in spec's explicit keep list — removed for minimal footprint)
 
+### Senior Developer Review (AI)
+
+**Review Outcome:** Changes Requested
+**Review Date:** 2026-04-23
+**Reviewer Model:** Claude Sonnet 4.6 (code-review workflow)
+**Layers run:** Blind Hunter · Edge Case Hunter · Acceptance Auditor
+
+#### Action Items
+
+**Patch — must fix (3):**
+- [ ] [Review][Patch] Duplicate `<meta name="generator">` tag [`apps/marketing/src/pages/index.astro:11-12`] — two identical `{Astro.generator}` meta tags; invalid HTML, suggests file not reviewed after scaffold
+- [ ] [Review][Patch] Broken SVG favicon link causes 404 [`apps/marketing/src/pages/index.astro:8`] — `href="/favicon.svg"` referenced but only `favicon.ico` shipped; browsers request SVG first and get a 404
+- [ ] [Review][Patch] `.env.*` gitignore pattern silently ignores `.env.local.example` [`.gitignore:6`] — `.env.*` glob matches `local.example`; the committed example stub cannot be re-created after deletion, breaking onboarding
+
+**Deferred — valid concerns, not this story's scope (8):**
+- [x] [Review][Defer] `@astrojs/check` pinned to `"latest"` not a semver range [`apps/marketing/package.json`] — intentional per spec ("Astro-coupled"); CI non-determinism risk accepted; revisit in Story 1.2
+- [x] [Review][Defer] `packages/ui/package.json` missing `exports` field [`packages/ui/package.json`] — source-import pattern matches `@hivekitchen/contracts`/`@hivekitchen/types` convention; not a deviation
+- [x] [Review][Defer] `packages/ui/tailwind.config.ts` relative `../design-system` import escapes package boundary [`packages/ui/tailwind.config.ts:7`] — intentional Story 1.1 bridging pattern per Dev Notes; Story 1.4 resolves
+- [x] [Review][Defer] Tailwind `content: []` empty in `packages/ui` [`packages/ui/tailwind.config.ts`] — stub; content globs land in Story 1.4 with real token system
+- [x] [Review][Defer] `lint` and `typecheck` scripts both run `astro check` [`apps/marketing/package.json`] — intentional; ESLint wiring is Story 1.5 scope; no linter to call yet
+- [x] [Review][Defer] `packages/ui` missing `lint` and `build` scripts [`packages/ui/package.json`] — intentional per story spec ("no dev/build/lint yet — empty barrel")
+- [x] [Review][Defer] `packages/tsconfig/astro.json` extends `astro/tsconfigs/strict` not workspace base [`packages/tsconfig/astro.json`] — intentional; Dev Notes explain why upstream Astro preset is preferred for forward compatibility
+- [x] [Review][Defer] `tokenPresets = {}` silently no-ops `theme.extend` [`packages/design-system/tokens/index.ts`] — placeholder by design; Story 1.4 replaces with v2.0 token system
+
+**Dismissed — noise / false positives (6):**
+- Root `package.json` lacks `workspaces` field — pnpm uses `pnpm-workspace.yaml`; no `workspaces` key needed
+- Duplicate `"types"` key in `packages/ui/package.json` — false positive; introduced by diff-prompt construction error; actual file has one key
+- `turbo.json` absent from story-scoped diff — file exists on disk; excluded by scope filter
+- `packages/tsconfig/package.json` files array missing `package.json` — private workspace package, never published to npm
+- Node.js dynamic import syntax in clean scripts — project floor is Node >=22 (now 24); stable since Node 12.20
+- Empty `astro.config.mjs` — intentionally empty per spec ("no integrations in this story")
+
 ### Change Log
 
 | Date | Change | By |
@@ -409,3 +447,4 @@ Ultimate context engine analysis completed — comprehensive developer guide cre
 | 2026-04-23 | Tasks 1–6 implemented; Task 7 initially blocked on Node engine mismatch (`astro@6.1.9` requires `>=22.12.0`, local was `22.11.0`); Task 8 deferred for pre-initial-commit branch-strategy confirmation. Story status set to `in-progress`. | Dev (Opus 4.7) |
 | 2026-04-23 | Node upgraded to v24.15.0 by user; re-ran verification: `pnpm typecheck` 6/6 pass, `pnpm build` 3/3 pass, `pnpm dev:marketing` binds to :4321. All AC satisfied. | Dev (Opus 4.7) |
 | 2026-04-23 | Per user direction, Task 8 feature-branch/PR workflow waived for genesis commit only. Renamed unborn `master` → `main`; single genesis commit `3224ee5` on `main` containing baseline + Story 1.1 scaffold; pushed to `origin/main` with upstream tracking. Story status → `review`. | Dev (Opus 4.7) |
+| 2026-04-23 | Code review complete (Sonnet 4.6). Outcome: Changes Requested. 3 patches, 8 deferred, 6 dismissed. Story status → `in-progress`. | Review (Sonnet 4.6) |
