@@ -1,0 +1,15 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(mkdir -p apps/api/docs)",
+      "Bash(cp packages/api/APIDesign.md apps/api/docs/)",
+      "Bash(cp packages/api/Architecture.md apps/api/docs/)",
+      "Bash(cp packages/api/fastify.md apps/api/docs/)",
+      "Bash(pnpm install *)",
+      "Bash(pnpm build *)",
+      "Bash(pnpm typecheck *)",
+      "Bash(pnpm --filter=@hivekitchen/ui run typecheck)",
+      "Bash(pnpm --filter=@hivekitchen/marketing exec astro telemetry disable)"
+    ]
+  }
+}

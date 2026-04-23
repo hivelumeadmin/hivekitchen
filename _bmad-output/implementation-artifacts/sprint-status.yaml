@@ -1,0 +1,223 @@
+# generated: 2026-04-23
+# last_updated: 2026-04-23 (Story 1-1 in-progress; dev-story workflow kicked off)
+# project: hivekitchen
+# project_key: NOKEY
+# tracking_system: file-system
+# story_location: {project-root}/_bmad-output/implementation-artifacts
+
+# STATUS DEFINITIONS:
+# ==================
+# Epic Status:
+#   - backlog: Epic not yet started
+#   - in-progress: Epic actively being worked on
+#   - done: All stories in epic completed
+#
+# Epic Status Transitions:
+#   - backlog → in-progress: Automatically when first story is created (via create-story)
+#   - in-progress → done: Manually when all stories reach 'done' status
+#
+# Story Status:
+#   - backlog: Story only exists in epic file
+#   - ready-for-dev: Story file created in stories folder
+#   - in-progress: Developer actively working on implementation
+#   - review: Ready for code review (via Dev's code-review workflow)
+#   - done: Story completed
+#
+# Retrospective Status:
+#   - optional: Can be completed but not required
+#   - done: Retrospective has been completed
+#
+# WORKFLOW NOTES:
+# ===============
+# - Epic transitions to 'in-progress' automatically when first story is created
+# - Stories can be worked in parallel if team capacity allows
+# - Developer typically creates next story after previous one is 'done' to incorporate learnings
+# - Dev moves story to 'review', then runs code-review (fresh context, different LLM recommended)
+
+generated: 2026-04-23
+last_updated: 2026-04-23
+project: hivekitchen
+project_key: NOKEY
+tracking_system: file-system
+story_location: "{project-root}/_bmad-output/implementation-artifacts"
+
+development_status:
+  # Epic 1: Foundation & Engineering Bedrock
+  epic-1: in-progress
+  1-1-scaffold-apps-marketing-astro-and-packages-ui-workspace-package: in-progress
+  1-2-wire-workspace-package-json-scripts-dockerfile-per-app-env-local-example: backlog
+  1-3-establish-foundation-gate-contracts-in-packages-contracts: backlog
+  1-4-establish-token-system-v2-0: backlog
+  1-5-scope-charter-eslint-scope-allowlist-rules-dev-mode-runtime-assertions: backlog
+  1-6-wire-fastify-plugins-zod-env-validation-in-apps-api: backlog
+  1-7-pino-structured-logging-opentelemetry-skeleton-grafana-cloud-otlp: backlog
+  1-8-single-row-audit-log-schema-monthly-partitions-composite-index-audit-service-write: backlog
+  1-9-tools-manifest-ts-skeleton-with-ci-lint-no-tool-without-manifest: backlog
+  1-10-realtime-sse-bridge-central-invalidationevent-dispatcher: backlog
+  1-11-reduced-motion-reduced-transparency-hooks-accessibility-lint: backlog
+  1-12-contrast-audit-harness-in-packages-design-system: backlog
+  1-13-anchor-device-perf-budgets-lighthouse-ci-in-github-workflows-perf-yml: backlog
+  1-14-pr-template-with-patterns-checklist-ci-orchestration: backlog
+  epic-1-retrospective: optional
+
+  # Epic 2: Household Onboarding & Profile
+  epic-2: backlog
+  2-1-supabase-auth-email-password-google-apple-oauth: backlog
+  2-2-4-role-rbac-prehandler-jwt-rotation-on-use: backlog
+  2-3-secondary-caregiver-invite-primitive-signed-jwt-single-use-jti-14-day-ttl: backlog
+  2-4-account-profile-management-recovery: backlog
+  2-5-notification-preferences-cultural-language-preference: backlog
+  2-6-voice-first-onboarding-interview-via-elevenlabs-three-signal-questions: backlog
+  2-7-text-equivalent-onboarding-path: backlog
+  2-8-coppa-soft-vpc-signed-declaration-beta: backlog
+  2-9-parental-notice-disclosure-pre-data-collection: backlog
+  2-10-add-child-profile-with-envelope-encrypted-sensitive-fields: backlog
+  2-11-cultural-template-inference-parental-confirm: backlog
+  2-12-per-child-lunch-bag-slot-declaration: backlog
+  2-13-visible-memory-write-primitives-memory-nodes-seed: backlog
+  2-14-onboarding-mental-model-copy-anxiety-leakage-telemetry: backlog
+  epic-2-retrospective: optional
+
+  # Epic 3: Weekly Plan & Ready-Answer Open
+  epic-3: backlog
+  3-1-allergy-guardrail-service-deterministic-authoritative-outside-agent-boundary: backlog
+  3-2-domain-orchestrator-llmprovider-adapter-openai-primary-anthropic-stub: backlog
+  3-3-planner-specialist-agent-planner-prompt-ts-versioned: backlog
+  3-4-agent-tools-recipe-memory-pantry-plan-allergy-cultural-registered-with-maxlatencyms: backlog
+  3-5-plan-repository-revision-versioning-presentation-bind-contract: backlog
+  3-6-brief-state-projection-writer: backlog
+  3-7-plan-generation-bullmq-job-with-per-tz-schedule: backlog
+  3-8-briefcanvas-momentheadline-luminote-components: backlog
+  3-9-plantile-component-with-all-states-variants: backlog
+  3-10-allergyclearedbadge-popover-with-audit-link: backlog
+  3-11-freshnessstate-quietdiff-components: backlog
+  3-12-per-slot-independent-swap-day-swap-skip-sick: backlog
+  3-13-plan-regeneration-request: backlog
+  3-14-following-weeks-draft-view: backlog
+  3-15-historical-plans-outcomes-view: backlog
+  3-16-school-policy-update-propagation: backlog
+  3-17-system-adjusts-on-policy-leftover-calendar-changes: backlog
+  3-18-cultural-calendar-awareness-l0-l1-priors: backlog
+  3-19-day-level-context-overrides: backlog
+  3-20-lunch-bag-composition-modification-snack-vs-main-modeling: backlog
+  3-21-pin-ban-extra-component-types-reusable-extra-library: backlog
+  3-22-passive-bias-from-extra-removals-high-activity-extra-proposal: backlog
+  3-23-per-slot-policy-scoping-bag-wide-allergy-rule: backlog
+  3-24-allergy-uncertainty-flagging-safe-substitution: backlog
+  3-25-hard-fail-escalation-no-safe-plan-possible: backlog
+  3-26-graceful-degradation-state-ux: backlog
+  3-27-variant-preparation-active-learning-visible-to-parent-before-delivery: backlog
+  3-28-pause-lunch-link-for-child-on-day-without-altering-plan: backlog
+  3-29-degraded-propose-state-with-try-alternating-sovereignty-toggle: backlog
+  3-30-llm-provider-failover-circuit-breaker-audit: backlog
+  epic-3-retrospective: optional
+
+  # Epic 4: Lunch Link & Heart Note Sacred Channel
+  epic-4: backlog
+  4-1-lunch-link-hmac-signed-urls-lunch-link-sessions-table: backlog
+  4-2-lunchlinkpage-child-scope-heart-note-bag-preview-emoji-rater: backlog
+  4-3-8pm-window-enforcement-60s-grace-410-gone-post-expiry: backlog
+  4-4-heart-note-composer-text-hold-to-talk-voice-envelope-encrypted: backlog
+  4-5-sacred-channel-delivery-no-ai-modification: backlog
+  4-6-scheduled-heart-note-delivery-edit-cancel-before-window-delivery-status: backlog
+  4-7-sendgrid-twilio-parent-copied-url-multi-channel-delivery: backlog
+  4-8-service-worker-for-lunch-route: backlog
+  4-9-flavorpassport-sparse-page-parent-child-variants: backlog
+  4-10-heartnotecomposer-grandparent-scope-with-at-cap-rhythm-copy: backlog
+  4-11-premium-voice-playback-of-heart-note-via-lunch-link: backlog
+  4-12-child-request-a-lunch-text-suggestion-parent-approval: backlog
+  4-13-no-heart-note-absence-nudges-anti-pattern-enforcement: backlog
+  4-14-layer-2-per-slot-signal-weighting-sibling-specific-patterns: backlog
+  4-15-allergy-transparency-log-exportable-to-parent-fr80: backlog
+  4-16-multilingual-font-fallbacks-for-non-latin-scripts: backlog
+  epic-4-retrospective: optional
+
+  # Epic 5: Household Coordination & Evening Check-in
+  epic-5: backlog
+  5-1-shared-family-thread-server-assigned-monotonic-sequence-thread-resync: backlog
+  5-2-sse-channel-per-user-id-client-id-per-tab-presence: backlog
+  5-3-threadturn-polymorphic-envelope-5-body-components: backlog
+  5-4-disambiguationpicker-l1-l4-with-bidirectional-tether: backlog
+  5-5-secondary-caregiver-invite-redemption-flow-revoke-transfer: backlog
+  5-6-packeroftheday-assignment-handoff: backlog
+  5-7-evening-check-in-unlimited-text-tier-capped-voice: backlog
+  5-8-elevenlabs-hmac-webhook-early-ack-continuation-pattern: backlog
+  5-9-concurrent-caption-fallback-for-voice-output: backlog
+  5-10-adaptive-lumi-tone-length-parent-initiated-only: backlog
+  5-11-passive-profile-enrichment-via-memory-note-tool: backlog
+  5-12-i-noticed-learning-moments-with-confirm-correct: backlog
+  5-13-plan-reasoning-explanations-on-demand: backlog
+  5-14-cultural-recognition-l2-l3-ratification-turns-family-language-ratchet: backlog
+  5-15-geolocation-opt-in-household-level-only: backlog
+  5-16-voice-transcript-retention-controls-90d-default-opt-in-longer-immediate-delete: backlog
+  5-17-thread-integrity-anomaly-client-beacon: backlog
+  epic-5-retrospective: optional
+
+  # Epic 6: Grocery & Silent Pantry-Plan-List Loop
+  epic-6: backlog
+  6-1-shopping-list-derivation-from-current-weeks-plan: backlog
+  6-2-store-mode-ui-one-handed-aisle-aware-sort-sticky-check-off: backlog
+  6-3-cultural-supplier-directory-routing-multi-store-split-list: backlog
+  6-4-tap-to-purchase-silent-pantry-update-parent-correctable-inference: backlog
+  6-5-leftover-aware-swap-proposals: backlog
+  6-6-add-non-plan-items-connectivity-loss-ux: backlog
+  epic-6-retrospective: optional
+
+  # Epic 7: Visible Memory & Trust Controls
+  epic-7: backlog
+  7-1-visible-memory-panel-with-authored-prose-from-projection: backlog
+  7-2-provenance-chips-edit-delete-primitives: backlog
+  7-3-soft-forget-nightly-soft-hard-promotion-job: backlog
+  7-4-reset-flavor-journey-annual: backlog
+  7-5-account-deletion-with-30-day-processor-erasure: backlog
+  7-6-parental-review-dashboard-compliance-trust-unified: backlog
+  7-7-auditable-json-data-export-fr71: backlog
+  7-8-consent-history-view-fr72: backlog
+  7-9-state-level-minor-privacy-patchwork-overrides: backlog
+  7-10-payload-scrubbing-primitive-for-future-sharing-surface: backlog
+  epic-7-retrospective: optional
+
+  # Epic 8: Billing, Tiers & Gift Subscriptions
+  epic-8: backlog
+  8-1-stripe-checkout-integration-standard-premium-tier-subscriptions: backlog
+  8-2-school-year-auto-pause-via-parent-declared-calendar: backlog
+  8-3-upgrade-downgrade-cancel-receipts: backlog
+  8-4-failed-payment-grace-service-continuity: backlog
+  8-5-stripe-webhook-hmac-validated: backlog
+  8-6-gift-subscription-purchase-129-yr-premium: backlog
+  8-7-guest-heart-note-authoring-add-on-24-yr-signed-jwt-invite: backlog
+  8-8-redeem-gifted-subscription-fr13: backlog
+  8-9-gift-cancellation-before-redemption-with-full-refund: backlog
+  8-10-premium-tier-feature-gate-logic-activation-of-epic-4-5-stubs: backlog
+  epic-8-retrospective: optional
+
+  # Epic 9: Ops Dashboard, Compliance Export & Incident Response
+  epic-9: backlog
+  9-1-allergy-safety-anomaly-dashboard-ops-scope: backlog
+  9-2-plan-generation-latency-voice-cost-guardrail-catch-rate-lunch-link-delivery-metrics: backlog
+  9-3-three-stage-plan-audit-timeline-component: backlog
+  9-4-incident-response-sla-workflow: backlog
+  9-5-parent-support-request-channel-ops-response-with-bounded-sla: backlog
+  9-6-compliance-officer-audit-log-subset-export-fr101: backlog
+  9-7-audit-logs-covering-all-categories-fr98: backlog
+  9-8-guardrail-mismatch-thread-integrity-anomaly-client-errors-backing-dashboards: backlog
+  epic-9-retrospective: optional
+
+  # Epic 10: Beta-to-Public-Launch Transition
+  epic-10: backlog
+  10-1-credit-card-vpc-at-subscription-signup-0-01-immediate-refund: backlog
+  10-2-beta-to-paid-transition-flow-with-14-day-refund-window: backlog
+  10-3-tier-variant-cohort-assignment-via-households-tier-variant: backlog
+  10-4-voice-cost-soft-cap-95th-percentile-messaging-hard-rate-limit: backlog
+  10-5-in-product-surveys-at-validation-milestones: backlog
+  epic-10-retrospective: optional
+
+  # Epic 11: Marketing & Public Acquisition
+  epic-11: backlog
+  11-1-astro-marketing-site-scaffold-landing-page: backlog
+  11-2-pricing-page-with-structured-data: backlog
+  11-3-pre-login-interactive-demo: backlog
+  11-4-cultural-community-partner-pages: backlog
+  11-5-faq-legal-pages: backlog
+  11-6-gift-purchase-entry-point-non-indexed-authenticated-routes: backlog
+  epic-11-retrospective: optional

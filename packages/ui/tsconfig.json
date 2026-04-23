@@ -1,0 +1,4 @@
+{
+  "extends": "@hivekitchen/tsconfig/react.json",
+  "include": ["src"]
+}

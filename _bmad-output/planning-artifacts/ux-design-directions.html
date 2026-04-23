@@ -1,0 +1,1046 @@
+<!doctype html>
+<html lang="en" data-theme="dark" dir="ltr">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>HiveKitchen — UX Design Directions (Final Showcase)</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  /* ============================================================
+     v2.0 TOKEN SYSTEM — locked in Step 8, refined through Step 12
+     ============================================================ */
+  :root[data-theme="dark"] {
+    --warm-neutral-50:  #FAF7F2;
+    --warm-neutral-100: #F2EDE4;
+    --warm-neutral-200: #D9D3C8;
+    --warm-neutral-300: #A8A196;
+    --warm-neutral-400: #7B7668;
+    --warm-neutral-500: #56524A;
+    --warm-neutral-600: #3E3B34;
+    --warm-neutral-700: #2F2D27;
+    --warm-neutral-800: #262420;
+    --warm-neutral-900: #1C1A17;
+    --warm-neutral-950: #141210;
+
+    --bg:             var(--warm-neutral-900);
+    --surface:        var(--warm-neutral-800);
+    --surface-2:      var(--warm-neutral-700);
+    --fg:             var(--warm-neutral-50);
+    --fg-muted:       #B0A99D;
+    --border:         var(--warm-neutral-700);
+
+    --amber:          #D98F3C;
+    --amber-soft:     #B97730;
+    --amber-warm:     #E69A3D;
+
+    --foliage:        #7A9681;
+    --foliage-soft:   #5F7A67;
+
+    --lumi-terracotta: #B46A4E;
+    --lumi-terracotta-warmed: #C88A6E;
+    --lumi-terracotta-dim: #8A4F3A;
+
+    --sacred-plum:    #8A5F72;
+    --sacred-plum-soft: #6B4A5A;
+
+    --safety-cleared-teal: #5A9C8B;
+    --safety-cleared-fill: rgba(90,156,139,0.10);
+
+    --safety-red:     #C65A4E;
+    --safety-red-fill: rgba(198,90,78,0.12);
+
+    --focus: var(--foliage);
+    --focus-offset: 2px;
+
+    --honey-accent:   #E69A3D;
+
+    --r-sm: 6px; --r-md: 10px; --r-lg: 16px; --r-xl: 24px;
+  }
+  :root[data-theme="light"] {
+    --warm-neutral-50:  #141210;
+    --warm-neutral-100: #1C1A17;
+    --warm-neutral-200: #262420;
+    --warm-neutral-300: #3E3B34;
+    --warm-neutral-400: #7B7668;
+    --warm-neutral-500: #A8A196;
+    --warm-neutral-600: #D9D3C8;
+    --warm-neutral-700: #E8E3D8;
+    --warm-neutral-800: #F2EDE4;
+    --warm-neutral-900: #FAF7F2;
+    --warm-neutral-950: #FFFCF6;
+
+    --bg:             var(--warm-neutral-900);
+    --surface:        var(--warm-neutral-800);
+    --surface-2:      var(--warm-neutral-700);
+    --fg:             var(--warm-neutral-50);
+    --fg-muted:       #56524A;
+    --border:         var(--warm-neutral-700);
+
+    --amber:          #B97730;
+    --amber-soft:     #96601F;
+    --amber-warm:     #D98F3C;
+
+    --foliage:        #5F7A67;
+    --foliage-soft:   #46604F;
+
+    --lumi-terracotta: #A15838;
+    --lumi-terracotta-warmed: #C07A5C;
+    --lumi-terracotta-dim: #753A24;
+
+    --sacred-plum:    #6B4A5A;
+    --sacred-plum-soft: #533845;
+
+    --safety-cleared-teal: #3D6B5F;
+    --safety-cleared-fill: rgba(61,107,95,0.10);
+
+    --safety-red:     #A84236;
+    --safety-red-fill: rgba(168,66,54,0.10);
+
+    --focus: var(--foliage);
+    --honey-accent:   #D98F3C;
+  }
+
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; background: var(--bg); color: var(--fg); font-family: 'Inter', system-ui, sans-serif; }
+  body { min-height: 100vh; -webkit-font-smoothing: antialiased; }
+  :focus-visible { outline: 2px solid var(--focus); outline-offset: var(--focus-offset); border-radius: 4px; }
+
+  .page-header { position: sticky; top: 0; z-index: 10; background: color-mix(in srgb, var(--bg) 92%, transparent); backdrop-filter: blur(10px); border-bottom: 1px solid var(--border); padding: 14px 32px; display: flex; justify-content: space-between; align-items: center; }
+  .page-header h1 { font-family: 'Instrument Serif', serif; font-size: 24px; font-weight: 400; margin: 0; letter-spacing: 0.2px; }
+  .page-header .meta { font-size: 12px; color: var(--fg-muted); }
+  .theme-toggle { background: var(--surface); color: var(--fg); border: 1px solid var(--border); padding: 6px 14px; border-radius: var(--r-md); font-size: 13px; cursor: pointer; font-family: inherit; }
+  .theme-toggle:hover { background: var(--surface-2); }
+
+  .container { max-width: 1280px; margin: 0 auto; padding: 48px 32px 96px; }
+
+  .section { margin-bottom: 80px; }
+  .section-label { font-size: 11px; letter-spacing: 0.16em; text-transform: uppercase; color: var(--fg-muted); margin-bottom: 8px; }
+  .section-title { font-family: 'Instrument Serif', serif; font-size: 40px; font-weight: 400; line-height: 1.1; margin: 0 0 12px; }
+  .section-sub { font-size: 15px; line-height: 1.6; color: var(--fg-muted); max-width: 780px; margin: 0 0 32px; }
+
+  .grid { display: grid; gap: 20px; }
+  .grid.cols-2 { grid-template-columns: repeat(2, 1fr); }
+  .grid.cols-3 { grid-template-columns: repeat(3, 1fr); }
+  @media (max-width: 900px) { .grid.cols-2, .grid.cols-3 { grid-template-columns: 1fr; } }
+
+  .card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-lg); padding: 24px; }
+  .card-label { font-size: 11px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--fg-muted); margin-bottom: 12px; }
+
+  .swatch-row { display: flex; flex-wrap: wrap; gap: 12px; }
+  .swatch { width: 150px; }
+  .swatch-chip { height: 64px; border-radius: var(--r-md); border: 1px solid var(--border); margin-bottom: 8px; }
+  .swatch-name { font-size: 12px; font-weight: 500; }
+  .swatch-hex { font-size: 11px; color: var(--fg-muted); font-family: ui-monospace, monospace; }
+
+  .brief {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--r-xl);
+    padding: 48px 48px 40px;
+    position: relative;
+  }
+  .brief-moment {
+    font-family: 'Instrument Serif', serif;
+    font-size: 34px;
+    font-weight: 400;
+    line-height: 1.18;
+    margin: 0 0 16px;
+    max-width: 640px;
+  }
+  .brief-moment em { font-style: italic; color: var(--amber); border-bottom: 2px solid var(--honey-accent); padding-bottom: 1px; }
+  .lumi-note {
+    font-size: 17px;
+    line-height: 1.55;
+    color: var(--fg);
+    border-left: 3px solid var(--lumi-terracotta);
+    padding-left: 16px;
+    margin: 0 0 36px;
+    max-width: 640px;
+  }
+  .lumi-note .family-lang { color: var(--sacred-plum); font-style: italic; }
+  .tile-row { display: grid; grid-template-columns: repeat(5, 1fr); gap: 12px; margin-bottom: 28px; }
+  @media (max-width: 900px) { .tile-row { grid-template-columns: 1fr; } }
+
+  .plan-tile {
+    background: var(--warm-neutral-900);
+    border: 1px solid var(--border);
+    border-radius: var(--r-md);
+    padding: 14px;
+    min-height: 140px;
+    display: flex; flex-direction: column;
+    cursor: pointer;
+    transition: transform .15s, border-color .15s;
+    position: relative;
+  }
+  :root[data-theme="light"] .plan-tile { background: var(--warm-neutral-950); }
+  .plan-tile:hover { border-color: var(--warm-neutral-400); transform: translateY(-1px); }
+  .plan-tile .day { font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--fg-muted); margin-bottom: 6px; }
+  .plan-tile .dish { font-size: 16px; font-weight: 600; line-height: 1.25; margin-bottom: 4px; }
+  .plan-tile .method { font-size: 12px; color: var(--fg-muted); flex-grow: 1; }
+  .plan-tile .chip-row { margin-top: 10px; display: flex; flex-wrap: wrap; gap: 4px; }
+
+  .plan-tile.today { box-shadow: 0 0 0 1px var(--amber), 0 0 20px -8px var(--amber); }
+  .plan-tile.today .day { color: var(--amber); }
+  .plan-tile.pending-input { border-style: dashed; border-color: var(--amber-warm); }
+  .plan-tile.pending-input::after {
+    content: ""; position: absolute; top: 10px; right: 10px; width: 8px; height: 8px;
+    background: var(--sacred-plum); border-radius: 50%; opacity: 0.3;
+    animation: plum-pulse 1.6s ease-in-out infinite;
+  }
+  @keyframes plum-pulse {
+    0%, 100% { opacity: 0.3; transform: scale(1); }
+    50% { opacity: 0.7; transform: scale(1.3); }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .plan-tile.pending-input::after { animation: none; opacity: 0.5; }
+  }
+  .plan-tile.past { opacity: 0.55; pointer-events: none; }
+  .plan-tile.locked { border-color: var(--warm-neutral-400); }
+  .plan-tile.locked::before {
+    content: "editing"; position: absolute; top: 8px; right: 10px; font-size: 10px; color: var(--fg-muted);
+  }
+
+  .chip {
+    display: inline-flex; align-items: center; gap: 4px;
+    font-size: 11px; font-weight: 500;
+    padding: 3px 8px; border-radius: 999px;
+    line-height: 1.2;
+  }
+  .chip::before { content: "✓"; font-size: 10px; }
+  .chip.cleared { background: var(--safety-cleared-fill); color: var(--safety-cleared-teal); }
+  .chip.cultural { background: color-mix(in srgb, var(--sacred-plum) 15%, transparent); color: var(--sacred-plum); }
+  .chip.cultural::before { content: "◆"; }
+  .chip.pantry { background: color-mix(in srgb, var(--foliage) 14%, transparent); color: var(--foliage); }
+  .chip.pantry::before { content: "◈"; }
+  .chip.lumi { background: color-mix(in srgb, var(--lumi-terracotta) 14%, transparent); color: var(--lumi-terracotta); }
+  .chip.lumi::before { content: ""; }
+
+  .freshness-strip {
+    margin-top: 24px; padding-top: 16px; border-top: 1px solid var(--border);
+    font-size: 12px; color: var(--fg-muted); display: flex; justify-content: space-between;
+  }
+
+  .btn-row { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; }
+  .btn {
+    font-family: inherit; font-size: 14px; font-weight: 500;
+    padding: 10px 18px; border-radius: var(--r-md);
+    border: 1px solid transparent; cursor: pointer;
+    transition: background .15s, border-color .15s, color .15s;
+    line-height: 1.2;
+  }
+  .btn.primary { background: var(--fg); color: var(--bg); }
+  .btn.primary:hover { background: var(--warm-neutral-300); }
+
+  .btn.secondary { background: var(--warm-neutral-700); color: var(--fg); }
+  .btn.secondary:hover { background: var(--warm-neutral-600); }
+
+  .btn.tertiary { background: transparent; color: var(--warm-neutral-300); padding-inline: 8px; }
+  :root[data-theme="light"] .btn.tertiary { color: var(--warm-neutral-400); }
+  .btn.tertiary:hover { text-decoration: underline; }
+
+  .btn.proposal {
+    background: transparent;
+    color: var(--lumi-terracotta);
+    border: 1.5px solid var(--lumi-terracotta);
+  }
+  .btn.proposal:hover { background: var(--lumi-terracotta-warmed); color: var(--warm-neutral-950); border-color: var(--lumi-terracotta-warmed); }
+  :root[data-theme="light"] .btn.proposal:hover { color: var(--warm-neutral-900); }
+
+  .btn.destructive {
+    background: transparent; color: var(--fg); border-color: var(--warm-neutral-400);
+  }
+  .btn.destructive:hover { border-color: var(--warm-neutral-300); background: var(--surface-2); }
+
+  .thread { display: flex; flex-direction: column; gap: 18px; }
+  .turn {
+    border-left: 2px solid transparent;
+    padding: 10px 0 10px 16px;
+    font-size: 15px; line-height: 1.55;
+  }
+  .turn.user { border-color: var(--warm-neutral-400); }
+  .turn.user .author { color: var(--warm-neutral-300); font-weight: 500; font-size: 12px; margin-bottom: 4px; }
+  .turn.lumi { border-color: var(--lumi-terracotta); }
+  .turn.lumi .author { color: var(--lumi-terracotta); font-weight: 500; font-size: 12px; margin-bottom: 4px; }
+  .turn.system { border-color: var(--foliage); }
+  .turn.system .author { color: var(--foliage); font-weight: 500; font-size: 12px; margin-bottom: 4px; }
+  .turn.cultural-proposal { border-color: var(--sacred-plum); background: color-mix(in srgb, var(--sacred-plum) 6%, transparent); padding: 12px 16px; border-radius: var(--r-md); }
+  .turn.cultural-proposal .author { color: var(--sacred-plum); font-weight: 500; font-size: 12px; margin-bottom: 4px; }
+
+  .turn .fallback-hint { font-size: 12px; color: var(--fg-muted); margin-top: 6px; cursor: pointer; }
+  .turn .fallback-hint::before { content: "⋯ "; }
+
+  .component-frame {
+    background: var(--bg);
+    border: 1px dashed var(--border);
+    border-radius: var(--r-md);
+    padding: 20px;
+    display: flex; flex-direction: column; gap: 12px;
+  }
+  :root[data-theme="light"] .component-frame { background: var(--warm-neutral-950); }
+  .component-frame h4 { font-size: 12px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--fg-muted); margin: 0; font-weight: 500; }
+
+  .allergy-badge {
+    display: inline-flex; align-items: center; gap: 6px;
+    background: var(--safety-cleared-fill);
+    color: var(--safety-cleared-teal);
+    border: 1px solid color-mix(in srgb, var(--safety-cleared-teal) 30%, transparent);
+    padding: 6px 12px; border-radius: 999px;
+    font-size: 13px; font-weight: 500;
+    align-self: flex-start;
+  }
+  .allergy-badge::before { content: "✓"; font-size: 12px; }
+
+  .quiet-diff {
+    font-size: 13px; color: var(--fg-muted);
+    padding: 8px 12px;
+    background: color-mix(in srgb, var(--warm-neutral-500) 8%, transparent);
+    border-radius: var(--r-sm);
+    display: flex; justify-content: space-between; align-items: center;
+  }
+  .quiet-diff .why-link { color: var(--fg-muted); text-decoration: underline; font-size: 12px; cursor: pointer; }
+
+  .freshness-state { font-size: 12px; color: var(--fg-muted); display: flex; align-items: center; gap: 8px; }
+  .freshness-state.stale::before { content: "◐"; color: var(--amber-warm); }
+  .freshness-state.offline::before { content: "⊘"; color: var(--fg-muted); }
+  .freshness-state.failed::before { content: "!"; color: var(--safety-red); font-weight: bold; }
+
+  .memory-sentence {
+    display: flex; justify-content: space-between; align-items: flex-start; gap: 12px;
+    padding: 10px 0;
+    border-bottom: 1px solid var(--border);
+  }
+  .memory-sentence:last-child { border-bottom: none; }
+  .memory-sentence p { margin: 0; font-size: 15px; line-height: 1.5; }
+  .memory-sentence .memory-dots {
+    flex-shrink: 0;
+    width: 28px; height: 28px;
+    display: inline-flex; align-items: center; justify-content: center;
+    border-radius: 999px;
+    background: transparent; color: var(--fg-muted);
+    cursor: pointer;
+    font-weight: 700;
+    border: none;
+  }
+  .memory-sentence .memory-dots:hover { background: var(--surface-2); color: var(--fg); }
+  .memory-sentence.first-time .memory-dots { color: var(--honey-accent); }
+
+  .heartnote {
+    background: var(--warm-neutral-800);
+    border: 1px solid var(--border);
+    border-radius: var(--r-lg);
+    padding: 28px;
+    position: relative;
+  }
+  :root[data-theme="light"] .heartnote { background: var(--warm-neutral-950); }
+  .heartnote textarea {
+    width: 100%;
+    background: transparent;
+    border: none;
+    resize: none;
+    color: var(--fg);
+    font-family: 'Instrument Serif', serif;
+    font-size: 26px;
+    line-height: 1.35;
+    min-height: 110px;
+    outline: none;
+  }
+  .heartnote textarea::placeholder { color: var(--warm-neutral-400); font-style: italic; }
+  .heartnote .cap { position: absolute; bottom: 16px; right: 16px; font-size: 12px; color: var(--fg-muted); }
+  .heartnote.at-cap { position: relative; min-height: 180px; }
+  .heartnote.at-cap .cap-overlay {
+    position: absolute; inset: 0;
+    background: color-mix(in srgb, var(--foliage) 12%, var(--surface));
+    border-radius: var(--r-lg);
+    padding: 28px;
+    display: flex; flex-direction: column; justify-content: center;
+    font-family: 'Instrument Serif', serif;
+    font-size: 22px; line-height: 1.35;
+  }
+  .heartnote.at-cap .cap-overlay .rhythm { margin-bottom: 18px; }
+
+  .lunch-link {
+    background: var(--warm-neutral-800);
+    border: 1px solid var(--border);
+    border-radius: var(--r-xl);
+    padding: 32px;
+    max-width: 480px;
+    text-align: center;
+  }
+  :root[data-theme="light"] .lunch-link { background: var(--warm-neutral-950); }
+  .lunch-link .heart-note-readout {
+    font-family: 'Instrument Serif', serif;
+    font-size: 28px;
+    line-height: 1.4;
+    color: var(--sacred-plum);
+    margin-bottom: 24px;
+    font-style: italic;
+  }
+  .lunch-link .food-photo {
+    aspect-ratio: 4/5;
+    background: linear-gradient(145deg, var(--amber-soft), var(--lumi-terracotta-dim));
+    border-radius: var(--r-lg);
+    margin-bottom: 20px;
+    display: flex; align-items: center; justify-content: center;
+    color: var(--warm-neutral-50); font-size: 14px; opacity: 0.8;
+  }
+  .lunch-link .emoji-row { display: flex; justify-content: center; gap: 20px; }
+  .lunch-link .emoji-row button {
+    width: 72px; height: 72px; border-radius: 50%;
+    background: var(--surface-2); border: 1px solid var(--border);
+    font-size: 32px; cursor: pointer;
+    transition: transform .15s, background .15s;
+  }
+  .lunch-link .emoji-row button:hover { background: var(--surface); transform: scale(1.05); }
+
+  .tier-ladder { display: flex; flex-direction: column; gap: 12px; }
+  .tier-row {
+    display: grid; grid-template-columns: 60px 1fr; gap: 16px; align-items: start;
+    padding: 14px 18px; border: 1px solid var(--border); border-radius: var(--r-md);
+    background: var(--surface);
+  }
+  .tier-label {
+    font-family: 'Instrument Serif', serif; font-size: 22px;
+    color: var(--amber); text-align: center;
+  }
+  .tier-desc { font-size: 12px; color: var(--fg-muted); margin: 0 0 6px; }
+  .tier-copy { font-size: 15px; line-height: 1.4; margin: 0; }
+  .tier-copy .family-lang { color: var(--sacred-plum); font-style: italic; }
+
+  .ratification {
+    background: color-mix(in srgb, var(--sacred-plum) 8%, var(--surface));
+    border: 1px solid color-mix(in srgb, var(--sacred-plum) 30%, transparent);
+    border-radius: var(--r-md);
+    padding: 18px 20px;
+  }
+  .ratification .q { font-size: 16px; line-height: 1.5; margin: 0 0 14px; }
+  .ratification .actions { display: flex; flex-wrap: wrap; gap: 8px; }
+
+  .empty-state {
+    padding: 40px 24px;
+    text-align: center;
+    color: var(--fg-muted);
+    font-size: 15px;
+    font-style: italic;
+    line-height: 1.55;
+  }
+
+  .mobile-nav {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--r-md);
+    padding: 8px;
+    display: flex; justify-content: space-around; gap: 4px;
+    max-width: 360px;
+  }
+  .mobile-nav a {
+    flex: 1; padding: 10px 14px; text-align: center;
+    font-size: 13px; color: var(--fg-muted);
+    text-decoration: none; border-radius: var(--r-sm);
+  }
+  .mobile-nav a.active { background: var(--surface-2); color: var(--fg); }
+
+  .type-pair { display: flex; flex-direction: column; gap: 12px; }
+  .type-sample { display: flex; align-items: baseline; gap: 16px; flex-wrap: wrap; }
+  .type-sample .label { font-size: 11px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--fg-muted); width: 90px; flex-shrink: 0; }
+  .type-serif { font-family: 'Instrument Serif', serif; }
+  .type-sans { font-family: 'Inter', sans-serif; }
+
+  .contrast-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .contrast-grid .half { padding: 16px; border-radius: var(--r-md); border: 1px solid var(--border); }
+  .contrast-grid .dark-half { background: #1C1A17; color: #FAF7F2; }
+  .contrast-grid .light-half { background: #FFFCF6; color: #141210; }
+
+  .scope-tag { display: inline-block; font-size: 10px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--fg-muted); border: 1px solid var(--border); padding: 2px 8px; border-radius: 999px; margin-left: 8px; vertical-align: middle; }
+
+  footer { text-align: center; margin-top: 80px; padding: 32px; font-size: 12px; color: var(--fg-muted); border-top: 1px solid var(--border); }
+</style>
+</head>
+<body>
+
+<header class="page-header">
+  <div>
+    <h1>HiveKitchen — UX Design Directions</h1>
+    <div class="meta">Final showcase · v2.0 tokens · Steps 9–13 integrated · 2026-04-22</div>
+  </div>
+  <button class="theme-toggle" onclick="toggleTheme()" aria-label="Toggle light/dark mode">Toggle theme</button>
+</header>
+
+<main class="container">
+
+  <section class="section">
+    <div class="section-label">Superseding note</div>
+    <h2 class="section-title">The direction, as built out.</h2>
+    <p class="section-sub">
+      The original HTML explored three divergent design directions (D1 Letter, D2 Kitchen Counter, D3 Notebook).
+      Step 9 locked <strong>D2 Kitchen Counter as the chassis</strong> with selective D1 borrows (Heart Note composer, Lunch Link).
+      This file now shows that <strong>decided direction as realized</strong> through the component strategy (Step 11),
+      the UX consistency patterns (Step 12 — with the inverted §12.8 cultural recognition), and the responsive plus
+      accessibility commitments (Step 13). Dark-mode-first, WCAG 2.2 AA floor, AAA for <code>.child-scope</code> and safety copy.
+    </p>
+  </section>
+
+  <section class="section">
+    <div class="section-label">Section 1 · Design tokens (v2.0)</div>
+    <h2 class="section-title">Warm, not white.</h2>
+    <p class="section-sub">
+      The palette departed from the v1.0 Design System.md: honey marigold to amber, sage cyan-teal to foliage,
+      pure neutrals to warm neutrals, Sora retired for Instrument Serif + Inter. Honey-amber is reserved for recognition moments
+      and never used for button hovers (Sally's token rule — proposal hover uses <code>--lumi-terracotta-warmed</code>).
+    </p>
+
+    <div class="card">
+      <div class="card-label">Warm neutrals</div>
+      <div class="swatch-row">
+        <div class="swatch"><div class="swatch-chip" style="background:var(--warm-neutral-50)"></div><div class="swatch-name">warm-neutral-50</div><div class="swatch-hex">fg / inverted</div></div>
+        <div class="swatch"><div class="swatch-chip" style="background:var(--warm-neutral-200)"></div><div class="swatch-name">warm-neutral-200</div><div class="swatch-hex">border / inverse</div></div>
+        <div class="swatch"><div class="swatch-chip" style="background:var(--warm-neutral-400)"></div><div class="swatch-name">warm-neutral-400</div><div class="swatch-hex">muted text</div></div>
+        <div class="swatch"><div class="swatch-chip" style="background:var(--warm-neutral-700)"></div><div class="swatch-name">warm-neutral-700</div><div class="swatch-hex">border / secondary</div></div>
+        <div class="swatch"><div class="swatch-chip" style="background:var(--warm-neutral-900)"></div><div class="swatch-name">warm-neutral-900</div><div class="swatch-hex">background</div></div>
+      </div>
+    </div>
+
+    <div class="grid cols-2" style="margin-top:20px">
+      <div class="card">
+        <div class="card-label">Accent — amber / honey-accent</div>
+        <div class="swatch-row">
+          <div class="swatch"><div class="swatch-chip" style="background:var(--amber)"></div><div class="swatch-name">--amber</div><div class="swatch-hex">emphasis + recognition</div></div>
+          <div class="swatch"><div class="swatch-chip" style="background:var(--amber-warm)"></div><div class="swatch-name">--amber-warm</div><div class="swatch-hex">hover accents</div></div>
+          <div class="swatch"><div class="swatch-chip" style="background:var(--honey-accent)"></div><div class="swatch-name">--honey-accent</div><div class="swatch-hex">recognition only</div></div>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-label">Semantic — voice + trust</div>
+        <div class="swatch-row">
+          <div class="swatch"><div class="swatch-chip" style="background:var(--lumi-terracotta)"></div><div class="swatch-name">--lumi-terracotta</div><div class="swatch-hex">Lumi's voice</div></div>
+          <div class="swatch"><div class="swatch-chip" style="background:var(--lumi-terracotta-warmed)"></div><div class="swatch-name">--lumi-terracotta-warmed</div><div class="swatch-hex">proposal btn hover</div></div>
+          <div class="swatch"><div class="swatch-chip" style="background:var(--sacred-plum)"></div><div class="swatch-name">--sacred-plum</div><div class="swatch-hex">family-language</div></div>
+          <div class="swatch"><div class="swatch-chip" style="background:var(--foliage)"></div><div class="swatch-name">--foliage</div><div class="swatch-hex">confirmations</div></div>
+          <div class="swatch"><div class="swatch-chip" style="background:var(--safety-cleared-teal)"></div><div class="swatch-name">--safety-cleared-teal</div><div class="swatch-hex">allergy cleared</div></div>
+          <div class="swatch"><div class="swatch-chip" style="background:var(--safety-red)"></div><div class="swatch-name">--safety-red</div><div class="swatch-hex">safety-block only</div></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card" style="margin-top:20px">
+      <div class="card-label">Typography pair — Instrument Serif + Inter</div>
+      <div class="type-pair">
+        <div class="type-sample"><span class="label">Display</span><span class="type-serif" style="font-size:36px">Thursday is ready.</span></div>
+        <div class="type-sample"><span class="label">Body</span><span class="type-sans" style="font-size:16px">Lumi kept Ayaan's noodles in on Wednesday — you asked for them again.</span></div>
+        <div class="type-sample"><span class="label">Heart Note</span><span class="type-serif" style="font-size:26px; font-style:italic; color:var(--sacred-plum)">Nani loves you, Ayaan.</span></div>
+        <div class="type-sample"><span class="label">Meta</span><span class="type-sans" style="font-size:12px; color:var(--fg-muted)">Last synced 4 minutes ago</span></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="section">
+    <div class="section-label">Section 2 · Primary surface</div>
+    <h2 class="section-title">The Brief.<span class="scope-tag">.app-scope</span></h2>
+    <p class="section-sub">
+      The Ready-Answer Open landing surface. Read-aloud-first order: Moment Headline → Lumi Note (terracotta indent) →
+      5 PlanTiles → freshness strip. Target: fully rendered in under 2 seconds on the anchor device (Galaxy A13 on 4G).
+      Optimistic-update, never approval. Silent scaffolding mutations surface as a Quiet Diff rear-view above the tiles.
+    </p>
+
+    <div class="brief">
+      <h3 class="brief-moment">Thursday is ready. <em>Ayaan's noodles are back in.</em></h3>
+      <p class="lumi-note">
+        I kept the cashew butter off Wednesday's wrap — I'm still checking the new pantry before I add any nuts back.
+        <span class="family-lang">Nani's dal is on the week. Ayaan's pick.</span>
+      </p>
+
+      <div class="quiet-diff" style="margin-bottom:22px">
+        <span>Swapped Tuesday's protein to match pantry</span>
+        <span class="why-link">Why?</span>
+      </div>
+
+      <div class="tile-row">
+        <div class="plan-tile past">
+          <div class="day">Mon · past</div>
+          <div class="dish">Chicken avocado wrap</div>
+          <div class="method">Leftover from dinner</div>
+        </div>
+        <div class="plan-tile today">
+          <div class="day">Today · Tue</div>
+          <div class="dish">Turkey-rice bowl</div>
+          <div class="method">Pressure-cooked rice</div>
+          <div class="chip-row">
+            <span class="chip cleared">Maya: peanut-safe</span>
+          </div>
+        </div>
+        <div class="plan-tile">
+          <div class="day">Wed</div>
+          <div class="dish">Sunbutter + banana wrap</div>
+          <div class="method">Cashew butter swapped</div>
+          <div class="chip-row">
+            <span class="chip lumi">Lumi swap</span>
+          </div>
+        </div>
+        <div class="plan-tile pending-input">
+          <div class="day">Thu</div>
+          <div class="dish">Nani's dal</div>
+          <div class="method">Slow-simmer · Ayaan's pick</div>
+          <div class="chip-row">
+            <span class="chip cultural">Jollof Friday tradition</span>
+          </div>
+        </div>
+        <div class="plan-tile locked">
+          <div class="day">Fri</div>
+          <div class="dish">Jollof rice</div>
+          <div class="method">Priya is editing…</div>
+          <div class="chip-row">
+            <span class="chip cultural">Opted-in template</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="freshness-strip">
+        <span>Plan confident · Last synced 4m ago</span>
+        <span>Priya is viewing the Brief</span>
+      </div>
+    </div>
+  </section>
+
+  <section class="section">
+    <div class="section-label">Section 3 · Button taxonomy</div>
+    <h2 class="section-title">Five variants, honest copy.</h2>
+    <p class="section-sub">
+      Primary, secondary, tertiary, <strong>proposal</strong> (Lumi-initiated offers only), destructive (narrowed — red reserved for safety).
+      No "OK / Cancel" — every button names what it does. The proposal variant hovers to <code>--lumi-terracotta-warmed</code>,
+      <em>not</em> honey-amber — honey is reserved for recognition moments.
+    </p>
+
+    <div class="grid cols-2">
+      <div class="card">
+        <div class="card-label">Rest state</div>
+        <div class="btn-row">
+          <button class="btn primary">Tuck into Ayaan's Thursday lunch</button>
+          <button class="btn secondary">Skip this one</button>
+          <button class="btn tertiary">Change my mind</button>
+          <button class="btn proposal">Can I try something?</button>
+          <button class="btn destructive">Forget this — Lumi won't use it</button>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-label">Hover each — verify proposal uses warmed-terracotta, not honey</div>
+        <div class="btn-row">
+          <button class="btn primary">Hover me</button>
+          <button class="btn secondary">Hover me</button>
+          <button class="btn tertiary">Hover me</button>
+          <button class="btn proposal">Hover (warmed-terracotta)</button>
+          <button class="btn destructive">Hover me</button>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="section">
+    <div class="section-label">Section 4 · Thread as spine</div>
+    <h2 class="section-title">The conversation is the spine.</h2>
+    <p class="section-sub">
+      The <code>&lt;ThreadTurn&gt;</code> envelope dispatches on <code>body.kind</code> to five body components
+      (<code>message</code>, <code>plan_diff</code>, <code>proposal</code>, <code>system_event</code>, <code>presence</code>)
+      plus the <code>cultural.proposal</code> body from §12.8.2. Turns ordered by <code>server_seq</code>, never <code>created_at</code>.
+    </p>
+
+    <div class="card">
+      <div class="thread">
+        <div class="turn user">
+          <div class="author">You · 9:41 PM</div>
+          <div>Can we swap Wednesday? Cashews are a no for this week.</div>
+        </div>
+        <div class="turn lumi">
+          <div class="author">Lumi · 9:41 PM</div>
+          <div>Pulled cashew butter. I'll use sunbutter for Wednesday's wrap.</div>
+        </div>
+        <div class="turn system">
+          <div class="author">Plan updated · 9:42 PM</div>
+          <div>Wednesday: cashew butter → sunbutter. Allergy verdict: <span style="color:var(--safety-cleared-teal)">cleared for Maya</span>.</div>
+        </div>
+        <div class="turn cultural-proposal">
+          <div class="author">Lumi · 10:05 PM</div>
+          <div>I've noticed "Jollof Friday" keeps coming back. Want me to keep it going, or is that just this month?</div>
+          <div class="btn-row" style="margin-top:10px">
+            <button class="btn proposal">Yes, keep it going</button>
+            <button class="btn tertiary">Tell Lumi more</button>
+            <button class="btn tertiary">Not for us</button>
+          </div>
+          <div class="fallback-hint">Why this pick?</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="section">
+    <div class="section-label">Section 5 · Cultural recognition (§12.8 inverted)</div>
+    <h2 class="section-title">Recognition as noticing, not as form field.</h2>
+    <p class="section-sub">
+      No template-picker UI. No weight sliders. Templates are internal priors the agent uses; the only user-visible
+      invocation is conversational ratification. The tier ladder renders differently based on opt-in, provenance, and
+      confidence state — with a <code>⋯ Why this pick?</code> affordance when Lumi falls back a tier.
+    </p>
+
+    <div class="tier-ladder">
+      <div class="tier-row">
+        <div class="tier-label">L0</div>
+        <div>
+          <p class="tier-desc">Preference memory · no opt-in · works in silence-mode</p>
+          <p class="tier-copy">Maya doesn't eat bell peppers.</p>
+        </div>
+      </div>
+      <div class="tier-row">
+        <div class="tier-label">L1</div>
+        <div>
+          <p class="tier-desc">Method / ingredient · inferred, no opt-in</p>
+          <p class="tier-copy">Tuesday's rice is pressure-cooked, not boiled.</p>
+        </div>
+      </div>
+      <div class="tier-row">
+        <div class="tier-label">L2</div>
+        <div>
+          <p class="tier-desc">Meal-pattern · requires opt-in + user used pattern name first (language-discovered gate)</p>
+          <p class="tier-copy">Keeping Jollof Friday.</p>
+        </div>
+      </div>
+      <div class="tier-row">
+        <div class="tier-label">L3</div>
+        <div>
+          <p class="tier-desc">Family-language / relational · requires active state + memory-node citation</p>
+          <p class="tier-copy"><span class="family-lang">Nani's dal</span> is on the week. Ayaan's pick.</p>
+        </div>
+      </div>
+    </div>
+
+    <div class="grid cols-2" style="margin-top:28px">
+      <div class="card">
+        <div class="card-label">Silence-mode (the default — §12.8.5)</div>
+        <p style="font-size:15px; line-height:1.6; margin:0 0 14px; color:var(--fg-muted);">
+          Every household ships in silence-mode out of the box. No cultural copy, no "Celebrating X" strip, no picker.
+          L0 preference memory still works. Warmth comes from relational specificity.
+        </p>
+        <div style="font-family:'Instrument Serif',serif; font-size:19px; line-height:1.5;">
+          "Thursday's lunch is packed. Maya's sandwich is the one without mayo, like always."
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-label">Ratification turn (the only user-facing cultural UI)</div>
+        <div class="ratification">
+          <p class="q">I've noticed halal comes up a lot in our planning. Want me to keep that in mind?</p>
+          <div class="actions">
+            <button class="btn proposal">Yes, keep it in mind</button>
+            <button class="btn tertiary">Tell Lumi more</button>
+            <button class="btn tertiary">Not for us</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card" style="margin-top:20px">
+      <div class="card-label">Interfaith-mode copy (§12.8.7)</div>
+      <div style="display:flex; flex-direction:column; gap:12px">
+        <div style="display:flex; align-items:center; gap:12px; padding:10px 14px; border:1px solid var(--border); border-radius:var(--r-md); background:var(--surface-2);">
+          <span style="font-size:18px">◉</span>
+          <span style="font-size:15px; font-weight:500">Honor all rules in every meal.</span>
+          <span style="font-size:12px; color:var(--fg-muted); margin-left:auto">(replaces "Stricter")</span>
+        </div>
+        <div style="display:flex; align-items:center; gap:12px; padding:10px 14px; border:1px solid var(--border); border-radius:var(--r-md);">
+          <span style="font-size:18px; color:var(--fg-muted)">◎</span>
+          <span style="font-size:15px; font-weight:500">Alternate whose rules lead each day.</span>
+          <span style="font-size:12px; color:var(--fg-muted); margin-left:auto">(alternating_sovereignty)</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="section">
+    <div class="section-label">Section 6 · Custom components (selected)</div>
+    <h2 class="section-title">17 components, locked.</h2>
+    <p class="section-sub">
+      A selection of the custom primitives specified in Step 11. Each uses v2.0 tokens, supports reduced-motion
+      fallbacks, and meets WCAG 2.2 AA (AAA for safety copy).
+    </p>
+
+    <div class="grid cols-2">
+      <div class="component-frame">
+        <h4>&lt;AllergyClearedBadge&gt;</h4>
+        <div class="allergy-badge">Cleared for Maya's peanut allergy</div>
+        <div style="font-size:13px; color:var(--fg-muted); line-height:1.5">
+          Tap to open Popover: <em>"We checked every ingredient against Maya's peanut allergy. Nothing in today's lunch contains peanuts or was made near them."</em>
+        </div>
+      </div>
+
+      <div class="component-frame">
+        <h4>&lt;QuietDiff&gt;</h4>
+        <div class="quiet-diff">
+          <span>Swapped Tuesday's protein to match pantry</span>
+          <span class="why-link">Why?</span>
+        </div>
+        <div style="font-size:12px; color:var(--fg-muted)">
+          Silent scaffolding mutations only — dietary or allergy changes escalate loud.
+        </div>
+      </div>
+
+      <div class="component-frame">
+        <h4>&lt;FreshnessState&gt;</h4>
+        <div class="freshness-state stale">Checking… last synced 4h ago</div>
+        <div class="freshness-state offline">You're offline. Yesterday's plan below.</div>
+        <div class="freshness-state failed">Lumi couldn't reach the plan. Retrying in 30s.</div>
+      </div>
+
+      <div class="component-frame">
+        <h4>&lt;VisibleMemorySentence&gt; — always-visible ⋯</h4>
+        <div class="memory-sentence first-time">
+          <p>Ayaan likes cold noodles better than hot.</p>
+          <button class="memory-dots" aria-label="Options">⋯</button>
+        </div>
+        <div class="memory-sentence">
+          <p>Maya's sandwiches go without mayo.</p>
+          <button class="memory-dots" aria-label="Options">⋯</button>
+        </div>
+        <div style="font-size:12px; color:var(--fg-muted)">
+          ⋯ is always visible (Sally's refinement). First-time users see a one-time helper.
+        </div>
+      </div>
+
+      <div class="component-frame">
+        <h4>&lt;PresenceIndicator&gt;</h4>
+        <div style="font-size:13px; color:var(--fg-muted); display:flex; align-items:center; gap:8px;">
+          <div style="width:20px; height:20px; border-radius:50%; background:var(--foliage);"></div>
+          <span>Priya is editing this tile</span>
+        </div>
+        <div style="font-size:12px; color:var(--fg-muted)">
+          Generic <code>surface: { kind, id }</code> addressing (Winston's W4). Never a modal, never blocks.
+        </div>
+      </div>
+
+      <div class="component-frame">
+        <h4>&lt;MobileNavAnchor&gt; — Phase 1</h4>
+        <div class="mobile-nav">
+          <a href="#" class="active">Brief</a>
+          <a href="#">Thread</a>
+          <a href="#">Memory</a>
+        </div>
+        <div style="font-size:12px; color:var(--fg-muted)">
+          Minimal persistent affordance on mobile. Swipe gestures layer on top for discovered-behavior users.
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="section">
+    <div class="section-label">Section 7 · Grandparent scope</div>
+    <h2 class="section-title">Heart Note Composer.<span class="scope-tag">.grandparent-scope</span></h2>
+    <p class="section-sub">
+      Borrowed from D1 Letter. Instrument Serif 26pt, unhurried. At-cap state uses rhythm copy, not restriction —
+      Sally's committed refinement from Step 11 party mode.
+    </p>
+
+    <div class="grid cols-2">
+      <div class="component-frame">
+        <h4>Writing state</h4>
+        <div class="heartnote">
+          <textarea placeholder="For Ayaan — something tucked into Thursday's lunch…">Nani loves you, Ayaan. Eat every bite and tell me what you thought.</textarea>
+          <div class="cap">57 / 220</div>
+        </div>
+        <div class="btn-row">
+          <button class="btn proposal">Tuck into Ayaan's Thursday lunch</button>
+        </div>
+      </div>
+
+      <div class="component-frame">
+        <h4>At-cap state (2/2 for the month)</h4>
+        <div class="heartnote at-cap">
+          <div class="cap-overlay">
+            <div class="rhythm">Ayaan has both of your notes this month, Nani.</div>
+            <div style="font-size:17px; font-family:'Inter',sans-serif; color:var(--fg-muted); font-style:normal;">The next one opens May 1.</div>
+          </div>
+          <textarea readonly></textarea>
+        </div>
+        <div class="btn-row">
+          <button class="btn secondary">Save for May 1</button>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="section">
+    <div class="section-label">Section 8 · Child scope</div>
+    <h2 class="section-title">Lunch Link.<span class="scope-tag">.child-scope</span></h2>
+    <p class="section-sub">
+      Read-aloud-first. Heart Note delivered unmodified (sacred). 72px tap targets. Single-column always.
+      <code>.child-scope</code> runs at WCAG 2.2 AAA across the entire surface.
+    </p>
+
+    <div style="display:flex; justify-content:center">
+      <div class="lunch-link">
+        <div class="heart-note-readout">Nani loves you, Ayaan. Eat every bite and tell me what you thought.</div>
+        <div class="food-photo">Photo — Ayaan's lunch · 4:5</div>
+        <div class="emoji-row">
+          <button aria-label="Loved it">🧡</button>
+          <button aria-label="Not sure">🤔</button>
+          <button aria-label="Yummy">😋</button>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="section">
+    <div class="section-label">Section 9 · Empty states</div>
+    <h2 class="section-title">Sparse pages, honest prose.</h2>
+    <p class="section-sub">
+      Never render the grid when empty. Never placeholder scaffolds. Never illustrated characters.
+      One honest sentence of what happens next.
+    </p>
+
+    <div class="grid cols-3">
+      <div class="card">
+        <div class="card-label">Flavor Passport (0 stamps)</div>
+        <div class="empty-state">Ayaan's taste is still forming. Lumi will notice and add it here.</div>
+      </div>
+      <div class="card">
+        <div class="card-label">Visible Memory (week 1)</div>
+        <div class="empty-state">Lumi is still learning about your family. Memory will show up here as patterns appear.</div>
+      </div>
+      <div class="card">
+        <div class="card-label">Memory search (no results)</div>
+        <div class="empty-state">Nothing matches "jollof". Try a person's name, a meal, or a week.</div>
+      </div>
+    </div>
+  </section>
+
+  <section class="section">
+    <div class="section-label">Section 10 · Responsive & accessibility</div>
+    <h2 class="section-title">Galaxy A13. 4G. AA floor.</h2>
+    <p class="section-sub">
+      Mobile-first CSS with logical properties (RTL-safe). Performance anchor is the 2022 Samsung Galaxy A13 on 4G.
+      WCAG 2.2 AA across the product; AAA for <code>.child-scope</code> and safety-critical copy.
+    </p>
+
+    <div class="grid cols-2">
+      <div class="card">
+        <div class="card-label">Contrast — both modes meet AAA for body text</div>
+        <div class="contrast-grid">
+          <div class="half dark-half">
+            <div style="font-size:15px; margin-bottom:8px">Body Inter 15pt — 7:1 AAA</div>
+            <div style="font-size:12px; color:#B0A99D">Muted meets AA at 4.5:1</div>
+          </div>
+          <div class="half light-half">
+            <div style="font-size:15px; margin-bottom:8px">Body Inter 15pt — 7:1 AAA</div>
+            <div style="font-size:12px; color:#56524A">Muted meets AA at 4.5:1</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-label">Perf budget (anchor device)</div>
+        <div style="font-size:14px; line-height:1.8">
+          <div>Ready-Answer Open cached render: <strong>≤ 1.2s</strong></div>
+          <div>SSE invalidation → surface update: <strong>≤ 600ms</strong></div>
+          <div>Optimistic mutation visible: <strong>≤ 100ms</strong></div>
+          <div>Guardrail verdict arrival: <strong>≤ 800ms p95</strong></div>
+          <div>Memory search response: <strong>≤ 500ms</strong></div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-label">Motion fallbacks — prefers-reduced-motion</div>
+        <div style="font-size:13px; line-height:1.8; color:var(--fg-muted)">
+          <div>• Plum-pulse on pending-input tile → static plum dot</div>
+          <div>• Memory ⋯ first-time honey pulse → static honey</div>
+          <div>• SSE incoming fade-in → instant render</div>
+          <div>• Freshness state foliage pulse → static chip</div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-label">i18n posture</div>
+        <div style="font-size:13px; line-height:1.8; color:var(--fg-muted)">
+          Phase 1 — English (US) UI chrome · family-language preserved as-is · RTL-safe primitives.<br>
+          Phase 2 — Arabic + Urdu full RTL, localized cultural copy.<br>
+          Phase 2+ — LTR expansion based on user data.
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-label">Tap targets by scope</div>
+        <div style="font-size:13px; line-height:1.8; color:var(--fg-muted)">
+          <div><code>.app-scope</code> / <code>.ops-scope</code> — 44×44 CSS px (WCAG 2.2 AA)</div>
+          <div><code>.grandparent-scope</code> — 56×56 CSS px</div>
+          <div><code>.child-scope</code> — 72×72 CSS px (AAA + our own standard)</div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-label">Voice accessibility (§13.5)</div>
+        <div style="font-size:13px; line-height:1.8; color:var(--fg-muted)">
+          Every voice turn has a synchronized transcript. No voice-only content, ever. Text-only mode disables TTS
+          without degrading comprehension. Low-confidence STT surfaces an honest error rather than faking a transcript.
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="section">
+    <div class="section-label">Section 11 · Phasing (build order)</div>
+    <h2 class="section-title">Foundation first. Culture second. Never stereotype.</h2>
+    <p class="section-sub">
+      Four Phase 0 gates must land before any component. Silence-mode is the default day-1 experience.
+      Cultural recognition ships in Phase 2 after content pipeline lands.
+    </p>
+
+    <div class="grid cols-3">
+      <div class="card">
+        <div class="card-label">Phase 0 — Week 0–2 (blocking)</div>
+        <div style="font-size:13px; line-height:1.7">
+          Contracts: <code>thread.server_seq</code>, guardrail Option A, <code>ForgetContract</code>, <code>presence.updated</code>, <code>errors.ts</code>, <code>cultural.ts</code> skeleton<br>
+          Token: <code>--lumi-terracotta-warmed</code><br>
+          Rules: scope ESLint, no-ok-cancel, no-dialog-outside-allowlist, logical-property lint<br>
+          Runtime: <code>&lt;CulturalBadge&gt;</code> flag-codepoint stripper
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-label">Phase 1 — Week 3–10</div>
+        <div style="font-size:13px; line-height:1.7">
+          Core: BriefCanvas, PlanTile, ThreadTurn, AllergyClearedBadge, FreshnessState, AccountableError, TrustChip, PresenceIndicator, QuietDiff<br>
+          Relational: HeartNoteComposer, LunchLinkPage, VisibleMemorySentence, FlavorPassport (sparse), PackerOfTheDay, DisambiguationPicker<br>
+          From Step 12: MobileNavAnchor, ScopeEntryTeaching, L0PreferenceMemory<br>
+          <strong>Silence-mode is default.</strong>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-label">Phase 2 — cultural recognition lights up</div>
+        <div style="font-size:13px; line-height:1.7">
+          Ratification thread turn + state machine<br>
+          L2 + L3 recognition with fallback metadata<br>
+          Memory search (Postgres tsvector)<br>
+          Arabic + Urdu localization<br>
+          Large-text toggle in grandparent-scope<br>
+          Hard-forget (Phase 2+, legal-reviewed)
+        </div>
+      </div>
+    </div>
+  </section>
+
+</main>
+
+<footer>
+  HiveKitchen UX Design Directions · v2.0 · Steps 9–13 integrated · Authored with Menon · 2026-04-22<br>
+  Dark-mode-first · WCAG 2.2 AA floor · Honey-amber reserved for recognition
+</footer>
+
+<script>
+  function toggleTheme() {
+    const html = document.documentElement;
+    const next = html.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
+    html.setAttribute('data-theme', next);
+    try { localStorage.setItem('hk-theme', next); } catch (e) {}
+  }
+  try {
+    const saved = localStorage.getItem('hk-theme');
+    if (saved) document.documentElement.setAttribute('data-theme', saved);
+  } catch (e) {}
+</script>
+
+</body>
+</html>
