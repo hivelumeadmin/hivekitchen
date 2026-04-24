@@ -42,6 +42,18 @@ describe('AllergyVerdict', () => {
   it('rejects blocked without required allergens', () => {
     expect(AllergyVerdict.safeParse({ verdict: 'blocked' }).success).toBe(false);
   });
+
+  it('rejects blocked with empty allergens list', () => {
+    expect(AllergyVerdict.safeParse({ verdict: 'blocked', allergens: [] }).success).toBe(false);
+  });
+
+  it('rejects blocked with empty-string allergen entry', () => {
+    expect(AllergyVerdict.safeParse({ verdict: 'blocked', allergens: [''] }).success).toBe(false);
+  });
+
+  it('rejects degraded with empty reason', () => {
+    expect(AllergyVerdict.safeParse({ verdict: 'degraded', reason: '' }).success).toBe(false);
+  });
 });
 
 describe('PlanUpdatedEvent', () => {

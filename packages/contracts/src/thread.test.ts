@@ -125,4 +125,37 @@ describe('Turn', () => {
       body: { type: 'message', content: 'x' },
     }).success).toBe(false);
   });
+
+  it('rejects empty-string server_seq (no silent 0n coercion)', () => {
+    expect(Turn.safeParse({
+      id: UUID1,
+      thread_id: UUID2,
+      server_seq: '',
+      created_at: DT,
+      role: 'user',
+      body: { type: 'message', content: 'x' },
+    }).success).toBe(false);
+  });
+
+  it('rejects array server_seq (no silent 0n coercion)', () => {
+    expect(Turn.safeParse({
+      id: UUID1,
+      thread_id: UUID2,
+      server_seq: [],
+      created_at: DT,
+      role: 'user',
+      body: { type: 'message', content: 'x' },
+    }).success).toBe(false);
+  });
+
+  it('rejects non-numeric string server_seq', () => {
+    expect(Turn.safeParse({
+      id: UUID1,
+      thread_id: UUID2,
+      server_seq: '1e3',
+      created_at: DT,
+      role: 'user',
+      body: { type: 'message', content: 'x' },
+    }).success).toBe(false);
+  });
 });

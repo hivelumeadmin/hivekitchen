@@ -31,13 +31,13 @@ export const AllergyVerdict = z.discriminatedUnion('verdict', [
   z.object({ verdict: z.literal('cleared') }),
   z.object({
     verdict: z.literal('blocked'),
-    allergens: z.array(z.string()),
+    allergens: z.array(z.string().min(1)).min(1),
     reason: z.string().optional(),
   }),
   z.object({ verdict: z.literal('pending') }),
   z.object({
     verdict: z.literal('degraded'),
-    reason: z.string(),
+    reason: z.string().min(1),
     suggestion: z.string().optional(),
   }),
 ]);

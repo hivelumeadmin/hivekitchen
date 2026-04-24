@@ -1,5 +1,17 @@
 import { z } from 'zod';
 
+// Monotonic sequence ID. Accepts bigint, integer number, or a numeric string.
+// Rejects empty string / empty array / non-numeric string — which z.coerce.bigint
+// would silently coerce to 0n.
+const SequenceId = z.union([
+  z.bigint(),
+  z.number().int(),
+  z
+    .string()
+    .regex(/^-?\d+$/)
+    .transform((s) => BigInt(s)),
+]);
+
 export const TurnBodyMessage = z.object({
   type: z.literal('message'),
   content: z.string(),
@@ -39,7 +51,7 @@ export const TurnBody = z.discriminatedUnion('type', [
 export const Turn = z.object({
   id: z.string().uuid(),
   thread_id: z.string().uuid(),
-  server_seq: z.coerce.bigint(),
+  server_seq: SequenceId,
   created_at: z.string().datetime(),
   role: z.enum(['user', 'lumi', 'system']),
   body: TurnBody,

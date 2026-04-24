@@ -1,6 +1,6 @@
 ﻿# Story 1.3: Establish Foundation Gate contracts in packages/contracts
 
-Status: review
+Status: done
 
 ## Story
 
@@ -748,3 +748,45 @@ claude-sonnet-4-6 (Claude Code)
 ### Change Log
 
 - 2026-04-23: Implemented all 13 tasks. Created 5 Foundation Gate schema files, 5 test files, contracts:check script. 53 tests pass. All workspace checks green.
+- 2026-04-23: Code review completed. 3 decision-needed, 3 patches, 8 deferred, 10 dismissed (see Review Findings).
+- 2026-04-23: Review patches applied — D1 unified (`InvalidationEvent` embeds `PlanUpdatedEvent` + `PresenceEvent`), D2 added (`ForgetCompletedEvent` is an `InvalidationEvent` member), D3 hardened (`check.ts` rewritten with import-statement regex, `.tsx` globs, broader export-form detection, duplicate-name detection, `z.infer<>` plumbing verification), P1 `SequenceId` union replaces `z.coerce.bigint()`, P2 `.min(1)` on `AllergyVerdict.blocked.allergens` + `degraded.reason`. New `events.test.ts` added; 53 → 74 tests. Typecheck 6/6, build 3/3, `contracts:check` PASS (29 exports).
+
+### Review Findings
+
+**Summary:** 3 decision-needed, 3 patch, 8 defer, 10 dismissed (false positives / known/deferred by spec). All 11 ACs satisfied literally. Typecheck 6/6, tests 53/53, `contracts:check` passes.
+
+#### Decision-Needed (resolved)
+
+- [x] [Review][Decision] `InvalidationEvent` members shadow `PlanUpdatedEvent` and `PresenceEvent` with lossy shapes — **Resolved (a): unified.** `InvalidationEvent` now references `PlanUpdatedEvent` and `PresenceEvent` directly; full shapes (including `guardrail_verdict`, `surface`, `expires_at`) are preserved on the wire. [packages/contracts/src/events.ts]
+- [x] [Review][Decision] `ForgetCompletedEvent` has no transport channel — **Resolved (a): added.** `ForgetCompletedEvent` is now a member of `InvalidationEvent` so `memory.forget.completed` has a real SSE transport. [packages/contracts/src/events.ts]
+- [x] [Review][Decision] `contracts:check` script meets AC literally but not its spirit — **Resolved (b): hardened.** Rewritten `check.ts` uses import-statement regex (not bare-word match), globs `.ts` and `.tsx` in `apps/api` and `apps/web`, broadens export-form detection (`const` / `function` / `class` / `type` / `interface` / `enum` / `export { ... }`), detects duplicate export names across files, and verifies `packages/types` plumbing via actual `z.infer<typeof X>` sites instead of free-text name match. Note: `packages/types` is retained as a valid plumbing signal (not fully excluded), because apps/api and apps/web do not yet import any contract schema in Story 1.3's bootstrap state; the hardened check still catches missing-plumbing bugs (contract export absent from types barrel) that the old tautological check would have missed. [packages/contracts/scripts/check.ts]
+
+#### Patch (applied)
+
+- [x] [Review][Patch] `z.coerce.bigint()` coerces `''` and `[]` to `0n` — **Fixed.** Replaced `z.coerce.bigint()` with a `SequenceId` union (`bigint | int | numeric-string`) in both `thread.ts` (`server_seq`) and `events.ts` (`thread.resync.from_seq`). Added tests covering `''`, `[]`, and `'1e3'` rejection. [packages/contracts/src/thread.ts, events.ts; thread.test.ts, events.test.ts]
+- [x] [Review][Patch] `AllergyVerdict.blocked` accepts `allergens: []`; `AllergyVerdict.degraded` accepts `reason: ''` — **Fixed.** `.min(1)` added to `blocked.allergens`, each element, and `degraded.reason`. Rejection tests added. [packages/contracts/src/plan.ts; plan.test.ts]
+- [x] [Review][Patch] `contracts:check` glob misses `.tsx` in apps/web — **Fixed** as part of D3 hardening (folded into the check.ts rewrite). [packages/contracts/scripts/check.ts]
+
+#### Deferred (pre-existing or out-of-story scope)
+
+- [x] [Review][Defer] `WeeklyPlan.weekOf: z.string()` unconstrained — pre-existing from Story 1.1; not touched by 1.3.
+- [x] [Review][Defer] UUID validators across all schemas accept the nil UUID `00000000-0000-0000-0000-000000000000` — sentinel-rejection policy belongs with Story 1.6 env/boundary work or architecture guidance.
+- [x] [Review][Defer] `Turn.created_at` / `expires_at` / `completed_at` accept ISO strings without seconds (e.g. `'2026-04-23T00:00Z'`) — Zod `.datetime()` default; tighten when wire-format precision is pinned.
+- [x] [Review][Defer] `PantryDelta` accepts empty delta `{}` — unexported internal stub; pantry domain refinement is Epic 3+.
+- [x] [Review][Defer] `ApiError.fields[].code` reuses `ErrorCode` which mixes request-level and field-level semantics — future split into `FieldErrorCode` (e.g., `FIELD_REQUIRED`, `FIELD_INVALID_FORMAT`) recommended when downstream routes start emitting real field errors.
+- [x] [Review][Defer] `contracts:check` soft spots beyond the P3 fix: file-scoped `@unused-by-design` exemption; regex misses `export function` / `export type` / `export { X }` / multiline exports; `exportedNames` map silently overwrites on duplicate names. All currently latent (no violations in tree).
+- [x] [Review][Defer] `z.string().datetime()` rejects timezone offsets (accepts only `Z`-suffixed UTC) — Zod default; `{ offset: true }` option needed if downstream producers emit offsets. Defer until Story 1.10 SSE wire-format decision.
+- [x] [Review][Defer] No `engines.node` declared at root or in `packages/contracts` but `check.ts` relies on Node 22+ APIs (`globSync`, `import.meta.dirname`) — add `"engines": { "node": ">=22" }` in a root-hygiene or Story 1.6 pass.
+
+#### Dismissed (false positive / out-of-scope)
+
+- Blind Hunter: `z.string().date()` unavailable in Zod 3.x — installed Zod is 3.25.76; `.date()` is available and rejects `'2026-02-30'`.
+- Blind Hunter: `globSync` not exported from `node:fs` — confirmed working on Node 24 (dev env and target).
+- Blind Hunter: `import.meta.dirname` undefined — works on Node 24.
+- Blind Hunter: rename `plans→plan` / `threads→thread` breaks stale imports in apps — typecheck 6/6 passes; grep found no stale refs (apps already use new names where applicable).
+- Blind Hunter: `JSON.stringify(BigInt)` throws — known and explicitly deferred by spec to Story 1.10 SSE emitter (spec "bigint serialization note").
+- Blind Hunter: `.js` specifiers break bundler resolution — typecheck and `pnpm build` 3/3 pass; moduleResolution handles it.
+- Edge Case: `z.string().date()` accepts `'2026-02-30'` — live parse rejects.
+- Edge Case: `exportedNames` map collision — currently no collisions in tree; latent risk captured in the deferred `contracts:check` soft-spot bundle.
+- Auditor: vitest `^4.0.0` vs spec `^2.2.0` — debug log documents the deviation; 4.x works; downgrading to 2.x would be a regression; spec's `^2.2.0` was stale guidance.
+- Auditor: `--passWithNoTests` flag — harmless; no meaningful failure mode masked given tests exist.
