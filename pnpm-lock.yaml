@@ -48,6 +48,9 @@ importers:
 
   apps/marketing:
     dependencies:
+      '@hivekitchen/design-system':
+        specifier: workspace:*
+        version: link:../../packages/design-system
       astro:
         specifier: ^6.1.9
         version: 6.1.9(@types/node@22.19.17)(jiti@1.21.7)(rollup@4.60.1)(tsx@4.21.0)(typescript@5.9.3)(yaml@2.8.3)
@@ -55,9 +58,15 @@ importers:
       '@astrojs/check':
         specifier: latest
         version: 0.9.8(prettier@3.8.3)(typescript@5.9.3)
+      '@astrojs/tailwind':
+        specifier: ^6.0.0
+        version: 6.0.2(astro@6.1.9(@types/node@22.19.17)(jiti@1.21.7)(rollup@4.60.1)(tsx@4.21.0)(typescript@5.9.3)(yaml@2.8.3))(tailwindcss@3.4.19(tsx@4.21.0)(yaml@2.8.3))
       '@hivekitchen/tsconfig':
         specifier: workspace:*
         version: link:../../packages/tsconfig
+      tailwindcss:
+        specifier: ^3.4.0
+        version: 3.4.19(tsx@4.21.0)(yaml@2.8.3)
       typescript:
         specifier: ^5.5.0
         version: 5.9.3
@@ -67,6 +76,9 @@ importers:
       '@hivekitchen/contracts':
         specifier: workspace:*
         version: link:../../packages/contracts
+      '@hivekitchen/design-system':
+        specifier: workspace:*
+        version: link:../../packages/design-system
       '@hivekitchen/types':
         specifier: workspace:*
         version: link:../../packages/types
@@ -124,6 +136,24 @@ importers:
         specifier: ^4.0.0
         version: 4.1.5(@types/node@22.19.17)(vite@7.3.2(@types/node@22.19.17)(jiti@1.21.7)(tsx@4.21.0)(yaml@2.8.3))
 
+  packages/design-system:
+    devDependencies:
+      '@hivekitchen/tsconfig':
+        specifier: workspace:*
+        version: link:../tsconfig
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.19.17
+      tailwindcss:
+        specifier: ^3.4.0
+        version: 3.4.19(tsx@4.21.0)(yaml@2.8.3)
+      typescript:
+        specifier: ^5.5.0
+        version: 5.9.3
+      vitest:
+        specifier: ^4.0.0
+        version: 4.1.5(@types/node@22.19.17)(vite@7.3.2(@types/node@22.19.17)(jiti@1.21.7)(tsx@4.21.0)(yaml@2.8.3))
+
   packages/tsconfig: {}
 
   packages/types:
@@ -143,6 +173,10 @@ importers:
         version: 5.9.3
 
   packages/ui:
+    dependencies:
+      '@hivekitchen/design-system':
+        specifier: workspace:*
+        version: link:../design-system
     devDependencies:
       '@hivekitchen/tsconfig':
         specifier: workspace:*
@@ -193,6 +227,12 @@ packages:
   '@astrojs/prism@4.0.1':
     resolution: {integrity: sha512-nksZQVjlferuWzhPsBpQ1JE5XuKAf1id1/9Hj4a9KG4+ofrlzxUUwX4YGQF/SuDiuiGKEnzopGOt38F3AnVWsQ==}
     engines: {node: '>=22.12.0'}
+
+  '@astrojs/tailwind@6.0.2':
+    resolution: {integrity: sha512-j3mhLNeugZq6A8dMNXVarUa8K6X9AW+QHU9u3lKNrPLMHhOQ0S7VeWhHwEeJFpEK1BTKEUY1U78VQv2gN6hNGg==}
+    peerDependencies:
+      astro: ^3.0.0 || ^4.0.0 || ^5.0.0
+      tailwindcss: ^3.0.24
 
   '@astrojs/telemetry@3.3.1':
     resolution: {integrity: sha512-7fcIxXS9J4ls5tr8b3ww9rbAIz2+HrhNJYZdkAhhB4za/I5IZ/60g+Bs8q7zwG0tOIZfNB4JWhVJ1Qkl/OrNCw==}
@@ -2001,6 +2041,18 @@ packages:
     peerDependencies:
       postcss: ^8.4.21
 
+  postcss-load-config@4.0.2:
+    resolution: {integrity: sha512-bSVhyJGL00wMVoPUzAVAnbEoWyqRxkjv64tUl427SKnPrENtq6hJwUojroMz2VB+Q1edmi4IfrAPpami5VVgMQ==}
+    engines: {node: '>= 14'}
+    peerDependencies:
+      postcss: '>=8.0.9'
+      ts-node: '>=9.0.0'
+    peerDependenciesMeta:
+      postcss:
+        optional: true
+      ts-node:
+        optional: true
+
   postcss-load-config@6.0.1:
     resolution: {integrity: sha512-oPtTM4oerL+UXmx+93ytZVN82RrlY/wPUV8IeDxFrzIjXOLF1pN+EmKPLbubvKHT2HC20xXsCAH2Z+CKV6Oz/g==}
     engines: {node: '>= 18'}
@@ -2871,6 +2923,16 @@ snapshots:
   '@astrojs/prism@4.0.1':
     dependencies:
       prismjs: 1.30.0
+
+  '@astrojs/tailwind@6.0.2(astro@6.1.9(@types/node@22.19.17)(jiti@1.21.7)(rollup@4.60.1)(tsx@4.21.0)(typescript@5.9.3)(yaml@2.8.3))(tailwindcss@3.4.19(tsx@4.21.0)(yaml@2.8.3))':
+    dependencies:
+      astro: 6.1.9(@types/node@22.19.17)(jiti@1.21.7)(rollup@4.60.1)(tsx@4.21.0)(typescript@5.9.3)(yaml@2.8.3)
+      autoprefixer: 10.5.0(postcss@8.5.10)
+      postcss: 8.5.10
+      postcss-load-config: 4.0.2(postcss@8.5.10)
+      tailwindcss: 3.4.19(tsx@4.21.0)(yaml@2.8.3)
+    transitivePeerDependencies:
+      - ts-node
 
   '@astrojs/telemetry@3.3.1':
     dependencies:
@@ -4830,6 +4892,13 @@ snapshots:
   postcss-js@4.1.0(postcss@8.5.10):
     dependencies:
       camelcase-css: 2.0.1
+      postcss: 8.5.10
+
+  postcss-load-config@4.0.2(postcss@8.5.10):
+    dependencies:
+      lilconfig: 3.1.3
+      yaml: 2.8.3
+    optionalDependencies:
       postcss: 8.5.10
 
   postcss-load-config@6.0.1(jiti@1.21.7)(postcss@8.5.10)(tsx@4.21.0)(yaml@2.8.3):

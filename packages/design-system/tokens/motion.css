@@ -1,0 +1,23 @@
+:root {
+  /* Sacred motion curve — ease-in-out with gentle asymmetry; the ONE approved
+     curve for Heart Note / sacred-channel animations. */
+  --sacred-ease: cubic-bezier(0.4, 0, 0.2, 1);
+
+  --motion-fast: 120ms; /* state changes on tap (tile update, picker expand) */
+  --motion-medium: 220ms; /* route transitions, panel open/close */
+  --motion-slow: 360ms; /* first-load Brief fade-in ONLY */
+
+  /* Comprehension-critical escape hatch: remains perceivable under
+     prefers-reduced-motion (UX spec §Motion — tile state-change). */
+  --motion-critical: 150ms;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --motion-fast: 0ms;
+    --motion-medium: 0ms;
+    --motion-slow: 0ms;
+    /* --motion-critical stays 150ms — duration holds, easing collapses to linear */
+    --sacred-ease: linear;
+  }
+}
