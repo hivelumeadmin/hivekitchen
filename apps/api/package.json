@@ -10,19 +10,41 @@
     "start": "node dist/server.js",
     "typecheck": "tsc --noEmit",
     "lint": "eslint src",
+    "test": "vitest run",
+    "tools:check": "tsx scripts/check-tool-manifest.ts",
     "clean": "rm -rf dist"
   },
   "dependencies": {
+    "@fastify/sensible": "^6.0.0",
     "@hivekitchen/contracts": "workspace:*",
     "@hivekitchen/types": "workspace:*",
+    "@opentelemetry/auto-instrumentations-node": "^0.49.0",
+    "@opentelemetry/exporter-trace-otlp-http": "^0.52.0",
+    "@opentelemetry/resources": "^1.25.0",
+    "@opentelemetry/sdk-node": "^0.52.0",
+    "@opentelemetry/sdk-trace-node": "^1.25.0",
+    "@sendgrid/mail": "^8.0.0",
+    "@supabase/supabase-js": "^2.0.0",
+    "@elevenlabs/elevenlabs-js": "^2.0.0",
+    "bullmq": "^5.0.0",
     "fastify": "^5.2.0",
+    "fastify-plugin": "^5.0.0",
+    "fastify-type-provider-zod": "^4.0.0",
+    "ioredis": "^5.0.0",
+    "openai": "^4.0.0",
     "pino": "^9.6.0",
+    "stripe": "^16.0.0",
+    "twilio": "^5.0.0",
     "zod": "^3.23.0"
   },
   "devDependencies": {
+    "@hivekitchen/eslint-config": "workspace:*",
     "@hivekitchen/tsconfig": "workspace:*",
     "@types/node": "^22.0.0",
+    "@vitest/coverage-v8": "^3.0.0",
+    "pino-pretty": "^11.0.0",
     "tsx": "^4.19.0",
-    "typescript": "^5.5.0"
+    "typescript": "^5.5.0",
+    "vitest": "^3.0.0"
   }
 }
