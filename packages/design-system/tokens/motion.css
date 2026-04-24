@@ -17,6 +17,7 @@
     --motion-fast: 0ms;
     --motion-medium: 0ms;
     --motion-slow: 0ms;
-    /* --motion-critical stays 150ms — easing collapses to linear, duration holds */
+    /* --motion-critical stays 150ms — duration holds, easing collapses to linear */
+    --sacred-ease: linear;
   }
 }

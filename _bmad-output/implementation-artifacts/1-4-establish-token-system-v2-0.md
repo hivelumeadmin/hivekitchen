@@ -1,6 +1,6 @@
 # Story 1.4: Establish token system v2.0
 
-Status: review
+Status: done
 
 ## Story
 
@@ -942,11 +942,21 @@ Commit scope for Story 1.4: `feat(design-system): …`. The scope `design-system
 - `pnpm-lock.yaml` — updated for new workspace packages and deps
 - `_bmad-output/implementation-artifacts/sprint-status.yaml` — story status updated
 
+## Review Findings
+
+- [x] [Review][Patch] `--sacred-ease` not overridden to `linear` inside `@media (prefers-reduced-motion: reduce)` [`packages/design-system/tokens/motion.css`] — Fixed: added `--sacred-ease: linear;` inside the reduced-motion block.
+- [x] [Review][Patch] `InstrumentSerif-Italic` `@font-face` missing `unicode-range` [`packages/design-system/tokens/typography.css`] — Fixed: added Latin unicode-range to the italic declaration.
+- [x] [Review][Defer] Root-relative `/fonts/...` paths break on non-`/` base-path deployments [`packages/design-system/tokens/typography.css`] — deferred, known limitation per spec; current deployment model is root-only
+- [x] [Review][Defer] Font file tests skip in CI (`it.skipIf(!!process.env.CI)`) [`packages/design-system/src/tokens/fonts.test.ts`] — deferred, spec-intentional; fonts are committed so divergence requires a code change
+- [x] [Review][Defer] Tailwind opacity modifiers (`bg-sacred-500/50`) silently produce no output with `var()` color tokens [`packages/design-system/src/tokens/index.ts`] — deferred, known architectural tradeoff of two-layer CSS-var approach; not a regression
+- [x] [Review][Defer] Dark mode has no `prefers-color-scheme` initialization — always renders light mode on first paint — deferred, explicitly out of scope for Story 1.4 per spec ("data-theme set by a later story")
+
 ## Change Log
 
 | Date | Change | Author |
 |---|---|---|
 | 2026-04-23 | Tasks 1–14 implemented; story promoted to `review` | Claude Sonnet 4.6 |
+| 2026-04-23 | Code review: 2 patches found, 4 deferred, 9 dismissed | Claude Sonnet 4.6 |
 - Architecture tree (stale — folder placement will be corrected in a later docs PR). [Source: `_bmad-output/planning-artifacts/architecture.md:1028,1147,1288`]
 - Project context — cross-cutting rules. [Source: `_bmad-output/project-context.md`]
 - Previous story learnings. [Sources: `_bmad-output/implementation-artifacts/1-1-*.md`, `1-2-*.md`, `1-3-*.md`]
