@@ -1,0 +1,36 @@
+{
+  "name": "@hivekitchen/eslint-config",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "prebuild": "node -e \"import('node:fs').then(fs => fs.rmSync('dist', { recursive: true, force: true }))\"",
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit",
+    "lint": "echo 'no self-lint'",
+    "test": "vitest run --passWithNoTests",
+    "clean": "node -e \"import('node:fs').then(fs => fs.rmSync('dist', { recursive: true, force: true }))\""
+  },
+  "devDependencies": {
+    "@hivekitchen/tsconfig": "workspace:*",
+    "@types/node": "^22.0.0",
+    "typescript": "^5.5.0",
+    "vitest": "^4.0.0"
+  },
+  "peerDependencies": {
+    "eslint": ">=9.0.0",
+    "eslint-plugin-boundaries": ">=4.0.0",
+    "eslint-plugin-jsx-a11y": ">=6.0.0",
+    "eslint-plugin-react": ">=7.0.0",
+    "eslint-plugin-react-hooks": ">=5.0.0",
+    "typescript-eslint": ">=8.0.0"
+  }
+}

@@ -13,6 +13,7 @@
     "test": "turbo run test",
     "clean": "turbo run clean",
     "contracts:check": "tsx packages/contracts/scripts/check.ts",
+    "tools:check": "tsx apps/api/scripts/check-tool-manifest.ts",
     "supabase:start": "supabase start",
     "supabase:stop": "supabase stop",
     "supabase:reset": "supabase db reset",
@@ -20,8 +21,14 @@
     "seed:reset": "tsx test/helpers/seed-dev.ts --reset"
   },
   "devDependencies": {
+    "eslint": "^9.0.0",
+    "eslint-plugin-boundaries": "^4.0.0",
+    "eslint-plugin-jsx-a11y": "^6.0.0",
+    "eslint-plugin-react": "^7.0.0",
+    "eslint-plugin-react-hooks": "^5.0.0",
+    "tsx": "^4.19.0",
     "turbo": "^2.4.0",
-    "tsx": "^4.19.0"
+    "typescript-eslint": "^8.0.0"
   },
   "author": "Shree Menon",
   "license": "ISC"
