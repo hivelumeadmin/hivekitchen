@@ -12,11 +12,14 @@
     "clean": "node -e \"import('node:fs').then(fs => { fs.rmSync('dist', { recursive: true, force: true }); fs.rmSync('.astro', { recursive: true, force: true }); })\""
   },
   "dependencies": {
+    "@hivekitchen/design-system": "workspace:*",
     "astro": "^6.1.9"
   },
   "devDependencies": {
     "@astrojs/check": "latest",
+    "@astrojs/tailwind": "^6.0.0",
     "@hivekitchen/tsconfig": "workspace:*",
+    "tailwindcss": "^3.4.0",
     "typescript": "^5.5.0"
   }
 }

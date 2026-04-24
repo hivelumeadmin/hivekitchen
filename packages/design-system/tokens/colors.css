@@ -1,0 +1,187 @@
+/* Light-mode (reciprocal — derived from dark-mode-first)
+   Stop derivation: uniform OKLCH lightness stepping from 0.97 (–50) through
+   the –500 anchor to 0.20 (–900). Hue and chroma held constant per group.
+   Story 1.12 contrast audit will validate and adjust any failing AA/AAA pairs. */
+:root {
+  /* Sacred Plum — Heart Note channel only (UX-DR1, UX-DR22) */
+  --sacred-plum-50: #ffe8fb;
+  --sacred-plum-100: #eec6d8;
+  --sacred-plum-200: #cba5b7;
+  --sacred-plum-300: #aa8697;
+  --sacred-plum-400: #8a6778;
+  --sacred-plum-500: #6b4a5a;
+  --sacred-plum-600: #593949;
+  --sacred-plum-700: #472938;
+  --sacred-plum-800: #361a29;
+  --sacred-plum-900: #260b1a;
+
+  /* Lumi Terracotta — Lumi→Child channel only (UX-DR1, UX-DR17) */
+  --lumi-terracotta-50: #ffdebf;
+  --lumi-terracotta-100: #ffc6a7;
+  --lumi-terracotta-200: #ffae90;
+  --lumi-terracotta-300: #e5977a;
+  --lumi-terracotta-400: #cc8064;
+  --lumi-terracotta-500: #b46a4e;
+  --lumi-terracotta-600: #944d31;
+  --lumi-terracotta-700: #743014;
+  --lumi-terracotta-800: #551300;
+  --lumi-terracotta-900: #370000;
+  /* Lumi proposal-accept moment only — +8% chroma, +4% L from –500 */
+  --lumi-terracotta-warmed: #c57455;
+
+  /* Safety-Cleared Teal — Allergy reassurance (UX-DR1, UX-DR24) */
+  --safety-cleared-teal-50: #d0fff3;
+  --safety-cleared-teal-100: #b1e2d4;
+  --safety-cleared-teal-200: #92c3b5;
+  --safety-cleared-teal-300: #75a597;
+  --safety-cleared-teal-400: #59877b;
+  --safety-cleared-teal-500: #3d6b5f;
+  --safety-cleared-teal-600: #28564b;
+  --safety-cleared-teal-700: #124338;
+  --safety-cleared-teal-800: #003026;
+  --safety-cleared-teal-900: #001d15;
+
+  /* Memory Provenance — Visible Memory chips (UX-DR1) */
+  --memory-provenance-50: #fff2e4;
+  --memory-provenance-100: #e8dacc;
+  --memory-provenance-200: #d0c2b4;
+  --memory-provenance-300: #b8aa9d;
+  --memory-provenance-400: #a19386;
+  --memory-provenance-500: #8a7d70;
+  --memory-provenance-600: #6d6054;
+  --memory-provenance-700: #514539;
+  --memory-provenance-800: #362b20;
+  --memory-provenance-900: #1e1409;
+
+  /* Honey Amber — Recognition moments only (UX-DR1, NEVER button hover) */
+  --honey-amber-50: #ffe392;
+  --honey-amber-100: #ffd281;
+  --honey-amber-200: #ffc170;
+  --honey-amber-300: #fcb05f;
+  --honey-amber-400: #ea9f4e;
+  --honey-amber-500: #d98f3c;
+  --honey-amber-600: #af6800;
+  --honey-amber-700: #864200;
+  --honey-amber-800: #5f1d00;
+  --honey-amber-900: #390000;
+
+  /* Foliage — Focus indicator + freshness signal (UX-DR1) */
+  --foliage-50: #e0fee7;
+  --foliage-100: #cbe9d2;
+  --foliage-200: #b6d3bd;
+  --foliage-300: #a1bfa9;
+  --foliage-400: #8daa95;
+  --foliage-500: #7a9681;
+  --foliage-600: #5a7561;
+  --foliage-700: #3b5542;
+  --foliage-800: #1e3726;
+  --foliage-900: #041c0c;
+
+  /* Warm Neutral — base palette; NEVER #fff or #000 */
+  --warm-neutral-50: #faf7f2;
+  --warm-neutral-100: #ede9e4;
+  --warm-neutral-200: #dedad4;
+  --warm-neutral-300: #cecac4;
+  --warm-neutral-400: #bfbbb4;
+  --warm-neutral-500: #87847f;
+  --warm-neutral-600: #706d68;
+  --warm-neutral-700: #595651;
+  --warm-neutral-800: #423f3a;
+  --warm-neutral-900: #2a2724;
+
+  /* Focus indicator (UX spec §Accessibility §Floor commitments) */
+  --focus-indicator-color: var(--foliage-500);
+  --focus-indicator-width: 2px;
+  --focus-indicator-offset: 2px;
+}
+
+/* Dark-mode — authored FIRST in design; warm-neutral inverts, accent scales
+   mirror L through the inversion midpoint (0.97 + 0.20 − origL).
+   Chroma reduced 15% for fatigue-tolerance on dark surfaces.
+   Story 1.12 contrast audit will validate and refine these values. */
+:root[data-theme="dark"] {
+  /* Sacred Plum dark */
+  --sacred-plum-50: #28111d;
+  --sacred-plum-100: #3f2632;
+  --sacred-plum-200: #5c414e;
+  --sacred-plum-300: #7a5c6a;
+  --sacred-plum-400: #997b89;
+  --sacred-plum-500: #ba9aa9;
+  --sacred-plum-600: #ceadbd;
+  --sacred-plum-700: #e3c2d1;
+  --sacred-plum-800: #f8d5e5;
+  --sacred-plum-900: #ffe3f3;
+
+  /* Lumi Terracotta dark */
+  --lumi-terracotta-50: #420c00;
+  --lumi-terracotta-100: #501a03;
+  --lumi-terracotta-200: #5f2710;
+  --lumi-terracotta-300: #753b25;
+  --lumi-terracotta-400: #8c5039;
+  --lumi-terracotta-500: #a3654e;
+  --lumi-terracotta-600: #c3836a;
+  --lumi-terracotta-700: #e5a289;
+  --lumi-terracotta-800: #ffc2a8;
+  --lumi-terracotta-900: #ffdcc1;
+  --lumi-terracotta-warmed: #99573e;
+
+  /* Safety-Cleared Teal dark */
+  --safety-cleared-teal-50: #001e16;
+  --safety-cleared-teal-100: #0d342b;
+  --safety-cleared-teal-200: #284e44;
+  --safety-cleared-teal-300: #42685e;
+  --safety-cleared-teal-400: #5e857a;
+  --safety-cleared-teal-500: #7aa296;
+  --safety-cleared-teal-600: #91b9ad;
+  --safety-cleared-teal-700: #a7d0c3;
+  --safety-cleared-teal-800: #bde7da;
+  --safety-cleared-teal-900: #cff9ed;
+
+  /* Memory Provenance dark */
+  --memory-provenance-50: #1d150c;
+  --memory-provenance-100: #2f261c;
+  --memory-provenance-200: #42382e;
+  --memory-provenance-300: #564c42;
+  --memory-provenance-400: #6b6156;
+  --memory-provenance-500: #81766b;
+  --memory-provenance-600: #9f9488;
+  --memory-provenance-700: #beb2a7;
+  --memory-provenance-800: #dfd3c6;
+  --memory-provenance-900: #f9ece0;
+
+  /* Honey Amber dark */
+  --honey-amber-50: #420c00;
+  --honey-amber-100: #4c1700;
+  --honey-amber-200: #572100;
+  --honey-amber-300: #612b00;
+  --honey-amber-400: #713a00;
+  --honey-amber-500: #814800;
+  --honey-amber-600: #a96d28;
+  --honey-amber-700: #d29352;
+  --honey-amber-800: #fcbb79;
+  --honey-amber-900: #ffdf9d;
+
+  /* Foliage dark */
+  --foliage-50: #071b0e;
+  --foliage-100: #162a1c;
+  --foliage-200: #263b2c;
+  --foliage-300: #374c3c;
+  --foliage-400: #485e4e;
+  --foliage-500: #5a7160;
+  --foliage-600: #7a9280;
+  --foliage-700: #9cb4a2;
+  --foliage-800: #bfd8c5;
+  --foliage-900: #ddf6e3;
+
+  /* Warm Neutral dark — 50↔900 inversion, warmth preserved */
+  --warm-neutral-50: #2a2724;
+  --warm-neutral-100: #423f3a;
+  --warm-neutral-200: #595651;
+  --warm-neutral-300: #706d68;
+  --warm-neutral-400: #87847f;
+  --warm-neutral-500: #bfbbb4;
+  --warm-neutral-600: #cecac4;
+  --warm-neutral-700: #dedad4;
+  --warm-neutral-800: #ede9e4;
+  --warm-neutral-900: #faf7f2;
+}
