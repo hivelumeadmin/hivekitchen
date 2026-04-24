@@ -1,0 +1,36 @@
+# VCS / editor
+.git
+.gitignore
+.vscode
+.idea
+
+# Build artifacts
+**/dist
+**/.turbo
+**/.astro
+**/.next
+
+# Dependencies (rebuilt in builder stage from pnpm-lock.yaml)
+**/node_modules
+
+# Env / secrets (never copied into image)
+.env
+.env.*
+!.env.local.example
+**/.env
+**/.env.*
+!**/.env.local.example
+
+# Documentation / planning / specs (not needed to build the API)
+docs
+specs
+_bmad
+_bmad-output
+.claude
+
+# Test artifacts
+coverage
+
+# Misc
+*.log
+.DS_Store

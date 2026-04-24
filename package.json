@@ -10,10 +10,18 @@
     "build": "turbo run build",
     "lint": "turbo run lint",
     "typecheck": "turbo run typecheck",
-    "clean": "turbo run clean"
+    "test": "turbo run test",
+    "clean": "turbo run clean",
+    "contracts:check": "tsx packages/contracts/scripts/check.ts",
+    "supabase:start": "supabase start",
+    "supabase:stop": "supabase stop",
+    "supabase:reset": "supabase db reset",
+    "seed:dev": "tsx test/helpers/seed-dev.ts",
+    "seed:reset": "tsx test/helpers/seed-dev.ts --reset"
   },
   "devDependencies": {
-    "turbo": "^2.4.0"
+    "turbo": "^2.4.0",
+    "tsx": "^4.19.0"
   },
   "author": "Shree Menon",
   "license": "ISC"
