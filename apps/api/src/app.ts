@@ -18,6 +18,7 @@ import { ioredisPlugin } from './plugins/ioredis.plugin.js';
 import { bullmqPlugin } from './plugins/bullmq.plugin.js';
 import { auditPartitionRotationPlugin } from './jobs/audit-partition-rotation.job.js';
 import { healthRoutes } from './modules/internal/health.routes.js';
+import { eventsRoutes } from './routes/v1/events/events.routes.js';
 
 const REQUEST_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -71,6 +72,7 @@ export async function buildApp(opts: BuildAppOptions) {
   await app.register(sensible);
 
   await app.register(healthRoutes);
+  await app.register(eventsRoutes);
 
   return app;
 }

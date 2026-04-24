@@ -3,7 +3,10 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "files": ["dist", "package.json"],
+  "files": [
+    "dist",
+    "package.json"
+  ],
   "scripts": {
     "dev": "tsx watch src/server.ts",
     "build": "tsc",
@@ -15,6 +18,7 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
+    "@elevenlabs/elevenlabs-js": "^2.0.0",
     "@fastify/sensible": "^6.0.0",
     "@hivekitchen/contracts": "workspace:*",
     "@hivekitchen/types": "workspace:*",
@@ -25,10 +29,10 @@
     "@opentelemetry/sdk-trace-node": "^1.25.0",
     "@sendgrid/mail": "^8.0.0",
     "@supabase/supabase-js": "^2.0.0",
-    "@elevenlabs/elevenlabs-js": "^2.0.0",
     "bullmq": "^5.0.0",
     "fastify": "^5.2.0",
     "fastify-plugin": "^5.0.0",
+    "fastify-sse-v2": "^4.2.2",
     "fastify-type-provider-zod": "^4.0.0",
     "ioredis": "^5.0.0",
     "openai": "^4.0.0",
