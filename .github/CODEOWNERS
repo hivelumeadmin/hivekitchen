@@ -1,0 +1,3 @@
+# Default owner for all files — requires at least one review from hivelumeadmin.
+# Adjust to a specific GitHub team handle once teams are configured.
+* @hivelumeadmin

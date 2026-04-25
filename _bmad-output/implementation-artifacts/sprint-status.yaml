@@ -1,5 +1,5 @@
 # generated: 2026-04-23
-# last_updated: 2026-04-24 (Story 1-13 done)
+# last_updated: 2026-04-25 (Story 2-1 contexted)
 # project: hivekitchen
 # project_key: NOKEY
 # tracking_system: file-system
@@ -35,7 +35,7 @@
 # - Dev moves story to 'review', then runs code-review (fresh context, different LLM recommended)
 
 generated: 2026-04-23
-last_updated: 2026-04-24 (Story 1-13 done)
+last_updated: 2026-04-25 (Story 2-1 contexted)
 project: hivekitchen
 project_key: NOKEY
 tracking_system: file-system
@@ -57,12 +57,12 @@ development_status:
   1-11-reduced-motion-reduced-transparency-hooks-accessibility-lint: done
   1-12-contrast-audit-harness-in-packages-design-system: done
   1-13-anchor-device-perf-budgets-lighthouse-ci-in-github-workflows-perf-yml: done
-  1-14-pr-template-with-patterns-checklist-ci-orchestration: backlog
+  1-14-pr-template-with-patterns-checklist-ci-orchestration: done
   epic-1-retrospective: optional
 
   # Epic 2: Household Onboarding & Profile
-  epic-2: backlog
-  2-1-supabase-auth-email-password-google-apple-oauth: backlog
+  epic-2: in-progress
+  2-1-supabase-auth-email-password-google-apple-oauth: ready-for-dev
   2-2-4-role-rbac-prehandler-jwt-rotation-on-use: backlog
   2-3-secondary-caregiver-invite-primitive-signed-jwt-single-use-jti-14-day-ttl: backlog
   2-4-account-profile-management-recovery: backlog
