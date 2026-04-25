@@ -5,6 +5,8 @@ import { OTLPTraceExporter } from '@opentelemetry/exporter-trace-otlp-http';
 import { ConsoleSpanExporter } from '@opentelemetry/sdk-trace-node';
 import type { Env } from '../common/env.js';
 
+type SDKExporter = Exclude<NonNullable<ConstructorParameters<typeof NodeSDK>[0]>['traceExporter'], undefined>;
+
 let sdk: NodeSDK | null = null;
 
 export function initOtel(
@@ -14,13 +16,14 @@ export function initOtel(
 
   const isDev = env.NODE_ENV === 'development' || env.NODE_ENV === 'test';
 
-  const traceExporter =
+  const traceExporter = (
     isDev || !env.OTEL_EXPORTER_OTLP_ENDPOINT
       ? new ConsoleSpanExporter()
       : new OTLPTraceExporter({
           url: env.OTEL_EXPORTER_OTLP_ENDPOINT,
           headers: parseOtelHeaders(env.OTEL_EXPORTER_OTLP_HEADERS),
-        });
+        })
+  ) as unknown as SDKExporter;
 
   sdk = new NodeSDK({
     resource: new Resource({
