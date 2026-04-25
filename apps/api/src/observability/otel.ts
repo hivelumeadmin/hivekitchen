@@ -3,8 +3,9 @@ import { Resource } from '@opentelemetry/resources';
 import { getNodeAutoInstrumentations } from '@opentelemetry/auto-instrumentations-node';
 import { OTLPTraceExporter } from '@opentelemetry/exporter-trace-otlp-http';
 import { ConsoleSpanExporter } from '@opentelemetry/sdk-trace-node';
-import type { SpanExporter } from '@opentelemetry/sdk-trace-base';
 import type { Env } from '../common/env.js';
+
+type SDKExporter = Exclude<ConstructorParameters<typeof NodeSDK>[0]['traceExporter'], undefined>;
 
 let sdk: NodeSDK | null = null;
 
@@ -22,7 +23,7 @@ export function initOtel(
           url: env.OTEL_EXPORTER_OTLP_ENDPOINT,
           headers: parseOtelHeaders(env.OTEL_EXPORTER_OTLP_HEADERS),
         })
-  ) as unknown as SpanExporter;
+  ) as unknown as SDKExporter;
 
   sdk = new NodeSDK({
     resource: new Resource({
