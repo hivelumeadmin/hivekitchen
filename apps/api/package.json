@@ -42,7 +42,7 @@
     "pino": "^9.6.0",
     "stripe": "^22.1.0",
     "twilio": "^6.0.0",
-    "zod": "^3.23.0"
+    "zod": "^4.3.6"
   },
   "devDependencies": {
     "@hivekitchen/eslint-config": "workspace:*",
