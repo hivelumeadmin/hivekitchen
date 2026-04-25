@@ -1,3 +1,7 @@
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { dirname, resolve } from 'node:path';
+import { Linter } from 'eslint';
 import { describe, it, expect } from 'vitest';
 import { webConfig, apiConfig, baseConfig } from './index.js';
 
@@ -12,6 +16,8 @@ function allRules(configs: readonly unknown[]): Set<string> {
   }
   return names;
 }
+
+const fixturesDir = resolve(dirname(fileURLToPath(import.meta.url)), '../__fixtures__');
 
 describe('baseConfig', () => {
   it('enables hivekitchen logical-properties rule and type-import hygiene', () => {
@@ -44,6 +50,28 @@ describe('webConfig', () => {
   it('loads jsx-a11y strict rules', () => {
     const hasJsxA11y = [...rules].some((r) => r.startsWith('jsx-a11y/'));
     expect(hasJsxA11y).toBe(true);
+  });
+
+  it('jsx-a11y rules fire on the invalid fixture (alt-text, anchor-has-content, click-handler)', () => {
+    const code = readFileSync(resolve(fixturesDir, 'jsx-a11y/invalid.tsx'), 'utf8');
+    const linter = new Linter();
+    const messages = linter.verify(code, cfg as Linter.Config[], { filename: 'invalid.tsx' });
+    const a11yMessages = messages.filter((m) => m.ruleId?.startsWith('jsx-a11y/'));
+    const ruleIds = new Set(a11yMessages.map((m) => m.ruleId));
+    expect(ruleIds.has('jsx-a11y/alt-text')).toBe(true);
+    expect(ruleIds.has('jsx-a11y/anchor-has-content')).toBe(true);
+    expect(
+      ruleIds.has('jsx-a11y/click-events-have-key-events') ||
+        ruleIds.has('jsx-a11y/no-static-element-interactions'),
+    ).toBe(true);
+  });
+
+  it('jsx-a11y rules report zero violations on the valid fixture', () => {
+    const code = readFileSync(resolve(fixturesDir, 'jsx-a11y/valid.tsx'), 'utf8');
+    const linter = new Linter();
+    const messages = linter.verify(code, cfg as Linter.Config[], { filename: 'valid.tsx' });
+    const a11yMessages = messages.filter((m) => m.ruleId?.startsWith('jsx-a11y/'));
+    expect(a11yMessages).toEqual([]);
   });
 
   it('registers the three hivekitchen scope rules', () => {
