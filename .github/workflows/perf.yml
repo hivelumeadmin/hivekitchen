@@ -34,12 +34,12 @@ jobs:
       - name: Build apps/marketing
         run: pnpm --filter @hivekitchen/marketing build
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: web-dist
           path: apps/web/dist/
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: marketing-dist
           path: apps/marketing/dist/
@@ -71,7 +71,7 @@ jobs:
         run: pnpm exec lhci autorun
         working-directory: apps/web
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: lhci-reports-web
@@ -105,7 +105,7 @@ jobs:
         run: pnpm exec lhci autorun
         working-directory: apps/marketing
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: lhci-reports-marketing
