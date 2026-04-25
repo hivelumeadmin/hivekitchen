@@ -1,9 +1,16 @@
 // apps/web/src/providers/query-provider.tsx
-import { useEffect, useRef } from 'react';
+import { lazy, Suspense, useEffect, useRef } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { ReactQueryDevtools } from '@tanstack/react-query-devtools';
 import { createSseBridge } from '@/lib/realtime/index.js';
 import type { SseBridge } from '@/lib/realtime/index.js';
+
+// Dynamic import keeps @tanstack/react-query-devtools out of the production
+// bundle — Vite tree-shakes the unused import in builds where DEV is false.
+const ReactQueryDevtools = import.meta.env.DEV
+  ? lazy(() =>
+      import('@tanstack/react-query-devtools').then((m) => ({ default: m.ReactQueryDevtools })),
+    )
+  : null;
 
 // Singleton QueryClient — created once for the app lifetime.
 // Not in useState (avoids recreation on HMR) and not in module scope (avoids leaking between tests).
@@ -43,7 +50,11 @@ export function QueryProvider({ children }: QueryProviderProps) {
   return (
     <QueryClientProvider client={queryClient}>
       {children}
-      {import.meta.env.DEV && <ReactQueryDevtools initialIsOpen={false} />}
+      {ReactQueryDevtools !== null && (
+        <Suspense fallback={null}>
+          <ReactQueryDevtools initialIsOpen={false} />
+        </Suspense>
+      )}
     </QueryClientProvider>
   );
 }

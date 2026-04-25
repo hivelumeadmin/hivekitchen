@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import Fastify from 'fastify';
 import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod';
 import sensible from '@fastify/sensible';
+import cors from '@fastify/cors';
 import type { Env } from './common/env.js';
 import { getLoggerOptions } from './common/logger.js';
 import { otelPlugin } from './plugins/otel.plugin.js';
@@ -70,6 +71,12 @@ export async function buildApp(opts: BuildAppOptions) {
   await app.register(auditPartitionRotationPlugin);
 
   await app.register(sensible);
+
+  await app.register(cors, {
+    origin: env.CORS_ALLOWED_ORIGINS,
+    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+    // credentials: true must be re-enabled when JWT moves to cookies (Story 2.2).
+  });
 
   await app.register(healthRoutes);
   await app.register(eventsRoutes);
