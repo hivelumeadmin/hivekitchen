@@ -1,0 +1,144 @@
+name: Perf — Lighthouse CI (anchor device)
+
+on:
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: perf-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build apps (VITE_E2E mode)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: '9.15.0'
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'pnpm'
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Build apps/web
+        run: pnpm --filter @hivekitchen/web build
+        env:
+          VITE_E2E: 'true'
+
+      - name: Build apps/marketing
+        run: pnpm --filter @hivekitchen/marketing build
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: web-dist
+          path: apps/web/dist/
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: marketing-dist
+          path: apps/marketing/dist/
+
+  lhci-web:
+    name: Perf / apps/web LHCI
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: '9.15.0'
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'pnpm'
+
+      - run: pnpm install --frozen-lockfile
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: web-dist
+          path: apps/web/dist/
+
+      - name: Run LHCI
+        run: pnpm exec lhci autorun
+        working-directory: apps/web
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: lhci-reports-web
+          path: apps/web/.lighthouseci/
+          retention-days: 30
+
+  lhci-marketing:
+    name: Perf / apps/marketing LHCI
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: '9.15.0'
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'pnpm'
+
+      - run: pnpm install --frozen-lockfile
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: marketing-dist
+          path: apps/marketing/dist/
+
+      - name: Run LHCI
+        run: pnpm exec lhci autorun
+        working-directory: apps/marketing
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: lhci-reports-marketing
+          path: apps/marketing/.lighthouseci/
+          retention-days: 30
+
+  sse-timing:
+    name: Perf / SSE invalidation timing
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: '9.15.0'
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'pnpm'
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Install Playwright browsers
+        run: pnpm exec playwright install chromium --with-deps
+        working-directory: apps/web
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: web-dist
+          path: apps/web/dist/
+
+      - name: SSE timing test
+        run: pnpm exec playwright test test/perf/sse-invalidation.spec.ts
+        working-directory: apps/web
