@@ -98,3 +98,19 @@
 - GitHub Actions pinned to major tags, not commit SHAs — supply chain risk [ci.yml] — project-wide; address in a dedicated DevSecOps hardening story.
 - Node 22 `engines` field missing from root `package.json` — project-wide; carry forward to a root-hygiene pass (see also 1-3 deferred log).
 - Redis failure paths not tested in histogram unit tests [tool-latency.histogram.test.ts] — Story 3.4 scope when orchestrator wires live Redis calls.
+
+## Deferred from: code review of 1-10-realtime-sse-bridge-central-invalidationevent-dispatcher (2026-04-24)
+
+- Auth on `/v1/events` — explicitly deferred to Story 2.2 per spec; stub is open and unauthenticated.
+- Redis pub/sub fan-out and actual event delivery on the SSE endpoint — Story 5.2; stub only writes `:ping` heartbeats today.
+- `Last-Event-ID` Redis event-log replay (≥6h retention) on the server — Story 5.2; the bridge correctly does NOT strip `Last-Event-ID` (AC #4) but the server has no replay buffer.
+- `client_id` echo suppression at the server — Story 5.2; without it, optimistic-mutation echoes can race with local state.
+- Server-side `thread.turn` deduplication, reordering, and cached-array cap — Story 5.x; the bridge appends faithfully per AC #2 and trusts server contract for ordering.
+- `reportThreadIntegrityAnomaly` is a no-op in production (only `console.warn` in DEV) — real `POST /v1/internal/client-anomaly` beacon is Story 5.17 per spec stub note.
+- `thread.resync.from_seq` plumbing into the thread loader (so refetch starts from the resync point, not the stored cursor) — Story 5.1.
+- `queryClient.clear()` on logout to evict cached PII (child names, allergies, heart notes) — auth flow not yet present (Story 2.2).
+- Server graceful drain on SIGTERM for long-lived SSE connections (Fastify `app.close()` will hang on open SSE handlers) — operational, post-Story 5.2.
+- Rate limit / connection cap per IP on `/v1/events` — Story 5.x operational hardening; current stub allows unbounded anonymous connections.
+- `audit-hook` `onResponse` fires when the SSE stream closes — recorded request duration is the entire connection lifetime, skewing dashboards. Surfaces with Story 5.2 / Epic 9.
+- `App.tsx` reads `window.location.pathname` inside render — works today by accident (no SPA router triggers re-render); fragile to future react-router integration in Epic 2.
+- `apps/web/vitest.config.ts` uses `__dirname` instead of `import.meta.url` + `fileURLToPath` — tooling-config drift; the project invariant targets `src/` files. Low risk; tidy in a tooling-hygiene pass.
