@@ -79,7 +79,7 @@ export const authRoutes: FastifyPluginAsync = async (fastify) => {
 
   fastify.post(
     '/v1/auth/refresh',
-    { schema: { body: z.object({}).strict(), response: { 200: RefreshResponseSchema } } },
+    { schema: { response: { 200: RefreshResponseSchema } } },
     async (request, reply) => {
       const plaintext = request.cookies['refresh_token'] ?? '';
       const result = await service.refreshToken(plaintext);
