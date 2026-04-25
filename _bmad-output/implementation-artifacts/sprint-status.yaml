@@ -1,5 +1,5 @@
 # generated: 2026-04-23
-# last_updated: 2026-04-24 (Story 1-12 done)
+# last_updated: 2026-04-24 (Story 1-13 done)
 # project: hivekitchen
 # project_key: NOKEY
 # tracking_system: file-system
@@ -35,7 +35,7 @@
 # - Dev moves story to 'review', then runs code-review (fresh context, different LLM recommended)
 
 generated: 2026-04-23
-last_updated: 2026-04-24 (Story 1-12 done)
+last_updated: 2026-04-24 (Story 1-13 done)
 project: hivekitchen
 project_key: NOKEY
 tracking_system: file-system
@@ -56,7 +56,7 @@ development_status:
   1-10-realtime-sse-bridge-central-invalidationevent-dispatcher: done
   1-11-reduced-motion-reduced-transparency-hooks-accessibility-lint: done
   1-12-contrast-audit-harness-in-packages-design-system: done
-  1-13-anchor-device-perf-budgets-lighthouse-ci-in-github-workflows-perf-yml: backlog
+  1-13-anchor-device-perf-budgets-lighthouse-ci-in-github-workflows-perf-yml: done
   1-14-pr-template-with-patterns-checklist-ci-orchestration: backlog
   epic-1-retrospective: optional
 

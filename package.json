@@ -21,6 +21,8 @@
     "seed:reset": "tsx test/helpers/seed-dev.ts --reset"
   },
   "devDependencies": {
+    "@lhci/cli": "^0.15.1",
+    "@playwright/test": "^1.59.1",
     "eslint": "^9.0.0",
     "eslint-plugin-boundaries": "^4.0.0",
     "eslint-plugin-jsx-a11y": "^6.0.0",

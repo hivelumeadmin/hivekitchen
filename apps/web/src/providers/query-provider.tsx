@@ -29,6 +29,11 @@ const queryClient = new QueryClient({
   },
 });
 
+// Expose for E2E perf timing tests — tree-shaken by Vite when VITE_E2E is absent.
+if (import.meta.env.VITE_E2E === 'true') {
+  (window as unknown as Record<string, unknown>).__hivekitchen_qc = queryClient;
+}
+
 interface QueryProviderProps {
   children: React.ReactNode;
 }

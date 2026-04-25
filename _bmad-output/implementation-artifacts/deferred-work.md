@@ -118,3 +118,9 @@
 ## Deferred from: code review of 1-12-contrast-audit-harness-in-packages-design-system (2026-04-24)
 
 - `--passWithNoTests` flag in `@hivekitchen/design-system` test script masks silent test discovery failure — test currently discovered and runs correctly (22 passed); vitest default `include` pattern already picks up `contrast-audit.test.ts` at package root. Revisit if vitest config gains explicit `include` restrictions or if a future story adds test count assertions.
+
+## Deferred from: code review of 1-13-anchor-device-perf-budgets-lighthouse-ci-in-github-workflows-perf-yml (2026-04-24)
+
+- `window.__hivekitchen_qc` exposure risk if `VITE_E2E=true` accidentally included in a non-test deployment — implementation is correct (Vite tree-shakes when unset); deployment hygiene concern. Revisit in a deployment/secrets hardening story.
+- Lighthouse budgets audit the unauthenticated route (`/`) which is likely a login redirect, not the actual app shell — no meaningful perf signal until auth routes exist. Revisit at Epic 2 (Household Onboarding) when authenticated routes are available.
+- `sse-timing` GHA job silently relies on the `VITE_E2E`-enabled `web-dist` artifact from the `build` job; if the build job ever changes, `__hivekitchen_qc` will be absent and Playwright times out with a cryptic `waitForFunction` error instead of a clear failure. Add a comment or a smoke-check step in a future CI hardening pass.

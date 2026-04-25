@@ -1,0 +1,43 @@
+{
+  "ci": {
+    "collect": {
+      "url": ["http://localhost:4174/"],
+      "startServerCommand": "pnpm preview --port 4174",
+      "startServerReadyPattern": "Local",
+      "startServerReadyTimeout": 15000,
+      "numberOfRuns": 3,
+      "settings": {
+        "formFactor": "mobile",
+        "throttling": {
+          "rttMs": 150,
+          "throughputKbps": 1638.4,
+          "cpuSlowdownMultiplier": 4,
+          "requestLatencyMs": 0,
+          "downloadThroughputKbps": 1638.4,
+          "uploadThroughputKbps": 768
+        },
+        "screenEmulation": {
+          "mobile": true,
+          "width": 360,
+          "height": 800,
+          "deviceScaleFactor": 2.75,
+          "disabled": false
+        },
+        "emulatedUserAgent": "Mozilla/5.0 (Linux; Android 12; SM-A135F) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/112.0.0.0 Mobile Safari/537.36"
+      }
+    },
+    "assert": {
+      "preset": "lighthouse:no-pwa",
+      "assertions": {
+        "categories:performance": ["error", { "minScore": 0.95 }],
+        "categories:accessibility": ["error", { "minScore": 0.95 }],
+        "categories:best-practices": ["error", { "minScore": 0.95 }],
+        "largest-contentful-paint": ["error", { "maxNumericValue": 1500 }]
+      }
+    },
+    "upload": {
+      "target": "filesystem",
+      "outputDir": ".lighthouseci"
+    }
+  }
+}
