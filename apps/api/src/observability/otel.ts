@@ -5,7 +5,7 @@ import { OTLPTraceExporter } from '@opentelemetry/exporter-trace-otlp-http';
 import { ConsoleSpanExporter } from '@opentelemetry/sdk-trace-node';
 import type { Env } from '../common/env.js';
 
-type SDKExporter = Exclude<ConstructorParameters<typeof NodeSDK>[0]['traceExporter'], undefined>;
+type SDKExporter = Exclude<NonNullable<ConstructorParameters<typeof NodeSDK>[0]>['traceExporter'], undefined>;
 
 let sdk: NodeSDK | null = null;
 
