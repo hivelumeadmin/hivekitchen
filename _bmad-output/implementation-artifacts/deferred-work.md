@@ -86,3 +86,15 @@
 - Shallow `*` wildcard in `REDACT_PATHS` misses PII nested deeper than two levels — requires established log-shape guarantees; address in a dedicated observability hardening pass. [apps/api/src/common/logger.ts]
 - `shutdownOtel()` errors not caught in `onClose` hook — add try/catch with timeout for clean graceful shutdown in OTEL hardening story. [apps/api/src/plugins/otel.plugin.ts]
 - No `testTimeout` or pool isolation in `vitest.config.ts` — harden when CI integration is active and OTEL tests run against a real SDK. [apps/api/vitest.config.ts]
+
+## Deferred from: code review of 1-9-tools-manifest-ts-skeleton-with-ci-lint-no-tool-without-manifest (2026-04-24)
+
+- `toolName` unsanitized in Redis key interpolation [tool-latency.histogram.ts:12] — internal caller; toolName comes from manifest (`<domain>.<verb>` convention). Re-evaluate if toolName ever becomes externally influenced.
+- `zadd` same-millisecond member collision silently drops a sample [tool-latency.histogram.ts:16] — loss of one sample at sub-ms granularity irrelevant for p95. Address in Story 3.4 if precision matters.
+- Negative `latencyMs` values accepted without bounds check [tool-latency.histogram.ts] — internal caller; value derives from `Date.now() - start` (always ≥ 0). Add validation in Story 3.4 when public orchestrator API is defined.
+- `spec[field] === undefined` passes `null` field values [check-tool-manifest.ts:68] — TS strict mode prevents null assignment; only reachable via runtime type bypass.
+- `extractManifestNames` does not verify array elements are strings [check-tool-manifest.ts:20] — TS enforces `readonly string[]`; non-string elements require deliberate type bypass.
+- `mockRedis` shared at `describe` scope — future test isolation risk [tool-latency.histogram.test.ts:6] — current tests unaffected; re-evaluate when Story 3.4 adds `mockResolvedValueOnce` patterns.
+- GitHub Actions pinned to major tags, not commit SHAs — supply chain risk [ci.yml] — project-wide; address in a dedicated DevSecOps hardening story.
+- Node 22 `engines` field missing from root `package.json` — project-wide; carry forward to a root-hygiene pass (see also 1-3 deferred log).
+- Redis failure paths not tested in histogram unit tests [tool-latency.histogram.test.ts] — Story 3.4 scope when orchestrator wires live Redis calls.
