@@ -2,6 +2,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { QueryClient } from '@tanstack/react-query';
 import { createSseBridge } from './sse.js';
+import * as threadIntegrity from './thread-integrity.js';
 import type { z } from 'zod';
 import type { InvalidationEvent } from '@hivekitchen/contracts';
 
@@ -205,7 +206,7 @@ describe('SseBridge — event dispatch', () => {
     expect(vi.mocked(qc.invalidateQueries)).toHaveBeenCalledWith({ queryKey: ['presence', UUID1] });
   });
 
-  it('malformed event data does NOT throw and does NOT call queryClient', () => {
+  it('schema-rejected event (well-formed JSON, unknown type) does NOT throw and does NOT call queryClient', () => {
     const qc = makeMockQueryClient();
     createSseBridge(qc).connect();
     const [es] = FakeEventSource.instances;
@@ -219,6 +220,207 @@ describe('SseBridge — event dispatch', () => {
 
     expect(vi.mocked(qc.invalidateQueries)).not.toHaveBeenCalled();
     expect(vi.mocked(qc.setQueryData)).not.toHaveBeenCalled();
+  });
+
+  it('non-JSON event data does NOT throw and does NOT call queryClient', () => {
+    const qc = makeMockQueryClient();
+    createSseBridge(qc).connect();
+    const [es] = FakeEventSource.instances;
+
+    expect(() => {
+      es.dispatch('message', new MessageEvent('message', { data: 'not json {{{' }));
+    }).not.toThrow();
+
+    expect(vi.mocked(qc.invalidateQueries)).not.toHaveBeenCalled();
+    expect(vi.mocked(qc.setQueryData)).not.toHaveBeenCalled();
+  });
+});
+
+describe('SseBridge — thread sequence integrity (AC #5)', () => {
+  it('does NOT report an anomaly for the first thread.turn ever seen', () => {
+    const reportSpy = vi.spyOn(threadIntegrity, 'reportThreadIntegrityAnomaly');
+    const qc = makeMockQueryClient();
+    createSseBridge(qc).connect();
+    const [es] = FakeEventSource.instances;
+
+    es.dispatch(
+      'message',
+      makeMessageEvent({
+        type: 'thread.turn',
+        thread_id: UUID1,
+        turn: { ...TURN_FIXTURE, server_seq: 1 },
+      }),
+    );
+
+    expect(reportSpy).not.toHaveBeenCalled();
+  });
+
+  it('reports an anomaly when server_seq skips ahead', () => {
+    const reportSpy = vi.spyOn(threadIntegrity, 'reportThreadIntegrityAnomaly');
+    const qc = makeMockQueryClient();
+    createSseBridge(qc).connect();
+    const [es] = FakeEventSource.instances;
+
+    es.dispatch(
+      'message',
+      makeMessageEvent({
+        type: 'thread.turn',
+        thread_id: UUID1,
+        turn: { ...TURN_FIXTURE, server_seq: 1 },
+      }),
+    );
+    es.dispatch(
+      'message',
+      makeMessageEvent({
+        type: 'thread.turn',
+        thread_id: UUID1,
+        turn: { ...TURN_FIXTURE, server_seq: 5 },
+      }),
+    );
+
+    expect(reportSpy).toHaveBeenCalledWith({
+      thread_id: UUID1,
+      expected_seq: 2n,
+      received_seq: 5n,
+    });
+  });
+
+  it('reports an anomaly when the same server_seq arrives twice (duplicate)', () => {
+    const reportSpy = vi.spyOn(threadIntegrity, 'reportThreadIntegrityAnomaly');
+    const qc = makeMockQueryClient();
+    createSseBridge(qc).connect();
+    const [es] = FakeEventSource.instances;
+
+    es.dispatch(
+      'message',
+      makeMessageEvent({
+        type: 'thread.turn',
+        thread_id: UUID1,
+        turn: { ...TURN_FIXTURE, server_seq: 1 },
+      }),
+    );
+    es.dispatch(
+      'message',
+      makeMessageEvent({
+        type: 'thread.turn',
+        thread_id: UUID1,
+        turn: { ...TURN_FIXTURE, server_seq: 1 },
+      }),
+    );
+
+    expect(reportSpy).toHaveBeenCalledWith({
+      thread_id: UUID1,
+      expected_seq: 2n,
+      received_seq: 1n,
+    });
+  });
+
+  it('out-of-order event does NOT regress the per-thread cursor', () => {
+    const reportSpy = vi.spyOn(threadIntegrity, 'reportThreadIntegrityAnomaly');
+    const qc = makeMockQueryClient();
+    createSseBridge(qc).connect();
+    const [es] = FakeEventSource.instances;
+
+    // Establish cursor at 5
+    es.dispatch(
+      'message',
+      makeMessageEvent({
+        type: 'thread.turn',
+        thread_id: UUID1,
+        turn: { ...TURN_FIXTURE, server_seq: 5 },
+      }),
+    );
+    reportSpy.mockClear();
+
+    // Stale event with seq 3 — should report anomaly but not regress cursor
+    es.dispatch(
+      'message',
+      makeMessageEvent({
+        type: 'thread.turn',
+        thread_id: UUID1,
+        turn: { ...TURN_FIXTURE, server_seq: 3 },
+      }),
+    );
+    expect(reportSpy).toHaveBeenCalledTimes(1);
+    reportSpy.mockClear();
+
+    // Next-in-sequence event (6) must be accepted without anomaly
+    es.dispatch(
+      'message',
+      makeMessageEvent({
+        type: 'thread.turn',
+        thread_id: UUID1,
+        turn: { ...TURN_FIXTURE, server_seq: 6 },
+      }),
+    );
+    expect(reportSpy).not.toHaveBeenCalled();
+  });
+
+  it('thread.resync clears the cursor — next thread.turn is treated as first-seen', () => {
+    const reportSpy = vi.spyOn(threadIntegrity, 'reportThreadIntegrityAnomaly');
+    const qc = makeMockQueryClient();
+    createSseBridge(qc).connect();
+    const [es] = FakeEventSource.instances;
+
+    es.dispatch(
+      'message',
+      makeMessageEvent({
+        type: 'thread.turn',
+        thread_id: UUID1,
+        turn: { ...TURN_FIXTURE, server_seq: 5 },
+      }),
+    );
+    es.dispatch(
+      'message',
+      makeMessageEvent({ type: 'thread.resync', thread_id: UUID1, from_seq: 100 }),
+    );
+    reportSpy.mockClear();
+
+    // Post-resync turn at any seq must not trigger an anomaly.
+    es.dispatch(
+      'message',
+      makeMessageEvent({
+        type: 'thread.turn',
+        thread_id: UUID1,
+        turn: { ...TURN_FIXTURE, server_seq: 42 },
+      }),
+    );
+    expect(reportSpy).not.toHaveBeenCalled();
+  });
+});
+
+describe('SseBridge — client_id provisioning', () => {
+  it('generates a UUID and persists it when sessionStorage is empty', () => {
+    const setSpy = vi.fn();
+    vi.stubGlobal('sessionStorage', {
+      getItem: vi.fn().mockReturnValue(null),
+      setItem: setSpy,
+    });
+    vi.stubGlobal('crypto', { randomUUID: () => '11111111-1111-1111-1111-111111111111' });
+
+    const qc = makeMockQueryClient();
+    createSseBridge(qc).connect();
+
+    expect(setSpy).toHaveBeenCalledWith('hk:client_id', '11111111-1111-1111-1111-111111111111');
+    const [es] = FakeEventSource.instances;
+    expect(es.url).toContain('client_id=11111111-1111-1111-1111-111111111111');
+  });
+
+  it('falls back gracefully when sessionStorage throws (Safari Private mode)', () => {
+    vi.stubGlobal('sessionStorage', {
+      getItem: () => {
+        throw new Error('SecurityError');
+      },
+      setItem: () => {
+        throw new Error('SecurityError');
+      },
+    });
+    vi.stubGlobal('crypto', { randomUUID: () => '22222222-2222-2222-2222-222222222222' });
+
+    const qc = makeMockQueryClient();
+    expect(() => createSseBridge(qc).connect()).not.toThrow();
+    const [es] = FakeEventSource.instances;
+    expect(es.url).toContain('client_id=22222222-2222-2222-2222-222222222222');
   });
 });
 
@@ -255,5 +457,31 @@ describe('SseBridge — reconnect backoff', () => {
     // No new EventSource created after disconnect
     expect(FakeEventSource.instances).toHaveLength(1);
     vi.useRealTimers();
+  });
+
+  it('error fired AFTER disconnect does not spawn a zombie reconnect', () => {
+    vi.useFakeTimers();
+    const qc = makeMockQueryClient();
+    const bridge = createSseBridge(qc);
+    bridge.connect();
+
+    const [es] = FakeEventSource.instances;
+    bridge.disconnect();
+    // Late async error from the closed connection.
+    es.dispatch('error', new Event('error'));
+    vi.advanceTimersByTime(10_000);
+
+    expect(FakeEventSource.instances).toHaveLength(1);
+    vi.useRealTimers();
+  });
+
+  it('calling connect() twice closes the prior EventSource (no leak)', () => {
+    const qc = makeMockQueryClient();
+    const bridge = createSseBridge(qc);
+    bridge.connect();
+    bridge.connect();
+
+    expect(FakeEventSource.instances).toHaveLength(2);
+    expect(FakeEventSource.instances[0]!.readyState).toBe(2); // closed
   });
 });

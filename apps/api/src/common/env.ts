@@ -33,6 +33,18 @@ const EnvSchema = z.object({
 
   OTEL_EXPORTER_OTLP_ENDPOINT: optionalEmptyAsUndefined(z.string().url()),
   OTEL_EXPORTER_OTLP_HEADERS: optionalEmptyAsUndefined(z.string()),
+
+  // Comma-separated list of origins allowed to hit the API (used by @fastify/cors).
+  // Default in development covers the Vite dev server; production deploys must set explicitly.
+  CORS_ALLOWED_ORIGINS: z
+    .string()
+    .default('http://localhost:5173')
+    .transform((s) =>
+      s
+        .split(',')
+        .map((o) => o.trim())
+        .filter((o) => o.length > 0),
+    ),
 });
 
 export type Env = z.infer<typeof EnvSchema>;

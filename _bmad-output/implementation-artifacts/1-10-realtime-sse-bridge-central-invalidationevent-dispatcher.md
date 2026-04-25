@@ -1,6 +1,6 @@
 # Story 1.10: RealTime SSE bridge + central InvalidationEvent dispatcher
 
-Status: review
+Status: done
 
 ## Story
 
@@ -1049,7 +1049,63 @@ pnpm tools:check → ✅ No *.tools.ts files found — manifest check skipped (e
 - `apps/api/src/routes/v1/events/.gitkeep`
 
 ### Review Findings
-_To be filled by code-review agent_
+
+_Reviewed: 2026-04-24 — bmad-code-review (3 parallel layers: Blind Hunter, Edge Case Hunter, Acceptance Auditor). Acceptance Auditor: all 13 ACs verified, all architecture invariants pass, all 4 documented drifts approved. Findings below are correctness/robustness gaps surfaced by the adversarial layers._
+
+**Decision resolved (2026-04-24):** Cross-origin SSE in dev — chose **Option A: install `@fastify/cors`** with `http://localhost:5173` allowlisted in dev. Promoted to a patch below.
+
+**Patches (web — `apps/web/src/lib/realtime/sse.ts`):**
+
+- [x] [Review][Patch] **`disconnect()` race with in-flight `error` handler can spawn zombie reconnects** [apps/web/src/lib/realtime/sse.ts:155-170] — `error` handler is async; if it fires after `disconnect()`, it schedules a new reconnect timer and re-opens. Add an `isDisposed` flag set by `disconnect()` and checked in the `error` handler and the reconnect-timer callback before calling `openConnection()`.
+- [x] [Review][Patch] **`connect()` does not close prior `EventSource` — calling twice leaks a connection** [apps/web/src/lib/realtime/sse.ts:175-178] — `connect()` clears the timer but skips `es?.close()`. React 19 StrictMode dev double-mount + any future explicit `connect()` retry leaks the prior EventSource. Close existing `es` at the top of `connect()`.
+- [x] [Review][Patch] **`JSON.parse` not wrapped in try/catch — non-JSON frame throws into the EventSource callback** [apps/web/src/lib/realtime/sse.ts:53] — `safeParse` only catches schema mismatch, not JSON syntax errors. A truncated frame or partial UTF-8 boundary will throw. Wrap the parse in try/catch and route to the same dev-warn branch as Zod failures.
+- [x] [Review][Patch] **Reconnect backoff exceeds the documented 60s cap by jitter** [apps/web/src/lib/realtime/sse.ts:20-28] — `Math.max(base, capped + jitter)` allows `60_000 + 12_000 = 72_000ms`. Spec AC #3 says "cap 60s". Clamp final result with `Math.min(cap, capped + jitter)` (apply the floor first, then the cap).
+- [x] [Review][Patch] **`thread.resync` doesn't clear per-thread sequence cursor** [apps/web/src/lib/realtime/sse.ts:127-130] — After resync, the local `prevSeq` is stale; the next `thread.turn` will either be flagged as a spurious anomaly or mask a real one. Add `threadSeqs.delete(event.thread_id)` in the `thread.resync` case.
+- [x] [Review][Patch] **Out-of-order `thread.turn` regresses the sequence cursor** [apps/web/src/lib/realtime/sse.ts:97] — `threadSeqs.set(threadId, receivedSeq)` is unconditional. If `receivedSeq < prevSeq + 1n` (duplicate or out-of-order), the cursor regresses and corrupts subsequent gap detection. Only update when `receivedSeq > prevSeq`, or store `max(prevSeq, receivedSeq)`.
+- [x] [Review][Patch] **`crypto.randomUUID()` throws in non-secure contexts (HTTP, sandboxed iframes)** [apps/web/src/lib/realtime/sse.ts:13] — Hard-crashes the bridge on plain http or in restricted contexts. Wrap in try/catch with a `Math.random()`-based UUIDv4 fallback so the bridge degrades gracefully.
+- [x] [Review][Patch] **`sessionStorage` access unguarded — `SecurityError` in restricted contexts** [apps/web/src/lib/realtime/sse.ts:11,14] — Safari Private mode (older), sandboxed iframes, third-party-context with storage-denied throw. Wrap `getItem`/`setItem` in try/catch and fall back to an in-memory client_id for the bridge's lifetime.
+- [x] [Review][Patch] **No `EventSource` feature detection** [apps/web/src/lib/realtime/sse.ts:150] — `new EventSource(url)` throws `ReferenceError` if undefined (older browsers, unexpected SSR pull). Guard with `typeof EventSource === 'undefined'` and bail with a dev warning.
+
+**Patches (web — `apps/web/src/providers/query-provider.tsx`):**
+
+- [x] [Review][Patch] **`ReactQueryDevtools` is statically imported and ships in prod bundle** [apps/web/src/providers/query-provider.tsx:3,46] — The runtime `import.meta.env.DEV` gate skips render but the static `import` keeps the package code in the production bundle. Switch to a Vite-friendly conditional dynamic import (or use a build-time guard pattern that lets Vite tree-shake the dev-only branch).
+
+**Patches (web — `apps/web/src/lib/realtime/sse.test.ts`):**
+
+- [x] [Review][Patch] **Test labelled "malformed event data" sends valid JSON — does not exercise `JSON.parse` failure** [apps/web/src/lib/realtime/sse.test.ts:208-220] — Payload is well-formed JSON with an unknown `type`. Add a separate test sending non-JSON `data` (e.g., `'not json'`) to cover the new try/catch.
+- [x] [Review][Patch] **No test for thread sequence-gap / duplicate-seq detection (AC #5 uncovered)** [apps/web/src/lib/realtime/sse.test.ts] — `reportThreadIntegrityAnomaly` is never asserted as called. Add a test sending two `thread.turn` events with non-consecutive `server_seq`, mocking the anomaly reporter and asserting the call payload.
+- [x] [Review][Patch] **No test for first-time `client_id` generation path** [apps/web/src/lib/realtime/sse.test.ts:56-58] — `sessionStorage.getItem` always returns `'test-client-id'`, so the `crypto.randomUUID()` + `setItem` branch is uncovered. Add a test where `getItem` returns `null` and assert `setItem` was called with the generated UUID.
+- [x] [Review][Patch] **No test for `disconnect()` during a pending reconnect (zombie-connection race)** [apps/web/src/lib/realtime/sse.test.ts] — Add a test that triggers `error` (schedules reconnect), calls `disconnect()`, then dispatches a second async `error` from the closed ES, and asserts `FakeEventSource.instances.length === 1`. Pairs with the disposed-flag patch above.
+
+**Patches (api — CORS):**
+
+- [x] [Review][Patch] **Install `@fastify/cors` and allow `localhost:5173` in dev (resolved decision)** [apps/api/package.json, apps/api/src/app.ts, apps/api/src/env.ts] — Without CORS, the dev bridge cannot connect cross-origin and reconnect-loops silently. Add `@fastify/cors` dep, register before `eventsRoutes`, allowlist origins from a new `CORS_ALLOWED_ORIGINS` env var (default `http://localhost:5173` in dev, empty in prod). Document follow-on for Story 2.2: when JWT lands via cookie, set `credentials: true` and re-pin `withCredentials: true` on the EventSource.
+
+**Patches (api — `apps/api/src/routes/v1/events/events.routes.ts`):**
+
+- [x] [Review][Patch] **`request.query as Record<string, string>` skips Zod validation — violates "every inbound boundary is Zod-parsed"** [apps/api/src/routes/v1/events/events.routes.ts:19] — Declare `schema: { querystring: z.object({ client_id: z.string().uuid() }) }` and let `fastify-type-provider-zod` narrow it. Removes the `as` cast.
+- [x] [Review][Patch] **`client_id` log-injection vector — control chars / very long values logged unsanitized** [apps/api/src/routes/v1/events/events.routes.ts:22-25,46-49] — A client passing `?client_id=%0Ainjected` writes a forged log line in non-pretty Pino transports. Constrain at the schema level (UUID regex + length) — fix bundles with the previous item.
+- [x] [Review][Patch] **`'unknown'` fallback for missing `client_id` masks a contract violation** [apps/api/src/routes/v1/events/events.routes.ts:19] — Architecture §3.3 requires the client to provide it. Reject with 400 when absent (the schema validation above does this for free).
+- [x] [Review][Patch] **`void reply.raw.writeHead/write` discards backpressure boolean and signals a Promise that doesn't exist** [apps/api/src/routes/v1/events/events.routes.ts:26,34,39] — `writeHead` is sync and returns the response; `write` returns a backpressure boolean. Drop the misleading `void` from `writeHead`. For `write`, at minimum drop the `void` and add a TODO/comment that Story 5.2 must respect the backpressure boolean before pushing real events.
+- [x] [Review][Patch] **No `'error'` handler on `reply.raw` — unhandled stream error crashes Node** [apps/api/src/routes/v1/events/events.routes.ts:26-49] — A half-broken socket emits `'error'` on the raw stream; no handler is attached, so Node's EventEmitter raises an unhandled-error exception. Add `reply.raw.on('error', err => fastify.log.warn({ err, clientId }, 'sse stream error'))`.
+- [x] [Review][Patch] **`setInterval` not `unref()`'d — keeps the event loop alive past graceful shutdown** [apps/api/src/routes/v1/events/events.routes.ts:37] — Add `heartbeatInterval.unref?.()` so the process can exit cleanly when no other handles are pending.
+- [x] [Review][Patch] **Missing `reply.hijack()` — Fastify still considers the response pending** [apps/api/src/routes/v1/events/events.routes.ts:26] — Bypassing the reply lifecycle without `reply.hijack()` causes Fastify's onSend/serializer to attempt a second write on a closed/streamed response. Call `reply.hijack()` immediately after `reply.raw.writeHead(...)`.
+
+**Deferred (carried to `_bmad-output/implementation-artifacts/deferred-work.md`):**
+
+- [x] [Review][Defer] Auth on `/v1/events` — explicitly deferred to Story 2.2.
+- [x] [Review][Defer] Redis pub/sub fan-out and actual event delivery — Story 5.2.
+- [x] [Review][Defer] `Last-Event-ID` Redis replay (≥6h retention) on server — Story 5.2.
+- [x] [Review][Defer] `client_id` echo suppression by server — Story 5.2.
+- [x] [Review][Defer] Server-side `thread.turn` dedupe / reordering / cap on cached array length — Story 5.x (caller/server-contract concern; bridge wires what the spec requires).
+- [x] [Review][Defer] `reportThreadIntegrityAnomaly` is silent in production — real beacon is Story 5.17 per spec.
+- [x] [Review][Defer] `thread.resync.from_seq` plumbing into the thread loader — Story 5.1.
+- [x] [Review][Defer] `queryClient.clear()` on logout (PII retention across mounts) — auth flow not yet present (Story 2.2).
+- [x] [Review][Defer] Server graceful drain on SIGTERM for long-lived SSE connections — operational, post-Story 5.2.
+- [x] [Review][Defer] Rate limit / connection cap per IP on `/v1/events` — Story 5.x operational hardening.
+- [x] [Review][Defer] `audit-hook` records SSE connection duration over hours (skews dashboards) — operational, surfaces with Story 5.2.
+- [x] [Review][Defer] `App.tsx` reads `window.location.pathname` in render — fragile to future router; addressed when react-router lands (Epic 2).
+- [x] [Review][Defer] `apps/web/vitest.config.ts` uses `__dirname` instead of `import.meta.url` — tooling-config drift; low risk, addressed in a tooling-hygiene pass.
 
 ## Change Log
 
