@@ -1,9 +1,10 @@
 import { z } from 'zod';
 import {
-  LoginRequest,
-  LoginResponse,
-  RefreshRequest,
-  RefreshResponse,
+  LoginRequestSchema,
+  LoginResponseSchema,
+  OAuthCallbackRequestSchema,
+  OAuthProviderSchema,
+  AuthUserSchema,
   MealItem,
   DayPlan,
   WeeklyPlan,
@@ -32,10 +33,11 @@ import {
 } from '@hivekitchen/contracts';
 
 // Auth
-export type LoginRequest = z.infer<typeof LoginRequest>;
-export type LoginResponse = z.infer<typeof LoginResponse>;
-export type RefreshRequest = z.infer<typeof RefreshRequest>;
-export type RefreshResponse = z.infer<typeof RefreshResponse>;
+export type LoginRequest = z.infer<typeof LoginRequestSchema>;
+export type LoginResponse = z.infer<typeof LoginResponseSchema>;
+export type OAuthCallbackRequest = z.infer<typeof OAuthCallbackRequestSchema>;
+export type OAuthProvider = z.infer<typeof OAuthProviderSchema>;
+export type AuthUser = z.infer<typeof AuthUserSchema>;
 
 // Plans
 export type MealItem = z.infer<typeof MealItem>;

@@ -12,6 +12,14 @@ const EnvSchema = z.object({
 
   SUPABASE_URL: z.string().url(),
   SUPABASE_SERVICE_ROLE_KEY: z.string().min(1),
+  SUPABASE_ANON_KEY: z.string().min(1),
+
+  SUPABASE_AUTH_EXTERNAL_GOOGLE_CLIENT_ID: z.string().min(1),
+  SUPABASE_AUTH_EXTERNAL_GOOGLE_SECRET: z.string().min(1),
+  SUPABASE_AUTH_EXTERNAL_APPLE_CLIENT_ID: z.string().min(1),
+  SUPABASE_AUTH_EXTERNAL_APPLE_SECRET: z.string().min(1),
+
+  WEB_BASE_URL: z.string().url().default('http://localhost:5173'),
 
   OPENAI_API_KEY: z.string().min(1),
 
