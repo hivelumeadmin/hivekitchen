@@ -6,7 +6,7 @@ import {
   RefreshResponseSchema,
 } from '@hivekitchen/contracts';
 import { UnauthorizedError } from '../../common/errors.js';
-import type { z } from 'zod';
+import { z } from 'zod';
 import { AuthRepository } from './auth.repository.js';
 import { AuthService, type LoginResult } from './auth.service.js';
 import { AuditRepository } from '../../audit/audit.repository.js';
@@ -79,7 +79,7 @@ export const authRoutes: FastifyPluginAsync = async (fastify) => {
 
   fastify.post(
     '/v1/auth/refresh',
-    { schema: { response: { 200: RefreshResponseSchema } } },
+    { schema: { body: z.object({}).strict(), response: { 200: RefreshResponseSchema } } },
     async (request, reply) => {
       const plaintext = request.cookies['refresh_token'] ?? '';
       const result = await service.refreshToken(plaintext);
