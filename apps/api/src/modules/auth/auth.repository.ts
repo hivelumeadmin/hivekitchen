@@ -21,6 +21,13 @@ export interface InsertRefreshTokenInput {
   expires_at: Date;
 }
 
+export interface RefreshTokenRow {
+  id: string;
+  user_id: string;
+  family_id: string;
+  replaced_by: string | null;
+}
+
 export class AuthRepository extends BaseRepository {
   async findUserByAuthId(userId: string): Promise<UserRow | null> {
     const { data, error } = await this.client
@@ -62,11 +69,46 @@ export class AuthRepository extends BaseRepository {
     return { id: (data as { id: string }).id };
   }
 
-  async markRefreshTokenRevoked(token_hash: string): Promise<void> {
-    const { error } = await this.client
+  async markRefreshTokenRevoked(token_hash: string): Promise<{ user_id: string | null }> {
+    const { data, error } = await this.client
       .from('refresh_tokens')
       .update({ revoked_at: new Date().toISOString() })
       .eq('token_hash', token_hash)
+      .is('revoked_at', null)
+      .select('user_id')
+      .maybeSingle();
+    if (error) throw error;
+    return { user_id: (data as { user_id: string } | null)?.user_id ?? null };
+  }
+
+  async findRefreshTokenByHash(hash: string): Promise<RefreshTokenRow | null> {
+    const { data, error } = await this.client
+      .from('refresh_tokens')
+      .select('id, user_id, family_id, replaced_by')
+      .eq('token_hash', hash)
+      .is('revoked_at', null)
+      .gt('expires_at', new Date().toISOString())
+      .maybeSingle();
+    if (error) throw error;
+    return (data as RefreshTokenRow | null) ?? null;
+  }
+
+  async consumeRefreshToken(tokenId: string, replacedBy: string): Promise<boolean> {
+    const { data, error } = await this.client
+      .from('refresh_tokens')
+      .update({ replaced_by: replacedBy })
+      .eq('id', tokenId)
+      .is('replaced_by', null)
+      .select('id');
+    if (error) throw error;
+    return Array.isArray(data) && data.length > 0;
+  }
+
+  async revokeAllByFamilyId(familyId: string): Promise<void> {
+    const { error } = await this.client
+      .from('refresh_tokens')
+      .update({ revoked_at: new Date().toISOString() })
+      .eq('family_id', familyId)
       .is('revoked_at', null);
     if (error) throw error;
   }

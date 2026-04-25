@@ -7,7 +7,7 @@ export const LoginRequestSchema = z.object({
 });
 
 // ---- POST /v1/auth/callback -----------------------------------------------
-export const OAuthProviderSchema = z.enum(['google', 'apple']);
+export const OAuthProviderSchema = z.enum(['google', 'apple']); // @unused-by-design — consumed by OAuthCallbackRequestSchema; standalone type used by Story 2.2 audit metadata
 
 export const OAuthCallbackRequestSchema = z.object({
   provider: OAuthProviderSchema,
@@ -17,17 +17,23 @@ export const OAuthCallbackRequestSchema = z.object({
 // ---- Common login response (both /login and /callback) --------------------
 export const AuthUserSchema = z.object({
   id: z.string().uuid(),
-  email: z.string().email(),
+  email: z.string().email().max(254),
   display_name: z.string().nullable(),
   current_household_id: z.string().uuid().nullable(),
   role: z.enum(['primary_parent', 'secondary_caregiver', 'guest_author', 'ops']),
 });
 
 export const LoginResponseSchema = z.object({
-  access_token: z.string(),
+  access_token: z.string().min(1),
   expires_in: z.number().int().positive(),
   user: AuthUserSchema,
   is_first_login: z.boolean(),
 });
 
 // POST /v1/auth/logout — empty 204 response, no schema needed.
+
+// ---- POST /v1/auth/refresh ------------------------------------------------
+export const RefreshResponseSchema = z.object({
+  access_token: z.string().min(1),
+  expires_in: z.number().int().positive(),
+});

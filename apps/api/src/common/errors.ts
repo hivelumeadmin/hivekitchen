@@ -29,6 +29,12 @@ export class UnauthorizedError extends DomainError {
   readonly title = 'Unauthorized';
 }
 
+export class ForbiddenError extends DomainError {
+  readonly type = '/errors/forbidden';
+  readonly status = 403;
+  readonly title = 'Forbidden';
+}
+
 export class ConflictError extends DomainError {
   readonly type = '/errors/conflict';
   readonly status = 409;

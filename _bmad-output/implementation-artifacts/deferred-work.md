@@ -138,6 +138,35 @@
 - Fork PRs silently receive `TURBO_TOKEN=""` (GitHub Actions does not pass secrets to fork workflows) — Turborepo falls back to local cache only on every fork/dependabot PR. Documented graceful fallback; no action needed until fork-PR CI time becomes a concern.
 - `e2e` job `--ignore-glob="**/perf/**"` glob is resolved relative to Playwright `testDir` on the CI runner's OS. Currently ubuntu-latest (Linux); glob is correct. If self-hosted Windows runners are ever added, verify glob separator handling.
 
+## Deferred from: code review of 2-1-supabase-auth-email-password-google-apple-oauth — full review (2026-04-25)
+
+- No `/v1/auth/refresh` endpoint — access tokens expire after 15 min with no recovery path until Story 2.2 implements token rotation. [`apps/api/src/modules/auth/`]
+- Expired refresh tokens not checked at query time — `expires_at` column exists but no query reads it; expiry enforcement belongs in the refresh endpoint (Story 2.2). [`apps/api/src/modules/auth/auth.repository.ts`]
+- No TTL cleanup job for `refresh_tokens` — table grows unbounded; add a nightly expiry-purge job in a future ops story. [`supabase/migrations/20260501125000_create_refresh_tokens.sql`]
+- Access token stored in Zustand (XSS-readable) — accepted per AC4 spec; no localStorage used. Mitigated by 15 min TTL. [`apps/web/src/stores/auth.store.ts`]
+- `auth.store` not persisted across page reloads — by design per AC4; silent refresh via refresh token is Story 2.2. [`apps/web/src/stores/auth.store.ts`]
+- `authRoutes` instantiates `AuthService` + `AuthRepository` directly inside the plugin — works for a once-registered plugin; migrate to `fastify.decorate` pattern in a future refactor. [`apps/api/src/modules/auth/auth.routes.ts`]
+- New `family_id` per login orphans the token rotation chain — Story 2.2 reuse-detection logic must link families across re-logins. [`apps/api/src/modules/auth/auth.service.ts:75`]
+- `insertRefreshToken` separate from the `create_household_and_user` RPC — low-probability partial-write on first login if the insert fails after the RPC succeeds; existing error handler prevents a response from being sent. [`apps/api/src/modules/auth/auth.service.ts:72-79`]
+- OAuth PKCE state not validated server-side — server-side `exchangeCodeForSession` runs on the service-role client with no PKCE verifier; short-lived single-use codes are the practical mitigation for beta. Add explicit state/nonce storage and server-side validation in a hardening epic before public launch. [`apps/api/src/modules/auth/auth.service.ts`]
+
+## Deferred from: code review of 2-1-supabase-auth-email-password-google-apple-oauth (2026-04-25)
+
+- `callback.tsx` provider coercion (`?? 'google'`) fires before schema validation — any non-`'apple'` query param (including invalid values) collapses to `'google'` before the body is assembled, so `OAuthCallbackRequestSchema`'s enum check never rejects an invalid provider. Flagged in contracts/types chunk; address in web chunk review. [`apps/web/src/routes/auth/callback.tsx`]
+- `next` query parameter reflected into `navigate()` with no allowlist — open redirect; `navigate()` accepts absolute URLs, so `?next=https://evil.com` after a valid OAuth exchange navigates the browser off-site. Flagged in contracts/types chunk; address in web chunk review. [`apps/web/src/routes/auth/callback.tsx`]
+- Apple OAuth can return no email (`data.user.email ?? ''`) — empty string passes into `createHouseholdAndUser` and gets persisted, then fails `AuthUserSchema`'s `.email()` check on serialization, producing a 500 instead of a handled error. Flagged in contracts/types chunk; address in service chunk review. [`apps/api/src/modules/auth/auth.service.ts`]
+
+## Deferred from: code review of 2-2-4-role-rbac-prehandler-jwt-rotation-on-use (2026-04-25)
+
+- Partial write window between `insertRefreshToken` and `consumeRefreshToken` — crash between the two steps leaves an orphaned new-token row; the client retries with the original (unconsumed) old token and succeeds on retry. Orphaned rows are non-exploitable but accumulate. TTL cleanup job (deferred from 2-1) will purge them. [`apps/api/src/modules/auth/auth.service.ts:87-94`]
+- `householdScopeHook` accepts any non-empty string as `household_id` — whitespace or non-UUID values pass the guard. JWTs are signed by this API with validated DB UUIDs, so not exploitable from the login path. Validate UUID format in a future hardening pass. [`apps/api/src/middleware/household-scope.hook.ts:8`]
+- `extractZodIssues` `.validation` array check missing `statusCode === 400` narrowing — pre-existing, deferred from Story 2-1 review. Any future custom error with an array `.validation` property could be misclassified as a 400. [`apps/api/src/app.ts`]
+- `login.tsx` flash of login page for already-authenticated users — `useEffect`-based redirect fires after first render; brief flash before redirect to `/app`. Address in a UX polish pass. [`apps/web/src/routes/auth/login.tsx:24`]
+- TOCTOU migration `20260501120500`: orphaned household has stale `primary_parent_user_id` FK — the losing concurrent first-login inserts a `households` row whose `primary_parent_user_id` points to a user whose `current_household_id` is the winning household. Future maintenance job should clean up orphaned households. [`supabase/migrations/20260501120500_create_household_and_user_idempotent.sql`]
+- RLS `households_member_select_policy` subquery creates N+1 per-row security evaluation — `SELECT current_household_id FROM users WHERE id = auth.uid()` runs under RLS per row evaluated. Use a `SECURITY DEFINER` helper function or lateral join at scale. [`supabase/migrations/20260502090000_enable_rls_users_households.sql`]
+- Double-slash URL `//v1/auth/login` bypasses `authenticate.hook.ts` skip-list prefix check — Fastify normalises double slashes at the routing layer so practically unreachable. Flagged for awareness if a non-standard reverse proxy is introduced. [`apps/api/src/middleware/authenticate.hook.ts:15`]
+- Coverage gaps: `revokeAllByFamilyId` not verified at route layer in `auth.routes.test.ts`; no regression test for `insertRefreshToken` failure during `refreshToken`. Service-layer tests cover revocation logic. [`apps/api/src/modules/auth/auth.routes.test.ts`]
+
 ## Deferred from: implementation of 2-1-supabase-auth-email-password-google-apple-oauth (2026-04-25)
 
 - Live `pnpm supabase:reset` verification of the three new migrations was skipped because Docker Desktop was not running on the dev machine. Migrations are direct copies of the spec; next dev with Docker should run `npx supabase start && pnpm supabase:reset && pnpm seed:dev` and confirm `\d users`, `\d households`, `\d refresh_tokens`, and `SELECT typname FROM pg_type WHERE typname='user_role';` succeed. [`supabase/migrations/`]

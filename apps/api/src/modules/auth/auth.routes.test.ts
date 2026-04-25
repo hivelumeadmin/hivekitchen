@@ -18,6 +18,7 @@ const SAMPLE_REFRESH_ID = '33333333-3333-3333-3333-333333333333';
 interface SupabaseAuthMock {
   signInWithPassword: ReturnType<typeof vi.fn>;
   exchangeCodeForSession: ReturnType<typeof vi.fn>;
+  admin?: { signOut: ReturnType<typeof vi.fn> };
 }
 
 function buildMockSupabase(opts: {
@@ -29,9 +30,52 @@ function buildMockSupabase(opts: {
   insertResult?: unknown;
   insertError?: unknown;
   updateError?: unknown;
+  refreshTokenLookupResult?: unknown;
+  refreshTokenLookupError?: unknown;
 }) {
+  const updateResult = { data: null, error: opts.updateError ?? null };
+  // consumeRefreshToken now uses .select('id') and expects an array of updated rows.
+  const consumeSelectResult = { data: [{ id: 'consumed' }], error: opts.updateError ?? null };
+
+  // Chain-aware result for `update().eq().is()`:
+  //   - awaitable directly (revokeAllByFamilyId path: expects { data: null, error })
+  //   - `.select().maybeSingle()` (markRefreshTokenRevoked path)
+  //   - `.select()` awaitable as array (consumeRefreshToken path)
+  const buildUpdateChain = () => {
+    const selectThenable = Object.assign(Promise.resolve(consumeSelectResult), {
+      maybeSingle: vi.fn().mockResolvedValue(updateResult),
+    });
+    const thenable: PromiseLike<typeof updateResult> & {
+      select: () => typeof selectThenable;
+    } = {
+      then(resolve, reject) {
+        return Promise.resolve(updateResult).then(resolve, reject);
+      },
+      select() {
+        return selectThenable;
+      },
+    };
+    return thenable;
+  };
+
+  // Chain for `select().eq().is().gt().maybeSingle()` — used by findRefreshTokenByHash.
+  const buildLookupChain = () => ({
+    is: () => ({
+      gt: () => ({
+        maybeSingle: vi.fn().mockResolvedValue({
+          data: opts.refreshTokenLookupResult ?? null,
+          error: opts.refreshTokenLookupError ?? null,
+        }),
+      }),
+    }),
+  });
+
   return {
-    auth: opts.auth,
+    auth: {
+      signInWithPassword: opts.auth.signInWithPassword,
+      exchangeCodeForSession: opts.auth.exchangeCodeForSession,
+      admin: opts.auth.admin ?? { signOut: vi.fn().mockResolvedValue({ error: null }) },
+    },
     from(table: string) {
       if (table === 'users') {
         return {
@@ -64,11 +108,16 @@ function buildMockSupabase(opts: {
               },
             };
           },
+          select() {
+            return {
+              eq: () => buildLookupChain(),
+            };
+          },
           update() {
             return {
               eq() {
                 return {
-                  is: vi.fn().mockResolvedValue({ error: opts.updateError ?? null }),
+                  is: () => buildUpdateChain(),
                 };
               },
             };
@@ -185,7 +234,7 @@ describe('POST /v1/auth/login', () => {
     const cookieStr = Array.isArray(setCookie) ? setCookie[0] ?? '' : (setCookie ?? '');
     expect(cookieStr).toMatch(/refresh_token=[A-Za-z0-9_-]{43};/);
     expect(cookieStr).toMatch(/Max-Age=2592000/);
-    expect(cookieStr).toMatch(/Path=\/v1\/auth\/refresh/);
+    expect(cookieStr).toMatch(/Path=\/v1\/auth[;,\s]/);
     expect(cookieStr).toMatch(/HttpOnly/);
     expect(cookieStr).toMatch(/SameSite=Lax/);
   });
@@ -288,6 +337,99 @@ describe('POST /v1/auth/callback', () => {
     });
 
     expect(res.statusCode).toBe(401);
+  });
+});
+
+describe('POST /v1/auth/refresh', () => {
+  let app: FastifyInstance;
+
+  afterEach(async () => {
+    if (app) await app.close();
+  });
+
+  it('happy path: rotates token, returns 200 + access_token + new Set-Cookie', async () => {
+    const supabaseMock = buildMockSupabase({
+      auth: { signInWithPassword: vi.fn(), exchangeCodeForSession: vi.fn() },
+      selectResult: {
+        id: SAMPLE_USER_ID,
+        email: 'parent@example.com',
+        display_name: 'Parent',
+        current_household_id: SAMPLE_HOUSEHOLD_ID,
+        role: 'primary_parent',
+      },
+      rpcResult: null,
+      refreshTokenLookupResult: {
+        id: 'old-rt',
+        user_id: SAMPLE_USER_ID,
+        family_id: 'fam-1',
+        replaced_by: null,
+      },
+    });
+    app = await buildTestApp(supabaseMock);
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/v1/auth/refresh',
+      cookies: { refresh_token: 'plaintext-old-token' },
+    });
+
+    expect(res.statusCode).toBe(200);
+    const body = JSON.parse(res.body) as { access_token: string; expires_in: number };
+    expect(typeof body.access_token).toBe('string');
+    expect(body.access_token.length).toBeGreaterThan(0);
+    expect(body.expires_in).toBe(15 * 60);
+
+    const setCookie = res.headers['set-cookie'];
+    const cookieStr = Array.isArray(setCookie) ? setCookie[0] ?? '' : (setCookie ?? '');
+    expect(cookieStr).toMatch(/refresh_token=[A-Za-z0-9_-]{43};/);
+    expect(cookieStr).toMatch(/Path=\/v1\/auth[;,\s]/);
+    expect(cookieStr).toMatch(/HttpOnly/);
+  });
+
+  it('missing refresh cookie → 401 unauthorized', async () => {
+    const supabaseMock = buildMockSupabase({
+      auth: { signInWithPassword: vi.fn(), exchangeCodeForSession: vi.fn() },
+      selectResult: null,
+      rpcResult: null,
+    });
+    app = await buildTestApp(supabaseMock);
+
+    const res = await app.inject({ method: 'POST', url: '/v1/auth/refresh' });
+
+    expect(res.statusCode).toBe(401);
+    const body = JSON.parse(res.body) as { type: string };
+    expect(body.type).toBe('/errors/unauthorized');
+  });
+
+  it('reused token (replaced_by set) → 401 + signOut called', async () => {
+    const adminSignOut = vi.fn().mockResolvedValue({ error: null });
+    const supabaseMock = buildMockSupabase({
+      auth: {
+        signInWithPassword: vi.fn(),
+        exchangeCodeForSession: vi.fn(),
+        admin: { signOut: adminSignOut },
+      },
+      selectResult: null,
+      rpcResult: null,
+      refreshTokenLookupResult: {
+        id: 'reused-rt',
+        user_id: SAMPLE_USER_ID,
+        family_id: 'fam-1',
+        replaced_by: 'replacement-rt',
+      },
+    });
+    app = await buildTestApp(supabaseMock);
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/v1/auth/refresh',
+      cookies: { refresh_token: 'plaintext-reused' },
+    });
+
+    expect(res.statusCode).toBe(401);
+    const body = JSON.parse(res.body) as { type: string };
+    expect(body.type).toBe('/errors/unauthorized');
+    expect(adminSignOut).toHaveBeenCalledWith(SAMPLE_USER_ID, 'global');
   });
 });
 

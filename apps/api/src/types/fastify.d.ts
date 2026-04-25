@@ -31,3 +31,18 @@ declare module 'fastify' {
     auditContext?: AuditWriteInput;
   }
 }
+
+declare module '@fastify/jwt' {
+  interface FastifyJWT {
+    payload: {
+      sub: string;
+      hh: string;
+      role: 'primary_parent' | 'secondary_caregiver' | 'guest_author' | 'ops';
+    };
+    user: {
+      id: string;
+      household_id: string;
+      role: 'primary_parent' | 'secondary_caregiver' | 'guest_author' | 'ops';
+    };
+  }
+}

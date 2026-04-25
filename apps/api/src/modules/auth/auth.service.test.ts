@@ -9,6 +9,7 @@ interface MockSupabase {
   auth: {
     signInWithPassword: ReturnType<typeof vi.fn>;
     exchangeCodeForSession: ReturnType<typeof vi.fn>;
+    admin: { signOut: ReturnType<typeof vi.fn> };
   };
 }
 
@@ -17,6 +18,9 @@ interface MockRepo {
   createHouseholdAndUser: ReturnType<typeof vi.fn>;
   insertRefreshToken: ReturnType<typeof vi.fn>;
   markRefreshTokenRevoked: ReturnType<typeof vi.fn>;
+  findRefreshTokenByHash: ReturnType<typeof vi.fn>;
+  consumeRefreshToken: ReturnType<typeof vi.fn>;
+  revokeAllByFamilyId: ReturnType<typeof vi.fn>;
 }
 
 const SAMPLE_USER: UserRow = {
@@ -32,13 +36,17 @@ function makeMocks() {
     auth: {
       signInWithPassword: vi.fn(),
       exchangeCodeForSession: vi.fn(),
+      admin: { signOut: vi.fn().mockResolvedValue({ error: null }) },
     },
   };
   const repository: MockRepo = {
     findUserByAuthId: vi.fn(),
     createHouseholdAndUser: vi.fn(),
     insertRefreshToken: vi.fn().mockResolvedValue({ id: 'rt-1' }),
-    markRefreshTokenRevoked: vi.fn().mockResolvedValue(undefined),
+    markRefreshTokenRevoked: vi.fn().mockResolvedValue({ user_id: null }),
+    findRefreshTokenByHash: vi.fn(),
+    consumeRefreshToken: vi.fn().mockResolvedValue(true),
+    revokeAllByFamilyId: vi.fn().mockResolvedValue(undefined),
   };
   const jwt = { sign: vi.fn().mockReturnValue('signed.jwt.token') };
   // Type-erase to satisfy AuthService constructor; runtime shape matches.
@@ -162,9 +170,86 @@ describe('AuthService.logout', () => {
     expect(arg).toMatch(/^[a-f0-9]{64}$/);
   });
 
+  it('calls supabase admin.signOut when user_id is returned from repo', async () => {
+    const mocks = makeMocks();
+    mocks.repository.markRefreshTokenRevoked.mockResolvedValue({ user_id: SAMPLE_USER.id });
+    await mocks.service.logout('some-plaintext-token');
+    expect(mocks.supabase.auth.admin.signOut).toHaveBeenCalledWith(SAMPLE_USER.id, 'global');
+  });
+
+  it('skips admin.signOut when token not found (user_id null)', async () => {
+    const mocks = makeMocks();
+    await mocks.service.logout('unknown-token');
+    expect(mocks.supabase.auth.admin.signOut).not.toHaveBeenCalled();
+  });
+
   it('no-op when token absent (empty string)', async () => {
     const mocks = makeMocks();
     await mocks.service.logout('');
     expect(mocks.repository.markRefreshTokenRevoked).not.toHaveBeenCalled();
+  });
+});
+
+describe('AuthService.refreshToken', () => {
+  let mocks: ReturnType<typeof makeMocks>;
+
+  beforeEach(() => {
+    mocks = makeMocks();
+  });
+
+  it('valid token: rotates and returns new access + refresh', async () => {
+    mocks.repository.findRefreshTokenByHash.mockResolvedValue({
+      id: 'old-rt',
+      user_id: SAMPLE_USER.id,
+      family_id: 'fam-1',
+      replaced_by: null,
+    });
+    mocks.repository.insertRefreshToken.mockResolvedValue({ id: 'new-rt' });
+    mocks.repository.findUserByAuthId.mockResolvedValue(SAMPLE_USER);
+
+    const result = await mocks.service.refreshToken('plaintext-old-token');
+
+    expect(result.type).toBe('rotated');
+    if (result.type !== 'rotated') return;
+    expect(result.access_token).toBe('signed.jwt.token');
+    expect(result.expires_in).toBe(15 * 60);
+    expect(result.user_id).toBe(SAMPLE_USER.id);
+    expect(result.refresh_token_plaintext).toMatch(/^[A-Za-z0-9_-]{43}$/);
+    expect(mocks.repository.insertRefreshToken).toHaveBeenCalledWith(
+      expect.objectContaining({ user_id: SAMPLE_USER.id, family_id: 'fam-1' }),
+    );
+    expect(mocks.repository.consumeRefreshToken).toHaveBeenCalledWith('old-rt', 'new-rt');
+  });
+
+  it('reused token (replaced_by set): revokes family + signs out user, returns reuse_detected', async () => {
+    mocks.repository.findRefreshTokenByHash.mockResolvedValue({
+      id: 'reused-rt',
+      user_id: SAMPLE_USER.id,
+      family_id: 'fam-1',
+      replaced_by: 'replacement-rt',
+    });
+
+    const result = await mocks.service.refreshToken('plaintext-reused');
+
+    expect(result.type).toBe('reuse_detected');
+    if (result.type !== 'reuse_detected') return;
+    expect(result.user_id).toBe(SAMPLE_USER.id);
+    expect(mocks.repository.revokeAllByFamilyId).toHaveBeenCalledWith('fam-1');
+    expect(mocks.supabase.auth.admin.signOut).toHaveBeenCalledWith(SAMPLE_USER.id, 'global');
+    expect(mocks.repository.insertRefreshToken).not.toHaveBeenCalled();
+  });
+
+  it('unknown token (no row found) → throws UnauthorizedError', async () => {
+    mocks.repository.findRefreshTokenByHash.mockResolvedValue(null);
+
+    await expect(mocks.service.refreshToken('plaintext-bad')).rejects.toBeInstanceOf(
+      UnauthorizedError,
+    );
+    expect(mocks.repository.revokeAllByFamilyId).not.toHaveBeenCalled();
+  });
+
+  it('empty plaintext → throws UnauthorizedError without DB lookup', async () => {
+    await expect(mocks.service.refreshToken('')).rejects.toBeInstanceOf(UnauthorizedError);
+    expect(mocks.repository.findRefreshTokenByHash).not.toHaveBeenCalled();
   });
 });

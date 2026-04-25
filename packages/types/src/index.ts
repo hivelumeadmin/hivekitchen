@@ -5,6 +5,7 @@ import {
   OAuthCallbackRequestSchema,
   OAuthProviderSchema,
   AuthUserSchema,
+  RefreshResponseSchema,
   MealItem,
   DayPlan,
   WeeklyPlan,
@@ -38,6 +39,7 @@ export type LoginResponse = z.infer<typeof LoginResponseSchema>;
 export type OAuthCallbackRequest = z.infer<typeof OAuthCallbackRequestSchema>;
 export type OAuthProvider = z.infer<typeof OAuthProviderSchema>;
 export type AuthUser = z.infer<typeof AuthUserSchema>;
+export type RefreshResponse = z.infer<typeof RefreshResponseSchema>;
 
 // Plans
 export type MealItem = z.infer<typeof MealItem>;

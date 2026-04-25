@@ -16,6 +16,22 @@ export interface LoginResult {
   refresh_token_max_age_seconds: number;
 }
 
+export interface RefreshRotatedResult {
+  type: 'rotated';
+  access_token: string;
+  expires_in: number;
+  user_id: string;
+  refresh_token_plaintext: string;
+  refresh_token_max_age_seconds: number;
+}
+
+export interface ReuseDetectedResult {
+  type: 'reuse_detected';
+  user_id: string;
+}
+
+export type RefreshResult = RefreshRotatedResult | ReuseDetectedResult;
+
 export class AuthService {
   constructor(
     private readonly repository: AuthRepository,
@@ -36,17 +52,80 @@ export class AuthService {
   async loginWithOAuth(input: { provider: 'google' | 'apple'; code: string }): Promise<LoginResult> {
     const { data, error } = await this.supabase.auth.exchangeCodeForSession(input.code);
     if (error || !data.user) throw new UnauthorizedError('OAuth exchange failed');
+    const email = data.user.email;
+    if (!email) throw new UnauthorizedError('OAuth provider did not supply an email address');
     return this.completeLogin({
       auth_user_id: data.user.id,
-      email: data.user.email ?? '',
+      email,
       display_name: extractDisplayName(data.user.user_metadata),
     });
   }
 
-  async logout(refresh_token_plaintext: string): Promise<void> {
-    if (refresh_token_plaintext.length === 0) return;
+  async logout(refresh_token_plaintext: string): Promise<{ user_id: string | null }> {
+    if (refresh_token_plaintext.length === 0) return { user_id: null };
     const hash = sha256Hex(refresh_token_plaintext);
-    await this.repository.markRefreshTokenRevoked(hash);
+    const { user_id } = await this.repository.markRefreshTokenRevoked(hash);
+    if (user_id !== null) {
+      try {
+        await this.supabase.auth.admin.signOut(user_id, 'global');
+      } catch {
+        // best-effort: DB revocation succeeded; Supabase session will expire naturally
+      }
+    }
+    return { user_id };
+  }
+
+  async refreshToken(plaintext: string): Promise<RefreshResult> {
+    if (plaintext.length === 0) throw new UnauthorizedError('Refresh token missing');
+
+    const hash = sha256Hex(plaintext);
+    const token = await this.repository.findRefreshTokenByHash(hash);
+    if (!token) throw new UnauthorizedError('Invalid or expired refresh token');
+
+    if (token.replaced_by !== null) {
+      try {
+        await this.repository.revokeAllByFamilyId(token.family_id);
+      } catch {
+        // best-effort: proceed to signOut regardless of DB failure
+      }
+      try {
+        await this.supabase.auth.admin.signOut(token.user_id, 'global');
+      } catch {
+        // best-effort
+      }
+      return { type: 'reuse_detected', user_id: token.user_id };
+    }
+
+    const newPlaintext = randomBytes(32).toString('base64url');
+    const newToken = await this.repository.insertRefreshToken({
+      user_id: token.user_id,
+      family_id: token.family_id,
+      token_hash: sha256Hex(newPlaintext),
+      expires_at: new Date(Date.now() + REFRESH_TOKEN_TTL_SECONDS * 1000),
+    });
+    const consumed = await this.repository.consumeRefreshToken(token.id, newToken.id);
+    if (!consumed) {
+      throw new UnauthorizedError('Concurrent token rotation detected — please retry');
+    }
+
+    const user = await this.repository.findUserByAuthId(token.user_id);
+    if (!user || !user.current_household_id) {
+      throw new UnauthorizedError('Account not found or household missing — please log in again');
+    }
+
+    const access_token = this.jwt.sign(
+      { sub: user.id, hh: user.current_household_id, role: user.role },
+      { expiresIn: `${ACCESS_TOKEN_TTL_SECONDS}s` },
+    );
+
+    return {
+      type: 'rotated',
+      access_token,
+      expires_in: ACCESS_TOKEN_TTL_SECONDS,
+      user_id: user.id,
+      refresh_token_plaintext: newPlaintext,
+      refresh_token_max_age_seconds: REFRESH_TOKEN_TTL_SECONDS,
+    };
   }
 
   private async completeLogin(input: {
@@ -64,6 +143,9 @@ export class AuthService {
       });
     }
 
+    if (!user.current_household_id) {
+      throw new Error(`User ${user.id} has no household after login — invariant violated`);
+    }
     const access_token = this.jwt.sign(
       { sub: user.id, hh: user.current_household_id, role: user.role },
       { expiresIn: `${ACCESS_TOKEN_TTL_SECONDS}s` },
