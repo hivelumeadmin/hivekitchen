@@ -4,6 +4,6 @@
     "module": "ESNext",
     "target": "ES2022"
   },
-  "include": ["src/**/*"],
+  "include": ["src/**/*", "contrast-audit.test.ts"],
   "exclude": ["node_modules", "dist"]
 }
