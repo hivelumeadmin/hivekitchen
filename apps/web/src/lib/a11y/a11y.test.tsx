@@ -30,6 +30,12 @@ function makeMockMql(initialMatches: boolean) {
 type MockMql = ReturnType<typeof makeMockMql>;
 
 function installMatchMediaSpy(mql: MockMql): void {
+  if (!window.matchMedia) {
+    Object.defineProperty(window, 'matchMedia', {
+      configurable: true,
+      value: () => undefined,
+    });
+  }
   vi.spyOn(window, 'matchMedia').mockImplementation(
     () => mql as unknown as MediaQueryList,
   );
