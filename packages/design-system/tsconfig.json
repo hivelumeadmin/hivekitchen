@@ -2,7 +2,8 @@
   "extends": "@hivekitchen/tsconfig/base.json",
   "compilerOptions": {
     "module": "ESNext",
-    "target": "ES2022"
+    "target": "ES2022",
+    "noEmit": true
   },
   "include": ["src/**/*", "contrast-audit.test.ts"],
   "exclude": ["node_modules", "dist"]

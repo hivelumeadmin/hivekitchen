@@ -10,3 +10,10 @@ dist/
 .DS_Store
 .turbo/
 .lighthouseci/
+
+# Defensive: stray TS build output that should never land in src/.
+# Real build artifacts go to dist/ (already ignored above).
+packages/**/src/**/*.js
+packages/**/src/**/*.js.map
+packages/**/src/**/*.d.ts
+packages/**/src/**/*.d.ts.map
