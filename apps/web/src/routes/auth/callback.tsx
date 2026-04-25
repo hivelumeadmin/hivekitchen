@@ -13,21 +13,27 @@ export default function AuthCallbackPage() {
   useEffect(() => {
     const code = params.get('code');
     const providerParam = params.get('provider');
-    const provider: OAuthProvider = providerParam === 'apple' ? 'apple' : 'google';
 
-    if (code === null) {
+    if (code === null || (providerParam !== 'google' && providerParam !== 'apple')) {
       navigate('/auth/login');
       return;
     }
 
+    const provider: OAuthProvider = providerParam;
+
     void (async () => {
-      const result = await hkFetch<LoginResponse>('/v1/auth/callback', {
-        method: 'POST',
-        body: { provider, code },
-      });
-      useAuthStore.getState().setSession(result.access_token, result.user);
-      const next = params.get('next');
-      navigate(result.is_first_login ? '/onboarding' : (next ?? '/app'));
+      try {
+        const result = await hkFetch<LoginResponse>('/v1/auth/callback', {
+          method: 'POST',
+          body: { provider, code },
+        });
+        useAuthStore.getState().setSession(result.access_token, result.user);
+        const next = params.get('next');
+        const destination = next && next.startsWith('/') ? next : '/app';
+        navigate(result.is_first_login ? '/onboarding' : destination);
+      } catch {
+        navigate('/auth/login');
+      }
     })();
   }, [params, navigate]);
 

@@ -1,6 +1,6 @@
 # Story 2.1: Supabase Auth — email/password + Google/Apple OAuth
 
-Status: review
+Status: done
 
 <!-- Note: Validation is optional. Run validate-create-story for quality check before dev-story. -->
 
@@ -108,6 +108,26 @@ So that **I can begin onboarding without having to create yet another account fr
   - [x] `pnpm typecheck && pnpm lint && pnpm test && pnpm contracts:check && pnpm tools:check` all green
   - [x] `sprint-status.yaml` updated to `2-1: review`, `last_updated: 2026-04-25`
   - [x] Story Status set to `review`
+
+### Review Findings (Chunk 1: Contracts + Types — 2026-04-25)
+
+- [x] [Review][Patch] `AuthUserSchema.email` missing `.max(254)` — fixed: added `.max(254)` to match `LoginRequestSchema`. [`packages/contracts/src/auth.ts`]
+- [x] [Review][Patch] `LoginResponseSchema.access_token` unconstrained `z.string()` — fixed: added `.min(1)` guard. [`packages/contracts/src/auth.ts`]
+- [x] [Review][Patch] `OAuthProviderSchema` exported without `// @unused-by-design` annotation — fixed: annotation added. [`packages/contracts/src/auth.ts`]
+### Review Findings (Chunk 2: API Core — 2026-04-25)
+
+- [x] [Review][Patch] `extractZodError` synthesizes `as unknown as ZodError` — the Fastify-validation-array branch returns a plain object cast to `ZodError`; breaks `instanceof` checks, `.flatten()`/`.format()` calls, and any future type-narrowed consumer. Change return type to a local `ZodIssueSummary` interface. [`apps/api/src/app.ts`]
+- [x] [Review][Defer] `@fastify/cookie` registered with `{ secret: env.JWT_SECRET }` but no cookie is ever signed — `signed: true` is absent from every `setCookie` call, making the secret dead config and creating misleading coupling with JWT_SECRET. Clarify intent before Story 2.2 adds cookie rotation. [`apps/api/src/app.ts`] — deferred, pre-existing design decision
+- [x] [Review][Defer] `extractZodError` `.validation` array guard is too broad — any error with an array `validation` property is misclassified as 400; add a narrowing check (e.g., `statusCode === 400`) to restrict to Fastify validation errors only. [`apps/api/src/app.ts`] — deferred, low risk in current small codebase
+- [x] [Review][Defer] OAuth env vars (`SUPABASE_AUTH_EXTERNAL_*`, `SUPABASE_ANON_KEY`, `WEB_BASE_URL`) validated in env.ts but never consumed by any API source file — these are consumed by Supabase CLI via config.toml env substitution, not by the API. Consider moving them to a separate validation or documenting clearly. [`apps/api/src/common/env.ts`] — deferred, by-spec but architecturally ambiguous
+- [x] [Review][Defer] `WEB_BASE_URL: z.string().url().default('http://localhost:5173')` — missing value in production silently falls back to localhost; remove default, make required with no fallback. [`apps/api/src/common/env.ts`] — deferred, production hardening
+- [x] [Review][Defer] `DomainError.detail` exposes `this.message` verbatim on the wire — future subclasses risk leaking raw internal error details; add a sanitisation point or document the invariant that callers must pass safe messages. [`apps/api/src/common/errors.ts`] — deferred, pre-existing design choice
+- [x] [Review][Defer] No `setNotFoundHandler` for Problem+JSON — unmatched routes return Fastify's default `{"error":"Not Found"}` shape instead of `application/problem+json`. [`apps/api/src/app.ts`] — deferred, consistency gap
+- [x] [Review][Defer] Concurrent first-login race — `findUserByAuthId` and `createHouseholdAndUser` are two separate async calls with no app-level guard; simultaneous first-logins for the same `auth_user_id` both see `user === null` and both attempt the RPC, producing a raw Postgres 23505 error instead of a handled `ConflictError`. — flagged here, to be addressed in service chunk review. [`apps/api/src/modules/auth/auth.service.ts`] — deferred to service chunk
+
+- [x] [Review][Defer] `callback.tsx` provider coercion (`?? 'google'`) fires before schema validation, masking invalid provider values — flagged here, to be addressed in web chunk review. [`apps/web/src/routes/auth/callback.tsx`] — deferred to web chunk
+- [x] [Review][Defer] `next` query param reflected into `navigate()` with no allowlist — open redirect risk; flagged here, to be addressed in web chunk review. [`apps/web/src/routes/auth/callback.tsx`] — deferred to web chunk
+- [x] [Review][Defer] Apple OAuth can return empty-string email (`data.user.email ?? ''`), which creates an invalid `users` row and causes a 500 when serialized through `AuthUserSchema` — flagged here, to be addressed in service chunk review. [`apps/api/src/modules/auth/auth.service.ts`] — deferred to service chunk
 
 ---
 
@@ -975,3 +995,47 @@ claude-opus-4-7 (Claude Opus 4.7, 1M context)
 |---|---|---|
 | 2026-04-25 | 2.1 | Story created via create-story workflow. Status → ready-for-dev. |
 | 2026-04-25 | 2.1 | Story implemented end-to-end. Status → review. 9 ACs satisfied; 11 tasks complete (live `supabase db reset` + `pnpm dev:api` smoke deferred — no Docker on dev machine). |
+| 2026-04-25 | 2.1 | Code review completed (3-layer: Blind Hunter + Edge Case Hunter + Acceptance Auditor). Status → in-progress. 2 decision-needed, 19 patch, 8 deferred, 3 dismissed. |
+| 2026-04-25 | 2.1 | All 19 review patches applied. New migration `20260501120500` (TOCTOU fix). Status → done. |
+
+---
+
+## Review Findings
+
+### Decision-Needed
+
+- [x] [Review][Decision → Patch] **Cookie signing wired but never activated** — Decision: B (plaintext cookies). Remove `secret` from `@fastify/cookie` registration; hash-in-DB provides the security boundary. [`apps/api/src/app.ts:73`]
+- [x] [Review][Decision → Defer] **OAuth PKCE state not validated server-side** — Deferred to a hardening epic before public launch. Short-lived single-use codes provide practical protection for beta; explicit server-side state nonce will be added pre-launch. [`apps/api/src/modules/auth/auth.service.ts`]
+
+### Patches
+
+- [x] [Review][Patch] **Cookie path mismatch — logout handler never receives the refresh cookie** [`apps/api/src/modules/auth/auth.routes.ts:56,87`] — Cookie is set with `path: '/v1/auth/refresh'`; logout is at `/v1/auth/logout`. Per RFC 6265, the browser sends a cookie only when the request path is prefixed by the cookie's path. Logout will always read an empty token string, making DB revocation a no-op every time. Fix: change cookie path to `/v1/auth` to cover both `/v1/auth/refresh` and `/v1/auth/logout`.
+- [x] [Review][Patch] **`logout` does not call `supabase.auth.signOut` (AC7 violation)** [`apps/api/src/modules/auth/auth.service.ts:46-50`] — AC7 requires `fastify.supabase.auth.signOut({ scope: 'global' })`. The Supabase session remains active after logout until its own TTL expires.
+- [x] [Review][Patch] **`account.created` audit never emitted (AC6 violation)** [`apps/api/src/modules/auth/auth.service.ts:57-70`] — AC6 requires an `account.created` audit write when AC5 creates household + user rows. No such write exists anywhere in the auth module.
+- [x] [Review][Patch] **Logout audit context missing `user_id` (AC6 violation)** [`apps/api/src/modules/auth/auth.routes.ts:59-63`] — The logout `auditContext` sets `event_type: 'auth.logout'` and `request_id` but omits `user_id`. The audit record is blind to which user logged out.
+- [x] [Review][Patch] **`clearSession` never called on logout (AC4 gap)** [`apps/web/src/stores/auth.store.ts`] — `auth.store.ts` defines `clearSession()` but no logout UI or logout API response handler calls it. The access token persists in Zustand memory after a successful logout until the next page reload.
+- [x] [Review][Patch] **TOCTOU race on first login — concurrent requests hit primary-key violation** [`apps/api/src/modules/auth/auth.service.ts:57-64`] — `findUserByAuthId` → `createHouseholdAndUser` is two separate round-trips. Two simultaneous first-login requests for the same `auth_user_id` both observe `null`, both call the RPC, and the second hits a PK violation on `users.id`, surfacing as an unhandled 500. Fix: add `ON CONFLICT (id) DO NOTHING` + fallback `SELECT` in the `create_household_and_user` Postgres function (`supabase/migrations/20260501120500_create_household_and_user_idempotent.sql`).
+- [x] [Review][Patch] **OAuth user with no email inserts empty string into NOT NULL UNIQUE column** [`apps/api/src/modules/auth/auth.service.ts:41`] — `email: data.user.email ?? ''` for OAuth users without an email (Apple "hide my email", some Google workspace flows). The first such user succeeds; every subsequent one fails with a unique-constraint violation on the empty string. Fix: throw `UnauthorizedError` if `data.user.email` is empty or absent.
+- [x] [Review][Patch] **JWT `hh` claim emitted as `null` when `current_household_id` is null** [`apps/api/src/modules/auth/auth.service.ts:68`] — `UserRow.current_household_id` is `string | null`. The JWT is signed with `{ hh: user.current_household_id }` without a null guard. Downstream middleware that reads `hh` as a UUID will receive `null`. Fix: throw or assert non-null before signing — `completeLogin` always sets `current_household_id`, but the guard makes the invariant explicit.
+- [x] [Review][Patch] **Open redirect via unvalidated `?next` param in callback.tsx** [`apps/web/src/routes/auth/callback.tsx:29`] — `navigate(params.get('next') ?? '/app')` accepts absolute URLs. A crafted callback `?next=https://evil.com` redirects an authenticated user off-domain after a successful OAuth exchange. Fix: validate that `next` starts with `/` before use.
+- [x] [Review][Patch] **`callback.tsx` async IIFE swallows errors — indefinite spinner on failure** [`apps/web/src/routes/auth/callback.tsx:23-31`] — The `void (async () => { ... })()` IIFE has no `try/catch`. Any `hkFetch` failure (network error, 401, expired code) is a swallowed rejection; the user sees "Signing you in…" indefinitely with no recovery path. Fix: wrap in `try/catch` and `navigate('/auth/login')` on error.
+- [x] [Review][Patch] **`login.tsx` `onSubmit` swallows API errors — no user feedback on failure** [`apps/web/src/routes/auth/login.tsx:19-23`] — `onSubmit` is an `async` function with no `try/catch`. On a 401 or network error the form silently re-enables with no error message displayed.
+- [x] [Review][Patch] **Login page does not redirect authenticated users to `/app` (AC1 violation)** [`apps/web/src/routes/auth/login.tsx`] — AC1 requires "loaded users are redirected to `/app`." No auth check or redirect exists in `LoginPage`.
+- [x] [Review][Patch] **Login form ignores `?next` query param on email/password submit (AC1/AC5 violation)** [`apps/web/src/routes/auth/login.tsx:19-22`] — `onSubmit` navigates to `/onboarding` or `/app` unconditionally. `useSearchParams` is not imported; `?next` is never read.
+- [x] [Review][Patch] **All four OAuth credentials required at API startup but never used in application code** [`apps/api/src/common/env.ts:17-20`] — `z.string().min(1)` (not `.optional()`) on all four OAuth env vars crashes the API on startup in any environment where OAuth is not configured (CI, staging without OAuth). These values belong only to `supabase/config.toml`; the API itself never reads them. Fix: change to `.optional()`.
+- [x] [Review][Patch] **`extractZodError` synthesizes a fake `ZodError` via double-cast** [`apps/api/src/app.ts:139-149`] — The `pseudo` object is cast to `ZodError` via `as unknown as ZodError` but has none of the real prototype methods. Any future caller that checks `instanceof ZodError` or calls `.flatten()` on it will throw. Fix: return a plain `{ issues: [...] }` object and narrow the error handler path to match that shape directly.
+- [x] [Review][Patch] **JWT secret and cookie signing secret are the same key — key conflation** [`apps/api/src/app.ts:73,78`] — Resolved via D1: `@fastify/cookie` registered with no secret at all; hash-in-DB is the security boundary. No separate `COOKIE_SECRET` needed since cookies are not signed.
+- [x] [Review][Patch] **`providerParam` silently defaults to `'google'` for any non-`'apple'` value** [`apps/web/src/routes/auth/callback.tsx:15`] — Includes `null`, typos, or `'Google'`. Audit log records wrong provider; future provider-specific branching will silently misroute. Fix: derive provider from an explicit enum check and navigate to login on invalid values.
+- [x] [Review][Patch] **`markRefreshTokenRevoked` silent no-op on missing token** [`apps/api/src/modules/auth/auth.repository.ts:65-71`] — PostgREST returns success with 0 rows when the token hash is not found. Fix: `markRefreshTokenRevoked` now returns `{ user_id: string | null }`; service checks the value before calling `admin.signOut`, making the no-token case observable.
+- [x] [Review][Patch] **`hkFetch` sends `Content-Type: application/json` on every method including GET** [`apps/web/src/lib/fetch.ts:21`] — Some proxies/WAFs reject GETs with a body content-type header. Fix: set the header only when `init.body !== undefined`.
+
+### Deferred
+
+- [x] [Review][Defer] **No `/v1/auth/refresh` endpoint** — Story 2.2 scope; access tokens expire in 15 min with no silent-refresh path until then. deferred, Story 2.2
+- [x] [Review][Defer] **Expired refresh tokens not checked in queries** — expiry check belongs in the refresh endpoint, which doesn't exist yet. deferred, Story 2.2
+- [x] [Review][Defer] **No TTL cleanup job for `refresh_tokens` table** — table grows unbounded; a nightly cleanup job belongs in a future ops story. deferred, future ops
+- [x] [Review][Defer] **Access token in Zustand — XSS readable** — accepted trade-off per AC4 spec; no localStorage/sessionStorage used. deferred, accepted per spec
+- [x] [Review][Defer] **`auth.store` not persisted across page reloads** — by design per AC4; silent refresh via refresh token is Story 2.2. deferred, Story 2.2
+- [x] [Review][Defer] **`authRoutes` instantiates service + repo directly inside plugin** — works correctly for a once-registered plugin; refactor to `fastify.decorate` pattern in a future refactor pass. deferred, style
+- [x] [Review][Defer] **New `family_id` per login — token rotation chain orphaned** — Story 2.2 owns reuse-detection logic; family_id linkage across sessions is a 2.2 concern. deferred, Story 2.2
+- [x] [Review][Defer] **`insertRefreshToken` is a separate call after the RPC — partial-write window** — low-probability; existing error handler prevents the response from being sent if the insert fails. deferred, low-probability

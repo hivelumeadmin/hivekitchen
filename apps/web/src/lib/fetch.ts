@@ -18,7 +18,8 @@ export class HkApiError extends Error {
 
 export async function hkFetch<T = unknown>(path: string, init: HkFetchInit): Promise<T> {
   const accessToken = useAuthStore.getState().accessToken;
-  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  const headers: Record<string, string> = {};
+  if (init.body !== undefined) headers['Content-Type'] = 'application/json';
   if (accessToken !== null) headers['Authorization'] = `Bearer ${accessToken}`;
 
   const res = await fetch(`${API_BASE_URL}${path}`, {

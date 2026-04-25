@@ -12,6 +12,8 @@ import { isDomainError } from './common/errors.js';
 import { otelPlugin } from './plugins/otel.plugin.js';
 import { requestIdPlugin } from './middleware/request-id.hook.js';
 import { auditHook } from './middleware/audit.hook.js';
+import { authenticateHook } from './middleware/authenticate.hook.js';
+import { householdScopeHook } from './middleware/household-scope.hook.js';
 import { vaultPlugin } from './plugins/vault.plugin.js';
 import { supabasePlugin } from './plugins/supabase.plugin.js';
 import { openaiPlugin } from './plugins/openai.plugin.js';
@@ -75,11 +77,14 @@ export async function buildApp(opts: BuildAppOptions) {
   await app.register(auditHook);
   await app.register(auditPartitionRotationPlugin);
 
-  await app.register(cookie, { secret: env.JWT_SECRET });
+  await app.register(cookie);
   await app.register(jwt, {
     secret: env.JWT_SECRET,
     sign: { expiresIn: '15m' },
   });
+
+  await app.register(authenticateHook);
+  await app.register(householdScopeHook);
 
   await app.register(sensible);
 
@@ -101,15 +106,13 @@ export async function buildApp(opts: BuildAppOptions) {
       return;
     }
 
-    const zodError = extractZodError(err);
-    if (zodError !== null) {
+    const zodIssues = extractZodIssues(err);
+    if (zodIssues !== null) {
       void reply.status(400).type('application/problem+json').send({
         type: '/errors/validation',
         status: 400,
         title: 'Validation failed',
-        detail: zodError.issues
-          .map((i) => `${i.path.join('.') || '(root)'}: ${i.message}`)
-          .join('; '),
+        detail: zodIssues.map((i) => `${i.path.join('.') || '(root)'}: ${i.message}`).join('; '),
         instance: request.id,
       });
       return;
@@ -131,23 +134,25 @@ export async function buildApp(opts: BuildAppOptions) {
   return app;
 }
 
-function extractZodError(err: unknown): ZodError | null {
-  if (err instanceof ZodError) return err;
+interface ZodIssueShape {
+  path: string[];
+  message: string;
+}
+
+function extractZodIssues(err: unknown): ZodIssueShape[] | null {
+  if (err instanceof ZodError) {
+    return err.issues.map((i) => ({ path: i.path.map(String), message: i.message }));
+  }
   const obj = err as { cause?: unknown; validation?: unknown };
-  if (obj.cause instanceof ZodError) return obj.cause;
-  // fastify-type-provider-zod v4 attaches the Zod error under .validation.
-  if (Array.isArray(obj.validation)) {
-    const first = obj.validation[0] as { instancePath?: string } | undefined;
-    if (first && typeof first === 'object') {
-      // Synthesize a ZodError-like shape from Fastify's validation entries.
-      const pseudo = {
-        issues: (obj.validation as Array<{ message?: string; instancePath?: string }>).map((v) => ({
-          path: v.instancePath ? v.instancePath.split('/').filter(Boolean) : [],
-          message: v.message ?? 'invalid',
-        })),
-      } as unknown as ZodError;
-      return pseudo;
-    }
+  if (obj.cause instanceof ZodError) {
+    return obj.cause.issues.map((i) => ({ path: i.path.map(String), message: i.message }));
+  }
+  // fastify-type-provider-zod v4 attaches validation errors under .validation.
+  if (Array.isArray(obj.validation) && obj.validation.length > 0) {
+    return (obj.validation as Array<{ message?: string; instancePath?: string }>).map((v) => ({
+      path: v.instancePath ? v.instancePath.split('/').filter(Boolean) : [],
+      message: v.message ?? 'invalid',
+    }));
   }
   return null;
 }
