@@ -19,7 +19,9 @@
   },
   "dependencies": {
     "@elevenlabs/elevenlabs-js": "^2.0.0",
+    "@fastify/cookie": "^11",
     "@fastify/cors": "^11.2.0",
+    "@fastify/jwt": "^9",
     "@fastify/sensible": "^6.0.0",
     "@hivekitchen/contracts": "workspace:*",
     "@hivekitchen/types": "workspace:*",

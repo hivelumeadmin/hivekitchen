@@ -61,7 +61,14 @@
       "Bash(gh pr *)",
       "Bash(exit 0)",
       "Bash(npm ls *)",
-      "Bash(npm list *)"
+      "Bash(npm list *)",
+      "Bash(xargs cat *)",
+      "Bash(npx tsc *)",
+      "Bash(python3 -c \"import json,sys; d=json.load\\(sys.stdin\\); print\\(json.dumps\\({'scripts': d.get\\('scripts',{}\\), 'devDependencies': d.get\\('devDependencies',{}\\)}, indent=2\\)\\)\")",
+      "Bash(npx supabase *)",
+      "Bash(SUPABASE_AUTH_EXTERNAL_GOOGLE_CLIENT_ID=placeholder SUPABASE_AUTH_EXTERNAL_GOOGLE_SECRET=placeholder SUPABASE_AUTH_EXTERNAL_APPLE_CLIENT_ID=placeholder SUPABASE_AUTH_EXTERNAL_APPLE_SECRET=placeholder npx supabase start)",
+      "Bash(SUPABASE_AUTH_EXTERNAL_GOOGLE_CLIENT_ID=placeholder SUPABASE_AUTH_EXTERNAL_GOOGLE_SECRET=placeholder SUPABASE_AUTH_EXTERNAL_APPLE_CLIENT_ID=placeholder SUPABASE_AUTH_EXTERNAL_APPLE_SECRET=placeholder npx supabase db reset)",
+      "Read(//c/Users/menon/AppData/Local/Temp/claude/F--development-hivekitchen/09a98f11-828f-4527-8bc6-be245ec6e225/tasks/**)"
     ]
   }
 }

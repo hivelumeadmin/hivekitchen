@@ -1,6 +1,8 @@
 # Supabase
 .branches
 .temp
+# Seed file may contain test fixtures; never commit. Story 1.14 deferred-item.
+seed.sql
 
 # dotenvx
 .env.keys
