@@ -11,9 +11,9 @@ import { ZodError } from 'zod';
 import { authRoutes } from './auth.routes.js';
 import { isDomainError } from '../../common/errors.js';
 
-const SAMPLE_USER_ID = '11111111-1111-1111-1111-111111111111';
-const SAMPLE_HOUSEHOLD_ID = '22222222-2222-2222-2222-222222222222';
-const SAMPLE_REFRESH_ID = '33333333-3333-3333-3333-333333333333';
+const SAMPLE_USER_ID = '11111111-1111-4111-8111-111111111111';
+const SAMPLE_HOUSEHOLD_ID = '22222222-2222-4222-8222-222222222222';
+const SAMPLE_REFRESH_ID = '33333333-3333-4333-8333-333333333333';
 
 interface SupabaseAuthMock {
   signInWithPassword: ReturnType<typeof vi.fn>;
@@ -234,7 +234,7 @@ describe('POST /v1/auth/login', () => {
     const cookieStr = Array.isArray(setCookie) ? setCookie[0] ?? '' : (setCookie ?? '');
     expect(cookieStr).toMatch(/refresh_token=[A-Za-z0-9_-]{43};/);
     expect(cookieStr).toMatch(/Max-Age=2592000/);
-    expect(cookieStr).toMatch(/Path=\/v1\/auth[;,\s]/);
+    expect(cookieStr).toMatch(/Path=\/v1\/auth\/refresh[;,\s]/);
     expect(cookieStr).toMatch(/HttpOnly/);
     expect(cookieStr).toMatch(/SameSite=Lax/);
   });
@@ -382,7 +382,7 @@ describe('POST /v1/auth/refresh', () => {
     const setCookie = res.headers['set-cookie'];
     const cookieStr = Array.isArray(setCookie) ? setCookie[0] ?? '' : (setCookie ?? '');
     expect(cookieStr).toMatch(/refresh_token=[A-Za-z0-9_-]{43};/);
-    expect(cookieStr).toMatch(/Path=\/v1\/auth[;,\s]/);
+    expect(cookieStr).toMatch(/Path=\/v1\/auth\/refresh[;,\s]/);
     expect(cookieStr).toMatch(/HttpOnly/);
   });
 

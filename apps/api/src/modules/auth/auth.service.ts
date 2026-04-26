@@ -44,7 +44,7 @@ export class AuthService {
     if (error || !data.user) throw new UnauthorizedError('Invalid credentials');
     return this.completeLogin({
       auth_user_id: data.user.id,
-      email: data.user.email ?? input.email,
+      email: data.user.email || input.email,
       display_name: extractDisplayName(data.user.user_metadata),
     });
   }
@@ -105,6 +105,10 @@ export class AuthService {
     });
     const consumed = await this.repository.consumeRefreshToken(token.id, newToken.id);
     if (!consumed) {
+      // A concurrent request already consumed the original token. Revoke only the orphaned new row
+      // (client never received its plaintext) to avoid accumulating valid-but-unreachable tokens.
+      // Do not revoke the whole family — the winning concurrent request's new token is legitimate.
+      await this.repository.markRefreshTokenRevoked(sha256Hex(newPlaintext));
       throw new UnauthorizedError('Concurrent token rotation detected — please retry');
     }
 
@@ -144,7 +148,7 @@ export class AuthService {
     }
 
     if (!user.current_household_id) {
-      throw new Error(`User ${user.id} has no household after login — invariant violated`);
+      throw new UnauthorizedError('Session invalid — please log in again');
     }
     const access_token = this.jwt.sign(
       { sub: user.id, hh: user.current_household_id, role: user.role },

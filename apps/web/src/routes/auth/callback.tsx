@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useScope } from '@hivekitchen/ui';
 import type { LoginResponse, OAuthProvider } from '@hivekitchen/types';
@@ -9,8 +9,12 @@ export default function AuthCallbackPage() {
   useScope('app-scope');
   const navigate = useNavigate();
   const [params] = useSearchParams();
+  const didRun = useRef(false);
 
   useEffect(() => {
+    if (didRun.current) return;
+    didRun.current = true;
+
     const code = params.get('code');
     const providerParam = params.get('provider');
 
@@ -29,7 +33,7 @@ export default function AuthCallbackPage() {
         });
         useAuthStore.getState().setSession(result.access_token, result.user);
         const next = params.get('next');
-        const destination = next && next.startsWith('/') ? next : '/app';
+        const destination = next && /^\/[^/]/.test(next) ? next : '/app';
         navigate(result.is_first_login ? '/onboarding' : destination);
       } catch {
         navigate('/auth/login');
