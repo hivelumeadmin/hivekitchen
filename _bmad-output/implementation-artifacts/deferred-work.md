@@ -211,6 +211,17 @@
 - `z.discriminatedUnion()` and `ZodError.issues` Zod 4 compatibility not explicitly documented — implicitly verified by passing typecheck and tests.
 - pnpm patch for `fastify-type-provider-zod` fixes a runtime bug not covered by AC3 (typecheck only); no integration test exercises a body-validation-failure → patched `createValidationError` path end-to-end. [`patches/fastify-type-provider-zod@4.0.2.patch`]
 
+## Deferred from: code review of 2-4-account-profile-management-recovery (2026-04-26)
+
+- No rate limiting on `POST /v1/auth/password-reset` — free email-bombing vector against any address; infra/middleware concern outside story scope. [`apps/api/src/modules/users/user.routes.ts`]
+- `preferred_language` accepts any 2–10 char string with no locale validation — garbage values stored and returned silently. Locale validation is a future story concern. [`packages/contracts/src/users.ts`]
+- `fastify-plugin` (`fp`) scoping means `/v1/auth/password-reset` auth-skip depends on global SKIP_PREFIXES — footgun if auth is ever moved to a plugin-scoped preHandler. [`apps/api/src/modules/users/user.routes.ts`]
+- `.single()` in `updateUserProfile` throws PGRST116 if the user row is deleted between auth check and DB update — unmapped raw error, extremely unlikely race. [`apps/api/src/modules/users/user.repository.ts`]
+- `updateUser` Zustand action silently no-ops when `state.user` is null (e.g., concurrent logout during a slow PATCH) — acceptable silent behaviour for this race. [`apps/web/src/stores/auth.store.ts`]
+- `/v1/auth/` blanket `SKIP_PREFIXES` entry is an implicit convention — any future route added under `/v1/auth/` is unauthenticated by default without any explicit marker. Architectural doc concern. [`apps/api/src/middleware/authenticate.hook.ts`]
+- Supabase mock chain in tests hardcodes method-chaining order — column name changes or query restructuring pass tests undetected. Accepted test-mock pattern in codebase. [`apps/api/src/modules/users/user.routes.test.ts`]
+- Password-reset test does not assert that no auth token is required — nice-to-have assertion to confirm public-route intent. [`apps/api/src/modules/users/user.routes.test.ts`]
+
 ## Deferred from: implementation of 2-3-secondary-caregiver-invite-primitive (2026-04-26)
 
 - Pre-existing baseline `pnpm typecheck` failure on `main` from Dependabot bump #21 (`stripe` 16.12.0 → 22.1.0): `apps/api/src/plugins/stripe.plugin.ts:6` sets `apiVersion: '2026-04-22.dahlia'` but the installed `stripe@22.1.0` types pin to `'2024-06-20'`. Not introduced by Story 2.3; confirmed by stash-and-typecheck against pristine main. Blocks the Story 2.3 exit gate `pnpm typecheck`. Suggested fix: bump `stripe` SDK to a version that recognizes the configured apiVersion, OR cast through `Stripe.LatestApiVersion`. [`apps/api/src/plugins/stripe.plugin.ts:6`]

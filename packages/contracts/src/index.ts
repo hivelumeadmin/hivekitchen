@@ -7,3 +7,4 @@ export * from './events.js';
 export * from './memory.js';
 export * from './presence.js';
 export * from './errors.js';
+export * from './users.js';

@@ -28,6 +28,7 @@ import { healthRoutes } from './modules/internal/health.routes.js';
 import { eventsRoutes } from './routes/v1/events/events.routes.js';
 import { authRoutes } from './modules/auth/auth.routes.js';
 import { inviteRoutes } from './modules/auth/invite.routes.js';
+import { userRoutes } from './modules/users/user.routes.js';
 
 const REQUEST_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -132,6 +133,7 @@ export async function buildApp(opts: BuildAppOptions) {
   await app.register(eventsRoutes);
   await app.register(authRoutes);
   await app.register(inviteRoutes);
+  await app.register(userRoutes);
 
   return app;
 }

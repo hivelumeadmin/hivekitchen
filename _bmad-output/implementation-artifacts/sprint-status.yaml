@@ -1,5 +1,5 @@
 # generated: 2026-04-23
-# last_updated: 2026-04-26 (Story 2-4 ready-for-dev)
+# last_updated: 2026-04-26 (Story 2-4 done)
 # project: hivekitchen
 # project_key: NOKEY
 # tracking_system: file-system
@@ -35,7 +35,7 @@
 # - Dev moves story to 'review', then runs code-review (fresh context, different LLM recommended)
 
 generated: 2026-04-23
-last_updated: 2026-04-26 (Story 2-4 ready-for-dev)
+last_updated: 2026-04-26 (Story 2-4 done)
 project: hivekitchen
 project_key: NOKEY
 tracking_system: file-system
@@ -67,7 +67,7 @@ development_status:
   2-1-supabase-auth-email-password-google-apple-oauth: done
   2-2-4-role-rbac-prehandler-jwt-rotation-on-use: done
   2-3-secondary-caregiver-invite-primitive-signed-jwt-single-use-jti-14-day-ttl: done
-  2-4-account-profile-management-recovery: ready-for-dev
+  2-4-account-profile-management-recovery: done
   2-5-notification-preferences-cultural-language-preference: backlog
   2-6-voice-first-onboarding-interview-via-elevenlabs-three-signal-questions: backlog
   2-7-text-equivalent-onboarding-path: backlog

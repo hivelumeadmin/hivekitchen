@@ -7,6 +7,7 @@ import AuthCallbackPage from './routes/auth/callback.js';
 import InviteRedeemPage from './routes/invite/$token.js';
 import AppHomePage from './routes/(app)/index.js';
 import OnboardingPage from './routes/(app)/onboarding.js';
+import AccountPage from './routes/(app)/account.js';
 
 const router = createBrowserRouter([
   { path: '/', element: <Navigate to="/auth/login" replace /> },
@@ -14,6 +15,7 @@ const router = createBrowserRouter([
   { path: '/auth/callback', element: <AuthCallbackPage /> },
   { path: '/invite/:token', element: <InviteRedeemPage /> },
   { path: '/app', element: <AppHomePage /> },
+  { path: '/account', element: <AccountPage /> },
   { path: '/onboarding', element: <OnboardingPage /> },
 ]);
 

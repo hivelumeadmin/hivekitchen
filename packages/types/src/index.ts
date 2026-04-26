@@ -35,6 +35,9 @@ import {
   ErrorCode,
   FieldError,
   ApiError,
+  UserProfileSchema,
+  UpdateProfileRequestSchema,
+  PasswordResetRequestSchema,
 } from '@hivekitchen/contracts';
 
 // Auth
@@ -91,3 +94,8 @@ export type PresenceEvent = z.infer<typeof PresenceEvent>;
 export type ErrorCode = z.infer<typeof ErrorCode>;
 export type FieldError = z.infer<typeof FieldError>;
 export type ApiError = z.infer<typeof ApiError>;
+
+// Users (Story 2.4 — profile management)
+export type UserProfile = z.infer<typeof UserProfileSchema>;
+export type UpdateProfileRequest = z.infer<typeof UpdateProfileRequestSchema>;
+export type PasswordResetRequest = z.infer<typeof PasswordResetRequestSchema>;
