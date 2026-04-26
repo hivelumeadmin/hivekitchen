@@ -129,6 +129,56 @@ So that **I can begin onboarding without having to create yet another account fr
 - [x] [Review][Defer] `next` query param reflected into `navigate()` with no allowlist — open redirect risk; flagged here, to be addressed in web chunk review. [`apps/web/src/routes/auth/callback.tsx`] — deferred to web chunk
 - [x] [Review][Defer] Apple OAuth can return empty-string email (`data.user.email ?? ''`), which creates an invalid `users` row and causes a 500 when serialized through `AuthUserSchema` — flagged here, to be addressed in service chunk review. [`apps/api/src/modules/auth/auth.service.ts`] — deferred to service chunk
 
+### Review Findings (Chunk 3: Supabase Config + Migrations — 2026-04-25)
+
+- [x] [Review][Patch] RLS UPDATE policies missing `WITH CHECK` — dropped both `users_self_update_policy` and `households_member_update_policy` (all mutations go through service-role which bypasses RLS; granting UPDATE to authenticated role without WITH CHECK allows role self-escalation). [`supabase/migrations/20260502090000_enable_rls_users_households.sql`]
+
+- [x] [Review][Patch] `refresh_tokens` table has RLS disabled — added `ALTER TABLE refresh_tokens ENABLE ROW LEVEL SECURITY` with no user-facing policies; service-role bypasses RLS so behavior is unchanged, but direct authenticated-client access is now denied by default. [`supabase/migrations/20260501125000_create_refresh_tokens.sql`]
+
+- [x] [Review][Patch] `packages/contracts/src/auth.test.ts` tests only `RefreshResponseSchema` — added coverage for `LoginRequestSchema` (4 cases), `OAuthCallbackRequestSchema` (4 cases), `AuthUserSchema` (5 cases), and `LoginResponseSchema` (3 cases). [`packages/contracts/src/auth.test.ts`]
+
+- [x] [Review][Defer] `LoginRequestSchema.password` uses `.min(12)` — matches the Supabase `minimum_password_length = 12` policy so registered users will always satisfy it. Low risk for a greenfield beta. Revisit if the project ever migrates users from a lower-minimum Supabase project. [`packages/contracts/src/auth.ts:6`] — deferred, greenfield project mitigates concern
+
+- [x] [Review][Defer] RLS migration `20260502090000_enable_rls_users_households.sql` shipped in Story 2.1 — AC8 explicitly defers RLS policies to Story 2.2. The migration was needed to support Story 2.2.4 (RBAC preHandler) which shipped on the same branch; scope creep is justified but should be tracked. [`supabase/migrations/20260502090000_enable_rls_users_households.sql`] — deferred, needed for 2.2.4 on same branch
+
+### Review Findings (Chunk 4: Auth Module — 2026-04-25)
+
+- [x] [Review][Patch] Cookie path is `/v1/auth` instead of `/v1/auth/refresh` in both `setRefreshCookie` and `clearCookie` — AC4 requires `Path=/v1/auth/refresh` so the cookie is only sent to the refresh endpoint; with `/v1/auth` the browser sends the refresh token to `/v1/auth/login` and `/v1/auth/callback` as well. Logout `clearCookie` uses mismatched path so browser won't delete the cookie. Fixed: changed both to `'/v1/auth/refresh'`. [`apps/api/src/modules/auth/auth.routes.ts:146,116`]
+
+- [x] [Review][Patch] `completeLogin` throws `new Error(...)` (not `DomainError`) when `current_household_id` is null after creation — bypasses the domain error handler; logs `user.id` in the error message string which leaks a user identifier into log aggregation. Fixed: changed to `throw new UnauthorizedError('Session invalid — please log in again')`. [`apps/api/src/modules/auth/auth.service.ts:147`]
+
+- [x] [Review][Patch] `loginWithPassword` uses `data.user.email ?? input.email` — nullish coalescing does not catch empty string `''`; `loginWithOAuth` uses `if (!email)` which correctly rejects it. Inconsistency could store empty-string email on Supabase edge cases. Fixed: changed to `||`. [`apps/api/src/modules/auth/auth.service.ts:47`]
+
+- [x] [Review][Patch] `consumeRefreshToken` returns false on concurrent race but orphaned `newToken` row is never revoked — accumulates valid-but-unreachable DB rows. Fixed: call `markRefreshTokenRevoked(sha256Hex(newPlaintext))` to revoke only the orphaned row (not the whole family) before throwing. [`apps/api/src/modules/auth/auth.service.ts:106-109`]
+
+- [x] [Review][Defer] `revokeAllByFamilyId` on reuse-detection path: failure swallowed with `catch {}`, no log emitted — family tokens remain live on transient DB error with no visibility. Inject logger into `AuthService` and log at `error` level. [`apps/api/src/modules/auth/auth.service.ts:113-119`] — deferred, requires logger injection refactor
+
+- [x] [Review][Defer] `account.created` audit is fire-and-forget (`void + catch`) — consistent with overall fire-and-forget audit pattern in this system but not durable on transient DB failure. [`apps/api/src/modules/auth/auth.routes.ts:34-41`] — deferred, matches existing audit pattern
+
+- [x] [Review][Defer] `POST /v1/auth/logout` returns 204 with no cookie — unauthenticated callers can generate null-user audit rows; idempotent logout is a reasonable design choice at beta scale. [`apps/api/src/modules/auth/auth.routes.ts:113`] — deferred, accepted design
+
+- [x] [Review][Defer] `auditContext` for `auth.token_reuse_revoked` set before `throw` — written via `onResponse` hook which fires after error response; process death between response and hook loses the event. Inherent in fire-and-forget audit architecture. [`apps/api/src/modules/auth/auth.routes.ts:86-91`] — deferred, architectural constraint
+
+- [x] [Review][Defer] `create_household_and_user` SQL function relies on schema defaults for `tier_variant='beta'` and `timezone='America/New_York'` rather than explicit `INSERT` values — correct today but fragile to future default changes. [`supabase/migrations/20260501120500_create_household_and_user_idempotent.sql:31`] — deferred, schema defaults match spec; defaults changeable only via migration
+
+### Review Findings (Chunk 5: Web Layer — 2026-04-25)
+
+- [x] [Review][Patch] Open redirect via protocol-relative URL — `next && next.startsWith('/')` passes for `//evil.com` (browser treats as `https://evil.com`). Changed to `next && /^\/[^/]/.test(next)` in both redirect-destination guards. [`apps/web/src/routes/auth/callback.tsx:32`, `apps/web/src/routes/auth/login.tsx:34`]
+
+- [x] [Review][Patch] `?next` param not forwarded into OAuth `redirectTo` — AC5 specifies `next`-aware redirect for all auth flows; `startOAuth` built `redirectTo` as a bare `?provider=...` URL with no `next`, losing the intended post-auth destination for OAuth users. Fixed: read and validate `next` from `params`, forward it to the `redirectTo` URL. [`apps/web/src/routes/auth/login.tsx:45-54`]
+
+- [x] [Review][Patch] `startOAuth` errors silently dropped — `supabase.auth.signInWithOAuth` could throw (network error, misconfiguration) with no error surfaced to the user. Added try/catch that sets `apiError`. [`apps/web/src/routes/auth/login.tsx:45`]
+
+- [x] [Review][Patch] `useEffect` in `callback.tsx` fires twice in React Strict Mode — `params` reference may be recreated on the Strict Mode double-invocation cycle, causing a second POST to `/v1/auth/callback` with the same single-use OAuth code; second request fails → navigates to login. Added `useRef(false)` guard (`didRun`) to run the effect body exactly once per component lifetime. [`apps/web/src/routes/auth/callback.tsx:13`]
+
+- [x] [Review][Dismiss] Access token stored in Zustand (XSS-readable) — flagged by agents as P1; matches AC4 exactly ("client stores it in Zustand `auth.store.ts` only — never localStorage/sessionStorage"). Intentional architecture per AC4.
+
+- [x] [Review][Dismiss] `logout` uses raw `fetch` instead of `hkFetch` — intentional design: `logout` must work even when the access token is expired; raw `fetch` avoids the Bearer header attachment. `credentials: 'include'` is present; `finally` always clears session state regardless of server response.
+
+- [x] [Review][Defer] No test file for `callback.tsx` — the OAuth callback is the most complex web route (async effect, navigation side-effects, cookie handling). Testing requires jsdom + React Testing Library + mocked `hkFetch`. [`apps/web/src/routes/auth/callback.tsx`] — deferred, medium effort, no security impact
+
+- [x] [Review][Defer] `supabase-client.ts` casts `import.meta.env.VITE_SUPABASE_URL` to `string` with no runtime validation — missing env var becomes `undefined` at runtime with a confusing Supabase SDK error. Add web-side env validation (Zod or explicit checks) on app bootstrap. [`apps/web/src/lib/supabase-client.ts:10-11`] — deferred, dev-experience improvement
+
 ---
 
 ## Dev Notes

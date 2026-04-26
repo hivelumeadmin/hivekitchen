@@ -113,7 +113,7 @@ export const authRoutes: FastifyPluginAsync = async (fastify) => {
   fastify.post('/v1/auth/logout', async (request, reply) => {
     const token = request.cookies['refresh_token'] ?? '';
     const { user_id } = await service.logout(token);
-    void reply.clearCookie('refresh_token', { path: '/v1/auth' });
+    void reply.clearCookie('refresh_token', { path: '/v1/auth/refresh' });
     request.auditContext = {
       event_type: 'auth.logout',
       user_id: user_id ?? undefined,
@@ -143,7 +143,7 @@ function setRefreshCookie(
     httpOnly: true,
     secure: env.NODE_ENV !== 'development',
     sameSite: 'lax',
-    path: '/v1/auth',
+    path: '/v1/auth/refresh',
     maxAge: maxAgeSeconds,
   });
 }

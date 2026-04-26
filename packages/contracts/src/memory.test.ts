@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { ForgetRequest, ForgetCompletedEvent } from './memory.js';
 
-const UUID1 = '00000000-0000-0000-0000-000000000001';
+const UUID1 = '00000000-0000-4000-8000-000000000001';
 const DT = '2026-04-23T00:00:00Z';
 
 describe('ForgetRequest', () => {

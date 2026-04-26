@@ -1,9 +1,9 @@
 import { describe, it, expect } from 'vitest';
 import { InvalidationEvent } from './events.js';
 
-const UUID1 = '00000000-0000-0000-0000-000000000001';
-const UUID2 = '00000000-0000-0000-0000-000000000002';
-const UUID3 = '00000000-0000-0000-0000-000000000003';
+const UUID1 = '00000000-0000-4000-8000-000000000001';
+const UUID2 = '00000000-0000-4000-8000-000000000002';
+const UUID3 = '00000000-0000-4000-8000-000000000003';
 const DT = '2026-04-23T00:00:00Z';
 
 describe('InvalidationEvent plan.updated (unified with PlanUpdatedEvent)', () => {

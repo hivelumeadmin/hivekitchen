@@ -1,0 +1,13 @@
+diff --git a/dist/src/errors.js b/dist/src/errors.js
+index 5cbe5af7785714dbcffda7bf59d673377c668acc..9f57ec626948d2a04b545537b44a1d65efdb1dfd 100644
+--- a/dist/src/errors.js
++++ b/dist/src/errors.js
+@@ -30,7 +30,7 @@ const hasZodFastifySchemaValidationErrors = (error) => typeof error === 'object'
+     error.validation.length > 0 &&
+     isZodFastifySchemaValidationError(error.validation[0]);
+ exports.hasZodFastifySchemaValidationErrors = hasZodFastifySchemaValidationErrors;
+-const createValidationError = (error) => error.errors.map((issue) => ({
++const createValidationError = (error) => (error.issues ?? error.errors).map((issue) => ({
+     [ZodFastifySchemaValidationErrorSymbol]: true,
+     keyword: issue.code,
+     instancePath: `/${issue.path.join('/')}`,

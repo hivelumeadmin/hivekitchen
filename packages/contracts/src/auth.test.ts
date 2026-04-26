@@ -1,5 +1,139 @@
 import { describe, it, expect } from 'vitest';
-import { RefreshResponseSchema } from './auth.js';
+import {
+  LoginRequestSchema,
+  OAuthCallbackRequestSchema,
+  AuthUserSchema,
+  LoginResponseSchema,
+  RefreshResponseSchema,
+} from './auth.js';
+
+describe('LoginRequestSchema', () => {
+  it('accepts a valid email/password', () => {
+    expect(
+      LoginRequestSchema.safeParse({ email: 'user@example.com', password: 'securepass123' }).success,
+    ).toBe(true);
+  });
+
+  it('rejects an invalid email', () => {
+    expect(
+      LoginRequestSchema.safeParse({ email: 'not-an-email', password: 'securepass123' }).success,
+    ).toBe(false);
+  });
+
+  it('rejects a password shorter than 12 chars', () => {
+    expect(
+      LoginRequestSchema.safeParse({ email: 'user@example.com', password: 'short' }).success,
+    ).toBe(false);
+  });
+
+  it('rejects an email exceeding 254 chars', () => {
+    const longEmail = 'a'.repeat(246) + '@test.com';
+    expect(LoginRequestSchema.safeParse({ email: longEmail, password: 'securepass123' }).success).toBe(
+      false,
+    );
+  });
+});
+
+describe('OAuthCallbackRequestSchema', () => {
+  it('accepts google provider with a code', () => {
+    expect(
+      OAuthCallbackRequestSchema.safeParse({ provider: 'google', code: 'oauth-code-xyz' }).success,
+    ).toBe(true);
+  });
+
+  it('accepts apple provider', () => {
+    expect(
+      OAuthCallbackRequestSchema.safeParse({ provider: 'apple', code: 'oauth-code-abc' }).success,
+    ).toBe(true);
+  });
+
+  it('rejects an unknown provider', () => {
+    expect(
+      OAuthCallbackRequestSchema.safeParse({ provider: 'facebook', code: 'oauth-code' }).success,
+    ).toBe(false);
+  });
+
+  it('rejects an empty code', () => {
+    expect(
+      OAuthCallbackRequestSchema.safeParse({ provider: 'google', code: '' }).success,
+    ).toBe(false);
+  });
+});
+
+describe('AuthUserSchema', () => {
+  const validUser = {
+    id: '11111111-1111-4111-8111-111111111111',
+    email: 'user@example.com',
+    display_name: 'Alice',
+    current_household_id: '22222222-2222-4222-8222-222222222222',
+    role: 'primary_parent',
+  };
+
+  it('accepts a valid user', () => {
+    expect(AuthUserSchema.safeParse(validUser).success).toBe(true);
+  });
+
+  it('accepts null display_name and current_household_id', () => {
+    expect(
+      AuthUserSchema.safeParse({ ...validUser, display_name: null, current_household_id: null }).success,
+    ).toBe(true);
+  });
+
+  it('rejects an invalid role', () => {
+    expect(AuthUserSchema.safeParse({ ...validUser, role: 'admin' }).success).toBe(false);
+  });
+
+  it('rejects a non-UUID id', () => {
+    expect(AuthUserSchema.safeParse({ ...validUser, id: 'not-a-uuid' }).success).toBe(false);
+  });
+
+  it('rejects an invalid email', () => {
+    expect(AuthUserSchema.safeParse({ ...validUser, email: 'not-an-email' }).success).toBe(false);
+  });
+});
+
+describe('LoginResponseSchema', () => {
+  const validUser = {
+    id: '11111111-1111-4111-8111-111111111111',
+    email: 'user@example.com',
+    display_name: null,
+    current_household_id: null,
+    role: 'primary_parent' as const,
+  };
+
+  it('accepts a valid login response', () => {
+    expect(
+      LoginResponseSchema.safeParse({
+        access_token: 'header.payload.signature',
+        expires_in: 900,
+        user: validUser,
+        is_first_login: false,
+      }).success,
+    ).toBe(true);
+  });
+
+  it('rejects empty access_token', () => {
+    expect(
+      LoginResponseSchema.safeParse({
+        access_token: '',
+        expires_in: 900,
+        user: validUser,
+        is_first_login: false,
+      }).success,
+    ).toBe(false);
+  });
+
+  it('rejects non-boolean is_first_login', () => {
+    expect(
+      LoginResponseSchema.safeParse({
+        access_token: 'tok',
+        expires_in: 900,
+        user: validUser,
+        is_first_login: 'yes',
+      }).success,
+    ).toBe(false);
+  });
+});
 
 describe('RefreshResponseSchema', () => {
   it('accepts a valid refresh response', () => {

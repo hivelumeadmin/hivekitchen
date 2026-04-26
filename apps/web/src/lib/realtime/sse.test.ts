@@ -82,8 +82,8 @@ function makeMessageEvent(data: z.infer<typeof InvalidationEvent>): MessageEvent
   return new MessageEvent('message', { data: JSON.stringify(data) });
 }
 
-const UUID1 = '00000000-0000-0000-0000-000000000001';
-const UUID2 = '00000000-0000-0000-0000-000000000002';
+const UUID1 = '00000000-0000-4000-8000-000000000001';
+const UUID2 = '00000000-0000-4000-8000-000000000002';
 const DT = '2026-04-24T00:00:00.000Z';
 
 const TURN_FIXTURE = {

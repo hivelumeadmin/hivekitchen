@@ -1,8 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import { SurfaceKind, PresenceEvent } from './presence.js';
 
-const UUID1 = '00000000-0000-0000-0000-000000000001';
-const UUID2 = '00000000-0000-0000-0000-000000000002';
+const UUID1 = '00000000-0000-4000-8000-000000000001';
+const UUID2 = '00000000-0000-4000-8000-000000000002';
 const DT = '2026-04-23T01:00:00Z';
 
 describe('SurfaceKind', () => {

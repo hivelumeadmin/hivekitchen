@@ -3,7 +3,7 @@ import { test, expect } from '@playwright/test';
 // UX-DR60: target 600ms, hard ceiling 1000ms.
 const SSE_HARD_CEILING_MS = 1000;
 // Minimal valid plan.updated event — satisfies InvalidationEvent schema.
-const WEEK_ID = '00000000-0000-0000-0000-000000000001';
+const WEEK_ID = '00000000-0000-4000-8000-000000000001';
 
 test.describe('SSE invalidation → queryClient latency (UX-DR60)', () => {
   test('plan.updated processed within hard ceiling', async ({ page }) => {

@@ -178,3 +178,35 @@
 - `apps/web/src/lib/supabase-client.ts` constructs the client at module-load even when the user never reaches the login page (e.g., direct deep-link to a public marketing route once Epic 11 lands). Consider lazy initialization if cold-start bundle size becomes a concern. [`apps/web/src/lib/supabase-client.ts`]
 - The fastify-type-provider-zod validation-array branch in the global error handler hand-rolls a "ZodError-like" pseudo-issue array. If `fastify-type-provider-zod` v5+ changes the validation shape, this branch silently drifts. Replace with a direct call to the library's documented error-mapping helper if/when one ships. [`apps/api/src/app.ts`]
 - **Discovered during 2.1 live smoke** (out of 2.1 scope, pre-existing from Story 1.8): `apps/api/src/jobs/audit-partition-rotation.job.ts` declares `QUEUE_NAME = 'audit:partition-rotation'`. BullMQ v5 rejects queue names containing `:` ("Queue name cannot contain :") because Redis keys are colon-separated internally — this prevents `pnpm dev:api` from booting. Rename to `audit-partition-rotation` (and update any operator dashboards/queries that reference the old name) in a Story-1.8 follow-up. [`apps/api/src/jobs/audit-partition-rotation.job.ts`]
+
+## Deferred from: code review of 1-15-upgrade-typescript-5-to-6 (2026-04-25)
+
+- `@hivekitchen/tsconfig` package has no `typescript` devDependency — pre-existing condition; the package is config-only and has no devDependencies at all. TypeScript version enforcement is distributed across each workspace package's own `package.json`. No blocking issue; revisit if a canonical single-pin location is ever desired. [`packages/tsconfig/package.json`]
+
+## Deferred from: code review of 2-1-supabase-auth-email-password-google-apple-oauth (chunk 3: migrations, 2026-04-25)
+
+- `LoginRequestSchema.password` uses `.min(12)` — matches Supabase `minimum_password_length = 12` so registered users always satisfy it; low risk for greenfield beta. Revisit if users are ever migrated from a lower-minimum Supabase project. [`packages/contracts/src/auth.ts:6`]
+- RLS migration `20260502090000_enable_rls_users_households.sql` shipped in Story 2.1 despite AC8 deferring RLS to Story 2.2. Migration was needed to support Story 2.2.4 (RBAC preHandler) shipped simultaneously; justified scope creep. Track for retrospective note. [`supabase/migrations/20260502090000_enable_rls_users_households.sql`]
+
+## Deferred from: code review of 2-1-supabase-auth-email-password-google-apple-oauth (chunk 4: auth module, 2026-04-25)
+
+- `revokeAllByFamilyId` on reuse-detection path swallows all errors with `catch {}` — family tokens remain live on transient DB failure with no log visibility. Requires logger injection into `AuthService` (currently no logger constructor param). [`apps/api/src/modules/auth/auth.service.ts:113-119`]
+- `account.created` audit is fire-and-forget (void + catch) — silently unrecorded on transient DB failure. Consistent with fire-and-forget audit pattern throughout, but not durable. [`apps/api/src/modules/auth/auth.routes.ts:34-41`]
+- `POST /v1/auth/logout` returns 204 when no cookie present — unauthenticated callers generate null-user audit rows; idempotent logout accepted as deliberate design choice. [`apps/api/src/modules/auth/auth.routes.ts:113`]
+- `auth.token_reuse_revoked` audit set via `request.auditContext` then immediately throws — event written via `onResponse` hook after error response; process death between response and hook loses a security-critical event. Inherent in fire-and-forget hook architecture. [`apps/api/src/modules/auth/auth.routes.ts:86-91`]
+- `create_household_and_user` SQL function relies on schema column defaults for `tier_variant='beta'` and `timezone='America/New_York'` rather than explicit INSERT values — correct today but fragile to future default changes. [`supabase/migrations/20260501120500_create_household_and_user_idempotent.sql:31`]
+
+## Deferred from: code review of 2-1-supabase-auth-email-password-google-apple-oauth (chunk 5: web layer, 2026-04-25)
+
+- No test file for `callback.tsx` — most complex web route (async effect, navigation side-effects, single-use OAuth code). Requires jsdom + React Testing Library + mocked `hkFetch`. Medium effort; no security impact — all auth logic is server-side. [`apps/web/src/routes/auth/callback.tsx`]
+- `supabase-client.ts` casts `import.meta.env.VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY` to `string` with no runtime check — undefined env var produces a confusing SDK error at runtime. Add Zod/explicit env validation on web app bootstrap (similar to `apps/api/src/common/env.ts`). [`apps/web/src/lib/supabase-client.ts:10-11`]
+
+## Deferred from: code review of 1-16-upgrade-zod-3-to-4 (2026-04-25)
+
+- `zod-resolver.ts` silently drops root-level schema refinement errors — `if (path && !errors[path])` skips issues with empty `path` array; no root-level `.refine()` currently in `LoginRequestSchema`, so latent only. [`apps/web/src/lib/zod-resolver.ts:15`]
+- `zod-resolver.ts` flat dot-path keys for nested errors (`"address.zip"` instead of `{ address: { zip: {...} } }`) — RHF resolver contract expects nested `FieldErrors<T>`; requires `toNestErrors` equivalent. Not active with current flat schemas but breaks any future nested form. [`apps/web/src/lib/zod-resolver.ts:14`]
+- `zod-resolver.ts` missing `context` and `options` params — `criteriaMode: 'all'` and native validation silently ignored; cast `as unknown as Resolver<T>` suppresses type error. [`apps/web/src/lib/zod-resolver.ts:9`]
+- Old-format UUIDs (`1111-1111`, `2222-2222`) surviving in `auth.service.test.ts`, `authenticate.hook.test.ts`, `login.test.tsx` — inconsistent with RFC 4122 v4 fix applied elsewhere; not causing current test failures (IDs don't flow through `.uuid()` validation in affected tests).
+- `lists.ts` and `voice.ts` not explicitly audited per AC2 — both compile correctly under Zod 4 with no breaking changes; documentation gap only. [`packages/contracts/src/lists.ts`, `packages/contracts/src/voice.ts`]
+- `z.discriminatedUnion()` and `ZodError.issues` Zod 4 compatibility not explicitly documented — implicitly verified by passing typecheck and tests.
+- pnpm patch for `fastify-type-provider-zod` fixes a runtime bug not covered by AC3 (typecheck only); no integration test exercises a body-validation-failure → patched `createValidationError` path end-to-end. [`patches/fastify-type-provider-zod@4.0.2.patch`]

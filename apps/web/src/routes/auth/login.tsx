@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useForm } from 'react-hook-form';
-import { zodResolver } from '@hookform/resolvers/zod';
+import { zodResolver } from '@/lib/zod-resolver.js';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useScope } from '@hivekitchen/ui';
 import { LoginRequestSchema } from '@hivekitchen/contracts';
@@ -31,7 +31,7 @@ export default function LoginPage() {
       const result = await hkFetch<LoginResponse>('/v1/auth/login', { method: 'POST', body: values });
       useAuthStore.getState().setSession(result.access_token, result.user);
       const next = params.get('next');
-      const destination = next && next.startsWith('/') ? next : '/app';
+      const destination = next && /^\/[^/]/.test(next) ? next : '/app';
       navigate(result.is_first_login ? '/onboarding' : destination);
     } catch (err) {
       if (err instanceof HkApiError && err.status === 401) {
@@ -43,10 +43,17 @@ export default function LoginPage() {
   }
 
   async function startOAuth(provider: 'google' | 'apple') {
-    await supabase.auth.signInWithOAuth({
-      provider,
-      options: { redirectTo: `${window.location.origin}/auth/callback?provider=${provider}` },
-    });
+    setApiError(null);
+    try {
+      const next = params.get('next');
+      const validNext = next && /^\/[^/]/.test(next) ? next : null;
+      const redirectTo = new URL('/auth/callback', window.location.origin);
+      redirectTo.searchParams.set('provider', provider);
+      if (validNext !== null) redirectTo.searchParams.set('next', validNext);
+      await supabase.auth.signInWithOAuth({ provider, options: { redirectTo: redirectTo.toString() } });
+    } catch {
+      setApiError('Something went wrong. Please try again later.');
+    }
   }
 
   return (
