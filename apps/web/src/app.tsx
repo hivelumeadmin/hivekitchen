@@ -4,6 +4,7 @@ import { QueryProvider } from './providers/query-provider.js';
 import { DevTokensPage } from './routes/_dev-tokens.js';
 import LoginPage from './routes/auth/login.js';
 import AuthCallbackPage from './routes/auth/callback.js';
+import InviteRedeemPage from './routes/invite/$token.js';
 import AppHomePage from './routes/(app)/index.js';
 import OnboardingPage from './routes/(app)/onboarding.js';
 
@@ -11,6 +12,7 @@ const router = createBrowserRouter([
   { path: '/', element: <Navigate to="/auth/login" replace /> },
   { path: '/auth/login', element: <LoginPage /> },
   { path: '/auth/callback', element: <AuthCallbackPage /> },
+  { path: '/invite/:token', element: <InviteRedeemPage /> },
   { path: '/app', element: <AppHomePage /> },
   { path: '/onboarding', element: <OnboardingPage /> },
 ]);

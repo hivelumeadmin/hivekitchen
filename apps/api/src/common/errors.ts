@@ -47,6 +47,12 @@ export class ValidationError extends DomainError {
   readonly title = 'Validation failed';
 }
 
+export class LinkExpiredError extends DomainError {
+  readonly type = '/errors/link-expired';
+  readonly status = 410;
+  readonly title = 'Link expired or already used';
+}
+
 export function isDomainError(err: unknown): err is DomainError {
   return err instanceof DomainError;
 }

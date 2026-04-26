@@ -210,3 +210,12 @@
 - `lists.ts` and `voice.ts` not explicitly audited per AC2 — both compile correctly under Zod 4 with no breaking changes; documentation gap only. [`packages/contracts/src/lists.ts`, `packages/contracts/src/voice.ts`]
 - `z.discriminatedUnion()` and `ZodError.issues` Zod 4 compatibility not explicitly documented — implicitly verified by passing typecheck and tests.
 - pnpm patch for `fastify-type-provider-zod` fixes a runtime bug not covered by AC3 (typecheck only); no integration test exercises a body-validation-failure → patched `createValidationError` path end-to-end. [`patches/fastify-type-provider-zod@4.0.2.patch`]
+
+## Deferred from: implementation of 2-3-secondary-caregiver-invite-primitive (2026-04-26)
+
+- Pre-existing baseline `pnpm typecheck` failure on `main` from Dependabot bump #21 (`stripe` 16.12.0 → 22.1.0): `apps/api/src/plugins/stripe.plugin.ts:6` sets `apiVersion: '2026-04-22.dahlia'` but the installed `stripe@22.1.0` types pin to `'2024-06-20'`. Not introduced by Story 2.3; confirmed by stash-and-typecheck against pristine main. Blocks the Story 2.3 exit gate `pnpm typecheck`. Suggested fix: bump `stripe` SDK to a version that recognizes the configured apiVersion, OR cast through `Stripe.LatestApiVersion`. [`apps/api/src/plugins/stripe.plugin.ts:6`]
+
+## Deferred from: code review of 2-3-secondary-caregiver-invite-primitive-signed-jwt-single-use-jti-14-day-ttl (2026-04-26)
+
+- **OAuth → `is_first_login` → onboarding redirect silently discards invite** — if a new user signs up via OAuth while following an invite link, `callback.tsx` redirects to `/onboarding` on `is_first_login: true`, permanently discarding the `?next=/invite/:token` destination. The invite token is never redeemed. Requires Story 5.5's full invite UX to fix correctly. [`apps/web/src/routes/auth/callback.tsx:37`]
+- **DB insert orphan if JWT signing fails after `insertInvite`** — `createInvite` commits the invite row to the DB before `jwt.sign()` executes. If signing throws (e.g., during a secret rotation mid-request), the row exists with no corresponding token and cannot be redeemed until TTL expiry. Low probability in production. Architectural constraint: supabase-js does not support multi-statement transactions. [`apps/api/src/modules/auth/invite.service.ts:43-61`]

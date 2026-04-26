@@ -37,3 +37,28 @@ export const RefreshResponseSchema = z.object({
   access_token: z.string().min(1),
   expires_in: z.number().int().positive(),
 });
+
+// ---- POST /v1/households/:id/invites --------------------------------------
+// Story 2.3 scopes invite issuance to `secondary_caregiver`. `guest_author` invites
+// are added by Story 8.7 (gift / guest-author flow).
+export const CreateInviteRequestSchema = z.object({
+  role: z.literal('secondary_caregiver'),
+  email: z.string().email().max(254).optional(),
+});
+
+export const CreateInviteResponseSchema = z.object({
+  invite_url: z.string().min(1),
+});
+
+// ---- POST /v1/auth/invites/redeem -----------------------------------------
+// Public route (under /v1/auth/ prefix). `token` is the base64url-encoded JWT
+// from the invite URL path segment.
+export const RedeemInviteRequestSchema = z.object({
+  token: z.string().min(1),
+});
+
+export const RedeemInviteResponseSchema = z.object({
+  role: AuthUserSchema.shape.role,
+  scope_target: z.string().min(1),
+  household_id: z.string().uuid(),
+});

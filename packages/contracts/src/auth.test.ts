@@ -5,6 +5,10 @@ import {
   AuthUserSchema,
   LoginResponseSchema,
   RefreshResponseSchema,
+  CreateInviteRequestSchema,
+  CreateInviteResponseSchema,
+  RedeemInviteRequestSchema,
+  RedeemInviteResponseSchema,
 } from './auth.js';
 
 describe('LoginRequestSchema', () => {
@@ -162,6 +166,74 @@ describe('RefreshResponseSchema', () => {
   it('rejects non-integer expires_in', () => {
     expect(
       RefreshResponseSchema.safeParse({ access_token: 'tok', expires_in: 1.5 }).success,
+    ).toBe(false);
+  });
+});
+
+describe('CreateInviteRequestSchema', () => {
+  it('accepts secondary_caregiver role with optional email', () => {
+    expect(
+      CreateInviteRequestSchema.safeParse({ role: 'secondary_caregiver', email: 'partner@example.com' })
+        .success,
+    ).toBe(true);
+    expect(CreateInviteRequestSchema.safeParse({ role: 'secondary_caregiver' }).success).toBe(true);
+  });
+
+  it('rejects guest_author role (Story 8.7 scope)', () => {
+    expect(CreateInviteRequestSchema.safeParse({ role: 'guest_author' }).success).toBe(false);
+  });
+});
+
+describe('CreateInviteResponseSchema', () => {
+  it('accepts an invite_url path', () => {
+    expect(CreateInviteResponseSchema.safeParse({ invite_url: '/invite/abc123' }).success).toBe(true);
+  });
+
+  it('rejects empty invite_url', () => {
+    expect(CreateInviteResponseSchema.safeParse({ invite_url: '' }).success).toBe(false);
+  });
+});
+
+describe('RedeemInviteRequestSchema', () => {
+  it('accepts a non-empty token string', () => {
+    expect(RedeemInviteRequestSchema.safeParse({ token: 'eyJabc' }).success).toBe(true);
+  });
+
+  it('rejects an empty token', () => {
+    expect(RedeemInviteRequestSchema.safeParse({ token: '' }).success).toBe(false);
+  });
+});
+
+describe('RedeemInviteResponseSchema', () => {
+  const validHouseholdId = '22222222-2222-4222-8222-222222222222';
+
+  it('accepts a valid response', () => {
+    expect(
+      RedeemInviteResponseSchema.safeParse({
+        role: 'secondary_caregiver',
+        scope_target: '/app/household/settings',
+        household_id: validHouseholdId,
+      }).success,
+    ).toBe(true);
+  });
+
+  it('accepts guest_author role', () => {
+    expect(
+      RedeemInviteResponseSchema.safeParse({
+        role: 'guest_author',
+        scope_target: '/app/household/settings',
+        household_id: validHouseholdId,
+      }).success,
+    ).toBe(true);
+  });
+
+  it('rejects an invalid role', () => {
+    expect(
+      RedeemInviteResponseSchema.safeParse({
+        role: 'admin',
+        scope_target: '/app/household/settings',
+        household_id: validHouseholdId,
+      }).success,
     ).toBe(false);
   });
 });

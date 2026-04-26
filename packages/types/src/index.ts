@@ -6,6 +6,10 @@ import {
   OAuthProviderSchema,
   AuthUserSchema,
   RefreshResponseSchema,
+  CreateInviteRequestSchema,
+  CreateInviteResponseSchema,
+  RedeemInviteRequestSchema,
+  RedeemInviteResponseSchema,
   MealItem,
   DayPlan,
   WeeklyPlan,
@@ -40,6 +44,12 @@ export type OAuthCallbackRequest = z.infer<typeof OAuthCallbackRequestSchema>;
 export type OAuthProvider = z.infer<typeof OAuthProviderSchema>;
 export type AuthUser = z.infer<typeof AuthUserSchema>;
 export type RefreshResponse = z.infer<typeof RefreshResponseSchema>;
+
+// Invites (Story 2.3)
+export type CreateInviteRequest = z.infer<typeof CreateInviteRequestSchema>;
+export type CreateInviteResponse = z.infer<typeof CreateInviteResponseSchema>;
+export type RedeemInviteRequest = z.infer<typeof RedeemInviteRequestSchema>;
+export type RedeemInviteResponse = z.infer<typeof RedeemInviteResponseSchema>;
 
 // Plans
 export type MealItem = z.infer<typeof MealItem>;

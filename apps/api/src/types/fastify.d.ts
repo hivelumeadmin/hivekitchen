@@ -34,11 +34,24 @@ declare module 'fastify' {
 
 declare module '@fastify/jwt' {
   interface FastifyJWT {
-    payload: {
-      sub: string;
-      hh: string;
-      role: 'primary_parent' | 'secondary_caregiver' | 'guest_author' | 'ops';
-    };
+    // Two payload shapes share the same JWT_SECRET / @fastify/jwt instance:
+    //   - access tokens: { sub, hh, role } — issued at login/refresh, sent in Authorization header.
+    //   - invite tokens: { household_id, role, invite_id, jti } — issued by Story 2.3 invite create,
+    //     sent as a body field on POST /v1/auth/invites/redeem (never in Authorization header).
+    // Read sites pin the shape via the typed generic: jwt.verify<AccessTokenPayload>() /
+    // jwt.verify<InviteClaims>(). The union here lets jwt.sign() accept either shape.
+    payload:
+      | {
+          sub: string;
+          hh: string;
+          role: 'primary_parent' | 'secondary_caregiver' | 'guest_author' | 'ops';
+        }
+      | {
+          household_id: string;
+          role: 'secondary_caregiver' | 'guest_author';
+          invite_id: string;
+          jti: string;
+        };
     user: {
       id: string;
       household_id: string;
