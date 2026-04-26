@@ -1,7 +1,6 @@
 {
   "extends": "@hivekitchen/tsconfig/react.json",
   "compilerOptions": {
-    "baseUrl": ".",
     "paths": {
       "@/*": ["./src/*"]
     }

@@ -32,6 +32,17 @@
     "turbo": "^2.4.0",
     "typescript-eslint": "^8.0.0"
   },
+  "pnpm": {
+    "peerDependencyRules": {
+      "allowedVersions": {
+        "@astrojs/check>typescript": "^6",
+        "tsconfck>typescript": "^6"
+      }
+    },
+    "patchedDependencies": {
+      "fastify-type-provider-zod@4.0.2": "patches/fastify-type-provider-zod@4.0.2.patch"
+    }
+  },
   "author": "Shree Menon",
   "license": "ISC"
 }

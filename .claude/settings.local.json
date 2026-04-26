@@ -68,7 +68,16 @@
       "Bash(npx supabase *)",
       "Bash(SUPABASE_AUTH_EXTERNAL_GOOGLE_CLIENT_ID=placeholder SUPABASE_AUTH_EXTERNAL_GOOGLE_SECRET=placeholder SUPABASE_AUTH_EXTERNAL_APPLE_CLIENT_ID=placeholder SUPABASE_AUTH_EXTERNAL_APPLE_SECRET=placeholder npx supabase start)",
       "Bash(SUPABASE_AUTH_EXTERNAL_GOOGLE_CLIENT_ID=placeholder SUPABASE_AUTH_EXTERNAL_GOOGLE_SECRET=placeholder SUPABASE_AUTH_EXTERNAL_APPLE_CLIENT_ID=placeholder SUPABASE_AUTH_EXTERNAL_APPLE_SECRET=placeholder npx supabase db reset)",
-      "Read(//c/Users/menon/AppData/Local/Temp/claude/F--development-hivekitchen/09a98f11-828f-4527-8bc6-be245ec6e225/tasks/**)"
+      "Read(//c/Users/menon/AppData/Local/Temp/claude/F--development-hivekitchen/09a98f11-828f-4527-8bc6-be245ec6e225/tasks/**)",
+      "Bash(gh api *)",
+      "Bash(gh run *)",
+      "Bash(python3 -c \"import json,sys; d=json.load\\(sys.stdin\\); print\\(d.get\\('version','not found'\\)\\)\")",
+      "Bash(python3 -m json.tool)",
+      "Bash(xargs grep *)",
+      "Bash(python3 *)",
+      "Bash(grep -n 'invalid_union\\\\|errors.*ZodIssue\\\\|$ZodInvalid' /f/development/hivekitchen/node_modules/.pnpm/zod@4.3.6/node_modules/zod/src/v4/core/errors.ts)",
+      "Bash(grep *)",
+      "Bash(find /f/development/hivekitchen/node_modules/.pnpm/@hookform+resolvers@4*/node_modules/@hookform/resolvers/ -name \"*.js\")"
     ]
   }
 }

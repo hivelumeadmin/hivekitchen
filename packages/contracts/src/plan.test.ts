@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { AllergyVerdict, PlanUpdatedEvent } from './plan.js';
 
-const UUID1 = '00000000-0000-0000-0000-000000000001';
+const UUID1 = '00000000-0000-4000-8000-000000000001';
 
 describe('AllergyVerdict', () => {
   it('parses cleared verdict', () => {

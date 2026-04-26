@@ -20,7 +20,7 @@ export const TurnBodyMessage = z.object({
 export const TurnBodyPlanDiff = z.object({
   type: z.literal('plan_diff'),
   week_id: z.string().uuid(),
-  diff: z.record(z.unknown()),
+  diff: z.record(z.string(), z.unknown()),
 });
 
 export const TurnBodyProposal = z.object({
@@ -32,7 +32,7 @@ export const TurnBodyProposal = z.object({
 export const TurnBodySystemEvent = z.object({
   type: z.literal('system_event'),
   event: z.string(),
-  payload: z.record(z.unknown()).optional(),
+  payload: z.record(z.string(), z.unknown()).optional(),
 });
 
 export const TurnBodyPresence = z.object({
