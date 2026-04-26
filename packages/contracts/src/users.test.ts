@@ -3,6 +3,11 @@ import {
   UserProfileSchema,
   UpdateProfileRequestSchema,
   PasswordResetRequestSchema,
+  NotificationPrefsSchema,
+  UpdateNotificationPrefsRequestSchema,
+  CulturalLanguageSchema,
+  UpdateCulturalPreferenceRequestSchema,
+  CULTURAL_LANGUAGE_VALUES,
 } from './users.js';
 
 describe('UserProfileSchema', () => {
@@ -13,6 +18,8 @@ describe('UserProfileSchema', () => {
     preferred_language: 'en',
     role: 'primary_parent' as const,
     auth_providers: ['email'],
+    notification_prefs: { weekly_plan_ready: true, grocery_list_ready: true },
+    cultural_language: 'default' as const,
   };
 
   it('accepts a valid profile with email provider', () => {
@@ -34,6 +41,22 @@ describe('UserProfileSchema', () => {
       UserProfileSchema.safeParse({ ...validProfile, auth_providers: 'email' as unknown as string[] })
         .success,
     ).toBe(false);
+  });
+
+  it('rejects a profile missing notification_prefs', () => {
+    const { notification_prefs: _omit, ...withoutPrefs } = validProfile;
+    expect(UserProfileSchema.safeParse(withoutPrefs).success).toBe(false);
+  });
+
+  it('rejects a profile with an unknown cultural_language', () => {
+    expect(
+      UserProfileSchema.safeParse({ ...validProfile, cultural_language: 'klingon' }).success,
+    ).toBe(false);
+  });
+
+  it('rejects a profile missing cultural_language', () => {
+    const { cultural_language: _omit, ...withoutLang } = validProfile;
+    expect(UserProfileSchema.safeParse(withoutLang).success).toBe(false);
   });
 });
 
@@ -94,5 +117,84 @@ describe('PasswordResetRequestSchema', () => {
     // 246 'a's + '@test.com' (9 chars) = 255 total — one over the limit
     const tooLongEmail = 'a'.repeat(246) + '@test.com';
     expect(PasswordResetRequestSchema.safeParse({ email: tooLongEmail }).success).toBe(false);
+  });
+});
+
+describe('NotificationPrefsSchema', () => {
+  it('accepts { weekly_plan_ready: true, grocery_list_ready: false }', () => {
+    expect(
+      NotificationPrefsSchema.safeParse({ weekly_plan_ready: true, grocery_list_ready: false }).success,
+    ).toBe(true);
+  });
+
+  it('rejects when either field is missing', () => {
+    expect(NotificationPrefsSchema.safeParse({ weekly_plan_ready: true }).success).toBe(false);
+    expect(NotificationPrefsSchema.safeParse({ grocery_list_ready: true }).success).toBe(false);
+  });
+
+  it('rejects when a field is not boolean', () => {
+    expect(
+      NotificationPrefsSchema.safeParse({ weekly_plan_ready: 'yes', grocery_list_ready: false }).success,
+    ).toBe(false);
+  });
+});
+
+describe('UpdateNotificationPrefsRequestSchema', () => {
+  it('rejects an empty object', () => {
+    expect(UpdateNotificationPrefsRequestSchema.safeParse({}).success).toBe(false);
+  });
+
+  it('accepts a single field', () => {
+    expect(
+      UpdateNotificationPrefsRequestSchema.safeParse({ weekly_plan_ready: false }).success,
+    ).toBe(true);
+    expect(
+      UpdateNotificationPrefsRequestSchema.safeParse({ grocery_list_ready: true }).success,
+    ).toBe(true);
+  });
+
+  it('accepts both fields together', () => {
+    expect(
+      UpdateNotificationPrefsRequestSchema.safeParse({
+        weekly_plan_ready: true,
+        grocery_list_ready: false,
+      }).success,
+    ).toBe(true);
+  });
+
+  it('rejects non-boolean values', () => {
+    expect(
+      UpdateNotificationPrefsRequestSchema.safeParse({ weekly_plan_ready: 1 }).success,
+    ).toBe(false);
+  });
+});
+
+describe('CulturalLanguageSchema', () => {
+  it('accepts every value in CULTURAL_LANGUAGE_VALUES', () => {
+    for (const value of CULTURAL_LANGUAGE_VALUES) {
+      expect(CulturalLanguageSchema.safeParse(value).success).toBe(true);
+    }
+  });
+
+  it('rejects an unknown value', () => {
+    expect(CulturalLanguageSchema.safeParse('klingon').success).toBe(false);
+  });
+});
+
+describe('UpdateCulturalPreferenceRequestSchema', () => {
+  it('accepts a valid enum value', () => {
+    expect(
+      UpdateCulturalPreferenceRequestSchema.safeParse({ cultural_language: 'south_asian' }).success,
+    ).toBe(true);
+  });
+
+  it('rejects an unknown enum value', () => {
+    expect(
+      UpdateCulturalPreferenceRequestSchema.safeParse({ cultural_language: 'klingon' }).success,
+    ).toBe(false);
+  });
+
+  it('rejects when cultural_language is missing', () => {
+    expect(UpdateCulturalPreferenceRequestSchema.safeParse({}).success).toBe(false);
   });
 });

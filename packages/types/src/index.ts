@@ -38,6 +38,11 @@ import {
   UserProfileSchema,
   UpdateProfileRequestSchema,
   PasswordResetRequestSchema,
+  NotificationPrefsSchema,
+  UpdateNotificationPrefsRequestSchema,
+  CulturalLanguageSchema,
+  UpdateCulturalPreferenceRequestSchema,
+  CULTURAL_LANGUAGE_VALUES,
 } from '@hivekitchen/contracts';
 
 // Auth
@@ -99,3 +104,10 @@ export type ApiError = z.infer<typeof ApiError>;
 export type UserProfile = z.infer<typeof UserProfileSchema>;
 export type UpdateProfileRequest = z.infer<typeof UpdateProfileRequestSchema>;
 export type PasswordResetRequest = z.infer<typeof PasswordResetRequestSchema>;
+
+// Users (Story 2.5 — notification preferences + cultural language)
+export type NotificationPrefs = z.infer<typeof NotificationPrefsSchema>;
+export type UpdateNotificationPrefsRequest = z.infer<typeof UpdateNotificationPrefsRequestSchema>;
+export type CulturalLanguagePreference = z.infer<typeof CulturalLanguageSchema>;
+export type UpdateCulturalPreferenceRequest = z.infer<typeof UpdateCulturalPreferenceRequestSchema>;
+export { CULTURAL_LANGUAGE_VALUES };

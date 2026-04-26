@@ -39,6 +39,7 @@ interface SupabaseMock {
   from(table: string): unknown;
   auth: AuthMock;
   _updateProfileSpy: ReturnType<typeof vi.fn>;
+  _updateArgCaptor: ReturnType<typeof vi.fn>;
 }
 
 function defaultUserRow(overrides: Partial<UserProfileRow> = {}): UserProfileRow {
@@ -48,6 +49,8 @@ function defaultUserRow(overrides: Partial<UserProfileRow> = {}): UserProfileRow
     display_name: 'Sample Parent',
     preferred_language: 'en',
     role: 'primary_parent',
+    notification_prefs: {},
+    cultural_language: 'default',
     ...overrides,
   };
 }
@@ -62,6 +65,7 @@ function buildMockSupabase(opts: MockOpts): SupabaseMock {
     data: opts.updateUserError ? null : updateUserResult,
     error: opts.updateUserError ?? null,
   });
+  const updateArgCaptor = vi.fn();
 
   return {
     from(table: string) {
@@ -75,13 +79,16 @@ function buildMockSupabase(opts: MockOpts): SupabaseMock {
               }),
             }),
           }),
-          update: () => ({
-            eq: () => ({
-              select: () => ({
-                single: updateProfileSpy,
+          update: (data: unknown) => {
+            updateArgCaptor(data);
+            return {
+              eq: () => ({
+                select: () => ({
+                  single: updateProfileSpy,
+                }),
               }),
-            }),
-          }),
+            };
+          },
         };
       }
       throw new Error(`unexpected table ${table}`);
@@ -100,6 +107,7 @@ function buildMockSupabase(opts: MockOpts): SupabaseMock {
       }),
     },
     _updateProfileSpy: updateProfileSpy,
+    _updateArgCaptor: updateArgCaptor,
   };
 }
 
@@ -188,11 +196,15 @@ describe('GET /v1/users/me', () => {
       email: string;
       auth_providers: string[];
       role: string;
+      notification_prefs: { weekly_plan_ready: boolean; grocery_list_ready: boolean };
+      cultural_language: string;
     };
     expect(body.id).toBe(SAMPLE_USER_ID);
     expect(body.email).toBe('parent@example.com');
     expect(body.role).toBe('primary_parent');
     expect(body.auth_providers).toEqual(['email']);
+    expect(body.notification_prefs).toEqual({ weekly_plan_ready: true, grocery_list_ready: true });
+    expect(body.cultural_language).toBe('default');
   });
 
   it('unauthenticated → 401', async () => {
@@ -311,6 +323,201 @@ describe('PATCH /v1/users/me', () => {
     expect(supabaseMock.auth.admin.updateUserById).toHaveBeenNthCalledWith(2, SAMPLE_USER_ID, {
       email: 'parent@example.com',
     });
+  });
+});
+
+describe('PATCH /v1/users/me/notifications', () => {
+  let app: FastifyInstance;
+
+  afterEach(async () => {
+    if (app) await app.close();
+  });
+
+  it('updates weekly_plan_ready=false → 200 with updated notification_prefs', async () => {
+    const supabaseMock = buildMockSupabase({
+      updateUserResult: defaultUserRow({
+        notification_prefs: { weekly_plan_ready: false, grocery_list_ready: true },
+      }),
+    });
+    app = await buildTestApp(supabaseMock);
+    const token = signAccessToken(app);
+
+    const res = await app.inject({
+      method: 'PATCH',
+      url: '/v1/users/me/notifications',
+      headers: { authorization: `Bearer ${token}` },
+      payload: { weekly_plan_ready: false },
+    });
+
+    expect(res.statusCode).toBe(200);
+    const body = JSON.parse(res.body) as {
+      notification_prefs: { weekly_plan_ready: boolean; grocery_list_ready: boolean };
+    };
+    expect(body.notification_prefs.weekly_plan_ready).toBe(false);
+    expect(body.notification_prefs.grocery_list_ready).toBe(true);
+  });
+
+  it('merges: existing grocery_list_ready=false, PATCH only weekly_plan_ready → grocery stays false', async () => {
+    const supabaseMock = buildMockSupabase({
+      findUserResult: defaultUserRow({
+        notification_prefs: { weekly_plan_ready: true, grocery_list_ready: false },
+      }),
+      updateUserResult: defaultUserRow({
+        notification_prefs: { weekly_plan_ready: true, grocery_list_ready: false },
+      }),
+    });
+    app = await buildTestApp(supabaseMock);
+    const token = signAccessToken(app);
+
+    const res = await app.inject({
+      method: 'PATCH',
+      url: '/v1/users/me/notifications',
+      headers: { authorization: `Bearer ${token}` },
+      payload: { weekly_plan_ready: true },
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(supabaseMock._updateProfileSpy).toHaveBeenCalledTimes(1);
+    expect(supabaseMock._updateArgCaptor).toHaveBeenCalledWith(
+      expect.objectContaining({
+        notification_prefs: { weekly_plan_ready: true, grocery_list_ready: false },
+      }),
+    );
+    // Verify the merge happened: the update payload sent both fields, preserving grocery_list_ready=false.
+    const body = JSON.parse(res.body) as {
+      notification_prefs: { weekly_plan_ready: boolean; grocery_list_ready: boolean };
+    };
+    expect(body.notification_prefs.weekly_plan_ready).toBe(true);
+    expect(body.notification_prefs.grocery_list_ready).toBe(false);
+  });
+
+  it('empty body → 400 ValidationError', async () => {
+    const supabaseMock = buildMockSupabase({});
+    app = await buildTestApp(supabaseMock);
+    const token = signAccessToken(app);
+
+    const res = await app.inject({
+      method: 'PATCH',
+      url: '/v1/users/me/notifications',
+      headers: { authorization: `Bearer ${token}` },
+      payload: {},
+    });
+
+    expect(res.statusCode).toBe(400);
+    const body = JSON.parse(res.body) as { type: string };
+    expect(body.type).toBe('/errors/validation');
+    expect(supabaseMock._updateProfileSpy).not.toHaveBeenCalled();
+  });
+
+  it('unauthenticated → 401', async () => {
+    const supabaseMock = buildMockSupabase({});
+    app = await buildTestApp(supabaseMock);
+
+    const res = await app.inject({
+      method: 'PATCH',
+      url: '/v1/users/me/notifications',
+      payload: { weekly_plan_ready: true },
+    });
+
+    expect(res.statusCode).toBe(401);
+  });
+});
+
+describe('PATCH /v1/users/me/preferences', () => {
+  let app: FastifyInstance;
+
+  afterEach(async () => {
+    if (app) await app.close();
+  });
+
+  it('sets cultural_language from default → south_asian → 200 with updated value', async () => {
+    const supabaseMock = buildMockSupabase({
+      updateUserResult: defaultUserRow({ cultural_language: 'south_asian' }),
+    });
+    app = await buildTestApp(supabaseMock);
+    const token = signAccessToken(app);
+
+    const res = await app.inject({
+      method: 'PATCH',
+      url: '/v1/users/me/preferences',
+      headers: { authorization: `Bearer ${token}` },
+      payload: { cultural_language: 'south_asian' },
+    });
+
+    expect(res.statusCode).toBe(200);
+    const body = JSON.parse(res.body) as { cultural_language: string };
+    expect(body.cultural_language).toBe('south_asian');
+  });
+
+  it('ratchet: south_asian → default returns 409 conflict (column unchanged)', async () => {
+    const supabaseMock = buildMockSupabase({
+      findUserResult: defaultUserRow({ cultural_language: 'south_asian' }),
+    });
+    app = await buildTestApp(supabaseMock);
+    const token = signAccessToken(app);
+
+    const res = await app.inject({
+      method: 'PATCH',
+      url: '/v1/users/me/preferences',
+      headers: { authorization: `Bearer ${token}` },
+      payload: { cultural_language: 'default' },
+    });
+
+    expect(res.statusCode).toBe(409);
+    const body = JSON.parse(res.body) as { type: string };
+    expect(body.type).toBe('/errors/conflict');
+    expect(supabaseMock._updateProfileSpy).not.toHaveBeenCalled();
+  });
+
+  it('ratchet allows sideways: south_asian → caribbean returns 200', async () => {
+    const supabaseMock = buildMockSupabase({
+      findUserResult: defaultUserRow({ cultural_language: 'south_asian' }),
+      updateUserResult: defaultUserRow({ cultural_language: 'caribbean' }),
+    });
+    app = await buildTestApp(supabaseMock);
+    const token = signAccessToken(app);
+
+    const res = await app.inject({
+      method: 'PATCH',
+      url: '/v1/users/me/preferences',
+      headers: { authorization: `Bearer ${token}` },
+      payload: { cultural_language: 'caribbean' },
+    });
+
+    expect(res.statusCode).toBe(200);
+    const body = JSON.parse(res.body) as { cultural_language: string };
+    expect(body.cultural_language).toBe('caribbean');
+  });
+
+  it('unknown enum value → 400 ValidationError', async () => {
+    const supabaseMock = buildMockSupabase({});
+    app = await buildTestApp(supabaseMock);
+    const token = signAccessToken(app);
+
+    const res = await app.inject({
+      method: 'PATCH',
+      url: '/v1/users/me/preferences',
+      headers: { authorization: `Bearer ${token}` },
+      payload: { cultural_language: 'klingon' },
+    });
+
+    expect(res.statusCode).toBe(400);
+    const body = JSON.parse(res.body) as { type: string };
+    expect(body.type).toBe('/errors/validation');
+    expect(supabaseMock._updateProfileSpy).not.toHaveBeenCalled();
+  });
+
+  it('unauthenticated → 401', async () => {
+    const supabaseMock = buildMockSupabase({});
+    app = await buildTestApp(supabaseMock);
+
+    const res = await app.inject({
+      method: 'PATCH',
+      url: '/v1/users/me/preferences',
+      payload: { cultural_language: 'south_asian' },
+    });
+
+    expect(res.statusCode).toBe(401);
   });
 });
 

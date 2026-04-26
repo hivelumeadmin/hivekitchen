@@ -3,9 +3,16 @@ import type { FastifyPluginAsync } from 'fastify';
 import {
   PasswordResetRequestSchema,
   UpdateProfileRequestSchema,
+  UpdateNotificationPrefsRequestSchema,
+  UpdateCulturalPreferenceRequestSchema,
   UserProfileSchema,
 } from '@hivekitchen/contracts';
-import type { UpdateProfileRequest, PasswordResetRequest } from '@hivekitchen/types';
+import type {
+  UpdateProfileRequest,
+  UpdateNotificationPrefsRequest,
+  UpdateCulturalPreferenceRequest,
+  PasswordResetRequest,
+} from '@hivekitchen/types';
 import { UserRepository } from './user.repository.js';
 import { UserService } from './user.service.js';
 
@@ -34,6 +41,50 @@ const userRoutesPlugin: FastifyPluginAsync = async (fastify) => {
     async (request) => {
       const body = request.body as UpdateProfileRequest;
       const { profile, fieldsChanged } = await service.updateMyProfile(request.user.id, body);
+      request.auditContext = {
+        event_type: 'account.updated',
+        user_id: request.user.id,
+        household_id: request.user.household_id,
+        request_id: request.id,
+        metadata: { fields_changed: fieldsChanged },
+      };
+      return profile;
+    },
+  );
+
+  fastify.patch(
+    '/v1/users/me/notifications',
+    {
+      schema: {
+        body: UpdateNotificationPrefsRequestSchema,
+        response: { 200: UserProfileSchema },
+      },
+    },
+    async (request) => {
+      const body = request.body as UpdateNotificationPrefsRequest;
+      const profile = await service.updateMyNotifications(request.user.id, body);
+      request.auditContext = {
+        event_type: 'account.updated',
+        user_id: request.user.id,
+        household_id: request.user.household_id,
+        request_id: request.id,
+        metadata: { fields_changed: ['notification_prefs'] },
+      };
+      return profile;
+    },
+  );
+
+  fastify.patch(
+    '/v1/users/me/preferences',
+    {
+      schema: {
+        body: UpdateCulturalPreferenceRequestSchema,
+        response: { 200: UserProfileSchema },
+      },
+    },
+    async (request) => {
+      const body = request.body as UpdateCulturalPreferenceRequest;
+      const { profile, fieldsChanged } = await service.updateMyPreferences(request.user.id, body);
       request.auditContext = {
         event_type: 'account.updated',
         user_id: request.user.id,

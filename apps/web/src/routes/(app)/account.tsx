@@ -1,13 +1,34 @@
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useScope } from '@hivekitchen/ui';
-import type { UserProfile, UpdateProfileRequest } from '@hivekitchen/types';
+import {
+  type UserProfile,
+  type UpdateProfileRequest,
+  type NotificationPrefs,
+  type CulturalLanguagePreference,
+  CULTURAL_LANGUAGE_VALUES,
+} from '@hivekitchen/types';
 import { hkFetch, HkApiError } from '@/lib/fetch.js';
 import { useAuthStore } from '@/stores/auth.store.js';
 
 type LoadState = 'loading' | 'ready' | 'error';
 
 const PASSWORD_RESET_COOLDOWN_MS = 60 * 1000;
+
+const CULTURAL_LANGUAGE_LABELS: { [K in CulturalLanguagePreference]: string } = {
+  default: 'English (Grandma, Grandpa)',
+  south_asian: 'South Asian (Nani, Nana, Dadi, Dada)',
+  hispanic: 'Spanish (Abuela, Abuelo)',
+  east_african: 'East African (Swahili)',
+  middle_eastern: 'Middle Eastern (Teta, Jiddo)',
+  east_asian: 'East Asian',
+  caribbean: 'Caribbean',
+};
+
+const CULTURAL_LANGUAGE_OPTIONS = CULTURAL_LANGUAGE_VALUES.map((value) => ({
+  value,
+  label: CULTURAL_LANGUAGE_LABELS[value],
+}));
 
 export default function AccountPage() {
   useScope('app-scope');
@@ -29,6 +50,17 @@ export default function AccountPage() {
   const [resetSent, setResetSent] = useState(false);
   const [resetError, setResetError] = useState<string | null>(null);
 
+  const [notifPrefs, setNotifPrefs] = useState<NotificationPrefs>({
+    weekly_plan_ready: true,
+    grocery_list_ready: true,
+  });
+  const [notifSavingField, setNotifSavingField] = useState<keyof NotificationPrefs | null>(null);
+  const [notifError, setNotifError] = useState<string | null>(null);
+
+  const [culturalLanguage, setCulturalLanguage] = useState<CulturalLanguagePreference>('default');
+  const [culturalSaving, setCulturalSaving] = useState(false);
+  const [culturalError, setCulturalError] = useState<string | null>(null);
+
   useEffect(() => {
     if (accessToken === null) {
       didLoad.current = false; // reset so a fresh login re-fetches the profile
@@ -45,6 +77,8 @@ export default function AccountPage() {
         setDisplayName(result.display_name ?? '');
         setPreferredLanguage(result.preferred_language);
         setEmailDraft(result.email);
+        setNotifPrefs(result.notification_prefs);
+        setCulturalLanguage(result.cultural_language);
         setLoadState('ready');
       } catch {
         setLoadState('error');
@@ -116,6 +150,55 @@ export default function AccountPage() {
     }
   }
 
+  async function handleNotificationToggle(field: keyof NotificationPrefs, checked: boolean) {
+    if (!profile) return;
+    const previous = profile.notification_prefs;
+    setNotifError(null);
+    setNotifSavingField(field);
+    // Optimistic UI: reflect the toggle immediately, reconcile from server response.
+    setNotifPrefs({ ...previous, [field]: checked });
+    try {
+      const updated = await hkFetch<UserProfile>('/v1/users/me/notifications', {
+        method: 'PATCH',
+        body: { [field]: checked },
+      });
+      setProfile(updated);
+      setNotifPrefs(updated.notification_prefs);
+    } catch {
+      setNotifPrefs(previous);
+      setNotifError('Could not update notification preference. Please try again.');
+    } finally {
+      setNotifSavingField(null);
+    }
+  }
+
+  async function handleCulturalLanguageChange(value: CulturalLanguagePreference) {
+    if (!profile) return;
+    const previous = culturalLanguage;
+    setCulturalError(null);
+    setCulturalSaving(true);
+    setCulturalLanguage(value);
+    try {
+      const updated = await hkFetch<UserProfile>('/v1/users/me/preferences', {
+        method: 'PATCH',
+        body: { cultural_language: value },
+      });
+      setProfile(updated);
+      setCulturalLanguage(updated.cultural_language);
+    } catch (err) {
+      setCulturalLanguage(previous);
+      if (err instanceof HkApiError && err.status === 409) {
+        setCulturalError('Family language cannot be changed back once set.');
+      } else if (err instanceof HkApiError && err.status === 400) {
+        setCulturalError('That option is not valid.');
+      } else {
+        setCulturalError('Could not update family language. Please try again.');
+      }
+    } finally {
+      setCulturalSaving(false);
+    }
+  }
+
   if (loadState === 'loading') {
     return (
       <main className="min-h-screen flex items-center justify-center px-6">
@@ -136,6 +219,7 @@ export default function AccountPage() {
 
   const isEmailProvider = profile.auth_providers.includes('email');
   const oauthProvider = profile.auth_providers.find((p) => p !== 'email');
+  const culturalLanguageLocked = profile.cultural_language !== 'default';
 
   return (
     <main className="min-h-screen px-6 py-12">
@@ -232,6 +316,74 @@ export default function AccountPage() {
             <p className="text-sm text-warm-neutral-700">
               Your account is managed at {oauthProvider ?? 'your provider'}.
             </p>
+          )}
+        </section>
+
+        <section className="space-y-3 border-t border-warm-neutral-200 pt-6">
+          <h2 className="font-serif text-xl">Notifications</h2>
+          <p className="text-sm text-warm-neutral-700">
+            Choose when Lumi reaches out. Toggle anytime.
+          </p>
+          <label className="flex items-center justify-between gap-3 py-1">
+            <span className="text-sm">Weekly plan is ready</span>
+            <input
+              type="checkbox"
+              checked={notifPrefs.weekly_plan_ready}
+              onChange={(e) =>
+                void handleNotificationToggle('weekly_plan_ready', e.target.checked)
+              }
+              disabled={notifSavingField !== null}
+              className="h-4 w-4"
+            />
+          </label>
+          <label className="flex items-center justify-between gap-3 py-1">
+            <span className="text-sm">Grocery list is ready</span>
+            <input
+              type="checkbox"
+              checked={notifPrefs.grocery_list_ready}
+              onChange={(e) =>
+                void handleNotificationToggle('grocery_list_ready', e.target.checked)
+              }
+              disabled={notifSavingField !== null}
+              className="h-4 w-4"
+            />
+          </label>
+          {notifError && (
+            <p role="alert" className="text-sm text-red-700">{notifError}</p>
+          )}
+        </section>
+
+        <section className="space-y-3 border-t border-warm-neutral-200 pt-6">
+          <h2 className="font-serif text-xl">Family language</h2>
+          <p className="text-sm text-warm-neutral-700">
+            How Lumi refers to family members in your household.
+          </p>
+          <select
+            aria-label="Family language"
+            value={culturalLanguage}
+            onChange={(e) =>
+              void handleCulturalLanguageChange(e.target.value as CulturalLanguagePreference)
+            }
+            disabled={culturalSaving}
+            className="w-full rounded border border-warm-neutral-300 px-3 py-2"
+          >
+            {CULTURAL_LANGUAGE_OPTIONS.map((opt) => (
+              <option
+                key={opt.value}
+                value={opt.value}
+                disabled={opt.value === 'default' && culturalLanguageLocked}
+              >
+                {opt.label}
+              </option>
+            ))}
+          </select>
+          {culturalLanguageLocked && (
+            <p className="text-sm text-warm-neutral-700">
+              Family language cannot be changed back once set.
+            </p>
+          )}
+          {culturalError && (
+            <p role="alert" className="text-sm text-red-700">{culturalError}</p>
           )}
         </section>
       </div>

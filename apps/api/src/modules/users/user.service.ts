@@ -1,9 +1,20 @@
 import type { SupabaseClient, User as SupabaseUser } from '@supabase/supabase-js';
-import type { UserProfile, UpdateProfileRequest } from '@hivekitchen/types';
+import type {
+  UserProfile,
+  UpdateProfileRequest,
+  UpdateNotificationPrefsRequest,
+  UpdateCulturalPreferenceRequest,
+} from '@hivekitchen/types';
 import { ConflictError, UnauthorizedError, ValidationError } from '../../common/errors.js';
 import type { UserRepository, UserProfileRow, UpdateUserProfileInput } from './user.repository.js';
+import { CulturalLanguageSchema } from '@hivekitchen/contracts';
 
 export interface UpdateMyProfileResult {
+  profile: UserProfile;
+  fieldsChanged: string[];
+}
+
+export interface UpdateMyPreferencesResult {
   profile: UserProfile;
   fieldsChanged: string[];
 }
@@ -77,6 +88,52 @@ export class UserService {
     return { profile: toUserProfile(row, auth_providers), fieldsChanged };
   }
 
+  async updateMyNotifications(
+    userId: string,
+    input: UpdateNotificationPrefsRequest,
+  ): Promise<UserProfile> {
+    const currentRow = await this.repository.findUserById(userId);
+    if (!currentRow) throw new UnauthorizedError('User not found');
+
+    // Merge over existing prefs so a single-field PATCH does not clobber the other field.
+    // Defaults (true) apply only when the column has never been written for this user.
+    const merged: { weekly_plan_ready: boolean; grocery_list_ready: boolean } = {
+      weekly_plan_ready: currentRow.notification_prefs?.weekly_plan_ready ?? true,
+      grocery_list_ready: currentRow.notification_prefs?.grocery_list_ready ?? true,
+    };
+    if (input.weekly_plan_ready !== undefined) merged.weekly_plan_ready = input.weekly_plan_ready;
+    if (input.grocery_list_ready !== undefined) merged.grocery_list_ready = input.grocery_list_ready;
+
+    const row = await this.repository.updateUserProfile(userId, { notification_prefs: merged });
+    const auth_providers = await this.fetchAuthProviders(userId);
+    return toUserProfile(row, auth_providers);
+  }
+
+  async updateMyPreferences(
+    userId: string,
+    input: UpdateCulturalPreferenceRequest,
+  ): Promise<UpdateMyPreferencesResult> {
+    const currentRow = await this.repository.findUserById(userId);
+    if (!currentRow) throw new UnauthorizedError('User not found');
+
+    // UX-DR47: family-language ratchet — once set to a non-default value, never revert to 'default'.
+    // Sideways moves (e.g. south_asian → caribbean) are allowed.
+    if (input.cultural_language === 'default' && currentRow.cultural_language !== 'default') {
+      throw new ConflictError('Family language cannot be reversed once set');
+    }
+
+    const fieldsChanged: string[] = [];
+    if (input.cultural_language !== currentRow.cultural_language) {
+      fieldsChanged.push('cultural_language');
+    }
+
+    const row = await this.repository.updateUserProfile(userId, {
+      cultural_language: input.cultural_language,
+    });
+    const auth_providers = await this.fetchAuthProviders(userId);
+    return { profile: toUserProfile(row, auth_providers), fieldsChanged };
+  }
+
   async initiatePasswordReset(email: string, webBaseUrl: string): Promise<void> {
     try {
       const { error } = await this.supabase.auth.resetPasswordForEmail(email, {
@@ -115,6 +172,11 @@ function toUserProfile(row: UserProfileRow, auth_providers: string[]): UserProfi
     preferred_language: row.preferred_language,
     role: row.role,
     auth_providers,
+    notification_prefs: {
+      weekly_plan_ready: row.notification_prefs?.weekly_plan_ready ?? true,
+      grocery_list_ready: row.notification_prefs?.grocery_list_ready ?? true,
+    },
+    cultural_language: CulturalLanguageSchema.parse(row.cultural_language),
   };
 }
 

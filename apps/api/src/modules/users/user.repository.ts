@@ -6,15 +6,20 @@ export interface UserProfileRow {
   display_name: string | null;
   preferred_language: string;
   role: 'primary_parent' | 'secondary_caregiver' | 'guest_author' | 'ops';
+  notification_prefs: { weekly_plan_ready?: boolean; grocery_list_ready?: boolean };
+  cultural_language: string;
 }
 
 export type UpdateUserProfileInput = Partial<{
   display_name: string | null;
   email: string;
   preferred_language: string;
+  notification_prefs: { weekly_plan_ready?: boolean; grocery_list_ready?: boolean };
+  cultural_language: string;
 }>;
 
-const PROFILE_COLUMNS = 'id, email, display_name, preferred_language, role';
+const PROFILE_COLUMNS =
+  'id, email, display_name, preferred_language, role, notification_prefs, cultural_language';
 
 export class UserRepository extends BaseRepository {
   async findUserById(id: string): Promise<UserProfileRow | null> {
