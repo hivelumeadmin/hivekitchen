@@ -5,6 +5,7 @@ const API_BASE_URL = import.meta.env.VITE_API_BASE_URL as string;
 export interface HkFetchInit {
   method: 'GET' | 'POST' | 'PATCH' | 'DELETE';
   body?: unknown;
+  signal?: AbortSignal;
 }
 
 export class HkApiError extends Error {
@@ -27,6 +28,7 @@ export async function hkFetch<T = unknown>(path: string, init: HkFetchInit): Pro
     headers,
     credentials: 'include',
     body: init.body !== undefined ? JSON.stringify(init.body) : undefined,
+    signal: init.signal,
   });
 
   if (!res.ok) {

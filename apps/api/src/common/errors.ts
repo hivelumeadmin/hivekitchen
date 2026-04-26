@@ -53,6 +53,18 @@ export class LinkExpiredError extends DomainError {
   readonly title = 'Link expired or already used';
 }
 
+export class NotFoundError extends DomainError {
+  readonly type = '/errors/not-found';
+  readonly status = 404;
+  readonly title = 'Not Found';
+}
+
+export class UpstreamError extends DomainError {
+  readonly type = '/errors/upstream';
+  readonly status = 502;
+  readonly title = 'Upstream Service Unavailable';
+}
+
 export function isDomainError(err: unknown): err is DomainError {
   return err instanceof DomainError;
 }

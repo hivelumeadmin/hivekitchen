@@ -30,4 +30,6 @@ export const InvalidationEvent = z.discriminatedUnion('type', [
   z.object({ type: z.literal('allergy.verdict'), plan_id: z.string().uuid(), verdict: AllergyVerdict }),
   PresenceEvent,
   z.object({ type: z.literal('thread.resync'), thread_id: z.string().uuid(), from_seq: SequenceId }),
+  z.object({ type: z.literal('voice.session.started'), session_id: z.string().uuid(), user_id: z.string().uuid() }),
+  z.object({ type: z.literal('voice.session.ended'), session_id: z.string().uuid(), user_id: z.string().uuid() }),
 ]);

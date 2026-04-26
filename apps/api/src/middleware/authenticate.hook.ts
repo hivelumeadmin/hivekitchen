@@ -3,6 +3,7 @@ import type { FastifyPluginAsync } from 'fastify';
 import { UnauthorizedError } from '../common/errors.js';
 
 const SKIP_PREFIXES = ['/v1/internal/', '/v1/webhooks/', '/v1/auth/'];
+const SKIP_EXACT = new Set(['/v1/voice/llm']);
 
 interface AccessTokenPayload {
   sub: string;
@@ -13,6 +14,7 @@ interface AccessTokenPayload {
 const authenticateHookPlugin: FastifyPluginAsync = async (fastify) => {
   fastify.addHook('onRequest', async (request) => {
     const url = request.url.split('?')[0] ?? '';
+    if (SKIP_EXACT.has(url)) return;
     if (SKIP_PREFIXES.some((prefix) => url.startsWith(prefix))) return;
 
     const header = request.headers.authorization;

@@ -25,6 +25,8 @@ const EnvSchema = z.object({
 
   ELEVENLABS_API_KEY: z.string().min(1),
   ELEVENLABS_WEBHOOK_SECRET: z.string().min(1),
+  ELEVENLABS_AGENT_ID: z.string().min(1),
+  ELEVENLABS_CUSTOM_LLM_SECRET: z.string().min(32),
 
   STRIPE_SECRET_KEY: z.string().min(1),
   STRIPE_WEBHOOK_SECRET: z.string().min(1),

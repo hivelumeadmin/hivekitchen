@@ -13,6 +13,7 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
+    "@elevenlabs/react": "^1.2.1",
     "@hivekitchen/contracts": "workspace:*",
     "@hivekitchen/design-system": "workspace:*",
     "@hivekitchen/types": "workspace:*",

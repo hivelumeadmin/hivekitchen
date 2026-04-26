@@ -25,8 +25,10 @@ import {
   TurnBodyProposal,
   TurnBodySystemEvent,
   TurnBodyPresence,
+  VoiceTokenRequestSchema,
   VoiceTokenResponse,
-  ElevenLabsWebhookPayload,
+  ElevenLabsLlmRequestSchema,
+  ElevenLabsPostCallWebhookPayload,
   InvalidationEvent,
   ForgetRequest,
   ForgetCompletedEvent,
@@ -81,8 +83,10 @@ export type TurnBodySystemEvent = z.infer<typeof TurnBodySystemEvent>;
 export type TurnBodyPresence = z.infer<typeof TurnBodyPresence>;
 
 // Voice
+export type VoiceTokenRequest = z.infer<typeof VoiceTokenRequestSchema>;
 export type VoiceTokenResponse = z.infer<typeof VoiceTokenResponse>;
-export type ElevenLabsWebhookPayload = z.infer<typeof ElevenLabsWebhookPayload>;
+export type ElevenLabsLlmRequest = z.infer<typeof ElevenLabsLlmRequestSchema>;
+export type ElevenLabsPostCallWebhook = z.infer<typeof ElevenLabsPostCallWebhookPayload>;
 
 // Events
 export type InvalidationEvent = z.infer<typeof InvalidationEvent>;

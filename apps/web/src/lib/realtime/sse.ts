@@ -183,6 +183,11 @@ export function createSseBridge(queryClient: QueryClient): SseBridge {
         void queryClient.invalidateQueries({ queryKey: QueryKeys.thread(event.thread_id) });
         break;
 
+      case 'voice.session.started':
+      case 'voice.session.ended':
+        // Story 5.2 will wire Redis pub/sub fan-out. For now these events are logged only.
+        break;
+
       default: {
         // Exhaustiveness check — TypeScript compile error if a new InvalidationEvent
         // type is added to packages/contracts without a matching case here.

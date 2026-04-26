@@ -55,4 +55,5 @@ export const Turn = z.object({
   created_at: z.string().datetime(),
   role: z.enum(['user', 'lumi', 'system']),
   body: TurnBody,
+  modality: z.enum(['text', 'voice']).optional(),
 });
