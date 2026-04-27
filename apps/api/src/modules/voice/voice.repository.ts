@@ -1,14 +1,10 @@
+import type { SupabaseClient } from '@supabase/supabase-js';
 import type { TurnBody } from '@hivekitchen/types';
 import { BaseRepository } from '../../repository/base.repository.js';
 import { NotFoundError } from '../../common/errors.js';
+import { ThreadRepository, type ThreadRow, type TurnRow } from '../threads/thread.repository.js';
 
-export interface ThreadRow {
-  id: string;
-  household_id: string;
-  type: string;
-  status: string;
-  created_at: string;
-}
+export type { ThreadRow, TurnRow };
 
 export interface VoiceSessionRow {
   id: string;
@@ -21,20 +17,54 @@ export interface VoiceSessionRow {
   ended_at: string | null;
 }
 
-const THREAD_COLUMNS = 'id, household_id, type, status, created_at';
 const SESSION_COLUMNS =
   'id, user_id, household_id, thread_id, elevenlabs_conversation_id, status, started_at, ended_at';
 
+// VoiceRepository composes ThreadRepository for thread/turn primitives so
+// voice-specific code stays small and the same primitives are reused by
+// the text-onboarding module.
 export class VoiceRepository extends BaseRepository {
-  async createThread(householdId: string, type: string): Promise<ThreadRow> {
-    const { data, error } = await this.client
-      .from('threads')
-      .insert({ household_id: householdId, type })
-      .select(THREAD_COLUMNS)
-      .single();
-    if (error) throw error;
-    return data as ThreadRow;
+  private readonly threads: ThreadRepository;
+
+  constructor(client: SupabaseClient) {
+    super(client);
+    this.threads = new ThreadRepository(client);
   }
+
+  // --- thread/turn primitives delegated to ThreadRepository ---
+
+  createThread(householdId: string, type: string): Promise<ThreadRow> {
+    return this.threads.createThread(householdId, type);
+  }
+
+  appendTurn(params: {
+    threadId: string;
+    seq: number;
+    role: 'user' | 'lumi' | 'system';
+    body: TurnBody;
+    modality: 'text' | 'voice';
+  }): Promise<TurnRow> {
+    return this.threads.appendTurn(params);
+  }
+
+  appendTurnNext(params: {
+    threadId: string;
+    role: 'user' | 'lumi' | 'system';
+    body: TurnBody;
+    modality: 'text' | 'voice';
+  }): Promise<TurnRow> {
+    return this.threads.appendTurnNext(params);
+  }
+
+  getNextSeq(threadId: string): Promise<number> {
+    return this.threads.getNextSeq(threadId);
+  }
+
+  closeThread(threadId: string): Promise<void> {
+    return this.threads.closeThread(threadId);
+  }
+
+  // --- voice-specific methods ---
 
   async createVoiceSession(params: {
     userId: string;
@@ -81,35 +111,5 @@ export class VoiceRepository extends BaseRepository {
     if (error) throw error;
     if (!data) throw new NotFoundError(`Voice session ${id} not found`);
     return data as VoiceSessionRow;
-  }
-
-  async appendTurn(params: {
-    threadId: string;
-    seq: number;
-    role: 'user' | 'lumi' | 'system';
-    body: TurnBody;
-    modality: 'text' | 'voice';
-  }): Promise<void> {
-    const { error } = await this.client.from('thread_turns').insert({
-      thread_id: params.threadId,
-      server_seq: params.seq,
-      role: params.role,
-      body: params.body,
-      modality: params.modality,
-    });
-    if (error) throw error;
-  }
-
-  async getNextSeq(threadId: string): Promise<number> {
-    const { data, error } = await this.client
-      .from('thread_turns')
-      .select('server_seq')
-      .eq('thread_id', threadId)
-      .order('server_seq', { ascending: false })
-      .limit(1)
-      .maybeSingle();
-    if (error) throw error;
-    const row = data as { server_seq: number } | null;
-    return row !== null ? row.server_seq + 1 : 1;
   }
 }

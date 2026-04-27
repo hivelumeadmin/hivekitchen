@@ -62,6 +62,11 @@ function buildMockSupabase(opts: {
               }),
             }),
           }),
+          update: () => ({
+            eq: () => ({
+              eq: () => Promise.resolve({ error: null }),
+            }),
+          }),
         };
       }
       if (table === 'voice_sessions') {
@@ -96,7 +101,22 @@ function buildMockSupabase(opts: {
       }
       if (table === 'thread_turns') {
         return {
-          insert: vi.fn().mockResolvedValue({ error: null }),
+          insert: () => ({
+            select: () => ({
+              single: vi.fn().mockResolvedValue({
+                data: {
+                  id: '99999999-9999-4999-8999-999999999999',
+                  thread_id: SAMPLE_THREAD_ID,
+                  server_seq: 1,
+                  role: 'user',
+                  body: { type: 'message', content: 'mock' },
+                  modality: 'voice',
+                  created_at: new Date().toISOString(),
+                },
+                error: null,
+              }),
+            }),
+          }),
           select: () => ({
             eq: () => ({
               order: () => ({

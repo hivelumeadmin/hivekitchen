@@ -1,14 +1,23 @@
 import type OpenAI from 'openai';
-import { ONBOARDING_SYSTEM_PROMPT } from './prompts/onboarding.prompt.js';
+import {
+  ONBOARDING_SYSTEM_PROMPT,
+  getOnboardingSystemPrompt,
+  type OnboardingModality,
+} from './prompts/onboarding.prompt.js';
 
 export type LlmMessage = { role: 'system' | 'user' | 'assistant'; content: string };
 
 export class OnboardingAgent {
   constructor(private readonly openai: OpenAI) {}
 
-  async respond(messages: LlmMessage[]): Promise<string> {
+  async respond(
+    messages: LlmMessage[],
+    opts: { modality?: OnboardingModality } = {},
+  ): Promise<string> {
+    const modality = opts.modality ?? 'voice';
+    const systemPrompt = modality === 'voice' ? ONBOARDING_SYSTEM_PROMPT : getOnboardingSystemPrompt(modality);
     const fullMessages: LlmMessage[] = [
-      { role: 'system', content: ONBOARDING_SYSTEM_PROMPT },
+      { role: 'system', content: systemPrompt },
       ...messages.filter((m) => m.role !== 'system'),
     ];
     const completion = await this.openai.chat.completions.create({
@@ -17,7 +26,11 @@ export class OnboardingAgent {
       temperature: 0.7,
       max_tokens: 300,
     });
-    return completion.choices[0]?.message?.content ?? '[pause] Let me think about that for a moment.';
+    const fallback =
+      modality === 'voice'
+        ? '[pause] Let me think about that for a moment.'
+        : 'Let me think about that for a moment.';
+    return completion.choices[0]?.message?.content ?? fallback;
   }
 
   async extractSummary(transcript: Array<{ role: string; message: string }>): Promise<{
@@ -53,5 +66,32 @@ export class OnboardingAgent {
       palate_notes: onlyStrings(raw.palate_notes),
       allergens_mentioned: onlyStrings(raw.allergens_mentioned),
     };
+  }
+
+  // Returns true when the most recent assistant turn was the closing summary
+  // AND the most recent user turn affirmed it ("yes", "that's right", etc.).
+  // Used to gate the front-end "Finish onboarding" affordance.
+  async isSummaryConfirmed(history: LlmMessage[]): Promise<boolean> {
+    if (history.length < 4) return false;
+    const recent = history
+      .slice(-6)
+      .filter((m) => m.role !== 'system')
+      .map((m) => `${m.role}: ${m.content}`)
+      .join('\n');
+    const completion = await this.openai.chat.completions.create({
+      model: 'gpt-4o',
+      messages: [
+        {
+          role: 'system',
+          content:
+            'You judge whether an onboarding conversation has reached its end: assistant has summarised what it learned and the user has confirmed or corrected the summary in their most recent message. Reply with exactly one word: "yes" or "no". Nothing else.',
+        },
+        { role: 'user', content: recent },
+      ],
+      temperature: 0,
+      max_tokens: 5,
+    });
+    const verdict = (completion.choices[0]?.message?.content ?? '').trim().toLowerCase();
+    return verdict.startsWith('yes');
   }
 }

@@ -45,6 +45,9 @@ import {
   CulturalLanguageSchema,
   UpdateCulturalPreferenceRequestSchema,
   CULTURAL_LANGUAGE_VALUES,
+  TextOnboardingTurnRequestSchema,
+  TextOnboardingTurnResponseSchema,
+  TextOnboardingFinalizeResponseSchema,
 } from '@hivekitchen/contracts';
 
 // Auth
@@ -115,3 +118,8 @@ export type UpdateNotificationPrefsRequest = z.infer<typeof UpdateNotificationPr
 export type CulturalLanguagePreference = z.infer<typeof CulturalLanguageSchema>;
 export type UpdateCulturalPreferenceRequest = z.infer<typeof UpdateCulturalPreferenceRequestSchema>;
 export { CULTURAL_LANGUAGE_VALUES };
+
+// Onboarding (Story 2.7 — text-equivalent path)
+export type TextOnboardingTurnRequest = z.infer<typeof TextOnboardingTurnRequestSchema>;
+export type TextOnboardingTurnResponse = z.infer<typeof TextOnboardingTurnResponseSchema>;
+export type TextOnboardingFinalizeResponse = z.infer<typeof TextOnboardingFinalizeResponseSchema>;

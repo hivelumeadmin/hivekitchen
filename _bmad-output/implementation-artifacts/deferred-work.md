@@ -245,3 +245,8 @@
 - **`extractSummary` accepts unbounded transcript length** — joins entire transcript and sends to gpt-4o without max-token clipping. Onboarding's 10-minute budget caps real-world size, low risk for this story. Add token-clipping when text-mode (Story 2.7) and longer threads land. [`apps/api/src/agents/onboarding.agent.ts`]
 - **Real Supabase integration test for `UNIQUE (thread_id, server_seq)` collision** — current vitest mocks return `{ error: null }` regardless of duplicate `server_seq`, so the race-condition contract is unenforced by tests. Needs Supabase test-DB infra. [`apps/api/src/modules/voice/voice.routes.test.ts`]
 - **Scoped content-type parser isolation test** — no test asserts that the `parseAs: 'string'` parser scoped to the webhook route does NOT bleed into other JSON routes. A regression that globalised the parser would not be caught. [`apps/api/src/modules/voice/voice.routes.test.ts`]
+
+## Deferred from: code review of 2-7-text-equivalent-onboarding-path (2026-04-26)
+
+- **F02 — `getNextSeq` starts at seq 1**: pre-existing pattern from Story 2.6; if DB schema uses 0-based `server_seq`, the first turn gets seq 1 instead of 0. Not confirmed without schema inspection. [`apps/api/src/modules/threads/thread.repository.ts:130`]
+- **F15 — `onboarding.routes.ts` direct instantiation**: `ThreadRepository`, `OnboardingAgent`, and `OnboardingService` are created inline in the plugin without Fastify DI decorators or `onClose` lifecycle hooks. Consistent with existing route patterns in this codebase; revisit when a DI / lifecycle hardening pass is warranted.

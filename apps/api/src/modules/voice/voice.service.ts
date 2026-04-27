@@ -165,13 +165,11 @@ export class VoiceService {
     for (let i = 0; i < transcript.length; i++) {
       const turn = transcript[i];
       if (!turn) continue;
-      const seq = await this.repository.getNextSeq(session.thread_id);
       const isAgent = turn.role === 'agent';
       // Spec Schema Design: persist Lumi response with TTS expression tags stripped.
       const content = isAgent ? stripExpressionTags(turn.message) : turn.message;
-      await this.repository.appendTurn({
+      await this.repository.appendTurnNext({
         threadId: session.thread_id,
-        seq,
         role: isAgent ? 'lumi' : 'user',
         body: { type: 'message', content },
         modality: 'voice',
@@ -196,10 +194,8 @@ export class VoiceService {
       );
     }
 
-    const summarySeq = await this.repository.getNextSeq(session.thread_id);
-    await this.repository.appendTurn({
+    await this.repository.appendTurnNext({
       threadId: session.thread_id,
-      seq: summarySeq,
       role: 'system',
       body: {
         type: 'system_event',
@@ -208,6 +204,11 @@ export class VoiceService {
       },
       modality: 'text',
     });
+
+    // Close the onboarding thread itself (not just the voice session) so the
+    // text-onboarding completion gate (householdHasCompletedOnboarding) finds
+    // a closed thread carrying the summary turn and refuses re-onboarding.
+    await this.repository.closeThread(session.thread_id);
 
     await this.repository.updateVoiceSession(session.id, {
       status: 'closed',

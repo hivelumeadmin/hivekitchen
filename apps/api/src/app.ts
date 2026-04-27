@@ -30,6 +30,7 @@ import { authRoutes } from './modules/auth/auth.routes.js';
 import { inviteRoutes } from './modules/auth/invite.routes.js';
 import { userRoutes } from './modules/users/user.routes.js';
 import { voiceRoutes } from './modules/voice/voice.routes.js';
+import { onboardingRoutes } from './modules/onboarding/onboarding.routes.js';
 
 const REQUEST_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -136,6 +137,7 @@ export async function buildApp(opts: BuildAppOptions) {
   await app.register(inviteRoutes);
   await app.register(userRoutes);
   await app.register(voiceRoutes);
+  await app.register(onboardingRoutes);
 
   return app;
 }

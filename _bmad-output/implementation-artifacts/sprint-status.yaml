@@ -1,5 +1,5 @@
 # generated: 2026-04-23
-# last_updated: 2026-04-26 (Story 2-6 done — review patches applied)
+# last_updated: 2026-04-26 (Story 2-7 review)
 # project: hivekitchen
 # project_key: NOKEY
 # tracking_system: file-system
@@ -35,7 +35,7 @@
 # - Dev moves story to 'review', then runs code-review (fresh context, different LLM recommended)
 
 generated: 2026-04-23
-last_updated: 2026-04-26 (Story 2-6 done — review patches applied)
+last_updated: 2026-04-26 (Story 2-7 review)
 project: hivekitchen
 project_key: NOKEY
 tracking_system: file-system
@@ -70,7 +70,7 @@ development_status:
   2-4-account-profile-management-recovery: done
   2-5-notification-preferences-cultural-language-preference: done
   2-6-voice-first-onboarding-interview-via-elevenlabs-three-signal-questions: done
-  2-7-text-equivalent-onboarding-path: backlog
+  2-7-text-equivalent-onboarding-path: review
   2-8-coppa-soft-vpc-signed-declaration-beta: backlog
   2-9-parental-notice-disclosure-pre-data-collection: backlog
   2-10-add-child-profile-with-envelope-encrypted-sensitive-fields: backlog

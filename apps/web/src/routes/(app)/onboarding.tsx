@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useScope } from '@hivekitchen/ui';
 import { useVoiceStore } from '@/stores/voice.store.js';
 import { OnboardingVoice } from '@/features/onboarding/OnboardingVoice.js';
+import { OnboardingText } from '@/features/onboarding/OnboardingText.js';
 
 type OnboardingMode = 'select' | 'voice' | 'text';
 
@@ -48,11 +49,12 @@ export default function OnboardingPage() {
 
   if (mode === 'text') {
     return (
-      <main className="min-h-screen flex items-center justify-center px-4">
-        <div className="w-full max-w-md">
-          <p className="font-sans text-stone-600 text-center">
-            Text onboarding coming in Story 2.7.
-          </p>
+      <main className="min-h-screen flex items-start justify-center px-4 py-8">
+        <div className="w-full max-w-2xl flex flex-col gap-6">
+          <h1 className="font-serif text-2xl text-stone-800 text-center">
+            Let&apos;s get to know your family
+          </h1>
+          <OnboardingText />
         </div>
       </main>
     );
