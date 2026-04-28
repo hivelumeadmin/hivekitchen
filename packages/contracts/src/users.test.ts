@@ -3,6 +3,7 @@ import {
   UserProfileSchema,
   UpdateProfileRequestSchema,
   PasswordResetRequestSchema,
+  PasswordResetCompleteRequestSchema,
   NotificationPrefsSchema,
   UpdateNotificationPrefsRequestSchema,
   CulturalLanguageSchema,
@@ -117,6 +118,53 @@ describe('PasswordResetRequestSchema', () => {
     // 246 'a's + '@test.com' (9 chars) = 255 total — one over the limit
     const tooLongEmail = 'a'.repeat(246) + '@test.com';
     expect(PasswordResetRequestSchema.safeParse({ email: tooLongEmail }).success).toBe(false);
+  });
+});
+
+describe('PasswordResetCompleteRequestSchema', () => {
+  const validBody = {
+    token: 'recovery-token-hash',
+    password: 'a-strong-password-12',
+  };
+
+  it('accepts a valid token + password', () => {
+    expect(PasswordResetCompleteRequestSchema.safeParse(validBody).success).toBe(true);
+  });
+
+  it('accepts password at min 12 chars', () => {
+    expect(
+      PasswordResetCompleteRequestSchema.safeParse({ ...validBody, password: 'a'.repeat(12) }).success,
+    ).toBe(true);
+  });
+
+  it('accepts password at max 128 chars', () => {
+    expect(
+      PasswordResetCompleteRequestSchema.safeParse({ ...validBody, password: 'a'.repeat(128) }).success,
+    ).toBe(true);
+  });
+
+  it('rejects empty token', () => {
+    expect(PasswordResetCompleteRequestSchema.safeParse({ ...validBody, token: '' }).success).toBe(false);
+  });
+
+  it('rejects password shorter than 12 chars', () => {
+    expect(
+      PasswordResetCompleteRequestSchema.safeParse({ ...validBody, password: 'short' }).success,
+    ).toBe(false);
+  });
+
+  it('rejects password longer than 128 chars', () => {
+    expect(
+      PasswordResetCompleteRequestSchema.safeParse({ ...validBody, password: 'a'.repeat(129) }).success,
+    ).toBe(false);
+  });
+
+  it('rejects when token is missing', () => {
+    expect(PasswordResetCompleteRequestSchema.safeParse({ password: 'a-strong-password-12' }).success).toBe(false);
+  });
+
+  it('rejects when password is missing', () => {
+    expect(PasswordResetCompleteRequestSchema.safeParse({ token: 'tok' }).success).toBe(false);
   });
 });
 

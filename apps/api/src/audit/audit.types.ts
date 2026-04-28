@@ -40,6 +40,7 @@ export const AUDIT_EVENT_TYPES = [
   'auth.refresh_rotated',
   'auth.token_reuse_revoked',
   'auth.password_reset_initiated',
+  'auth.password_reset_completed',
   // allergy
   'allergy.guardrail_rejection',
   'allergy.uncertainty',

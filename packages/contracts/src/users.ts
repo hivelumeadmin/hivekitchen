@@ -71,3 +71,11 @@ export const UpdateProfileRequestSchema = z.object({
 export const PasswordResetRequestSchema = z.object({
   email: z.string().email().max(254),
 });
+
+// ---- POST /v1/auth/password-reset-complete request body -------------------
+// Public route. `token` is the Supabase recovery token_hash from the email
+// link (`?token_hash=...&type=recovery`). Password rules mirror LoginRequest.
+export const PasswordResetCompleteRequestSchema = z.object({
+  token: z.string().min(1),
+  password: z.string().min(12).max(128),
+});

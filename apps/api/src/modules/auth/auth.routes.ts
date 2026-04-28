@@ -3,6 +3,7 @@ import {
   LoginRequestSchema,
   LoginResponseSchema,
   OAuthCallbackRequestSchema,
+  PasswordResetCompleteRequestSchema,
   RefreshResponseSchema,
 } from '@hivekitchen/contracts';
 import { UnauthorizedError } from '../../common/errors.js';
@@ -14,6 +15,7 @@ import { AuditService } from '../../audit/audit.service.js';
 
 type LoginBody = z.infer<typeof LoginRequestSchema>;
 type CallbackBody = z.infer<typeof OAuthCallbackRequestSchema>;
+type PasswordResetCompleteBody = z.infer<typeof PasswordResetCompleteRequestSchema>;
 
 export const authRoutes: FastifyPluginAsync = async (fastify) => {
   const service = new AuthService(
@@ -107,6 +109,33 @@ export const authRoutes: FastifyPluginAsync = async (fastify) => {
         metadata: {},
       };
       return { access_token: result.access_token, expires_in: result.expires_in };
+    },
+  );
+
+  fastify.post(
+    '/v1/auth/password-reset-complete',
+    {
+      schema: {
+        body: PasswordResetCompleteRequestSchema,
+        response: { 200: LoginResponseSchema },
+      },
+    },
+    async (request, reply) => {
+      const body = request.body as PasswordResetCompleteBody;
+      const result = await service.completePasswordReset(body);
+      setRefreshCookie(
+        reply,
+        result.refresh_token_plaintext,
+        result.refresh_token_max_age_seconds,
+        fastify.env,
+      );
+      request.auditContext = {
+        event_type: 'auth.password_reset_completed',
+        user_id: result.user.id,
+        request_id: request.id,
+        metadata: {},
+      };
+      return loginPayload(result);
     },
   );
 

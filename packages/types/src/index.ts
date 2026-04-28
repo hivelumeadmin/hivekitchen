@@ -40,6 +40,7 @@ import {
   UserProfileSchema,
   UpdateProfileRequestSchema,
   PasswordResetRequestSchema,
+  PasswordResetCompleteRequestSchema,
   NotificationPrefsSchema,
   UpdateNotificationPrefsRequestSchema,
   CulturalLanguageSchema,
@@ -111,6 +112,9 @@ export type ApiError = z.infer<typeof ApiError>;
 export type UserProfile = z.infer<typeof UserProfileSchema>;
 export type UpdateProfileRequest = z.infer<typeof UpdateProfileRequestSchema>;
 export type PasswordResetRequest = z.infer<typeof PasswordResetRequestSchema>;
+
+// Password reset completion (Story 2.4b)
+export type PasswordResetCompleteRequest = z.infer<typeof PasswordResetCompleteRequestSchema>;
 
 // Users (Story 2.5 — notification preferences + cultural language)
 export type NotificationPrefs = z.infer<typeof NotificationPrefsSchema>;

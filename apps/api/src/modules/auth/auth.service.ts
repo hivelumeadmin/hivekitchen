@@ -1,7 +1,7 @@
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { JWT } from '@fastify/jwt';
-import { UnauthorizedError } from '../../common/errors.js';
+import { LinkExpiredError, UnauthorizedError } from '../../common/errors.js';
 import type { AuthRepository, UserRow } from './auth.repository.js';
 
 const REFRESH_TOKEN_TTL_SECONDS = 30 * 24 * 60 * 60;
@@ -58,6 +58,25 @@ export class AuthService {
       auth_user_id: data.user.id,
       email,
       display_name: extractDisplayName(data.user.user_metadata),
+    });
+  }
+
+  async completePasswordReset(input: { token: string; password: string }): Promise<LoginResult> {
+    const { data: { user }, error } = await this.supabase.auth.getUser(input.token);
+    if (error || !user) throw new LinkExpiredError('Reset link expired or already used');
+
+    const email = user.email;
+    if (!email) throw new LinkExpiredError('Reset link expired or already used');
+
+    const { error: pwError } = await this.supabase.auth.admin.updateUserById(user.id, {
+      password: input.password,
+    });
+    if (pwError) throw new Error('Unexpected authentication service error');
+
+    return this.completeLogin({
+      auth_user_id: user.id,
+      email,
+      display_name: extractDisplayName(user.user_metadata),
     });
   }
 

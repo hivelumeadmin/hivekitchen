@@ -18,7 +18,11 @@ const SAMPLE_REFRESH_ID = '33333333-3333-4333-8333-333333333333';
 interface SupabaseAuthMock {
   signInWithPassword: ReturnType<typeof vi.fn>;
   exchangeCodeForSession: ReturnType<typeof vi.fn>;
-  admin?: { signOut: ReturnType<typeof vi.fn> };
+  getUser?: ReturnType<typeof vi.fn>;
+  admin?: {
+    signOut?: ReturnType<typeof vi.fn>;
+    updateUserById?: ReturnType<typeof vi.fn>;
+  };
 }
 
 function buildMockSupabase(opts: {
@@ -74,7 +78,12 @@ function buildMockSupabase(opts: {
     auth: {
       signInWithPassword: opts.auth.signInWithPassword,
       exchangeCodeForSession: opts.auth.exchangeCodeForSession,
-      admin: opts.auth.admin ?? { signOut: vi.fn().mockResolvedValue({ error: null }) },
+      getUser: opts.auth.getUser ?? vi.fn(),
+      admin: {
+        signOut: opts.auth.admin?.signOut ?? vi.fn().mockResolvedValue({ error: null }),
+        updateUserById:
+          opts.auth.admin?.updateUserById ?? vi.fn().mockResolvedValue({ error: null }),
+      },
     },
     from(table: string) {
       if (table === 'users') {
@@ -459,5 +468,130 @@ describe('POST /v1/auth/logout', () => {
     const cookieStr = Array.isArray(setCookie) ? setCookie[0] ?? '' : (setCookie ?? '');
     expect(cookieStr).toMatch(/refresh_token=;/);
     expect(cookieStr).toMatch(/Max-Age=0/);
+  });
+});
+
+describe('POST /v1/auth/password-reset-complete', () => {
+  let app: FastifyInstance;
+
+  afterEach(async () => {
+    if (app) await app.close();
+  });
+
+  it('happy path: 200 + session body + cookie set + password updated', async () => {
+    const updateUserById = vi.fn().mockResolvedValue({ error: null });
+    const supabaseMock = buildMockSupabase({
+      auth: {
+        signInWithPassword: vi.fn(),
+        exchangeCodeForSession: vi.fn(),
+        getUser: vi.fn().mockResolvedValue({
+          data: {
+            user: { id: SAMPLE_USER_ID, email: 'parent@example.com', user_metadata: { full_name: 'Parent' } },
+          },
+          error: null,
+        }),
+        admin: { updateUserById },
+      },
+      selectResult: {
+        id: SAMPLE_USER_ID,
+        email: 'parent@example.com',
+        display_name: 'Parent',
+        current_household_id: SAMPLE_HOUSEHOLD_ID,
+        role: 'primary_parent',
+      },
+      rpcResult: null,
+    });
+    app = await buildTestApp(supabaseMock);
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/v1/auth/password-reset-complete',
+      payload: { token: 'recovery-token-hash', password: 'a-strong-password-12' },
+    });
+
+    expect(res.statusCode).toBe(200);
+    const body = JSON.parse(res.body) as { access_token: string; user: { id: string }; is_first_login: boolean };
+    expect(typeof body.access_token).toBe('string');
+    expect(body.user.id).toBe(SAMPLE_USER_ID);
+    expect(updateUserById).toHaveBeenCalledWith(SAMPLE_USER_ID, { password: 'a-strong-password-12' });
+
+    const setCookie = res.headers['set-cookie'];
+    const cookieStr = Array.isArray(setCookie) ? setCookie[0] ?? '' : (setCookie ?? '');
+    expect(cookieStr).toMatch(/refresh_token=[A-Za-z0-9_-]{43};/);
+    expect(cookieStr).toMatch(/Path=\/v1\/auth\/refresh[;,\s]/);
+    expect(cookieStr).toMatch(/HttpOnly/);
+  });
+
+  it('expired/invalid token (Supabase returns error) → 410 LinkExpiredError', async () => {
+    const updateUserById = vi.fn();
+    const supabaseMock = buildMockSupabase({
+      auth: {
+        signInWithPassword: vi.fn(),
+        exchangeCodeForSession: vi.fn(),
+        getUser: vi.fn().mockResolvedValue({
+          data: { user: null },
+          error: { message: 'Token expired or invalid' },
+        }),
+        admin: { updateUserById },
+      },
+      selectResult: null,
+      rpcResult: null,
+    });
+    app = await buildTestApp(supabaseMock);
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/v1/auth/password-reset-complete',
+      payload: { token: 'expired-token', password: 'a-strong-password-12' },
+    });
+
+    expect(res.statusCode).toBe(410);
+    const body = JSON.parse(res.body) as { type: string };
+    expect(body.type).toBe('/errors/link-expired');
+    expect(updateUserById).not.toHaveBeenCalled();
+  });
+
+  it('password shorter than 12 chars → 400 validation', async () => {
+    const supabaseMock = buildMockSupabase({
+      auth: {
+        signInWithPassword: vi.fn(),
+        exchangeCodeForSession: vi.fn(),
+      },
+      selectResult: null,
+      rpcResult: null,
+    });
+    app = await buildTestApp(supabaseMock);
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/v1/auth/password-reset-complete',
+      payload: { token: 'recovery-token-hash', password: 'short' },
+    });
+
+    expect(res.statusCode).toBe(400);
+    const body = JSON.parse(res.body) as { type: string };
+    expect(body.type).toBe('/errors/validation');
+  });
+
+  it('missing token field → 400 validation', async () => {
+    const supabaseMock = buildMockSupabase({
+      auth: {
+        signInWithPassword: vi.fn(),
+        exchangeCodeForSession: vi.fn(),
+      },
+      selectResult: null,
+      rpcResult: null,
+    });
+    app = await buildTestApp(supabaseMock);
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/v1/auth/password-reset-complete',
+      payload: { password: 'a-strong-password-12' },
+    });
+
+    expect(res.statusCode).toBe(400);
+    const body = JSON.parse(res.body) as { type: string };
+    expect(body.type).toBe('/errors/validation');
   });
 });
