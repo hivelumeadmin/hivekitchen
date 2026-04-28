@@ -65,6 +65,21 @@ export class UpstreamError extends DomainError {
   readonly title = 'Upstream Service Unavailable';
 }
 
+// TypeScript prevents overriding `readonly` literal properties (type, title) declared
+// in a subclass (ForbiddenError). Extends DomainError directly with status = 403 to
+// achieve the same HTTP semantics. instanceof ForbiddenError is false for this error;
+// callers must use isDomainError() or check error.type / error.status instead.
+export class ParentalNoticeRequiredError extends DomainError {
+  readonly type = '/errors/parental-notice-required';
+  readonly status = 403;
+  readonly title = 'Parental notice acknowledgment required';
+  constructor() {
+    super(
+      'Primary parent must acknowledge the parental notice before adding a child profile.',
+    );
+  }
+}
+
 export function isDomainError(err: unknown): err is DomainError {
   return err instanceof DomainError;
 }

@@ -1,5 +1,5 @@
 # generated: 2026-04-23
-# last_updated: 2026-04-27 (Story 2-8 story file created — ready-for-dev)
+# last_updated: 2026-04-27 (Story 2-9 implementation complete — moved to review)
 # project: hivekitchen
 # project_key: NOKEY
 # tracking_system: file-system
@@ -35,7 +35,7 @@
 # - Dev moves story to 'review', then runs code-review (fresh context, different LLM recommended)
 
 generated: 2026-04-23
-last_updated: 2026-04-27 (Story 2-8 story file created — ready-for-dev)
+last_updated: 2026-04-28 (Story 2-9 7-group adversarial review complete — 17 patches applied, status moved to done)
 project: hivekitchen
 project_key: NOKEY
 tracking_system: file-system
@@ -72,8 +72,8 @@ development_status:
   2-6-voice-first-onboarding-interview-via-elevenlabs-three-signal-questions: done
   2-7-text-equivalent-onboarding-path: done
   2-4b-password-reset-completion-web-page: done
-  2-8-coppa-soft-vpc-signed-declaration-beta: ready-for-dev
-  2-9-parental-notice-disclosure-pre-data-collection: backlog
+  2-8-coppa-soft-vpc-signed-declaration-beta: done
+  2-9-parental-notice-disclosure-pre-data-collection: done
   2-10-add-child-profile-with-envelope-encrypted-sensitive-fields: backlog
   2-11-cultural-template-inference-parental-confirm: backlog
   2-12-per-child-lunch-bag-slot-declaration: backlog

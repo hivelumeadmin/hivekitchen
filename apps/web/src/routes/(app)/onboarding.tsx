@@ -1,13 +1,16 @@
 import { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useScope } from '@hivekitchen/ui';
 import { useVoiceStore } from '@/stores/voice.store.js';
 import { OnboardingVoice } from '@/features/onboarding/OnboardingVoice.js';
 import { OnboardingText } from '@/features/onboarding/OnboardingText.js';
+import { OnboardingConsent } from '@/features/onboarding/OnboardingConsent.js';
 
-type OnboardingMode = 'select' | 'voice' | 'text';
+type OnboardingMode = 'select' | 'voice' | 'text' | 'consent';
 
 export default function OnboardingPage() {
   useScope('app-scope');
+  const navigate = useNavigate();
   const [mode, setMode] = useState<OnboardingMode>('select');
   // Selectors only — never pull the whole store (project rule).
   const voiceStatus = useVoiceStore((s) => s.status);
@@ -40,7 +43,7 @@ export default function OnboardingPage() {
               </button>
             </div>
           ) : (
-            <OnboardingVoice />
+            <OnboardingVoice onComplete={() => setMode('consent')} />
           )}
         </div>
       </main>
@@ -54,7 +57,20 @@ export default function OnboardingPage() {
           <h1 className="font-serif text-2xl text-stone-800 text-center">
             Let&apos;s get to know your family
           </h1>
-          <OnboardingText />
+          <OnboardingText onFinalized={() => setMode('consent')} />
+        </div>
+      </main>
+    );
+  }
+
+  if (mode === 'consent') {
+    return (
+      <main className="min-h-screen flex items-start justify-center px-4 py-8">
+        <div className="w-full max-w-2xl flex flex-col gap-6">
+          <h1 className="font-serif text-2xl text-stone-800 text-center">
+            One final step
+          </h1>
+          <OnboardingConsent onConsented={() => void navigate('/app')} />
         </div>
       </main>
     );

@@ -1,11 +1,14 @@
 import type { TurnBody } from '@hivekitchen/types';
 import { BaseRepository } from '../../repository/base.repository.js';
 
+export type ThreadModality = 'voice' | 'text';
+
 export interface ThreadRow {
   id: string;
   household_id: string;
   type: string;
   status: string;
+  modality: ThreadModality;
   created_at: string;
 }
 
@@ -19,29 +22,53 @@ export interface TurnRow {
   created_at: string;
 }
 
-export const THREAD_COLUMNS = 'id, household_id, type, status, created_at';
+export const THREAD_COLUMNS = 'id, household_id, type, status, modality, created_at';
 export const TURN_COLUMNS = 'id, thread_id, server_seq, role, body, modality, created_at';
 
+// Postgres unique-violation SQLSTATE — surfaced raw on the supabase-js
+// error envelope. Match strictly on the code: a substring check on
+// `.message` was previously used as a fallback but misclassified wrapped
+// errors that embedded another error's text (e.g., logged transaction
+// failures). The code is the authoritative signal.
+const UNIQUE_VIOLATION_CODE = '23505';
+
+function isUniqueViolation(err: unknown): boolean {
+  const e = err as { code?: unknown };
+  return typeof e.code === 'string' && e.code === UNIQUE_VIOLATION_CODE;
+}
+
 export class ThreadRepository extends BaseRepository {
-  async createThread(householdId: string, type: string): Promise<ThreadRow> {
+  // R2-D2 — modality is required at creation. The DB partial unique index
+  // `threads_one_active_per_household_type_modality` guarantees one active
+  // thread per (household, type, modality); a duplicate insert surfaces as
+  // a unique-violation that callers can map to a 409.
+  async createThread(
+    householdId: string,
+    type: string,
+    modality: ThreadModality,
+  ): Promise<ThreadRow> {
     const { data, error } = await this.client
       .from('threads')
-      .insert({ household_id: householdId, type })
+      .insert({ household_id: householdId, type, modality })
       .select(THREAD_COLUMNS)
       .single();
     if (error) throw error;
     return data as ThreadRow;
   }
 
+  // R2-D2 — active-thread lookup is per-modality so voice and text never
+  // share a thread mid-webhook (Story 2.6 → 2.7 gap).
   async findActiveThreadByHousehold(
     householdId: string,
     type: string,
+    modality: ThreadModality,
   ): Promise<ThreadRow | null> {
     const { data, error } = await this.client
       .from('threads')
       .select(THREAD_COLUMNS)
       .eq('household_id', householdId)
       .eq('type', type)
+      .eq('modality', modality)
       .eq('status', 'active')
       .order('created_at', { ascending: false })
       .limit(1)
@@ -50,19 +77,27 @@ export class ThreadRepository extends BaseRepository {
     return (data as ThreadRow | null) ?? null;
   }
 
+  // The completion gate is intentionally modality-agnostic: a household that
+  // completed onboarding via voice should not be allowed to re-onboard via
+  // text. Pass `modality` only when callers explicitly need a per-modality
+  // closed-thread record.
   async findClosedThreadByHousehold(
     householdId: string,
     type: string,
+    modality?: ThreadModality,
   ): Promise<ThreadRow | null> {
-    const { data, error } = await this.client
+    let q = this.client
       .from('threads')
       .select(THREAD_COLUMNS)
       .eq('household_id', householdId)
       .eq('type', type)
       .eq('status', 'closed')
       .order('created_at', { ascending: false })
-      .limit(1)
-      .maybeSingle();
+      .limit(1);
+    if (modality !== undefined) {
+      q = q.eq('modality', modality);
+    }
+    const { data, error } = await q.maybeSingle();
     if (error) throw error;
     return (data as ThreadRow | null) ?? null;
   }
@@ -134,11 +169,13 @@ export class ThreadRepository extends BaseRepository {
     return row !== null ? row.server_seq + 1 : 1;
   }
 
-  // Atomic-ish wrapper: read max(server_seq), append, retry once on
-  // unique-violation (Postgres SQLSTATE 23505) caused by a concurrent inserter
-  // racing on the same (thread_id, server_seq). Real durability still requires
+  // Atomic-ish wrapper: read max(server_seq), append, retry on
+  // unique-violation caused by a concurrent inserter racing on the same
+  // (thread_id, server_seq) UNIQUE constraint. Real durability still requires
   // a per-thread Postgres sequence; this narrows the window enough for the
   // single-author onboarding flow without a schema change.
+  // R2-P2 — accept both raw PG `code` and PostgREST `message` markers; default
+  // `lastErr` to a real Error so retry-exhaustion is debuggable.
   async appendTurnNext(params: {
     threadId: string;
     role: 'user' | 'lumi' | 'system';
@@ -146,7 +183,9 @@ export class ThreadRepository extends BaseRepository {
     modality: 'text' | 'voice';
   }): Promise<TurnRow> {
     const MAX_ATTEMPTS = 3;
-    let lastErr: unknown;
+    let lastErr: unknown = new Error(
+      'appendTurnNext exhausted retries with no captured error',
+    );
     for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
       const seq = await this.getNextSeq(params.threadId);
       try {
@@ -158,11 +197,17 @@ export class ThreadRepository extends BaseRepository {
           modality: params.modality,
         });
       } catch (err) {
-        const code = (err as { code?: unknown }).code;
-        if (code !== '23505') throw err;
+        if (!isUniqueViolation(err)) throw err;
         lastErr = err;
       }
     }
-    throw lastErr;
+    throw lastErr instanceof Error
+      ? lastErr
+      : new Error('appendTurnNext exhausted retries on unique-violation');
   }
 }
+
+// Re-exported so service-layer callers can map raw DB unique-violations
+// (e.g. on createThread, on the summary partial unique index) to clean
+// 409 ConflictError without re-implementing the detection.
+export { isUniqueViolation };

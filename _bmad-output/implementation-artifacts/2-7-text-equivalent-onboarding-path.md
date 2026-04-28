@@ -1,6 +1,6 @@
 # Story 2.7: Text-equivalent onboarding path
 
-Status: review
+Status: done
 
 ## Story
 
@@ -407,6 +407,7 @@ None — all task validations succeeded inline.
 |---|---|
 | 2026-04-26 | Initial implementation — Tasks 1–7 complete; 99 API + 40 web + 161 contract tests pass |
 | 2026-04-26 | Review patches F01, F03–F11/12, F14, F16, F17 applied; tests still green at 99 API + 40 web + 161 contract |
+| 2026-04-26 | Round 2 review: 12 patches applied (R2-D1, R2-D2, R2-D3, R2-P1–R2-P9); tests still green at 99 API + 40 web + 161 contract |
 
 ### Review Findings
 
@@ -437,3 +438,29 @@ None — all task validations succeeded inline.
 
 - [x] [Review][Defer] F02 — `getNextSeq` starts at 1: off-by-one if DB schema uses 0-based server_seq [apps/api/src/modules/threads/thread.repository.ts:130] — deferred, pre-existing pattern from Story 2-6
 - [x] [Review][Defer] F15 — `onboarding.routes.ts` instantiates service/repository directly without Fastify DI pattern [apps/api/src/modules/onboarding/onboarding.routes.ts:13] — deferred, consistent with existing route patterns in this codebase
+
+#### Round 2 (2026-04-26) — Decision-Needed (resolved)
+
+- [x] [Review][Decision→Patch] R2-D1 — Concurrency atomicity strategy → **Decision: option 1 — DB partial unique indexes.** Add migration creating `UNIQUE (household_id, type) WHERE status='active'` on `threads` (covers race (a) — duplicate active onboarding threads per household) and a partial unique index ensuring one `system_event 'onboarding.summary'` turn per thread (covers race (c) — duplicate summary turns under concurrent finalize). Race (b) — interleaved user/lumi turn writes from concurrent `submitTextTurn` — accepted under beta-low-concurrency assumption; frontend `pending` flag mitigates the common double-tap case; revisit when a multi-instance deploy lands. [apps/api/src/modules/onboarding/onboarding.service.ts:64-70, 209-231; supabase/migrations/20260504000000_create_threads.sql:5-11]
+- [x] [Review][Decision→Patch] R2-D2 — Voice→text modality handoff during in-flight webhook → **Decision: option 1 — add `modality` discriminator to `threads`.** Migration adds `modality TEXT NOT NULL CHECK (modality IN ('voice','text'))` to `threads`; `findActiveThreadByHousehold` gains a `modality` filter; `createThread` requires the modality at creation time; voice and text routes pass their own modality. Eliminates the cross-modality contamination window during the ElevenLabs post-call webhook gap. Existing rows backfilled to `'voice'` (Story 2.6 was the only producer pre-2.7). [apps/api/src/modules/onboarding/onboarding.service.ts:64-70; apps/api/src/modules/voice/voice.service.ts:163-211; apps/api/src/modules/threads/thread.repository.ts]
+- [x] [Review][Decision→Patch] R2-D3 — Auth role gate on onboarding endpoints → **Decision: option 1 — restrict to `primary_parent` only.** Add a `requireRole('primary_parent')` preHandler on `POST /v1/onboarding/text/turn` and `POST /v1/onboarding/text/finalize`; secondary caregivers attempting either receive 403. Same gate should be added to the voice routes for consistency (track as defer if not in 2-7 scope). [apps/api/src/modules/onboarding/onboarding.routes.ts:21-67]
+
+#### Round 2 (2026-04-26) — Patches
+
+- [x] [Review][Patch] R2-D1 — DB partial unique indexes for active threads and onboarding summary turns — Add a migration creating: (1) `CREATE UNIQUE INDEX threads_one_active_per_household_type ON threads(household_id, type) WHERE status='active';` and (2) a partial unique index preventing more than one `system_event 'onboarding.summary'` turn per `thread_id` (e.g., `CREATE UNIQUE INDEX thread_turns_one_summary_per_thread ON thread_turns(thread_id, ((body->>'event'))) WHERE (body->>'type') = 'system_event' AND (body->>'event') = 'onboarding.summary';`). Map the resulting `23505` errors in service code to a clean `ConflictError` ("active onboarding thread already exists" / "summary already recorded") so concurrent callers see a deterministic 409 instead of a raw DB error.
+- [x] [Review][Patch] R2-D2 — Add `modality` discriminator to `threads` — Migration: `ALTER TABLE threads ADD COLUMN modality TEXT NOT NULL DEFAULT 'voice' CHECK (modality IN ('voice','text'));` then `ALTER TABLE threads ALTER COLUMN modality DROP DEFAULT;`. Update `ThreadRepository.findActiveThreadByHousehold(householdId, type)` → `findActiveThreadByHousehold(householdId, type, modality)`; update `createThread` to require `modality`. Update both callers: voice path passes `'voice'`, text path passes `'text'`. Combine with R2-D1's partial unique index to: `UNIQUE (household_id, type, modality) WHERE status='active'`. Backfill: `UPDATE threads SET modality='voice'` for any existing rows.
+- [x] [Review][Patch] R2-D3 — Restrict onboarding text endpoints to `primary_parent` role — Wire `requireRole('primary_parent')` preHandler (introduced in Story 2-2) on `POST /v1/onboarding/text/turn` and `POST /v1/onboarding/text/finalize`. Add a 403 test asserting a `secondary_caregiver` JWT is rejected. Out of 2-7 scope but consistent: add the same gate to voice routes (`/v1/voice/onboarding/start`, etc.) — track as a separate item if not landing in this patch pass.
+- [x] [Review][Patch] R2-P1 — Orphan-resume must compare content before reusing trailing user turn [apps/api/src/modules/onboarding/onboarding.service.ts]
+- [x] [Review][Patch] R2-P2 — `appendTurnNext` retry error matching hardened (matches both PG `code` and PostgREST `message`; `lastErr` defaults to a real Error) [apps/api/src/modules/threads/thread.repository.ts]
+- [x] [Review][Patch] R2-P3 — `extractSummary` failure now surfaces as 502 `/errors/upstream`; thread is NOT closed and no empty summary is persisted [apps/api/src/modules/onboarding/onboarding.service.ts]
+- [x] [Review][Patch] R2-P4 — `isSummaryConfirmed` verdict parsing tightened to `/^yes\b/` + reject any verdict containing `'no'` [apps/api/src/agents/onboarding.agent.ts]
+- [x] [Review][Patch] R2-P5 — Synthetic greeting prepended to `agentInput` on first text turn (shared `OPENING_GREETING` constant moved to `@hivekitchen/contracts` so web and api never drift) [packages/contracts/src/onboarding.ts; apps/api/src/modules/onboarding/onboarding.service.ts; apps/web/src/features/onboarding/OnboardingText.tsx]
+- [x] [Review][Patch] R2-P6 — User content in classifier and extractor prompts wrapped in `<<<ONBOARDING_MSG>>>` delimiters with literal-marker scrubbing; system prompt instructs model to treat marker contents as data only [apps/api/src/agents/onboarding.agent.ts]
+- [x] [Review][Patch] R2-P7 — `UpstreamError` detail sanitized; raw `err` logged server-side only [apps/api/src/modules/onboarding/onboarding.service.ts]
+- [x] [Review][Patch] R2-P8 — `stripExpressionTags` extracted to `apps/api/src/common/strip-expression-tags.ts` and applied defensively to text-mode `lumiText` before persistence and response [apps/api/src/common/strip-expression-tags.ts; apps/api/src/modules/voice/voice.service.ts; apps/api/src/modules/onboarding/onboarding.service.ts]
+- [x] [Review][Patch] R2-P9 — Agent's `isSummaryConfirmed` floor raised to 6 (matches service guard); inline comment now states the rationale (3 question-answer pairs = 6 LLM messages, counting synthetic greeting as turn 0) [apps/api/src/agents/onboarding.agent.ts; apps/api/src/modules/onboarding/onboarding.service.ts]
+
+#### Round 2 (2026-04-26) — Deferred
+
+- [x] [Review][Defer] R2-W1 — Text-onboarding has no GET endpoint and `OnboardingText` does not rehydrate prior thread state on mount/refresh/cross-device — refresh permanently desyncs the UI from server state; abort-on-unmount discards a Lumi reply that was already persisted. [apps/web/src/features/onboarding/OnboardingText.tsx:18-43; missing GET on apps/api/src/modules/onboarding/onboarding.routes.ts] — deferred per spec Dev Note "Re-entry and resume — out of scope" (line 266); track for a follow-up story alongside the broader resume primitive.
+- [x] [Review][Defer] R2-W2 — `householdHasCompletedOnboarding` issues two extra DB roundtrips on every text turn [apps/api/src/modules/onboarding/onboarding.service.ts:1267-1277] — performance refinement, not a correctness defect; revisit if onboarding turn latency exceeds budget.

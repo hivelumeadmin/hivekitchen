@@ -2,7 +2,10 @@ import fp from 'fastify-plugin';
 import type { FastifyPluginAsync } from 'fastify';
 import type { Job } from 'bullmq';
 
-const QUEUE_NAME = 'audit:partition-rotation';
+// Renamed from 'audit:partition-rotation' — BullMQ v5 rejects queue names with
+// `:` because Redis keys are colon-separated internally. Tracked in Story-1.8
+// deferred-work; the rename unblocks API boot.
+const QUEUE_NAME = 'audit-partition-rotation';
 const SCHEDULER_ID = 'monthly-partition-create';
 
 const auditPartitionRotation: FastifyPluginAsync = async (fastify) => {

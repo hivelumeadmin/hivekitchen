@@ -352,6 +352,7 @@ describe('POST /v1/onboarding/text/turn', () => {
     expect(createThreadSpy).toHaveBeenCalledWith({
       household_id: SAMPLE_HOUSEHOLD_ID,
       type: 'onboarding',
+      modality: 'text',
     });
     // Two appendTurn calls — user (modality text), lumi (modality text)
     expect(appendSpy).toHaveBeenCalledTimes(2);
@@ -645,7 +646,7 @@ describe('POST /v1/onboarding/text/finalize', () => {
     expect(res.statusCode).toBe(409);
   });
 
-  it('extractSummary fails → 200 with empty summary, thread still closed', async () => {
+  it('extractSummary fails → 502 upstream error, thread NOT closed and summary NOT persisted (R2-P3)', async () => {
     const appendSpy = vi.fn();
     const closeSpy = vi.fn();
     app = await buildTestApp({
@@ -669,17 +670,19 @@ describe('POST /v1/onboarding/text/finalize', () => {
       headers: { authorization: `Bearer ${token}` },
     });
 
-    expect(res.statusCode).toBe(200);
-    const body = JSON.parse(res.body) as {
-      summary: { cultural_templates: string[]; allergens_mentioned: string[] };
-    };
-    expect(body.summary).toEqual({
-      cultural_templates: [],
-      palate_notes: [],
-      allergens_mentioned: [],
-    });
-    expect(appendSpy).toHaveBeenCalled();
-    expect(closeSpy).toHaveBeenCalled();
+    expect(res.statusCode).toBe(502);
+    const body = JSON.parse(res.body) as { type: string; detail: string };
+    expect(body.type).toBe('/errors/upstream');
+    // Critical: when extraction fails we must NOT silently persist an empty
+    // summary or close the thread — that causes permanent data loss for the
+    // household (no allergens captured, downstream meal planning blind).
+    // Both side effects must be skipped so the user can retry.
+    expect(appendSpy).not.toHaveBeenCalledWith(
+      expect.objectContaining({
+        body: expect.objectContaining({ type: 'system_event' }),
+      }),
+    );
+    expect(closeSpy).not.toHaveBeenCalled();
   });
 
   it('unauthenticated → 401', async () => {

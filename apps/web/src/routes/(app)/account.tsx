@@ -10,6 +10,8 @@ import {
 } from '@hivekitchen/types';
 import { hkFetch, HkApiError } from '@/lib/fetch.js';
 import { useAuthStore } from '@/stores/auth.store.js';
+import { useComplianceStore } from '@/stores/compliance.store.js';
+import { ParentalNoticeView } from '@/features/compliance/ParentalNoticeView.js';
 
 type LoadState = 'loading' | 'ready' | 'error';
 
@@ -34,8 +36,10 @@ export default function AccountPage() {
   useScope('app-scope');
   const navigate = useNavigate();
   const accessToken = useAuthStore((s) => s.accessToken);
+  const setAcknowledgmentState = useComplianceStore((s) => s.setAcknowledgmentState);
   const didLoad = useRef(false);
   const resetInProgress = useRef(false);
+  const [showNotice, setShowNotice] = useState(false);
 
   const [loadState, setLoadState] = useState<LoadState>('loading');
   const [profile, setProfile] = useState<UserProfile | null>(null);
@@ -79,6 +83,10 @@ export default function AccountPage() {
         setEmailDraft(result.email);
         setNotifPrefs(result.notification_prefs);
         setCulturalLanguage(result.cultural_language);
+        setAcknowledgmentState(
+          result.parental_notice_acknowledged_at,
+          result.parental_notice_acknowledged_version,
+        );
         setLoadState('ready');
       } catch {
         setLoadState('error');
@@ -384,6 +392,33 @@ export default function AccountPage() {
           )}
           {culturalError && (
             <p role="alert" className="text-sm text-red-700">{culturalError}</p>
+          )}
+        </section>
+
+        <section className="space-y-3 border-t border-warm-neutral-200 pt-6">
+          <h2 className="font-serif text-xl">Privacy &amp; Data</h2>
+          {profile.parental_notice_acknowledged_at !== null ? (
+            <p className="text-sm text-warm-neutral-700">
+              You acknowledged our parental notice on{' '}
+              {new Date(profile.parental_notice_acknowledged_at).toLocaleDateString()}{' '}
+              (version {profile.parental_notice_acknowledged_version ?? 'unknown'}).
+            </p>
+          ) : (
+            <p className="text-sm text-warm-neutral-700">
+              You haven&apos;t read our parental notice yet.
+            </p>
+          )}
+          <button
+            type="button"
+            onClick={() => setShowNotice((v) => !v)}
+            className="text-sm underline"
+          >
+            {showNotice ? 'Hide the parental notice' : 'Read the parental notice'}
+          </button>
+          {showNotice && (
+            <div className="mt-3 rounded-2xl border border-warm-neutral-200 bg-warm-neutral-50 px-4 py-3">
+              <ParentalNoticeView />
+            </div>
           )}
         </section>
       </div>

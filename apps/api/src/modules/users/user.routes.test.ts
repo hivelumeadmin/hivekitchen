@@ -51,6 +51,8 @@ function defaultUserRow(overrides: Partial<UserProfileRow> = {}): UserProfileRow
     role: 'primary_parent',
     notification_prefs: {},
     cultural_language: 'default',
+    parental_notice_acknowledged_at: null,
+    parental_notice_acknowledged_version: null,
     ...overrides,
   };
 }
@@ -198,6 +200,8 @@ describe('GET /v1/users/me', () => {
       role: string;
       notification_prefs: { weekly_plan_ready: boolean; grocery_list_ready: boolean };
       cultural_language: string;
+      parental_notice_acknowledged_at: string | null;
+      parental_notice_acknowledged_version: string | null;
     };
     expect(body.id).toBe(SAMPLE_USER_ID);
     expect(body.email).toBe('parent@example.com');
@@ -205,6 +209,34 @@ describe('GET /v1/users/me', () => {
     expect(body.auth_providers).toEqual(['email']);
     expect(body.notification_prefs).toEqual({ weekly_plan_ready: true, grocery_list_ready: true });
     expect(body.cultural_language).toBe('default');
+    // AC7: both fields must be present in the profile response
+    expect(body.parental_notice_acknowledged_at).toBeNull();
+    expect(body.parental_notice_acknowledged_version).toBeNull();
+  });
+
+  it('returns non-null parental notice fields for acknowledged user (AC7)', async () => {
+    const supabaseMock = buildMockSupabase({
+      findUserResult: defaultUserRow({
+        parental_notice_acknowledged_at: '2026-04-26T08:00:00.000Z',
+        parental_notice_acknowledged_version: 'v1',
+      }),
+    });
+    app = await buildTestApp(supabaseMock);
+    const token = signAccessToken(app);
+
+    const res = await app.inject({
+      method: 'GET',
+      url: '/v1/users/me',
+      headers: { authorization: `Bearer ${token}` },
+    });
+
+    expect(res.statusCode).toBe(200);
+    const body = JSON.parse(res.body) as {
+      parental_notice_acknowledged_at: string | null;
+      parental_notice_acknowledged_version: string | null;
+    };
+    expect(body.parental_notice_acknowledged_at).toBe('2026-04-26T08:00:00.000Z');
+    expect(body.parental_notice_acknowledged_version).toBe('v1');
   });
 
   it('unauthenticated → 401', async () => {
@@ -239,8 +271,15 @@ describe('PATCH /v1/users/me', () => {
     });
 
     expect(res.statusCode).toBe(200);
-    const body = JSON.parse(res.body) as { display_name: string };
+    const body = JSON.parse(res.body) as {
+      display_name: string;
+      parental_notice_acknowledged_at: string | null;
+      parental_notice_acknowledged_version: string | null;
+    };
     expect(body.display_name).toBe('New Name');
+    // PATCH responses include full profile — verify COPPA fields flow through
+    expect(body.parental_notice_acknowledged_at).toBeNull();
+    expect(body.parental_notice_acknowledged_version).toBeNull();
     expect(supabaseMock.auth.admin.updateUserById).not.toHaveBeenCalled();
   });
 

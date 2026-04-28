@@ -30,6 +30,8 @@ export const AUDIT_EVENT_TYPES = [
   'billing.gift_redeemed',
   // vpc
   'vpc.consented',
+  // parental_notice
+  'parental_notice.acknowledged',
   // account
   'account.created',
   'account.updated',

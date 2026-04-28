@@ -1,5 +1,13 @@
 import { z } from 'zod';
 
+// Opening greeting rendered by the text-onboarding client and prepended to
+// the agent's history on the very first text turn so the LLM has matching
+// context (otherwise it commonly re-introduces itself on turn 2). Shared
+// between `apps/web` (client render) and `apps/api` (synthetic agentInput
+// prefix on first turn) to prevent drift.
+export const OPENING_GREETING =
+  "I'm Lumi. I'd love to learn a little about your family — three short questions, and you can answer however feels natural. Tell me, what did your grandmother cook?";
+
 // POST /v1/onboarding/text/turn — request body
 export const TextOnboardingTurnRequestSchema = z.object({
   message: z.string().trim().min(1).max(4000),

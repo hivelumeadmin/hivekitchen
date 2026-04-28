@@ -14,9 +14,10 @@
     "clean": "turbo run clean",
     "contracts:check": "tsx packages/contracts/scripts/check.ts",
     "tools:check": "tsx apps/api/scripts/check-tool-manifest.ts",
-    "supabase:start": "supabase start",
-    "supabase:stop": "supabase stop",
-    "supabase:reset": "supabase db reset",
+    "supabase:link": "supabase link",
+    "supabase:push": "supabase db push --linked",
+    "supabase:diff": "supabase db diff --linked",
+    "supabase:status": "supabase projects list",
     "seed:dev": "tsx test/helpers/seed-dev.ts",
     "seed:reset": "tsx test/helpers/seed-dev.ts --reset"
   },

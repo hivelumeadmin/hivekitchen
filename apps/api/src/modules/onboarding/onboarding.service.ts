@@ -1,7 +1,14 @@
 import type { FastifyBaseLogger } from 'fastify';
+import { OPENING_GREETING } from '@hivekitchen/contracts';
 import { ConflictError, UpstreamError } from '../../common/errors.js';
+import { stripExpressionTags } from '../../common/strip-expression-tags.js';
 import type { OnboardingAgent, LlmMessage } from '../../agents/onboarding.agent.js';
-import type { ThreadRepository, ThreadRow, TurnRow } from '../threads/thread.repository.js';
+import {
+  isUniqueViolation,
+  type ThreadRepository,
+  type ThreadRow,
+  type TurnRow,
+} from '../threads/thread.repository.js';
 
 export interface OnboardingServiceDeps {
   threads: ThreadRepository;
@@ -34,10 +41,14 @@ export interface FinalizeTextOnboardingResult {
 
 const ONBOARDING_THREAD_TYPE = 'onboarding';
 const SUMMARY_EVENT = 'onboarding.summary';
+const TEXT_MODALITY = 'text' as const;
 
-// F10 — three signal questions × user/lumi pair = 6 turns minimum before a
-// summary turn is even plausible. Below this we skip the OpenAI classifier
-// call entirely (saves a per-turn round-trip in the early conversation).
+// F10 — three signal questions × user/lumi pair = 6 LLM messages minimum
+// before the summary turn is plausible (the synthetic greeting prepended to
+// agentInput on first turn counts toward this). Below this we skip the
+// OpenAI classifier call entirely (saves a per-turn round-trip in the early
+// conversation). R2-P9 — also enforced inside the agent so the finalize path
+// cannot bypass it via direct API call.
 const MIN_TURNS_FOR_COMPLETION_CHECK = 6;
 
 const onlyStrings = (v: unknown): string[] =>
@@ -55,18 +66,41 @@ export class OnboardingService {
   }
 
   async submitTextTurn(input: SubmitTextTurnInput): Promise<SubmitTextTurnResult> {
-    // 1. Refuse if a closed onboarding thread already carries a summary.
+    // 1. Refuse if a closed onboarding thread already carries a summary
+    //    (modality-agnostic — voice-completed households should not re-onboard
+    //    via text).
     if (await this.householdHasCompletedOnboarding(input.householdId)) {
       throw new ConflictError('onboarding already complete');
     }
 
-    // 2. Reuse the active thread or create one.
+    // 2. Reuse the active text-modality thread or create one.
+    //    R2-D1/R2-D2 — DB partial unique index on (household_id, type, modality)
+    //    WHERE status='active' guarantees one active text thread; a concurrent
+    //    first-turn race surfaces as a unique-violation that we map to 409.
     let thread: ThreadRow | null = await this.threads.findActiveThreadByHousehold(
       input.householdId,
       ONBOARDING_THREAD_TYPE,
+      TEXT_MODALITY,
     );
     if (thread === null) {
-      thread = await this.threads.createThread(input.householdId, ONBOARDING_THREAD_TYPE);
+      try {
+        thread = await this.threads.createThread(
+          input.householdId,
+          ONBOARDING_THREAD_TYPE,
+          TEXT_MODALITY,
+        );
+      } catch (err) {
+        if (!isUniqueViolation(err)) throw err;
+        // Concurrent first-turn lost the race — read the winner's thread.
+        thread = await this.threads.findActiveThreadByHousehold(
+          input.householdId,
+          ONBOARDING_THREAD_TYPE,
+          TEXT_MODALITY,
+        );
+        if (thread === null) {
+          throw new ConflictError('onboarding already complete');
+        }
+      }
     }
 
     // 3. Read the existing turns once — we need them for both the F16 gate,
@@ -86,17 +120,21 @@ export class OnboardingService {
 
     const history = this.turnsToLlmMessages(existingTurns);
 
-    // F08 — orphaned user turn: a previous attempt persisted the user turn
-    //   then failed before Lumi's reply was written (AC7 contract). On the
-    //   client retry we must NOT append a duplicate user turn — instead
+    // F08 / R2-P1 — orphaned user turn: a previous attempt persisted the user
+    //   turn then failed before Lumi's reply was written (AC7 contract). On
+    //   the client retry we must NOT append a duplicate user turn — instead
     //   resume the conversation by treating the existing trailing user turn
-    //   as the input for this request. The client's `input.message` typically
-    //   carries the same content per AC7.
+    //   as the input for this request. R2-P1 — only resume when the new
+    //   `input.message` matches the stored content; otherwise the client is
+    //   sending a different (possibly edited) message, in which case we
+    //   append a fresh user turn so the agent sees what the user actually
+    //   sent and the returned turn_id matches the optimistic UI.
     const lastTurn: TurnRow | undefined = existingTurns[existingTurns.length - 1];
     const isOrphanedUserTurn =
       lastTurn !== undefined &&
       lastTurn.role === 'user' &&
-      lastTurn.body.type === 'message';
+      lastTurn.body.type === 'message' &&
+      lastTurn.body.content === input.message;
 
     let userTurn: TurnRow;
     let agentInput: LlmMessage[];
@@ -119,15 +157,31 @@ export class OnboardingService {
         threadId: thread.id,
         role: 'user',
         body: { type: 'message', content: input.message },
-        modality: 'text',
+        modality: TEXT_MODALITY,
       });
       agentInput = [...history, { role: 'user', content: input.message }];
     }
 
+    // R2-P5 — first text turn has no agent-side history of the opening
+    // greeting (it's rendered client-only). Without a prior assistant turn
+    // the LLM commonly re-introduces itself on turn 2, breaking parity with
+    // the voice flow. Prepend a synthetic greeting message so the agent
+    // sees the same conversational entry point the user did.
+    if (history.length === 0) {
+      agentInput = [
+        { role: 'assistant', content: OPENING_GREETING },
+        ...agentInput,
+      ];
+    }
+
     // 5. Call the agent — translate any failure into UpstreamError (502).
+    //    R2-P7 — do NOT echo the upstream error message into the response
+    //    detail field; OpenAI errors can leak request bodies, headers, and
+    //    rate-limit JSON. Log the raw err server-side, return a generic
+    //    detail to the client.
     let lumiText: string;
     try {
-      lumiText = await this.agent.respond(agentInput, { modality: 'text' });
+      lumiText = await this.agent.respond(agentInput, { modality: TEXT_MODALITY });
     } catch (err) {
       this.logger.error(
         {
@@ -139,24 +193,30 @@ export class OnboardingService {
         },
         'OnboardingAgent.respond failed during text turn',
       );
-      throw new UpstreamError(
-        `Onboarding agent unavailable: ${err instanceof Error ? err.message : String(err)}`,
-      );
+      throw new UpstreamError('Onboarding agent unavailable');
     }
+
+    // R2-P8 — defense-in-depth: TEXT_RULES instructs the model not to emit
+    // expression tags, but rule-adherence is ~95%. Strip [warmly]/[pause]/etc.
+    // before persisting and returning so a leak never surfaces literally to
+    // the user.
+    const sanitizedLumiText = stripExpressionTags(lumiText);
 
     // 6. Persist Lumi's reply.
     const lumiTurn = await this.threads.appendTurnNext({
       threadId: thread.id,
       role: 'lumi',
-      body: { type: 'message', content: lumiText },
-      modality: 'text',
+      body: { type: 'message', content: sanitizedLumiText },
+      modality: TEXT_MODALITY,
     });
 
-    // 7. F10 — only spend an OpenAI roundtrip on the summary classifier
-    //    once the conversation has plausibly reached the summary turn.
+    // 7. F10 / R2-P9 — only spend an OpenAI roundtrip on the summary classifier
+    //    once the conversation has plausibly reached the summary turn (3
+    //    question-answer pairs = 6 LLM messages, counting the synthetic
+    //    greeting as turn 0).
     const updatedHistory: LlmMessage[] = [
       ...agentInput,
-      { role: 'assistant', content: lumiText },
+      { role: 'assistant', content: sanitizedLumiText },
     ];
     let isComplete = false;
     if (updatedHistory.length >= MIN_TURNS_FOR_COMPLETION_CHECK) {
@@ -181,7 +241,7 @@ export class OnboardingService {
       thread_id: thread.id,
       turn_id: userTurn.id,
       lumi_turn_id: lumiTurn.id,
-      lumi_response: lumiText,
+      lumi_response: sanitizedLumiText,
       is_complete: isComplete,
     };
   }
@@ -195,10 +255,11 @@ export class OnboardingService {
       throw new ConflictError('onboarding already complete');
     }
 
-    // 2. Need an active thread to finalise.
+    // 2. Need an active text-modality thread to finalise.
     const thread = await this.threads.findActiveThreadByHousehold(
       input.householdId,
       ONBOARDING_THREAD_TYPE,
+      TEXT_MODALITY,
     );
     if (thread === null) {
       throw new ConflictError('no active onboarding thread to finalize');
@@ -209,6 +270,8 @@ export class OnboardingService {
     // F05 — idempotent: a concurrent finalize call may have already
     // appended the summary turn on this thread. Return that summary
     // (and ensure the thread is closed) instead of writing a duplicate.
+    // Safety net for the in-memory race; the DB partial unique index
+    // `thread_turns_one_summary_per_thread` is the authoritative guard.
     const existingSummaryTurn = turns.find(
       (t) => t.body.type === 'system_event' && t.body.event === SUMMARY_EVENT,
     );
@@ -243,7 +306,7 @@ export class OnboardingService {
     // F06 — propagate classifier failures as upstream errors instead of
     // silently coercing them into a "not ready" 409. Hiding an OpenAI
     // outage as a finalize-not-ready response misleads the client and
-    // hides a real incident.
+    // hides a real incident. R2-P7 — generic detail; raw err logged only.
     let confirmed: boolean;
     try {
       confirmed = await this.agent.isSummaryConfirmed(history);
@@ -258,18 +321,17 @@ export class OnboardingService {
         },
         'isSummaryConfirmed failed during finalize — surfacing as upstream error',
       );
-      throw new UpstreamError(
-        `Onboarding readiness check failed: ${err instanceof Error ? err.message : String(err)}`,
-      );
+      throw new UpstreamError('Onboarding readiness check failed');
     }
     if (!confirmed) {
       // F17 — distinct message from the empty-thread case.
       throw new ConflictError('summary not yet confirmed — keep talking with Lumi');
     }
 
-    // 3. Run extraction. On failure, persist an empty summary + return 200
-    //    (mirrors the Story 2.6 webhook contract — best-effort, never blocks
-    //    completion).
+    // 3. Run extraction. R2-P3 — on failure do NOT persist an empty summary
+    //    and do NOT close the thread; surface as 502 so the client can retry.
+    //    Silently writing an empty summary then closing causes permanent data
+    //    loss for the household (downstream meal planning has no allergens).
     const transcript = turns
       .filter((t) => t.role !== 'system' && t.body.type === 'message')
       .map((t) => ({
@@ -277,15 +339,11 @@ export class OnboardingService {
         message: t.body.type === 'message' ? t.body.content : '',
       }));
 
-    let summary: FinalizeTextOnboardingResult['summary'] = {
-      cultural_templates: [],
-      palate_notes: [],
-      allergens_mentioned: [],
-    };
+    let summary: FinalizeTextOnboardingResult['summary'];
     try {
       summary = await this.agent.extractSummary(transcript);
     } catch (err) {
-      this.logger.warn(
+      this.logger.error(
         {
           err,
           module: 'onboarding',
@@ -293,22 +351,32 @@ export class OnboardingService {
           thread_id: thread.id,
           household_id: input.householdId,
         },
-        'onboarding summary extraction failed — persisting empty summary',
+        'onboarding summary extraction failed — refusing to persist empty summary',
       );
+      throw new UpstreamError('Onboarding summary extraction failed');
     }
 
     // 4. Append the system_event summary turn (modality='text' — system
-    //    events are not voice).
-    await this.threads.appendTurnNext({
-      threadId: thread.id,
-      role: 'system',
-      body: {
-        type: 'system_event',
-        event: SUMMARY_EVENT,
-        payload: summary,
-      },
-      modality: 'text',
-    });
+    //    events are not voice). The DB partial unique index guarantees only
+    //    one summary per thread; a concurrent finalize race surfaces as a
+    //    unique-violation that we map to a clean 409.
+    try {
+      await this.threads.appendTurnNext({
+        threadId: thread.id,
+        role: 'system',
+        body: {
+          type: 'system_event',
+          event: SUMMARY_EVENT,
+          payload: summary,
+        },
+        modality: TEXT_MODALITY,
+      });
+    } catch (err) {
+      if (isUniqueViolation(err)) {
+        throw new ConflictError('onboarding already complete');
+      }
+      throw err;
+    }
 
     // 5. Close the thread.
     await this.threads.closeThread(thread.id);
@@ -330,9 +398,9 @@ export class OnboardingService {
   }
 
   // Has the household already produced a system_event 'onboarding.summary'
-  // turn on a CLOSED onboarding thread? AC9 gate. Active-thread summary
-  // checks live inline at the call sites (F16) so we don't have to read
-  // the active turns twice.
+  // turn on a CLOSED onboarding thread (any modality)? AC9 gate. Active-
+  // thread summary checks live inline at the call sites (F16) so we don't
+  // have to read the active turns twice.
   private async householdHasCompletedOnboarding(householdId: string): Promise<boolean> {
     const closed = await this.threads.findClosedThreadByHousehold(
       householdId,

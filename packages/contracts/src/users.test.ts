@@ -21,6 +21,8 @@ describe('UserProfileSchema', () => {
     auth_providers: ['email'],
     notification_prefs: { weekly_plan_ready: true, grocery_list_ready: true },
     cultural_language: 'default' as const,
+    parental_notice_acknowledged_at: null,
+    parental_notice_acknowledged_version: null,
   };
 
   it('accepts a valid profile with email provider', () => {
@@ -58,6 +60,25 @@ describe('UserProfileSchema', () => {
   it('rejects a profile missing cultural_language', () => {
     const { cultural_language: _omit, ...withoutLang } = validProfile;
     expect(UserProfileSchema.safeParse(withoutLang).success).toBe(false);
+  });
+
+  it('accepts non-null parental_notice_acknowledged_at as a valid datetime string', () => {
+    expect(
+      UserProfileSchema.safeParse({
+        ...validProfile,
+        parental_notice_acknowledged_at: '2026-04-27T12:00:00.000Z',
+        parental_notice_acknowledged_version: 'v1',
+      }).success,
+    ).toBe(true);
+  });
+
+  it('rejects parental_notice_acknowledged_at as a non-datetime string', () => {
+    expect(
+      UserProfileSchema.safeParse({
+        ...validProfile,
+        parental_notice_acknowledged_at: 'yesterday',
+      }).success,
+    ).toBe(false);
   });
 });
 

@@ -54,6 +54,8 @@ export const UserProfileSchema = z.object({
   auth_providers: z.array(z.string()),
   notification_prefs: NotificationPrefsSchema,
   cultural_language: CulturalLanguageSchema,
+  parental_notice_acknowledged_at: z.string().datetime().nullable(),
+  parental_notice_acknowledged_version: z.string().nullable(),
 });
 
 // ---- PATCH /v1/users/me request body --------------------------------------

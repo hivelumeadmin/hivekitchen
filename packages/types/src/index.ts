@@ -49,6 +49,16 @@ import {
   TextOnboardingTurnRequestSchema,
   TextOnboardingTurnResponseSchema,
   TextOnboardingFinalizeResponseSchema,
+  ConsentDeclarationResponseSchema,
+  VpcConsentRequestSchema,
+  VpcConsentResponseSchema,
+  ParentalNoticeResponseSchema,
+  AcknowledgeParentalNoticeRequestSchema,
+  AcknowledgeParentalNoticeResponseSchema,
+  ProcessorEntrySchema,
+  RetentionEntrySchema,
+  KNOWN_PARENTAL_NOTICE_VERSIONS,
+  PARENTAL_NOTICE_PROCESSOR_NAMES,
 } from '@hivekitchen/contracts';
 
 // Auth
@@ -127,3 +137,20 @@ export { CULTURAL_LANGUAGE_VALUES };
 export type TextOnboardingTurnRequest = z.infer<typeof TextOnboardingTurnRequestSchema>;
 export type TextOnboardingTurnResponse = z.infer<typeof TextOnboardingTurnResponseSchema>;
 export type TextOnboardingFinalizeResponse = z.infer<typeof TextOnboardingFinalizeResponseSchema>;
+
+// Compliance (Story 2.8 — COPPA soft-VPC signed declaration)
+export type ConsentDeclarationResponse = z.infer<typeof ConsentDeclarationResponseSchema>;
+export type VpcConsentRequest = z.infer<typeof VpcConsentRequestSchema>;
+export type VpcConsentResponse = z.infer<typeof VpcConsentResponseSchema>;
+
+// Compliance (Story 2.9 — AADC parental notice)
+export type ParentalNoticeResponse = z.infer<typeof ParentalNoticeResponseSchema>;
+export type AcknowledgeParentalNoticeRequest = z.infer<
+  typeof AcknowledgeParentalNoticeRequestSchema
+>;
+export type AcknowledgeParentalNoticeResponse = z.infer<
+  typeof AcknowledgeParentalNoticeResponseSchema
+>;
+export type ProcessorEntry = z.infer<typeof ProcessorEntrySchema>;
+export type RetentionEntry = z.infer<typeof RetentionEntrySchema>;
+export { KNOWN_PARENTAL_NOTICE_VERSIONS, PARENTAL_NOTICE_PROCESSOR_NAMES };

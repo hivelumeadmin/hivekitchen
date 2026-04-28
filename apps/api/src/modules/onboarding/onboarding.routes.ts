@@ -7,6 +7,7 @@ import {
 } from '@hivekitchen/contracts';
 import { ThreadRepository } from '../threads/thread.repository.js';
 import { OnboardingAgent } from '../../agents/onboarding.agent.js';
+import { authorize } from '../../middleware/authorize.hook.js';
 import { OnboardingService } from './onboarding.service.js';
 
 const onboardingRoutesPlugin: FastifyPluginAsync = async (fastify) => {
@@ -18,9 +19,15 @@ const onboardingRoutesPlugin: FastifyPluginAsync = async (fastify) => {
     logger: fastify.log,
   });
 
+  // R2-D3 — onboarding authors the household's cultural template, palate
+  // notes, and allergen declarations. Restrict to the primary parent;
+  // secondary caregivers (Story 2-3 invite) get 403.
+  const requirePrimaryParent = authorize(['primary_parent']);
+
   fastify.post(
     '/v1/onboarding/text/turn',
     {
+      preHandler: requirePrimaryParent,
       schema: {
         body: TextOnboardingTurnRequestSchema,
         response: { 200: TextOnboardingTurnResponseSchema },
@@ -53,6 +60,7 @@ const onboardingRoutesPlugin: FastifyPluginAsync = async (fastify) => {
   fastify.post(
     '/v1/onboarding/text/finalize',
     {
+      preHandler: requirePrimaryParent,
       schema: {
         response: { 200: TextOnboardingFinalizeResponseSchema },
       },

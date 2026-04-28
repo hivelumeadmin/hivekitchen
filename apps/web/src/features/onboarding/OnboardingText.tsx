@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
+  OPENING_GREETING,
   TextOnboardingTurnResponseSchema,
   TextOnboardingFinalizeResponseSchema,
 } from '@hivekitchen/contracts';
@@ -8,12 +9,9 @@ import { hkFetch, HkApiError } from '@/lib/fetch.js';
 
 type Turn = { id: string; role: 'lumi' | 'user'; content: string };
 
-const OPENING_GREETING =
-  "I'm Lumi. I'd love to learn a little about your family — three short questions, and you can answer however feels natural. Tell me, what did your grandmother cook?";
-
 const GREETING_TURN_ID = 'greeting';
 
-export function OnboardingText() {
+export function OnboardingText({ onFinalized }: { onFinalized?: () => void } = {}) {
   const navigate = useNavigate();
   const [turns, setTurns] = useState<Turn[]>([
     { id: GREETING_TURN_ID, role: 'lumi', content: OPENING_GREETING },
@@ -109,7 +107,14 @@ export function OnboardingText() {
     try {
       const raw = await hkFetch<unknown>('/v1/onboarding/text/finalize', { method: 'POST' });
       TextOnboardingFinalizeResponseSchema.parse(raw);
-      void navigate('/app');
+      // Story 2.8 — when the parent owns post-finalize navigation it passes
+      // onFinalized. Without the prop, fall back to direct navigation so the
+      // existing 2.7 test suite continues to pass and standalone use still works.
+      if (onFinalized !== undefined) {
+        onFinalized();
+      } else {
+        void navigate('/app');
+      }
     } catch (err) {
       const message =
         err instanceof HkApiError && err.status === 409
@@ -118,7 +123,7 @@ export function OnboardingText() {
       setError(message);
       setFinalizing(false);
     }
-  }, [finalizing, navigate]);
+  }, [finalizing, navigate, onFinalized]);
 
   return (
     <div className="flex flex-col w-full gap-6">

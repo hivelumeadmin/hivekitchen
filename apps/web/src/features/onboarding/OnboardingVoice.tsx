@@ -1,13 +1,11 @@
 import { useEffect, useCallback } from 'react';
-import { useNavigate } from 'react-router-dom';
 import { ConversationProvider, useConversation } from '@elevenlabs/react';
 import { VoiceTokenResponse } from '@hivekitchen/contracts';
 import { hkFetch, HkApiError } from '@/lib/fetch.js';
 import { useVoiceStore } from '@/stores/voice.store.js';
 
 // Inner — must be inside ConversationProvider
-function OnboardingVoiceSession() {
-  const navigate = useNavigate();
+function OnboardingVoiceSession({ onComplete }: { onComplete?: () => void }) {
   // Selectors only — never destructure the whole store (per project rule).
   const setStatus = useVoiceStore((s) => s.setStatus);
   const storeStart = useVoiceStore((s) => s.startSession);
@@ -19,10 +17,11 @@ function OnboardingVoiceSession() {
     onConnect: () => setStatus('active'),
     onDisconnect: () => {
       storeEnd();
-      // Story 2.10 will own the summary review screen; for now route back to
-      // the app shell — the post-call webhook persisted the summary as a
-      // system_event turn that 2.10 will read.
-      void navigate('/app');
+      // Navigation is owned by the parent (OnboardingPage). The post-call
+      // ElevenLabs webhook has already persisted the onboarding summary as a
+      // system_event turn before this fires; the parent transitions to the
+      // consent step, then onConsented routes to /app.
+      onComplete?.();
     },
     onError: (message) => setError(message),
   });
@@ -110,10 +109,10 @@ function OnboardingVoiceSession() {
   );
 }
 
-export function OnboardingVoice() {
+export function OnboardingVoice({ onComplete }: { onComplete?: () => void }) {
   return (
     <ConversationProvider>
-      <OnboardingVoiceSession />
+      <OnboardingVoiceSession onComplete={onComplete} />
     </ConversationProvider>
   );
 }

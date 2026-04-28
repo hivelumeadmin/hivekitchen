@@ -2,19 +2,13 @@ import type { ElevenLabsClient } from '@elevenlabs/elevenlabs-js';
 import type { FastifyBaseLogger } from 'fastify';
 import type { ElevenLabsPostCallWebhook } from '@hivekitchen/types';
 import { NotFoundError, UpstreamError } from '../../common/errors.js';
+import { stripExpressionTags } from '../../common/strip-expression-tags.js';
 import type { OnboardingAgent, LlmMessage } from '../../agents/onboarding.agent.js';
 import type { VoiceRepository } from './voice.repository.js';
 
 const CLOSING_PHRASE =
   "[warmly] That's everything I needed — let me put together your first plan.";
 const SESSION_TIMEOUT_MS = 10 * 60 * 1000;
-
-// Strip Eleven v3 expression tags ([warmly], [pause], etc.) from text before
-// persisting to thread_turns.body — tags are TTS delivery hints, not transcript.
-const EXPRESSION_TAG = /\s*\[[a-z][a-z\s]*\]\s*/gi;
-function stripExpressionTags(text: string): string {
-  return text.replace(EXPRESSION_TAG, ' ').replace(/\s+/g, ' ').trim();
-}
 
 // ElevenLabs SDK returns conversationId at runtime but it's not in the typed response model
 type SignedUrlResultWithConversationId = { signedUrl: string; conversationId?: string };
@@ -70,7 +64,7 @@ export class VoiceService {
       );
     }
 
-    const thread = await this.repository.createThread(householdId, 'onboarding');
+    const thread = await this.repository.createThread(householdId, 'onboarding', 'voice');
     const session = await this.repository.createVoiceSession({
       userId,
       householdId,

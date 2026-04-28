@@ -33,8 +33,12 @@ export class VoiceRepository extends BaseRepository {
 
   // --- thread/turn primitives delegated to ThreadRepository ---
 
-  createThread(householdId: string, type: string): Promise<ThreadRow> {
-    return this.threads.createThread(householdId, type);
+  createThread(
+    householdId: string,
+    type: string,
+    modality: 'voice' | 'text',
+  ): Promise<ThreadRow> {
+    return this.threads.createThread(householdId, type, modality);
   }
 
   appendTurn(params: {

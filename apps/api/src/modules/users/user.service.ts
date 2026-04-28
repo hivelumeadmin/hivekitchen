@@ -177,6 +177,8 @@ function toUserProfile(row: UserProfileRow, auth_providers: string[]): UserProfi
       grocery_list_ready: row.notification_prefs?.grocery_list_ready ?? true,
     },
     cultural_language: CulturalLanguageSchema.parse(row.cultural_language),
+    parental_notice_acknowledged_at: row.parental_notice_acknowledged_at,
+    parental_notice_acknowledged_version: row.parental_notice_acknowledged_version,
   };
 }
 
