@@ -1,14 +1,15 @@
 import { z } from 'zod';
+import { CulturalKeySchema } from './cultural.js';
 
 // Monotonic sequence ID. Accepts bigint, integer number, or a numeric string.
 // Rejects empty string / empty array / non-numeric string — which z.coerce.bigint
 // would silently coerce to 0n.
 const SequenceId = z.union([
   z.bigint(),
-  z.number().int(),
+  z.number().int().nonnegative(),
   z
     .string()
-    .regex(/^-?\d+$/)
+    .regex(/^\d+$/)
     .transform((s) => BigInt(s)),
 ]);
 
@@ -40,12 +41,28 @@ export const TurnBodyPresence = z.object({
   user_id: z.string().uuid(),
 });
 
+// Story 2.11 — Lumi appends one ratification_prompt turn after onboarding
+// finalization when cultural priors are detected from the transcript.
+// Each entry is a (prior_id, key, label) triple the web client renders as
+// a CulturalRatificationCard.
+export const TurnBodyRatificationPrompt = z.object({
+  type: z.literal('ratification_prompt'),
+  priors: z.array(
+    z.object({
+      prior_id: z.string().uuid(),
+      key: CulturalKeySchema,
+      label: z.string(),
+    }),
+  ).min(1),
+});
+
 export const TurnBody = z.discriminatedUnion('type', [
   TurnBodyMessage,
   TurnBodyPlanDiff,
   TurnBodyProposal,
   TurnBodySystemEvent,
   TurnBodyPresence,
+  TurnBodyRatificationPrompt,
 ]);
 
 export const Turn = z.object({

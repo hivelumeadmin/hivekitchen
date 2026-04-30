@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { Turn, TurnBody, TurnBodyMessage, TurnBodyPlanDiff, TurnBodyProposal, TurnBodySystemEvent, TurnBodyPresence } from './thread.js';
+import { Turn, TurnBody, TurnBodyMessage, TurnBodyPlanDiff, TurnBodyProposal, TurnBodySystemEvent, TurnBodyPresence, TurnBodyRatificationPrompt } from './thread.js';
 
 const UUID1 = '00000000-0000-4000-8000-000000000001';
 const UUID2 = '00000000-0000-4000-8000-000000000002';
@@ -157,5 +157,82 @@ describe('Turn', () => {
       role: 'user',
       body: { type: 'message', content: 'x' },
     }).success).toBe(false);
+  });
+
+  it('accepts modality: voice', () => {
+    expect(Turn.safeParse({
+      id: UUID1,
+      thread_id: UUID2,
+      server_seq: '1',
+      created_at: DT,
+      role: 'lumi',
+      body: { type: 'message', content: 'hi' },
+      modality: 'voice',
+    }).success).toBe(true);
+  });
+
+  it('accepts Turn with modality absent', () => {
+    expect(Turn.safeParse({
+      id: UUID1,
+      thread_id: UUID2,
+      server_seq: '1',
+      created_at: DT,
+      role: 'user',
+      body: { type: 'message', content: 'hi' },
+    }).success).toBe(true);
+  });
+
+  it('rejects invalid modality string', () => {
+    expect(Turn.safeParse({
+      id: UUID1,
+      thread_id: UUID2,
+      server_seq: '1',
+      created_at: DT,
+      role: 'user',
+      body: { type: 'message', content: 'hi' },
+      modality: 'fax',
+    }).success).toBe(false);
+  });
+});
+
+describe('TurnBodyRatificationPrompt', () => {
+  const PRIOR_UUID = '33333333-3333-4333-8333-333333333333';
+
+  it('accepts a valid ratification_prompt body', () => {
+    expect(
+      TurnBodyRatificationPrompt.safeParse({
+        type: 'ratification_prompt',
+        priors: [{ prior_id: PRIOR_UUID, key: 'halal', label: 'Halal' }],
+      }).success,
+    ).toBe(true);
+  });
+
+  it('rejects an invalid cultural key', () => {
+    expect(
+      TurnBodyRatificationPrompt.safeParse({
+        type: 'ratification_prompt',
+        priors: [{ prior_id: PRIOR_UUID, key: 'west_african', label: 'West African' }],
+      }).success,
+    ).toBe(false);
+  });
+
+  it('rejects entry missing prior_id', () => {
+    expect(
+      TurnBodyRatificationPrompt.safeParse({
+        type: 'ratification_prompt',
+        priors: [{ key: 'halal', label: 'Halal' }],
+      }).success,
+    ).toBe(false);
+  });
+});
+
+describe('TurnBody — ratification_prompt discriminant', () => {
+  it('discriminates on ratification_prompt type', () => {
+    const PRIOR_UUID = '33333333-3333-4333-8333-333333333333';
+    const r = TurnBody.safeParse({
+      type: 'ratification_prompt',
+      priors: [{ prior_id: PRIOR_UUID, key: 'south_asian', label: 'South Asian' }],
+    });
+    expect(r.success).toBe(true);
   });
 });

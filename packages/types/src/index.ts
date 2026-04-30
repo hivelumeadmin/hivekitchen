@@ -25,10 +25,17 @@ import {
   TurnBodyProposal,
   TurnBodySystemEvent,
   TurnBodyPresence,
-  VoiceTokenRequestSchema,
-  VoiceTokenResponse,
-  ElevenLabsLlmRequestSchema,
-  ElevenLabsPostCallWebhookPayload,
+  VoiceSessionCreateSchema,
+  VoiceSessionCreateResponseSchema,
+  WsClientMessageSchema,
+  WsServerMessageSchema,
+  WsSessionReadySchema,
+  WsTranscriptSchema,
+  WsResponseStartSchema,
+  WsResponseEndSchema,
+  WsSessionSummarySchema,
+  WsErrorSchema,
+  WsErrorCodeSchema,
   InvalidationEvent,
   ForgetRequest,
   ForgetCompletedEvent,
@@ -59,6 +66,31 @@ import {
   RetentionEntrySchema,
   KNOWN_PARENTAL_NOTICE_VERSIONS,
   PARENTAL_NOTICE_PROCESSOR_NAMES,
+  AgeBandSchema,
+  AddChildBodySchema,
+  ChildResponseSchema,
+  AddChildResponseSchema,
+  GetChildResponseSchema,
+  BagCompositionSchema,
+  SetBagCompositionBodySchema,
+  SetBagCompositionResponseSchema,
+  CulturalKeySchema,
+  TierSchema,
+  TemplateStateSchema,
+  CulturalPriorSchema,
+  RatifyActionSchema,
+  RatifyCulturalPriorBodySchema,
+  CulturalPriorListResponseSchema,
+  RatifyCulturalPriorResponseSchema,
+  TemplateStateChangedEventSchema,
+  TurnBodyRatificationPrompt,
+  LumiSurfaceSchema,
+  LumiContextSignalSchema,
+  LumiTurnRequestSchema,
+  LumiThreadTurnsResponseSchema,
+  VoiceTalkSessionCreateSchema,
+  VoiceTalkSessionResponseSchema,
+  LumiNudgeEventSchema,
 } from '@hivekitchen/contracts';
 
 // Auth
@@ -96,11 +128,18 @@ export type TurnBodyProposal = z.infer<typeof TurnBodyProposal>;
 export type TurnBodySystemEvent = z.infer<typeof TurnBodySystemEvent>;
 export type TurnBodyPresence = z.infer<typeof TurnBodyPresence>;
 
-// Voice
-export type VoiceTokenRequest = z.infer<typeof VoiceTokenRequestSchema>;
-export type VoiceTokenResponse = z.infer<typeof VoiceTokenResponse>;
-export type ElevenLabsLlmRequest = z.infer<typeof ElevenLabsLlmRequestSchema>;
-export type ElevenLabsPostCallWebhook = z.infer<typeof ElevenLabsPostCallWebhookPayload>;
+// Voice (Story 2.6b — HK-owned WebSocket pipeline)
+export type VoiceSessionCreate = z.infer<typeof VoiceSessionCreateSchema>;
+export type VoiceSessionCreateResponse = z.infer<typeof VoiceSessionCreateResponseSchema>;
+export type WsClientMessage = z.infer<typeof WsClientMessageSchema>;
+export type WsServerMessage = z.infer<typeof WsServerMessageSchema>;
+export type WsSessionReady = z.infer<typeof WsSessionReadySchema>;
+export type WsTranscript = z.infer<typeof WsTranscriptSchema>;
+export type WsResponseStart = z.infer<typeof WsResponseStartSchema>;
+export type WsResponseEnd = z.infer<typeof WsResponseEndSchema>;
+export type WsSessionSummary = z.infer<typeof WsSessionSummarySchema>;
+export type WsError = z.infer<typeof WsErrorSchema>;
+export type WsErrorCode = z.infer<typeof WsErrorCodeSchema>;
 
 // Events
 export type InvalidationEvent = z.infer<typeof InvalidationEvent>;
@@ -154,3 +193,36 @@ export type AcknowledgeParentalNoticeResponse = z.infer<
 export type ProcessorEntry = z.infer<typeof ProcessorEntrySchema>;
 export type RetentionEntry = z.infer<typeof RetentionEntrySchema>;
 export { KNOWN_PARENTAL_NOTICE_VERSIONS, PARENTAL_NOTICE_PROCESSOR_NAMES };
+
+// Children (Story 2.10 — envelope-encrypted child profiles)
+export type AgeBand = z.infer<typeof AgeBandSchema>;
+export type AddChildBody = z.infer<typeof AddChildBodySchema>;
+export type ChildResponse = z.infer<typeof ChildResponseSchema>;
+export type AddChildResponse = z.infer<typeof AddChildResponseSchema>;
+export type GetChildResponse = z.infer<typeof GetChildResponseSchema>;
+
+// Children (Story 2.12 — per-child Lunch Bag slot declaration)
+export type BagComposition = z.infer<typeof BagCompositionSchema>;
+export type SetBagCompositionBody = z.infer<typeof SetBagCompositionBodySchema>;
+export type SetBagCompositionResponse = z.infer<typeof SetBagCompositionResponseSchema>;
+
+// Cultural priors (Story 2.11)
+export type CulturalKey = z.infer<typeof CulturalKeySchema>;
+export type Tier = z.infer<typeof TierSchema>;
+export type TemplateState = z.infer<typeof TemplateStateSchema>;
+export type CulturalPrior = z.infer<typeof CulturalPriorSchema>;
+export type RatifyAction = z.infer<typeof RatifyActionSchema>;
+export type RatifyCulturalPriorBody = z.infer<typeof RatifyCulturalPriorBodySchema>;
+export type CulturalPriorListResponse = z.infer<typeof CulturalPriorListResponseSchema>;
+export type RatifyCulturalPriorResponse = z.infer<typeof RatifyCulturalPriorResponseSchema>;
+export type TemplateStateChangedEvent = z.infer<typeof TemplateStateChangedEventSchema>;
+export type TurnBodyRatificationPrompt = z.infer<typeof TurnBodyRatificationPrompt>;
+
+// Ambient Lumi (Story 12.1 — ADR-002 contract surface)
+export type LumiSurface = z.infer<typeof LumiSurfaceSchema>;
+export type LumiContextSignal = z.infer<typeof LumiContextSignalSchema>;
+export type LumiTurnRequest = z.infer<typeof LumiTurnRequestSchema>;
+export type LumiThreadTurnsResponse = z.infer<typeof LumiThreadTurnsResponseSchema>;
+export type VoiceTalkSessionCreate = z.infer<typeof VoiceTalkSessionCreateSchema>;
+export type VoiceTalkSessionResponse = z.infer<typeof VoiceTalkSessionResponseSchema>;
+export type LumiNudgeEvent = z.infer<typeof LumiNudgeEventSchema>;

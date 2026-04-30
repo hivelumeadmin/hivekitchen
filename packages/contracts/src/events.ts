@@ -13,10 +13,10 @@ const PantryDelta = z.object({
 // Same union used for Turn.server_seq in thread.ts. Kept local to avoid widening the public API.
 const SequenceId = z.union([
   z.bigint(),
-  z.number().int(),
+  z.number().int().nonnegative(),
   z
     .string()
-    .regex(/^-?\d+$/)
+    .regex(/^\d+$/)
     .transform((s) => BigInt(s)),
 ]);
 
