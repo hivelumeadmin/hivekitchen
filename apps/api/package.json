@@ -39,7 +39,7 @@
     "fastify-sse-v2": "^4.2.2",
     "fastify-type-provider-zod": "4.0.2",
     "ioredis": "^5.0.0",
-    "openai": "^4.0.0",
+    "openai": "^6.34.0",
     "pino": "^9.6.0",
     "stripe": "^22.1.0",
     "twilio": "^6.0.0",
