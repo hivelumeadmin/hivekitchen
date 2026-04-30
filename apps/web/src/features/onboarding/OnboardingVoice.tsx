@@ -1,85 +1,50 @@
-import { useEffect, useCallback } from 'react';
-import { ConversationProvider, useConversation } from '@elevenlabs/react';
-import { VoiceTokenResponse } from '@hivekitchen/contracts';
-import { hkFetch, HkApiError } from '@/lib/fetch.js';
+import { useEffect } from 'react';
+import { useVoiceSession } from '@/hooks/useVoiceSession.js';
 import { useVoiceStore } from '@/stores/voice.store.js';
 
-// Inner — must be inside ConversationProvider
-function OnboardingVoiceSession({ onComplete }: { onComplete?: () => void }) {
-  // Selectors only — never destructure the whole store (per project rule).
+export interface OnboardingVoiceProps {
+  onComplete: (result: { cultural_priors_detected: boolean }) => void;
+}
+
+export function OnboardingVoice({ onComplete }: OnboardingVoiceProps) {
   const setStatus = useVoiceStore((s) => s.setStatus);
-  const storeStart = useVoiceStore((s) => s.startSession);
-  const storeEnd = useVoiceStore((s) => s.endSession);
   const setError = useVoiceStore((s) => s.setError);
   const setIsSpeaking = useVoiceStore((s) => s.setIsSpeaking);
+  const clearError = useVoiceStore((s) => s.clearError);
 
-  const { startSession, endSession, isSpeaking, status } = useConversation({
-    onConnect: () => setStatus('active'),
-    onDisconnect: () => {
-      storeEnd();
-      // Navigation is owned by the parent (OnboardingPage). The post-call
-      // ElevenLabs webhook has already persisted the onboarding summary as a
-      // system_event turn before this fires; the parent transitions to the
-      // consent step, then onConsented routes to /app.
-      onComplete?.();
-    },
+  const { status, errorMessage, start, stop } = useVoiceSession({
+    onComplete,
     onError: (message) => setError(message),
   });
 
-  // Mirror the SDK's isSpeaking flag into the store so consumers outside this
-  // subtree (and StrictMode-safe across re-renders) see one source of truth.
+  // Start the session on mount; clean up on unmount.
   useEffect(() => {
-    setIsSpeaking(isSpeaking);
-  }, [isSpeaking, setIsSpeaking]);
+    clearError();
+    void start();
+    return () => stop();
+    // start/stop are stable refs from the hook by useCallback; we only want
+    // to fire this on mount.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
-  // Fetch the signed URL and open the WebSocket session on mount
+  // Mirror the hook's status into the cross-tree voice store.
   useEffect(() => {
-    const controller = new AbortController();
-    let started = false;
+    setStatus(
+      status === 'connecting'
+        ? 'connecting'
+        : status === 'closed'
+          ? 'ended'
+          : status === 'error'
+            ? 'error'
+            : status === 'idle'
+              ? 'idle'
+              : 'active',
+    );
+    setIsSpeaking(status === 'speaking');
+  }, [status, setStatus, setIsSpeaking]);
 
-    async function init() {
-      setStatus('connecting');
-      try {
-        const raw = await hkFetch<unknown>('/v1/voice/token', {
-          method: 'POST',
-          body: { context: 'onboarding' },
-          signal: controller.signal,
-        });
-        if (controller.signal.aborted) return;
-        const token = VoiceTokenResponse.parse(raw);
-        storeStart(token.sessionId);
-        startSession({ signedUrl: token.token });
-        started = true;
-      } catch (err) {
-        if (controller.signal.aborted) return;
-        // AbortError surfaces here on cleanup; ignore it.
-        if (err instanceof DOMException && err.name === 'AbortError') return;
-        const is502 = err instanceof HkApiError && err.status === 502;
-        setError(
-          is502
-            ? 'Voice is temporarily unavailable.'
-            : 'Could not start voice session. Please try again.',
-        );
-      }
-    }
+  const isSpeaking = status === 'speaking';
 
-    void init();
-
-    return () => {
-      controller.abort();
-      // Only call endSession if we actually opened one; calling against an
-      // unstarted session leaks a WebSocket on StrictMode double-mount.
-      if (started) endSession();
-    };
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
-
-  const handleEnd = useCallback(() => {
-    endSession();
-  }, [endSession]);
-
-  // SDK ConversationStatus: 'disconnected' | 'connecting' | 'connected' | 'error'.
-  // Use the SDK status as the single source of truth for the rendering decisions
-  // here; the store mirrors it via setStatus for cross-tree consumers.
   return (
     <div className="flex flex-col items-center gap-8">
       <div
@@ -95,24 +60,21 @@ function OnboardingVoiceSession({ onComplete }: { onComplete?: () => void }) {
 
       <p className="font-sans text-sm text-stone-400 tracking-wide uppercase">
         {status === 'connecting' && 'Connecting…'}
-        {status === 'connected' && (isSpeaking ? 'Lumi is speaking' : 'Listening…')}
+        {status === 'ready' && 'Listening…'}
+        {status === 'listening' && 'Listening…'}
+        {status === 'processing' && 'Thinking…'}
+        {status === 'speaking' && 'Lumi is speaking'}
+        {status === 'closing' && 'Wrapping up…'}
+        {status === 'error' && (errorMessage ?? 'Something went wrong')}
       </p>
 
       <button
         type="button"
-        onClick={handleEnd}
+        onClick={stop}
         className="mt-4 px-6 py-2 rounded-full font-sans text-sm text-stone-600 border border-stone-300 hover:bg-stone-100 transition-colors"
       >
         End session
       </button>
     </div>
-  );
-}
-
-export function OnboardingVoice({ onComplete }: { onComplete?: () => void }) {
-  return (
-    <ConversationProvider>
-      <OnboardingVoiceSession onComplete={onComplete} />
-    </ConversationProvider>
   );
 }

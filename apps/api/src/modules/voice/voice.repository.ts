@@ -12,7 +12,7 @@ export interface VoiceSessionRow {
   household_id: string;
   thread_id: string;
   elevenlabs_conversation_id: string | null;
-  status: 'active' | 'closed' | 'timed_out';
+  status: 'active' | 'closed' | 'timed_out' | 'disconnected';
   started_at: string;
   ended_at: string | null;
 }
@@ -74,7 +74,7 @@ export class VoiceRepository extends BaseRepository {
     userId: string;
     householdId: string;
     threadId: string;
-    elevenLabsConversationId: string;
+    elevenLabsConversationId: string | null;
   }): Promise<VoiceSessionRow> {
     const { data, error } = await this.client
       .from('voice_sessions')
@@ -90,13 +90,25 @@ export class VoiceRepository extends BaseRepository {
     return data as VoiceSessionRow;
   }
 
-  async findSessionByConversationId(
-    elevenLabsConversationId: string,
+  async findVoiceSession(sessionId: string): Promise<VoiceSessionRow | null> {
+    const { data, error } = await this.client
+      .from('voice_sessions')
+      .select(SESSION_COLUMNS)
+      .eq('id', sessionId)
+      .maybeSingle();
+    if (error) throw error;
+    return (data as VoiceSessionRow | null) ?? null;
+  }
+
+  async findActiveSessionForHousehold(
+    householdId: string,
   ): Promise<VoiceSessionRow | null> {
     const { data, error } = await this.client
       .from('voice_sessions')
       .select(SESSION_COLUMNS)
-      .eq('elevenlabs_conversation_id', elevenLabsConversationId)
+      .eq('household_id', householdId)
+      .eq('status', 'active')
+      .limit(1)
       .maybeSingle();
     if (error) throw error;
     return (data as VoiceSessionRow | null) ?? null;

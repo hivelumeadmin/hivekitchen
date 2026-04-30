@@ -14,11 +14,17 @@ export default function LoginPage() {
   const navigate = useNavigate();
   const [params] = useSearchParams();
   const [apiError, setApiError] = useState<string | null>(null);
-  const accessToken = useAuthStore((s) => s.accessToken);
 
+  // Mount-only: if the user lands on /auth/login while already authenticated,
+  // bounce to /app. Post-login navigation (including `next=` and first-login
+  // routing) is owned by onSubmit; depending on `accessToken` here would race
+  // setSession with onSubmit's own navigate call and clobber it.
   useEffect(() => {
-    if (accessToken !== null) navigate('/app', { replace: true });
-  }, [accessToken, navigate]);
+    if (useAuthStore.getState().accessToken !== null) {
+      navigate('/app', { replace: true });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const { register, handleSubmit, formState } = useForm<LoginRequest>({
     resolver: zodResolver(LoginRequestSchema),

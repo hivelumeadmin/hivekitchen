@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import Fastify, { type FastifyInstance } from 'fastify';
 import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod';
 import jwt from '@fastify/jwt';
+import websocket from '@fastify/websocket';
 import { ZodError } from 'zod';
 import { authenticateHook } from '../../middleware/authenticate.hook.js';
 import { isDomainError } from '../../common/errors.js';
@@ -12,17 +13,15 @@ const SAMPLE_USER_ID = '11111111-1111-4111-8111-111111111111';
 const SAMPLE_HOUSEHOLD_ID = '22222222-2222-4222-8222-222222222222';
 const SAMPLE_THREAD_ID = '33333333-3333-4333-8333-333333333333';
 const SAMPLE_SESSION_ID = '44444444-4444-4444-8444-444444444444';
-const SAMPLE_CONVERSATION_ID = 'conv_test_abc123';
 const JWT_SECRET = 'a'.repeat(32);
-const CUSTOM_LLM_SECRET = 'x'.repeat(32);
-const WEBHOOK_SECRET = 'w'.repeat(32);
-const AGENT_ID = 'agent_test_xyz';
+const VOICE_ID = 'voice_test_xyz';
 
 const SAMPLE_THREAD_ROW = {
   id: SAMPLE_THREAD_ID,
   household_id: SAMPLE_HOUSEHOLD_ID,
   type: 'onboarding',
   status: 'active',
+  modality: 'voice',
   created_at: new Date().toISOString(),
 };
 
@@ -31,35 +30,23 @@ const SAMPLE_SESSION_ROW = {
   user_id: SAMPLE_USER_ID,
   household_id: SAMPLE_HOUSEHOLD_ID,
   thread_id: SAMPLE_THREAD_ID,
-  elevenlabs_conversation_id: SAMPLE_CONVERSATION_ID,
+  elevenlabs_conversation_id: null,
   status: 'active',
   started_at: new Date().toISOString(),
   ended_at: null,
 };
 
-const TIMED_OUT_SESSION_ROW = {
-  ...SAMPLE_SESSION_ROW,
-  started_at: new Date(Date.now() - 11 * 60 * 1000).toISOString(),
-};
-
 function buildMockSupabase(opts: {
-  sessionLookupResult?: unknown;
-  sessionLookupError?: unknown;
-  createThreadError?: unknown;
-  createSessionError?: unknown;
+  activeSessionForHousehold?: unknown;
 }) {
-  const sessionLookupResult = opts.sessionLookupResult ?? null;
-
+  const activeSession = opts.activeSessionForHousehold ?? null;
   return {
     from(table: string) {
       if (table === 'threads') {
         return {
           insert: () => ({
             select: () => ({
-              single: vi.fn().mockResolvedValue({
-                data: opts.createThreadError ? null : SAMPLE_THREAD_ROW,
-                error: opts.createThreadError ?? null,
-              }),
+              single: vi.fn().mockResolvedValue({ data: SAMPLE_THREAD_ROW, error: null }),
             }),
           }),
           update: () => ({
@@ -73,18 +60,23 @@ function buildMockSupabase(opts: {
         return {
           insert: () => ({
             select: () => ({
-              single: vi.fn().mockResolvedValue({
-                data: opts.createSessionError ? null : SAMPLE_SESSION_ROW,
-                error: opts.createSessionError ?? null,
-              }),
+              single: vi.fn().mockResolvedValue({ data: SAMPLE_SESSION_ROW, error: null }),
             }),
           }),
           select: () => ({
-            eq: () => ({
-              maybeSingle: vi.fn().mockResolvedValue({
-                data: sessionLookupResult,
-                error: opts.sessionLookupError ?? null,
-              }),
+            eq: vi.fn().mockImplementation((col: string) => {
+              if (col === 'id') {
+                // findVoiceSession — not exercised by current POST /sessions tests
+                return { maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null }) };
+              }
+              // findActiveSessionForHousehold: .eq('household_id').eq('status').limit(1).maybeSingle()
+              return {
+                eq: () => ({
+                  limit: () => ({
+                    maybeSingle: vi.fn().mockResolvedValue({ data: activeSession, error: null }),
+                  }),
+                }),
+              };
             }),
           }),
           update: () => ({
@@ -99,87 +91,17 @@ function buildMockSupabase(opts: {
           }),
         };
       }
-      if (table === 'thread_turns') {
-        return {
-          insert: () => ({
-            select: () => ({
-              single: vi.fn().mockResolvedValue({
-                data: {
-                  id: '99999999-9999-4999-8999-999999999999',
-                  thread_id: SAMPLE_THREAD_ID,
-                  server_seq: 1,
-                  role: 'user',
-                  body: { type: 'message', content: 'mock' },
-                  modality: 'voice',
-                  created_at: new Date().toISOString(),
-                },
-                error: null,
-              }),
-            }),
-          }),
-          select: () => ({
-            eq: () => ({
-              order: () => ({
-                limit: () => ({
-                  maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null }),
-                }),
-              }),
-            }),
-          }),
-        };
-      }
       throw new Error(`unexpected table: ${table}`);
     },
   };
 }
 
-function buildMockElevenLabs(opts: {
-  getSignedUrlResult?: unknown;
-  getSignedUrlError?: unknown;
-  constructEventResult?: unknown;
-  constructEventError?: unknown;
-}) {
-  return {
-    conversationalAi: {
-      conversations: {
-        getSignedUrl: opts.getSignedUrlError
-          ? vi.fn().mockRejectedValue(opts.getSignedUrlError)
-          : vi.fn().mockResolvedValue(
-              opts.getSignedUrlResult ?? {
-                signedUrl: 'https://api.elevenlabs.io/v1/convai/conversation?token=signed',
-                conversationId: SAMPLE_CONVERSATION_ID,
-              },
-            ),
-      },
-    },
-    webhooks: {
-      constructEvent: opts.constructEventError
-        ? vi.fn().mockRejectedValue(opts.constructEventError)
-        : vi.fn().mockResolvedValue(
-            opts.constructEventResult ?? {
-              type: 'post_call_transcription',
-              event_timestamp: 1717171717,
-              data: {
-                agent_id: AGENT_ID,
-                conversation_id: SAMPLE_CONVERSATION_ID,
-                status: 'done',
-                transcript: [
-                  { role: 'agent', message: '[warmly] What did your grandmother cook?', time_in_call_secs: 1 },
-                  { role: 'user', message: 'She made dal and rice every Sunday.' },
-                ],
-              },
-            },
-          ),
-    },
-  };
-}
-
-function buildMockOpenAI(responseText = '[warmly] That sounds like a wonderful family tradition.') {
+function buildMockOpenAI() {
   return {
     chat: {
       completions: {
         create: vi.fn().mockResolvedValue({
-          choices: [{ message: { content: responseText } }],
+          choices: [{ message: { content: 'hello' } }],
         }),
       },
     },
@@ -188,8 +110,6 @@ function buildMockOpenAI(responseText = '[warmly] That sounds like a wonderful f
 
 async function buildTestApp(opts: {
   supabase: ReturnType<typeof buildMockSupabase>;
-  elevenlabs: ReturnType<typeof buildMockElevenLabs>;
-  openai: ReturnType<typeof buildMockOpenAI>;
 }): Promise<FastifyInstance> {
   const app = Fastify({ logger: false, genReqId: () => randomUUID() });
   app.setValidatorCompiler(validatorCompiler);
@@ -198,17 +118,17 @@ async function buildTestApp(opts: {
   const env = {
     NODE_ENV: 'development' as const,
     JWT_SECRET,
-    ELEVENLABS_AGENT_ID: AGENT_ID,
-    ELEVENLABS_CUSTOM_LLM_SECRET: CUSTOM_LLM_SECRET,
-    ELEVENLABS_WEBHOOK_SECRET: WEBHOOK_SECRET,
+    ELEVENLABS_API_KEY: 'test-key',
+    ELEVENLABS_VOICE_ID: VOICE_ID,
   };
   app.decorate('env', env as unknown as FastifyInstance['env']);
   app.decorate('supabase', opts.supabase as unknown as FastifyInstance['supabase']);
-  app.decorate('elevenlabs', opts.elevenlabs as unknown as FastifyInstance['elevenlabs']);
-  app.decorate('openai', opts.openai as unknown as FastifyInstance['openai']);
+  app.decorate('elevenlabs', {} as unknown as FastifyInstance['elevenlabs']);
+  app.decorate('openai', buildMockOpenAI() as unknown as FastifyInstance['openai']);
 
   await app.register(jwt, { secret: JWT_SECRET, sign: { expiresIn: '15m' } });
   await app.register(authenticateHook);
+  await app.register(websocket);
 
   app.setErrorHandler((err, request, reply) => {
     if (isDomainError(err)) {
@@ -231,6 +151,25 @@ async function buildTestApp(opts: {
       });
       return;
     }
+    const obj = err as { cause?: unknown; validation?: unknown };
+    if (obj.cause instanceof ZodError) {
+      void reply.status(400).type('application/problem+json').send({
+        type: '/errors/validation',
+        status: 400,
+        title: 'Validation failed',
+        instance: request.id,
+      });
+      return;
+    }
+    if (Array.isArray(obj.validation) && obj.validation.length > 0) {
+      void reply.status(400).type('application/problem+json').send({
+        type: '/errors/validation',
+        status: 400,
+        title: 'Validation failed',
+        instance: request.id,
+      });
+      return;
+    }
     void reply.status(500).send({ type: '/errors/internal', status: 500 });
   });
 
@@ -243,81 +182,83 @@ function signAccessToken(app: FastifyInstance): string {
   return app.jwt.sign({ sub: SAMPLE_USER_ID, hh: SAMPLE_HOUSEHOLD_ID, role: 'primary_parent' });
 }
 
-const VALID_LLM_BODY = {
-  messages: [
-    { role: 'system', content: 'You are Lumi.' },
-    { role: 'user', content: 'What did your grandmother cook?' },
-  ],
-  model: 'gpt-4o',
-  stream: true,
-  elevenlabs_extra_body: { UUID: SAMPLE_CONVERSATION_ID },
-};
-
-const VALID_WEBHOOK_PAYLOAD = {
-  type: 'post_call_transcription',
-  event_timestamp: 1717171717,
-  data: {
-    agent_id: AGENT_ID,
-    conversation_id: SAMPLE_CONVERSATION_ID,
-    status: 'done',
-    transcript: [
-      { role: 'agent', message: 'What did your grandmother cook?' },
-      { role: 'user', message: 'She made dal and rice.' },
-    ],
-  },
-};
-
-describe('POST /v1/voice/token', () => {
+describe('POST /v1/voice/sessions', () => {
   let app: FastifyInstance;
 
   afterEach(async () => {
     if (app) await app.close();
   });
 
-  it('happy path → 200 with token (signed URL) and sessionId', async () => {
-    app = await buildTestApp({
-      supabase: buildMockSupabase({}),
-      elevenlabs: buildMockElevenLabs({}),
-      openai: buildMockOpenAI(),
-    });
+  it('happy path → 200 with session_id (UUID)', async () => {
+    app = await buildTestApp({ supabase: buildMockSupabase({}) });
     const token = signAccessToken(app);
 
     const res = await app.inject({
       method: 'POST',
-      url: '/v1/voice/token',
+      url: '/v1/voice/sessions',
       headers: { authorization: `Bearer ${token}` },
       payload: { context: 'onboarding' },
     });
 
     expect(res.statusCode).toBe(200);
-    const body = JSON.parse(res.body) as { token: string; sessionId: string };
-    expect(typeof body.token).toBe('string');
-    expect(body.token.startsWith('https://')).toBe(true);
-    expect(body.sessionId).toBe(SAMPLE_SESSION_ID);
+    const body = JSON.parse(res.body) as { session_id: string };
+    expect(body.session_id).toBe(SAMPLE_SESSION_ID);
   });
 
   it('unauthenticated → 401', async () => {
-    app = await buildTestApp({
-      supabase: buildMockSupabase({}),
-      elevenlabs: buildMockElevenLabs({}),
-      openai: buildMockOpenAI(),
-    });
+    app = await buildTestApp({ supabase: buildMockSupabase({}) });
 
     const res = await app.inject({
       method: 'POST',
-      url: '/v1/voice/token',
+      url: '/v1/voice/sessions',
       payload: { context: 'onboarding' },
     });
 
     expect(res.statusCode).toBe(401);
   });
 
-  it('ElevenLabs unavailable → 502', async () => {
+  it('existing active session for household → 409', async () => {
     app = await buildTestApp({
-      supabase: buildMockSupabase({}),
-      elevenlabs: buildMockElevenLabs({ getSignedUrlError: new Error('network timeout') }),
-      openai: buildMockOpenAI(),
+      supabase: buildMockSupabase({ activeSessionForHousehold: SAMPLE_SESSION_ROW }),
     });
+    const token = signAccessToken(app);
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/v1/voice/sessions',
+      headers: { authorization: `Bearer ${token}` },
+      payload: { context: 'onboarding' },
+    });
+
+    expect(res.statusCode).toBe(409);
+    const body = JSON.parse(res.body) as { type: string };
+    expect(body.type).toBe('/errors/conflict');
+  });
+
+  it('rejects unknown context → 400', async () => {
+    app = await buildTestApp({ supabase: buildMockSupabase({}) });
+    const token = signAccessToken(app);
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/v1/voice/sessions',
+      headers: { authorization: `Bearer ${token}` },
+      payload: { context: 'evening' },
+    });
+
+    expect(res.statusCode).toBe(400);
+  });
+});
+
+describe('Removed voice endpoints (Story 2.6b — replaced by HK-owned WS)', () => {
+  let app: FastifyInstance;
+
+  afterEach(async () => {
+    if (app) await app.close();
+  });
+
+  it('POST /v1/voice/token → 404', async () => {
+    app = await buildTestApp({ supabase: buildMockSupabase({}) });
     const token = signAccessToken(app);
 
     const res = await app.inject({
@@ -325,179 +266,35 @@ describe('POST /v1/voice/token', () => {
       url: '/v1/voice/token',
       headers: { authorization: `Bearer ${token}` },
       payload: { context: 'onboarding' },
-    });
-
-    expect(res.statusCode).toBe(502);
-    const body = JSON.parse(res.body) as { type: string };
-    expect(body.type).toBe('/errors/upstream');
-  });
-});
-
-describe('POST /v1/voice/llm', () => {
-  let app: FastifyInstance;
-
-  afterEach(async () => {
-    if (app) await app.close();
-  });
-
-  it('valid bearer + known conversation → 200 text/event-stream with data chunks and [DONE]', async () => {
-    app = await buildTestApp({
-      supabase: buildMockSupabase({ sessionLookupResult: SAMPLE_SESSION_ROW }),
-      elevenlabs: buildMockElevenLabs({}),
-      openai: buildMockOpenAI('[warmly] That sounds lovely.'),
-    });
-
-    const res = await app.inject({
-      method: 'POST',
-      url: '/v1/voice/llm',
-      headers: { authorization: `Bearer ${CUSTOM_LLM_SECRET}` },
-      payload: VALID_LLM_BODY,
-    });
-
-    expect(res.statusCode).toBe(200);
-    expect(res.headers['content-type']).toContain('text/event-stream');
-    expect(res.body).toContain('data: ');
-    expect(res.body).toContain('data: [DONE]');
-  });
-
-  it('wrong bearer secret → 401', async () => {
-    app = await buildTestApp({
-      supabase: buildMockSupabase({ sessionLookupResult: SAMPLE_SESSION_ROW }),
-      elevenlabs: buildMockElevenLabs({}),
-      openai: buildMockOpenAI(),
-    });
-
-    const res = await app.inject({
-      method: 'POST',
-      url: '/v1/voice/llm',
-      headers: { authorization: 'Bearer wrong-secret' },
-      payload: VALID_LLM_BODY,
-    });
-
-    expect(res.statusCode).toBe(401);
-  });
-
-  it('missing Authorization header → 401', async () => {
-    app = await buildTestApp({
-      supabase: buildMockSupabase({}),
-      elevenlabs: buildMockElevenLabs({}),
-      openai: buildMockOpenAI(),
-    });
-
-    const res = await app.inject({
-      method: 'POST',
-      url: '/v1/voice/llm',
-      payload: VALID_LLM_BODY,
-    });
-
-    expect(res.statusCode).toBe(401);
-  });
-
-  it('unknown conversation_id → 404', async () => {
-    app = await buildTestApp({
-      supabase: buildMockSupabase({ sessionLookupResult: null }),
-      elevenlabs: buildMockElevenLabs({}),
-      openai: buildMockOpenAI(),
-    });
-
-    const res = await app.inject({
-      method: 'POST',
-      url: '/v1/voice/llm',
-      headers: { authorization: `Bearer ${CUSTOM_LLM_SECRET}` },
-      payload: VALID_LLM_BODY,
     });
 
     expect(res.statusCode).toBe(404);
   });
 
-  it('timed-out session → 200 SSE with closing phrase', async () => {
-    app = await buildTestApp({
-      supabase: buildMockSupabase({ sessionLookupResult: TIMED_OUT_SESSION_ROW }),
-      elevenlabs: buildMockElevenLabs({}),
-      openai: buildMockOpenAI(),
-    });
+  it('POST /v1/voice/llm → 404', async () => {
+    app = await buildTestApp({ supabase: buildMockSupabase({}) });
+    const token = signAccessToken(app);
 
     const res = await app.inject({
       method: 'POST',
       url: '/v1/voice/llm',
-      headers: { authorization: `Bearer ${CUSTOM_LLM_SECRET}` },
-      payload: VALID_LLM_BODY,
+      headers: { authorization: `Bearer ${token}` },
+      payload: {},
     });
 
-    expect(res.statusCode).toBe(200);
-    expect(res.headers['content-type']).toContain('text/event-stream');
-    expect(res.body).toContain("That's everything I needed");
-    expect(res.body).toContain('data: [DONE]');
-  });
-});
-
-describe('POST /v1/webhooks/elevenlabs', () => {
-  let app: FastifyInstance;
-
-  afterEach(async () => {
-    if (app) await app.close();
+    expect(res.statusCode).toBe(404);
   });
 
-  it('valid HMAC + post_call_transcription → 200 empty body', async () => {
-    app = await buildTestApp({
-      supabase: buildMockSupabase({ sessionLookupResult: SAMPLE_SESSION_ROW }),
-      elevenlabs: buildMockElevenLabs({ constructEventResult: VALID_WEBHOOK_PAYLOAD }),
-      openai: buildMockOpenAI(),
-    });
+  it('POST /v1/webhooks/elevenlabs → 404', async () => {
+    app = await buildTestApp({ supabase: buildMockSupabase({}) });
 
     const res = await app.inject({
       method: 'POST',
       url: '/v1/webhooks/elevenlabs',
-      headers: {
-        'content-type': 'application/json',
-        'elevenlabs-signature': 't=1717171717,v0=mock_valid_sig',
-      },
-      payload: JSON.stringify(VALID_WEBHOOK_PAYLOAD),
+      headers: { 'content-type': 'application/json' },
+      payload: '{}',
     });
 
-    expect(res.statusCode).toBe(200);
-    expect(res.body).toBe('');
-  });
-
-  it('invalid HMAC signature → 403', async () => {
-    app = await buildTestApp({
-      supabase: buildMockSupabase({}),
-      elevenlabs: buildMockElevenLabs({ constructEventError: new Error('Invalid signature') }),
-      openai: buildMockOpenAI(),
-    });
-
-    const res = await app.inject({
-      method: 'POST',
-      url: '/v1/webhooks/elevenlabs',
-      headers: {
-        'content-type': 'application/json',
-        'elevenlabs-signature': 't=1717171717,v0=bad_sig',
-      },
-      payload: JSON.stringify(VALID_WEBHOOK_PAYLOAD),
-    });
-
-    expect(res.statusCode).toBe(403);
-    const body = JSON.parse(res.body) as { type: string };
-    expect(body.type).toBe('/errors/forbidden');
-  });
-
-  it('unknown conversation_id → 200 (log and ignore — do not 404 on webhooks)', async () => {
-    app = await buildTestApp({
-      supabase: buildMockSupabase({ sessionLookupResult: null }),
-      elevenlabs: buildMockElevenLabs({ constructEventResult: VALID_WEBHOOK_PAYLOAD }),
-      openai: buildMockOpenAI(),
-    });
-
-    const res = await app.inject({
-      method: 'POST',
-      url: '/v1/webhooks/elevenlabs',
-      headers: {
-        'content-type': 'application/json',
-        'elevenlabs-signature': 't=1717171717,v0=mock_valid_sig',
-      },
-      payload: JSON.stringify(VALID_WEBHOOK_PAYLOAD),
-    });
-
-    expect(res.statusCode).toBe(200);
+    expect(res.statusCode).toBe(404);
   });
 });
