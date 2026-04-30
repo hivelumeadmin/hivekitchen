@@ -11,6 +11,10 @@ dist/
 .turbo/
 .lighthouseci/
 
+# Claude Code local settings — may contain secrets in allowed-command patterns
+.claude/settings.local.json
+apps/web/test-results/
+
 # Defensive: stray TS build output that should never land in src/.
 # Real build artifacts go to dist/ (already ignored above).
 packages/**/src/**/*.js
