@@ -618,7 +618,7 @@ Scope: **MVP-cut-aligned for closed beta (April 2026)** with Growth/Vision items
 
 **User outcome:** My partner and I share the load — we see who's packing tomorrow, hand off mid-week without re-planning, and Lumi already has Wednesday's plan when Devon opens her phone. I can chat with Lumi (voice or text) when it suits me, and she gets noticeably better at understanding my family week by week. When she notices something, I can see it and confirm or correct.
 
-**Scope:** Shared family thread with server-assigned monotonic `server_seq` + `thread.resync` recovery + per-tab SSE channel + Figma-style `<PresenceIndicator>` with generic surface addressing + `<ThreadTurn>` polymorphic envelope (TurnMessage / TurnPlanDiff / TurnProposal / TurnSystemEvent / TurnPresence body components) + `<DisambiguationPicker>` L1→L4 promotion ladder + L3→L4 bidirectional tether (sacred-plum pulse + thread breadcrumb pinned at top, returns to QuietDiff settled summary) + Secondary Caregiver invite redemption flow (cross-scope `/invite/$token` route resolving role then redirecting) + revoke caregiver access + transfer primary ownership + `<PackerOfTheDay>` + Evening Check-in unlimited text + voice tier caps (Standard 10min/wk per FR58, Premium unlimited per FR57) + voice token issuance (`POST /v1/voice/token`) + ElevenLabs HMAC webhook (`POST /v1/webhooks/elevenlabs`) + tool-latency manifest enforcement at runtime + sync-vs-early-ack split at 6000ms boundary + `<EarlyAckPulse>` non-verbal SSE orb pulse for 1.5–4s estimated chains + spoken "one sec" continuation for >6s chains (NEVER "Let me pull that up...") + concurrent text caption fallback for all voice output + tone/length adaptation by household context (time of day, recent activity) + parent-initiated only (Lumi never proactive, FR63) + passive profile enrichment via memory.note tool from conversation mentions + "I noticed" learning moments on home surface with confirm/correct (FR62) + plan-reasoning explanations on demand (FR64) + cultural-recognition L2 meal-pattern ("Keeping Jollof Friday") with opt-in + language-discovered gates + L3 family-language with provenance (sacred-plum tint, tap reveals memory node) + Lumi-initiated ratification turn at `suggested` state (no template picker UI ever) + family-language ratchet (forward-only) + interfaith-mode toggle ("Honor all rules in every meal." / "Alternate whose rules lead each day.") + thread-integrity-anomaly client beacon to `/v1/internal/client-anomaly`.
+**Scope:** Shared family thread with server-assigned monotonic `server_seq` + `thread.resync` recovery + per-tab SSE channel + Figma-style `<PresenceIndicator>` with generic surface addressing + `<ThreadTurn>` polymorphic envelope (TurnMessage / TurnPlanDiff / TurnProposal / TurnSystemEvent / TurnPresence body components) + `<DisambiguationPicker>` L1→L4 promotion ladder + L3→L4 bidirectional tether (sacred-plum pulse + thread breadcrumb pinned at top, returns to QuietDiff settled summary) + Secondary Caregiver invite redemption flow (cross-scope `/invite/$token` route resolving role then redirecting) + revoke caregiver access + transfer primary ownership + `<PackerOfTheDay>` + Evening Check-in unlimited text + voice tier caps (Standard 10min/wk per FR58, Premium unlimited per FR57) + voice infrastructure per ADR-002 (tap-to-talk, browser-direct STT + TTS, single-use token pair issued by `POST /v1/lumi/voice/sessions` — owned by Epic 12) + tool-latency manifest enforcement at runtime + sync-vs-early-ack split at 6000ms boundary + `<EarlyAckPulse>` non-verbal SSE orb pulse for 1.5–4s estimated chains + spoken "one sec" continuation for >6s chains (NEVER "Let me pull that up...") + concurrent text caption fallback for all voice output + tone/length adaptation by household context (time of day, recent activity) + parent-initiated only (Lumi never proactive, FR63) + passive profile enrichment via memory.note tool from conversation mentions + "I noticed" learning moments on home surface with confirm/correct (FR62) + plan-reasoning explanations on demand (FR64) + cultural-recognition L2 meal-pattern ("Keeping Jollof Friday") with opt-in + language-discovered gates + L3 family-language with provenance (sacred-plum tint, tap reveals memory node) + Lumi-initiated ratification turn at `suggested` state (no template picker UI ever) + family-language ratchet (forward-only) + interfaith-mode toggle ("Honor all rules in every meal." / "Alternate whose rules lead each day.") + thread-integrity-anomaly client beacon to `/v1/internal/client-anomaly`.
 
 **FRs covered:** FR27, FR28, FR29, FR30, FR31, FR56, FR57, FR58, FR59, FR60, FR61, FR62, FR63, FR64.
 **Dependencies:** Requires Epic 1 (Foundation Gate Turn contract, presence contract, SSE bridge) + Epic 2 (auth, Secondary Caregiver invite primitive). Epic 3 strongly recommended first so Lumi has plans to discuss; can ship before Epic 4.
@@ -692,6 +692,17 @@ Scope: **MVP-cut-aligned for closed beta (April 2026)** with Growth/Vision items
 
 ---
 
+### Epic 12 — Ambient Lumi Companion
+
+**User outcome:** Lumi is always there when I need her — a quiet presence in the corner of every screen. When I'm looking at the weekly plan, she knows it. When I'm thinking about Emma's allergens, she knows that too. I can tap to chat or tap to talk from anywhere, and she remembers our conversation from last time. She occasionally surfaces something useful without being asked — and I can silence that if I want.
+
+**Scope:** `packages/contracts/src/lumi.ts` (LumiSurface enum, LumiContextSignalSchema, LumiTurnRequestSchema, LumiNudgeEventSchema, VoiceTalkSessionSchema) + `apps/web/src/stores/lumi.store.ts` (replaces `voice.store.ts` for ambient usage; manages surface context, per-surface thread IDs, turns, talk session state, panel UI state, proactive nudge queue) + route context registration pattern (`lumiStore.setContext()` on mount across all app routes) + `GET /v1/lumi/threads/:threadId/turns` (thread hydration for panel display) + DB migration dropping modality discriminator from thread uniqueness constraint for non-onboarding thread types + `POST /v1/lumi/voice/sessions` + `DELETE /v1/lumi/voice/sessions/:id` (tap-to-talk session lifecycle; issues single-use STT + TTS token pair from ElevenLabs; links tokens to HiveKitchen user session) + browser-direct ElevenLabs STT WebSocket + TTS WebSocket (two connections per talk session, browser as hub, raw audio never touches HiveKitchen API) + chat sync via WebSocket messages (transcript appended directly to chat on STT output; Lumi text appended directly to chat on `response.text` message from HiveKitchen WS; `GET /v1/lumi/threads/:threadId/turns` as resync fallback) + 20s inactivity auto-close of talk session + `LumiOrb` + `LumiPanel` components in root `(app)` layout (collapsed orb / text panel / voice panel states; excluded from onboarding and child-facing routes) + `LumiAgent` class with surface prompt dispatch (`apps/api/src/agents/prompts/lumi-base.prompt.ts` + per-surface surface files) + household snapshot assembly before each agent call (family name, children, allergens — never from agent-side DB read) + `POST /v1/lumi/turns` text turn endpoint (with context signal) + role-scoped Lumi capabilities (Primary Parent, Secondary Caregiver, Grandparent — all get panel; Premium tier for voice modality; role injected into agent prompt) + proactive nudge infrastructure (SSE `lumi.nudge` event, Redis rate-limit 1/HH/30min, async `LumiAgent.generateNudge()` post-mutation triggers) + notification preferences global opt-out for proactive nudges (maps to FR105) + `voice.ts` contract update (`z.literal('onboarding')` → `LumiSurfaceSchema`).
+
+**FRs covered:** FR56, FR57, FR58, FR59, FR60, FR61, FR62, FR63, FR64 (voice + text enrichment; ambient delivery of what was previously scoped to Epic 5 evening check-in voice path). Architecture-derived requirements from ADR-002 (2026-04-29).
+**Dependencies:** Requires Epic 1 (Foundation Gate, SSE bridge, thread contract) + Epic 2 (auth, household data, onboarding complete). Epic 3 strongly recommended first so Lumi has plan data to discuss on the `planning` surface. Epic 5 household thread and coordination stories are parallel but independent. **Epic 5's voice infrastructure is now owned by Epic 12** — Epic 5 stories reference Epic 12 for the voice layer.
+
+---
+
 ## Epic dependency + sequencing graph
 
 ```
@@ -714,11 +725,15 @@ Epic 1 (Foundation) ━━━ blocks all others
                                                                               Epic 10 (Beta→Launch) ━━━━━━━━━┛ (month 5/6 transition; needs E1-E9 + E8)
 
 Epic 11 (Marketing) ━━━ standalone runtime; deferred to ~September 2026 (near public launch)
+
+Epic 12 (Ambient Lumi) ━━━ requires E1 + E2; E3 strongly recommended; Phase 1+2 ships before E5 voice
 ```
 
-**Suggested shipping order:** E1 → E2 → E3 → (E4 + E5 + E6 in parallel) → E7 → E9 (build-along, surfaces grow with traffic from E3 onward) → **E8 (Billing) just-in-time before E10** → E10 (month 5/6 transition) → E11 (near public launch).
+**Suggested shipping order:** E1 → E2 → **E12 Phase 1+2** → E3 → (E4 + E5 + E6 in parallel, E5 voice provided by E12) → E7 → E9 (build-along) → **E8 (Billing) just-in-time before E10** → E10 (month 5/6 transition) → **E12 Phase 3+4** → E11 (near public launch).
 
-**Why E8 is sequenced late:** Beta is free, so Stripe doesn't need to be live during beta. Landing E8 just before E10 (the transition that activates billing) minimizes the time billing infrastructure sits unused and avoids maintaining Stripe wiring that no household is exercising. Premium-feature gates that Epic 4 (FR41) and Epic 5 (FR57) reference ship as inert "always-Premium" stubs during beta, then activate when E8 lands.
+**Why E8 is sequenced late:** Beta is free, so Stripe doesn’t need to be live during beta. Landing E8 just before E10 minimizes the time billing infrastructure sits unused. Premium-feature gates that Epic 4 (FR41) and Epic 5 (FR57) reference ship as inert “always-Premium” stubs during beta, then activate when E8 lands.
+
+**Why E12 Phase 1+2 ships before E5:** Epic 5’s evening check-in voice path depends on the Ambient Lumi voice pipeline (tap-to-talk, browser-direct STT + TTS, single-use token pair). Phase 1+2 of E12 must land before E5 can implement voice. E12 Phase 3+4 (surface-specific agent prompts and proactive nudges) needs plan and conversation data from E3 and E5 to be meaningful — those ship after.
 
 ---
 
@@ -2615,3 +2630,221 @@ So that I can complete the purchase without confusion (links to FR88).
 **When** I navigate to `/gift`,
 **Then** marketing page explains the gift Premium ($129/yr) + Guest Heart Note add-on ($24/yr); CTA links to `/gift/purchase` in app (.grandparent-scope).
 **And** robots.txt and per-page meta enforce: marketing routes indexed; `/lunch/*` `noindex,nofollow,noarchive,nosnippet` + `X-Robots-Tag: none`; authenticated app routes `noindex,nofollow`.
+
+
+---
+
+## Epic 12: Ambient Lumi Companion
+
+Lumi is always there when I need her — a quiet presence in the corner of every screen. She knows what the user is looking at, remembers their conversations, and is always reachable by tap.
+
+### Phase 1 — Foundation
+
+### Story 12.1: Lumi contracts — LumiSurface, LumiContextSignal, LumiTurnRequest
+
+As a developer,
+I want the shared Lumi contracts defined in `packages/contracts/src/lumi.ts`,
+So that both `apps/web` and `apps/api` work from a single source of truth for surface types and context signals (ADR-002).
+
+**Acceptance Criteria:**
+
+**Given** no `lumi.ts` contract exists,
+**When** Story 12.1 is complete,
+**Then** `packages/contracts/src/lumi.ts` exports `LumiSurfaceSchema` (z.enum of onboarding, planning, meal-detail, child-profile, grocery-list, evening-check-in, heart-note, general), `LumiContextSignalSchema`, `LumiTurnRequestSchema`, `LumiNudgeEventSchema`, `VoiceTalkSessionSchema`.
+**And** `packages/contracts/src/voice.ts` `VoiceSessionCreateSchema.context` updated from `z.literal('onboarding')` to `LumiSurfaceSchema`.
+**And** `packages/contracts/src/index.ts` exports all new schemas.
+**And** `pnpm typecheck` passes across all packages.
+
+---
+
+### Story 12.2: Global Lumi store (lumi.store.ts)
+
+As a developer,
+I want a single Zustand store managing all Lumi state across the app,
+So that every surface reads from one source of truth instead of scattered component-local state (ADR-002 Decision 5).
+
+**Acceptance Criteria:**
+
+**Given** Story 12.1 is complete,
+**When** Story 12.2 is complete,
+**Then** `apps/web/src/stores/lumi.store.ts` exists with: `surface`, `contextSignal`, `threadIds`, `turns`, `isHydrating`, `talkSessionId`, `voiceStatus`, `isSpeaking`, `isPanelOpen`, `panelMode`, `pendingNudge` and all action functions defined in ADR-002.
+**And** `voice.store.ts` is deleted; any existing consumers updated to `lumi.store.ts`.
+**And** store uses Zustand 5 curried `create<Shape>()()` signature.
+
+---
+
+### Story 12.3: Thread turns endpoint — GET /v1/lumi/threads/:threadId/turns
+
+As a developer,
+I want an authenticated endpoint to retrieve persisted turns for a surface thread,
+So that the Lumi panel can hydrate from the server on mount, reconnect, or manual refresh.
+
+**Acceptance Criteria:**
+
+**Given** Story 12.1 is complete and the `thread_turns` table exists,
+**When** Story 12.3 is complete,
+**Then** `GET /v1/lumi/threads/:threadId/turns` returns the last 20 turns ordered by `server_seq`, scoped to the caller's household via RLS.
+**And** response schema matches `LumiThreadTurnsResponseSchema` from contracts.
+**And** returns 403 if the thread does not belong to the caller's household.
+
+---
+
+### Story 12.4: DB migration — drop modality discriminator from thread uniqueness constraint
+
+As a developer,
+I want voice and text turns for the same surface to share one thread,
+So that Lumi has full conversational context regardless of input mode (ADR-002 OQ-1).
+
+**Acceptance Criteria:**
+
+**Given** the existing `threads_one_active_per_household_type_modality` constraint,
+**When** Story 12.4 is complete,
+**Then** migration drops the modality-partitioned constraint.
+**And** migration creates `threads_one_active_per_household_type` partial unique index on `(household_id, type) WHERE status = 'active' AND type != 'onboarding'`.
+**And** the onboarding-scoped modality constraint is preserved unchanged.
+**And** migration is reversible.
+
+---
+
+### Story 12.5: Talk session lifecycle — POST/DELETE /v1/lumi/voice/sessions
+
+As a Premium-tier Primary Parent,
+I want a tap-to-talk session to issue a single-use ElevenLabs STT + TTS token pair,
+So that the browser can open browser-direct WebSocket connections without exposing the permanent ElevenLabs API key (ADR-002 Decision 4).
+
+**Acceptance Criteria:**
+
+**Given** Stories 12.1 + 12.4 are complete,
+**When** `POST /v1/lumi/voice/sessions` is called with a valid JWT and `{ context: LumiSurface, context_signal }`,
+**Then** API requests a single-use STT token and a single-use TTS token from ElevenLabs.
+**And** both tokens are linked to a `voice_sessions` row with `user_id`, `household_id`, and resolved `thread_id` (created lazily if first interaction on this surface).
+**And** response returns `{ stt_token, tts_token, voice_id, talk_session_id }`.
+**And** `DELETE /v1/lumi/voice/sessions/:id` marks the session closed; HiveKitchen user session is unaffected.
+**And** sessions with no close call auto-close after 20s inactivity via Redis TTL sentinel.
+
+---
+
+### Phase 2 — Ambient UI Shell
+
+### Story 12.6: LumiOrb + LumiPanel in root layout
+
+As a Primary Parent,
+I want to see a quiet Lumi orb in the corner of every authenticated screen that I can tap to open a conversation panel,
+So that Lumi is always reachable without being intrusive (ADR-002 Decision 1).
+
+**Acceptance Criteria:**
+
+**Given** Story 12.2 is complete,
+**When** Story 12.6 is complete,
+**Then** `<LumiOrb>` and `<LumiPanel>` are mounted in `apps/web/src/routes/(app)/layout.tsx`.
+**And** orb is hidden on the onboarding route and all child-facing routes (`/lunch/*`).
+**And** collapsed state: small orb, bottom-right. Text state: compact 320px-max panel, last 5-8 turns + text input. Voice state: orb pulses, panel shows live transcript.
+**And** design uses warm-neutral palette; panel is secondary to the current screen content with no chat-first layout.
+
+---
+
+### Story 12.7: Route context registration
+
+As a developer,
+I want each app route to register its current surface context with the Lumi store on mount,
+So that Lumi always knows what the user is looking at when they open the panel (ADR-002 Decision 2).
+
+**Acceptance Criteria:**
+
+**Given** Stories 12.2 + 12.6 are complete,
+**When** Story 12.7 is complete,
+**Then** every route under `(app)/` calls `lumiStore.setContext({ surface, entity_type?, entity_id?, entity_summary? })` in a `useEffect` on mount.
+**And** `setContext()` triggers thread hydration when `threadIds[surface]` is known (calls `GET /v1/lumi/threads/:threadId/turns` then `hydrateThread()`).
+**And** switching routes updates panel turns to the new surface thread without interrupting an active voice session.
+
+---
+
+### Story 12.8: Tap-to-talk — browser-direct ElevenLabs STT + TTS WebSockets
+
+As a Premium-tier Primary Parent,
+I want to tap the Lumi orb to start a voice conversation and tap again to end it,
+So that I can talk to Lumi hands-free from any screen (ADR-002 Decision 4 — full tap-to-talk sequence).
+
+**Acceptance Criteria:**
+
+**Given** Stories 12.5 + 12.6 + 12.7 are complete,
+**When** user taps orb to voice mode,
+**Then** browser calls `POST /v1/lumi/voice/sessions`; on response opens ElevenLabs STT WebSocket and ElevenLabs TTS WebSocket (browser-direct, single-use tokens).
+**And** user speech sent to STT WebSocket; transcript received and appended directly to chat panel as user turn, then sent to HiveKitchen WS.
+**And** HiveKitchen WS sends `{ type: 'response.text', text }`; text appended directly to chat panel as Lumi turn and forwarded to TTS WebSocket for audio playback.
+**And** raw audio never transits the HiveKitchen API.
+**And** tap to end closes both WebSocket connections and calls `DELETE /v1/lumi/voice/sessions/:id`.
+**And** 20s inactivity closes connections identically to tap-to-end.
+**And** Standard-tier users see graceful text-only fallback; voice mode unavailable.
+
+---
+
+### Phase 3 — Surface-Specific Agent Prompts
+
+### Story 12.9: LumiAgent with surface prompt dispatch + household snapshot
+
+As a developer,
+I want the backend Lumi agent to assemble its system prompt from base persona + surface instructions + household snapshot + context signal,
+So that Lumi responds relevantly to what the user is currently doing on any surface (ADR-002 Decision 6).
+
+**Acceptance Criteria:**
+
+**Given** Story 12.1 is complete and the onboarding agent exists,
+**When** Story 12.9 is complete,
+**Then** `apps/api/src/agents/lumi.agent.ts` exports `LumiAgent` with a `respond({ surface, contextSignal, turns, householdSnapshot, modality })` method.
+**And** `apps/api/src/agents/prompts/lumi-base.prompt.ts` contains the shared Lumi persona (extracted from `onboarding.prompt.ts`).
+**And** `apps/api/src/agents/prompts/surfaces/` directory contains one prompt file per surface (planning, meal-detail, child-profile, grocery-list, evening-check-in, heart-note, general).
+**And** before each agent call the service fetches a household snapshot (family name, children first names, active allergens) from the DB and injects as a system message; the agent never reads the DB directly.
+**And** `OnboardingAgent` is refactored to use `lumi-base.prompt.ts` as its persona source; all existing onboarding behavior unchanged.
+
+---
+
+### Story 12.10: POST /v1/lumi/turns — ambient text turn endpoint
+
+As a Primary Parent,
+I want to send a text message to Lumi from the panel on any surface and get a contextual response,
+So that I can ask Lumi anything without leaving what I am doing (ADR-002 Decision 3 + 6).
+
+**Acceptance Criteria:**
+
+**Given** Stories 12.3 + 12.9 are complete,
+**When** `POST /v1/lumi/turns` is called with `{ message, context_signal }` and a valid JWT,
+**Then** API resolves or creates the active thread for `context_signal.surface` (lazy creation).
+**And** user turn persisted to thread before agent call; Lumi turn persisted after.
+**And** response returns `{ thread_id, turn_id, lumi_turn_id, lumi_response }`.
+
+---
+
+### Phase 4 — Proactive Lumi
+
+### Story 12.11: Proactive nudge infrastructure — SSE delivery + Redis rate limit
+
+As a Primary Parent,
+I want Lumi to occasionally surface a relevant insight after a meaningful action without me having to ask,
+So that I feel like Lumi is paying attention to my family (ADR-002 Decision 7).
+
+**Acceptance Criteria:**
+
+**Given** Stories 12.9 + 12.10 are complete and the household SSE channel exists (Epic 5.2),
+**When** a registered trigger event fires (plan generation complete, child meal rating received, allergen flagged, evening check-in complete),
+**Then** API asynchronously calls `LumiAgent.generateNudge()` after the mutation resolves.
+**And** nudge persisted as a Lumi turn in the appropriate surface thread.
+**And** Redis key `lumi:nudge:household:{id}` enforces max 1 nudge per household per 30 minutes; suppressed nudges still persisted to thread.
+**And** SSE event `lumi.nudge` emitted on the household channel when rate limit allows.
+**And** frontend `setNudge(turn)` causes orb to breathe/glow; user taps to open panel showing nudge.
+
+---
+
+### Story 12.12: Global proactive nudge opt-out in notification preferences
+
+As a Primary Parent,
+I want a single toggle to silence all proactive Lumi nudges,
+So that I can control when Lumi speaks up (ADR-002 OQ-5, FR105).
+
+**Acceptance Criteria:**
+
+**Given** Story 12.11 is complete and notification preferences exist (Epic 2),
+**When** Story 12.12 is complete,
+**Then** notification preferences includes a `proactive_lumi_nudges: boolean` field (default `true`).
+**And** when `false`, the SSE nudge event is suppressed and `LumiAgent.generateNudge()` is skipped; turns are still persisted to the thread.
+**And** toggle is accessible from both the Lumi panel settings and the main notification preferences screen.

@@ -14,7 +14,7 @@ deferred_work_file: '{implementation_artifacts}/deferred-work.md'
 
 ### 1. Clean review shortcut
 
-If zero findings remain after triage (all dismissed or none raised): state that and proceed to section 6 (Sprint Status Update).
+If zero findings remain after triage (all dismissed or none raised): state that and proceed to section 6 (E2E verification gate).
 
 ### 2. Write findings to the story file
 
@@ -83,7 +83,64 @@ If `{spec_file}` is **not** set, present only options 1 and 3 (omit option 2 —
 - Deferred: <W>
 - Dismissed: <R>
 
-### 6. Update story status and sync sprint tracking
+### 6. E2E verification gate
+
+Skip this section if `{spec_file}` is not set.
+
+Before marking the story `done`, verify that end-to-end tests pass against the patched code.
+
+#### 6a. Check for E2E tests
+
+Look for a Playwright config in the affected apps (typically `apps/web/playwright.config.ts`). Read the `testDir` from that config and scan it for `.spec.ts` files.
+
+- **No config or empty testDir:** Tell the user:
+  > **No E2E tests found.**
+  > A. Generate tests now using `bmad-qa-generate-e2e-tests` (recommended)
+  > B. Skip — mark story done without E2E coverage
+  >
+  > Reply A or B.
+
+  - **A:** Invoke the `bmad-qa-generate-e2e-tests` skill, passing the `{spec_file}` as context so it knows which features to cover. Once the skill completes and test files are present, return to 6a and re-scan.
+  - **B:** Proceed to section 7.
+
+- **Tests found:** Proceed to 6b.
+
+#### 6b. Prompt the user to run E2E tests
+
+Tell the user:
+
+> **E2E verification — run before marking this story done.**
+>
+> ```bash
+> # Build the app first (Playwright preview server requires a built dist/)
+> pnpm --filter @hivekitchen/web build
+>
+> # Run with a visible browser
+> pnpm --filter @hivekitchen/web exec playwright test --headed
+>
+> # Or interactive UI mode (step inspector + timeline)
+> pnpm --filter @hivekitchen/web exec playwright test --ui
+> ```
+>
+> If Playwright is not yet installed:
+> ```bash
+> cd apps/web && pnpm add -D @playwright/test && pnpm exec playwright install chromium
+> ```
+>
+> Paste the test output below when done.
+
+**HALT** — wait for the user to paste test output.
+
+#### 6c. Interpret results
+
+- **All passed:** proceed to section 7 (Update story status → `done`).
+- **One or more failed:** do NOT mark the story `done`. Set `{new_status}` = `in-progress`. Append each failing test as an action item in the story file under `### Review Findings` (prefix `[E2E][Fail]`). Tell the user:
+  > E2E gate failed — story remains `in-progress`. Fix the failing tests and re-run the review.
+
+  Then skip to section 8 (Next steps), bypassing section 7's status update.
+- **User reports Playwright not installed:** present the install commands (already shown in 6b), then re-HALT and wait for test output before proceeding.
+
+### 7. Update story status and sync sprint tracking
 
 Skip this section if `{spec_file}` is not set.
 
@@ -117,7 +174,7 @@ If `{sprint_status}` file does not exist, note that story status was updated in 
 > **Deferred:** <W>
 > **Dismissed:** <R>
 
-### 7. Next steps
+### 8. Next steps
 
 Present the user with follow-up options:
 

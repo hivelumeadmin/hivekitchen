@@ -1,5 +1,58 @@
 # Deferred Work Log
 
+## Deferred from: code review of 12-1-lumi-contracts-lumisurface-lumicontextsignal-lumiturnrequest (2026-04-29)
+
+- **`LumiNudgeEventSchema` is not registered in the `InvalidationEvent` discriminated union** — `'lumi.nudge'` is not a member of the SSE union in `events.ts`. Story 12.11 implements proactive nudge SSE delivery; it must either fold `lumi.nudge` into `InvalidationEvent` or define a separate channel. Decide before 12.11 ships. [`packages/contracts/src/events.ts`, `packages/contracts/src/lumi.ts`]
+- **`VoiceSessionCreateSchema` widening lets non-`'onboarding'` surfaces silently pass through to onboarding-only route** — `voice.routes.ts`/`voice.service.ts` ignore `context` and unconditionally use `'onboarding'` thread type. Until Story 12.5 introduces `/v1/lumi/voice/sessions`, the legacy route should runtime-reject non-`'onboarding'` contexts (HTTP 400). Story 12.1 spec explicitly forbids `apps/api` changes — must be a follow-up before 12.5 ships. [`apps/api/src/modules/voice/voice.routes.ts`, `apps/api/src/modules/voice/voice.service.ts`]
+- **`LumiNudgeEventSchema` envelope lacks `thread_id` / event-id / timestamp** — Spec defines exactly `type` + `turn` + `surface`. SSE consumers cannot deduplicate or route without unpacking `turn`. Reconsider envelope-level routing/dedup metadata when 12.11 wires SSE delivery. [`packages/contracts/src/lumi.ts:59-63`]
+- **`Turn.modality` is still optional** — Ambient Lumi mixes text and voice in one thread; modality semantics are ambiguous. Story 12.4 explicitly drops the modality discriminator from the thread uniqueness constraint. Verify whether the field is also removed from the `Turn` schema as part of that work. [`packages/contracts/src/thread.ts:75`]
+- **`LumiThreadTurnsResponseSchema` does not cross-check that nested `turns[].thread_id` matches the outer `thread_id`** — Server-correctness concern. Add a `.refine()` only if a real ingestion path can produce mismatched turns. [`packages/contracts/src/lumi.ts:38-41`]
+- **`voice.test.ts:22` "rejects unknown context" uses `'evening'` which is rejected only because it's not a `LumiSurfaceSchema` member** — If `'evening'` is ever added (or `'evening-check-in'` is renamed), this test silently flips to "accepts". Replace with a structurally invalid value (`null`, `123`, or `'__not_a_surface__'`). Pre-existing test file, not touched by 12.1. [`packages/contracts/src/voice.test.ts:22`]
+- **`LumiTurnRequestSchema` strict-mode behavior is undefined** — Schema accepts unknown extra fields; no test asserts intended behavior; nothing prevents a future `.strict()` from silently breaking clients. Resolve as part of a project-wide schema strict-mode policy. [`packages/contracts/src/lumi.ts:31-34`]
+
+## Deferred from: code review of 2-12-per-child-lunch-bag-slot-declaration (2026-04-29)
+
+- **TOCTOU double-read in `setBagComposition` produces stale audit pre-image** — `findById` + `updateBagComposition` are two separate round-trips; a concurrent update between them yields a stale `old` value in the `child.bag_updated` audit record. Fix requires a DB-level CTE (`UPDATE ... RETURNING` with pre-image capture). [`apps/api/src/modules/children/children.service.ts:58-69`]
+- **`assertCallerInHousehold` return type should be an assertion function** — currently typed as `void`; TypeScript cannot narrow control flow after the call. Should be `asserts callerHouseholdId is string` to provide compile-time guarantee that execution stops on mismatch. [`apps/api/src/modules/children/children.routes.ts:141-145`]
+- **DB CHECK constraint doesn't validate `snack`/`extra` field types in `bag_composition`** — constraint only enforces `(bag_composition->>'main')::boolean = true`; a direct superuser DB write could store `{"main":true,"snack":"yes","extra":0}` without triggering the constraint. Zod guards at the API boundary are the effective protection. [`supabase/migrations/20260520000000_add_bag_composition_to_children.sql`]
+- **Double-tap submit concurrency gap in `BagCompositionCard`** — two Save clicks within the same event-loop tick (before `pending` re-renders to `true`) can launch two concurrent PATCH requests that both call `onSaved`, duplicating the child in `savedChildren`. A ref-based in-flight guard would close this. [`apps/web/src/features/children/BagCompositionCard.tsx`, `apps/web/src/hooks/useSetBagComposition.ts`]
+
+## Deferred from: code review of 2-6b-voice-pipeline-v2-hk-owned-websocket-elevenlabs-stt-tts (2026-04-28)
+
+- **TOCTOU in `createSession` — no DB-level uniqueness constraint** — Two concurrent `POST /v1/voice/sessions` for the same household can both pass the `findActiveSessionForHousehold` null-check before either inserts, resulting in two `active` rows. Requires a partial unique index `(household_id) WHERE status = 'active'` in the DB schema. [`apps/api/src/modules/voice/voice.service.ts:78`]
+- **No WS integration tests for AC2–AC7, AC12** — All WebSocket behaviors (audio processing, concurrent turns, timeout, client disconnect, TTS mid-stream failure) are untested. The dev agent record noted this as a gap. Recommend adding WS integration tests using `@fastify/websocket` test helpers or a real WS client in the test suite. [`apps/api/src/modules/voice/voice.routes.test.ts`]
+
+## Deferred from: code review of 2-11-cultural-template-inference-parental-confirm Group 3 (2026-04-29)
+
+- **404/403 on any action passes original action as `onResolved` action** — `_action` is intentionally ignored in `handleResolved` so the semantic mismatch has no runtime effect, but if analytics or audit instrumentation is added to `handleResolved` later, 404 removals will appear as user-initiated `forget` actions in logs. Document or rename parameter when analytics lands. [`apps/web/src/features/onboarding/CulturalRatificationCard.tsx:40`]
+- **Multiple cards resolving simultaneously can double-fire `onComplete` edge case** — each `CulturalRatificationCard` has its own `useRatifyCulturalPrior` instance; two concurrent PATCH responses completing in the same microtask batch could both reach the `priors.length === 0` check before either state update commits. `queueMicrotask` is removed (Group 3 patch), reducing exposure, but full fix requires lifting `isPending` to step level. Defer until concurrency is exercised in practice. [`apps/web/src/features/onboarding/CulturalRatificationStep.tsx`]
+
+## Deferred from: code review of 2-11-cultural-template-inference-parental-confirm Group 2 (2026-04-29)
+
+- **`opt_in` from `forgotten` state is not explicitly blocked** — AC9 says "detected → opt_in_confirmed" but the service does not guard against `forgotten → opt_in_confirmed`; a household that has forgotten a template could re-opt-in. AC10 permits `forget` from any state (by design), so the inverse may be intentional. Needs spec clarification before Epic 3 planner reads prior data. [`apps/api/src/modules/cultural-priors/cultural-prior.service.ts:180`]
+- **Supabase error path testing absent from routes tests** — mock `culturalPriorsTable` never returns `{ error: { message: '...' } }`; DB-level failures (network timeout, constraint violations, permission errors) are untested at the route layer. Add error-return test cases when the test infrastructure is revisited. [`apps/api/src/modules/cultural-priors/cultural-prior.routes.test.ts`]
+
+## Deferred from: code review of 2-11-cultural-template-inference-parental-confirm Group 1 (2026-04-29)
+
+- **`upsertDetected` re-run silently skips existing `detected` priors** — `ignoreDuplicates: true` means priors already at `detected` from a prior finalization run are not returned and not re-included in the ratification prompt on webhook retry. Intentional per spec forward-only state invariant; webhook retry idempotency is an ops concern for later. [`apps/api/src/modules/cultural-priors/cultural-prior.repository.ts`]
+- **`lumi_response: z.string().optional()` vs AC5 requiring `lumi_response: string`** — optional() is correct for the shared response schema because opt_in and forget never return this field; a discriminated per-action response schema would be more precise but adds complexity without runtime benefit. [`packages/contracts/src/cultural.ts`]
+
+## Deferred from: code review of 2-11-cultural-template-inference-parental-confirm (2026-04-28)
+
+- **`upsertDetected` issues one DB round-trip per prior (max 6 sequential upserts)** — bounded by the Phase-1 template set; acceptable for current story scope. Batch-upsert optimisation deferred. [`apps/api/src/modules/cultural-priors/cultural-prior.repository.ts:51`]
+- **No rate limit on `tell_lumi_more`** — each call invokes gpt-4o with no per-household cap. Infrastructure / middleware concern outside story scope. [`apps/api/src/modules/cultural-priors/cultural-prior.routes.ts:44`]
+- **`<TrustChip variant="cultural-template">` not rendered** — component does not exist yet; inline sacred-plum span used as placeholder. Wire when TrustChip primitive lands. [`apps/web/src/features/onboarding/CulturalRatificationCard.tsx:55`]
+- **`tell_lumi_more` keeps prior at `detected` indefinitely** — intentional behaviour; user is expected to pick a final action (opt_in / forget) after reading the follow-up. No change needed for this story. [`apps/api/src/modules/cultural-priors/cultural-prior.service.ts:116`]
+- **No UX-DR45 linter rule for flag-emoji / "Celebrating X" ban** — tooling gap not introduced by this story. [`apps/web/src/features/onboarding/`]
+
+## Deferred from: code review of 2-10-add-child-profile-with-envelope-encrypted-sensitive-fields (2026-04-28)
+
+- **HouseholdsRepository not wired — AC 15 deferred to Story 5.5** — `HouseholdsRepository` exists and is unit-tested but is never imported or instantiated in live code. `caregiver_relationships` is always NULL in beta (no live code path writes to it). Story 5.5 (secondary caregiver invite redemption) must import and use `HouseholdsRepository` for all reads and writes to `caregiver_relationships` — that is the point at which AC 15 becomes exercisable. [`apps/api/src/modules/households/households.repository.ts`]
+
+- **No AAD binding wrapped DEK to its household** — `wrapDek` uses plain AES-256-GCM with no additional authenticated data (AAD) tying the wrapped DEK to a specific household. A DEK wrapped for household A could theoretically be transplanted to household B's `encrypted_dek` column and would unwrap correctly, enabling cross-household decryption. Requires DB write access + KEK — already a total system compromise. Deferred; add AAD in a dedicated encryption hardening story before public launch. [`apps/api/src/lib/envelope-encryption.ts:40-46`]
+- **Array element strings have no content validation beyond length** — allergens, cultural identifiers, and dietary preferences accept any non-empty string up to 100 chars. Values like `<script>alert(1)</script>` are schema-valid and stored encrypted. XSS risk depends entirely on rendering context (currently rendered as text nodes, not innerHTML). Deferred; add an allowlist or sanitiser if rendering context ever changes. [`packages/contracts/src/children.ts`]
+- **CHILD_COLUMNS raw string — column-name typos silently return undefined fields** — Supabase JS returns any-typed rows; a misspelled column name in `CHILD_COLUMNS` produces `undefined` on the cast `ChildRow` with no TS error. Pre-existing pattern across all repositories in the codebase. Deferred until `supabase gen types` is wired into the build. [`apps/api/src/modules/children/children.repository.ts:43-44`]
+
 ## Deferred from: code review of 2-9-parental-notice-disclosure-pre-data-collection (2026-04-27)
 
 - Unsafe `data as T` casts throughout `compliance.repository.ts` — Supabase JS returns `any`; fixing requires Supabase type generation (`supabase gen types`) applied codebase-wide. Not unique to this PR. Defer until type generation is wired into the build.
@@ -275,3 +328,59 @@
 - **[MED] `declarationContent` cached for process lifetime — version smear across rolling deploys** — different API pods may serve different cached `v1.md` contents during a rolling deploy with an in-place file edit. Mitigated by the version-pinning policy ("any text edit = bump `CURRENT_DECLARATION_VERSION`"); add this rule to the launch runbook so legal-fix deploys always bump the version. [`apps/api/src/modules/compliance/compliance.service.ts:25, 30-35`]
 - **[MED] Migration `20260505000000_threads_modality_and_unique_constraints.sql` shipped here is a Story 2-7 R2 fix** — scope drift from 2-7 round-2: Story 2-7 was marked `done` while this required migration was unmerged, so anyone pulling main between 2-7's merge and 2-8 ran 2-7 code calling `findActiveThreadByHousehold(..., modality)` against a `threads` table without a `modality` column. Flag for sprint retrospective and consider a CI check that every story marked `done` has its migrations live in main. [`supabase/migrations/20260505000000_threads_modality_and_unique_constraints.sql`, `_bmad-output/implementation-artifacts/2-7-text-equivalent-onboarding-path.md`]
 - **[MED] `householdHasCompletedOnboarding` accepts any closed thread with a summary turn but doesn't validate summary integrity** — Story 2-7 territory. Voice path's "best-effort empty summary" pattern can produce a summary turn with empty content; the gate would still mark the household done with empty allergens/preferences, blocking re-onboarding while plan generation runs blind. Patch alongside R2-P5 follow-up (require non-empty allergens or explicit "user declined" sentinel). [`apps/api/src/modules/onboarding/onboarding.service.ts:404-414`]
+
+
+## Deferred from: Story 2-6b voice pipeline v2 (2026-04-28)
+
+- **In-memory WsSession store** — `VoiceService.sessions` is a `Map<string, WsSession>`. At
+  beta scale (150 concurrent HH) this is sufficient. At 5,000+ HH scale, WS connections must
+  be routable to a specific API instance or the map must be replaced with Redis. Ticket: upgrade
+  VoiceService to Redis-backed session store when API is deployed behind a load balancer.
+
+- **ElevenLabs Scribe async mode** — Scribe v1 is synchronous REST (~200–400ms). ElevenLabs
+  provides an async batched Scribe endpoint with lower per-word cost. Evaluate when voice
+  usage exceeds 100 HH active simultaneously.
+
+- **MediaSource streaming audio** — current implementation buffers all MP3 chunks and plays
+  on response.end. MediaSource API would reduce perceived latency by ~200ms. Deferred until
+  there is user feedback that the pause before Lumi speaks is noticeable.
+
+- **JWT `?token=` in access logs** — `GET /v1/voice/ws?token=<jwt>` is logged by Fastify's
+  request serialiser with the full query string. The bearer token is valid for 15 minutes and
+  is written to any log-aggregation system (Datadog, CloudWatch, etc.). Fix: add a pino request
+  serialiser in `app.ts` that redacts `?token=<value>` to `?token=REDACTED`.
+  [`apps/api/src/app.ts`, `apps/api/src/modules/voice/voice.routes.ts:69`]
+
+- **`submitTextTurn` race-recovery conflates "finalized" and "not found"** — when a
+  `createThread` unique-violation is caught and the winner's thread is re-read as `null`
+  (because it was immediately finalized), the code throws `ConflictError('onboarding already
+  complete')`. If the null is instead due to Supabase read-after-write lag on a replica, the
+  error message is factually wrong and the client has no signal to retry. Fix: after the re-read
+  returns `null`, call `householdHasCompletedOnboarding` before choosing the error message.
+  [`apps/api/src/modules/onboarding/onboarding.service.ts:96-107`]
+
+- **Orphaned user turn detection false-positive on duplicate short messages** — `submitTextTurn`
+  treats a trailing user turn as an orphan when `lastTurn.body.content === input.message`. Short
+  confirmation messages ("Yes", "OK") sent twice in legitimate succession are silently
+  de-duplicated; the second message reuses the old `turn_id`. Fix: add a guard that only marks a
+  turn as orphaned when it has no following lumi reply AND was persisted recently (e.g., within
+  the last 30 s). [`apps/api/src/modules/onboarding/onboarding.service.ts:136-141`]
+
+- **VAD onnxruntime-web WASM not served in production build** — `@ricky0123/vad-react@0.0.36`
+  depends on `onnxruntime-web` which fetches `.wasm` binaries at runtime. `vite.config.ts` has
+  no WASM configuration (`vite-plugin-wasm`, `optimizeDeps.exclude`, or `assetsInclude`) and
+  `apps/web/public/` contains no WASM files. Vite dev server may serve the files via module
+  resolution, masking the issue in development. Test: `pnpm --filter @hivekitchen/web build &&
+  vite preview` and open the voice onboarding step — if the WASM fetch fails the VAD will not
+  initialise and the mic will never trigger. Fix: copy the required WASM files from
+  `node_modules/onnxruntime-web/dist/*.wasm` to `apps/web/public/` and configure
+  `ortConfig.wasmPaths = '/'` in `useMicVAD` options, OR add `vite-plugin-wasm` to
+  `vite.config.ts`. [`apps/web/vite.config.ts`, `apps/web/src/hooks/useVoiceSession.ts`]
+
+- **`@elevenlabs/elevenlabs-js` SDK client is dead code** — `elevenlabs.plugin.ts` decorates
+  `fastify.elevenlabs` with an `ElevenLabsClient` instance, but no call site in the codebase
+  accesses `fastify.elevenlabs`. All ElevenLabs API calls in `voice.service.ts` use raw
+  `fetch()` with the API key passed as a string through `VoiceServiceDeps`. Fix: either remove
+  `elevenlabs.plugin.ts` and the `@elevenlabs/elevenlabs-js` dependency (keeping raw fetch), or
+  migrate `VoiceService` to call methods on the SDK client and remove the raw fetch calls.
+  [`apps/api/src/plugins/elevenlabs.plugin.ts`, `apps/api/src/modules/voice/voice.service.ts`]

@@ -1,5 +1,5 @@
 # generated: 2026-04-23
-# last_updated: 2026-04-27 (Story 2-9 implementation complete — moved to review)
+# last_updated: 2026-04-29 (Story 12-1 code review — 4 decisions resolved + 3 patches applied, story → done)
 # project: hivekitchen
 # project_key: NOKEY
 # tracking_system: file-system
@@ -35,7 +35,7 @@
 # - Dev moves story to 'review', then runs code-review (fresh context, different LLM recommended)
 
 generated: 2026-04-23
-last_updated: 2026-04-28 (Story 2-9 7-group adversarial review complete — 17 patches applied, status moved to done)
+last_updated: 2026-04-29 (Story 12-1 code review — 4 decisions resolved + 3 patches applied, story → done)
 project: hivekitchen
 project_key: NOKEY
 tracking_system: file-system
@@ -70,13 +70,14 @@ development_status:
   2-4-account-profile-management-recovery: done
   2-5-notification-preferences-cultural-language-preference: done
   2-6-voice-first-onboarding-interview-via-elevenlabs-three-signal-questions: done
+  2-6b-voice-pipeline-v2-hk-owned-websocket-elevenlabs-stt-tts: done
   2-7-text-equivalent-onboarding-path: done
   2-4b-password-reset-completion-web-page: done
   2-8-coppa-soft-vpc-signed-declaration-beta: done
   2-9-parental-notice-disclosure-pre-data-collection: done
-  2-10-add-child-profile-with-envelope-encrypted-sensitive-fields: backlog
-  2-11-cultural-template-inference-parental-confirm: backlog
-  2-12-per-child-lunch-bag-slot-declaration: backlog
+  2-10-add-child-profile-with-envelope-encrypted-sensitive-fields: done
+  2-11-cultural-template-inference-parental-confirm: done
+  2-12-per-child-lunch-bag-slot-declaration: done
   2-13-visible-memory-write-primitives-memory-nodes-seed: backlog
   2-14-onboarding-mental-model-copy-anxiety-leakage-telemetry: backlog
   epic-2-retrospective: optional
@@ -224,3 +225,19 @@ development_status:
   11-5-faq-legal-pages: backlog
   11-6-gift-purchase-entry-point-non-indexed-authenticated-routes: backlog
   epic-11-retrospective: optional
+
+  # Epic 12: Ambient Lumi Companion
+  epic-12: in-progress
+  12-1-lumi-contracts-lumisurface-lumicontextsignal-lumiturnrequest: done
+  12-2-global-lumi-store-lumi-store-ts: ready-for-dev
+  12-3-thread-turns-endpoint-get-v1-lumi-threads-threadid-turns: ready-for-dev
+  12-4-db-migration-drop-modality-discriminator-from-thread-uniqueness-constraint: ready-for-dev
+  12-5-talk-session-lifecycle-post-delete-v1-lumi-voice-sessions: ready-for-dev
+  12-6-lumiorb-and-lumipanel-in-root-layout: backlog
+  12-7-route-context-registration: backlog
+  12-8-tap-to-talk-browser-direct-elevenlabs-stt-tts-websockets: backlog
+  12-9-lumiagent-with-surface-prompt-dispatch-and-household-snapshot: backlog
+  12-10-post-v1-lumi-turns-ambient-text-turn-endpoint: backlog
+  12-11-proactive-nudge-infrastructure-sse-delivery-redis-rate-limit: backlog
+  12-12-global-proactive-nudge-opt-out-in-notification-preferences: backlog
+  epic-12-retrospective: optional

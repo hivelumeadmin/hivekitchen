@@ -23,6 +23,7 @@
     "@fastify/cors": "^11.2.0",
     "@fastify/jwt": "^9",
     "@fastify/sensible": "^6.0.0",
+    "@fastify/websocket": "^11.2.0",
     "@hivekitchen/contracts": "workspace:*",
     "@hivekitchen/types": "workspace:*",
     "@opentelemetry/auto-instrumentations-node": "^0.49.0",
