@@ -1,5 +1,12 @@
 # Deferred Work Log
 
+## Deferred from: code review of 2-6b-voice-pipeline-v2 Group A (2026-04-29)
+
+- **`session.summary` silently lost if client disconnects during `closeSession` async tail** — DB is updated correctly but the client never receives the summary frame. The household completes onboarding in the DB but the client UX cannot confirm it. Design-level gap; consider a recovery endpoint (`GET /v1/voice/sessions/:id/status`) so the client can poll on reconnect. [`voice.service.ts` — closeSession completed path]
+- **JWT expiry not re-verified mid WebSocket session** — JWT is validated once at WS open; a 15-min token remains usable for the full 10-min session window even if revoked. Acceptable for current threat model. Revisit if token revocation requirements tighten. [`voice.routes.ts` — WS handler]
+- **`/v1/webhooks/` still in `SKIP_PREFIXES` of `authenticate.hook.ts`** — Webhook route was removed in 2-6b but the auth-skip prefix remains. No route registered under it so no exposure; remove in a cleanup pass. [`authenticate.hook.ts`]
+- **ElevenLabs `xi-api-key` potentially captured in fetch error cause chain** — Some runtimes attach request headers to fetch `TypeError.cause`. If logged via `this.logger.warn({ err })`, the API key could appear in log storage. Validate against actual Node.js fetch error shape in staging before shipping to production log aggregation. [`voice.service.ts` — transcribe, streamTts]
+
 ## Deferred from: code review of 12-1-lumi-contracts-lumisurface-lumicontextsignal-lumiturnrequest (2026-04-29)
 
 - **`LumiNudgeEventSchema` is not registered in the `InvalidationEvent` discriminated union** — `'lumi.nudge'` is not a member of the SSE union in `events.ts`. Story 12.11 implements proactive nudge SSE delivery; it must either fold `lumi.nudge` into `InvalidationEvent` or define a separate channel. Decide before 12.11 ships. [`packages/contracts/src/events.ts`, `packages/contracts/src/lumi.ts`]

@@ -719,6 +719,7 @@ claude-sonnet-4-6
 | Date       | Change                                                                                                  |
 | ---------- | ------------------------------------------------------------------------------------------------------- |
 | 2026-04-28 | Story 2-6b implemented: HK-owned WebSocket voice pipeline replacing ElevenLabs Custom LLM transport.    |
+| 2026-04-29 | Fresh code review (Group A — API layer) post-patch: 6 patch, 7 deferred, 13 dismissed.                 |
 
 ### Review Findings
 
@@ -828,3 +829,25 @@ _Reviewed 2026-04-28 · 0 decisions · 4 patch · 4 deferred_
 - [→ deferred-work.md] **`@elevenlabs/elevenlabs-js` SDK client is dead code** — `fastify.elevenlabs` decoration never accessed; all ElevenLabs calls use raw `fetch`. Remove plugin/dep or migrate to SDK client.
 - [→ deferred-work.md] **ws:// → wss:// not documented for TLS deploys** — Missing comment in `.env.local.example`; mixed-content block produces silent WS failure in HTTPS staging.
 - [→ deferred-work.md] **`^0.0.36` semver intent ambiguous on pre-1.0 VAD package** — Under npm/pnpm, `^0.0.36` = `=0.0.36`; the caret implies "compatible updates" but the range is pinned. Consider exact specifier `"0.0.36"` for clarity.
+
+---
+
+**Group A — Fresh Review (API Voice Module)** (voice.service.ts, voice.routes.ts, voice.repository.ts, authenticate.hook.ts)
+_Reviewed 2026-04-29 · 0 decision-needed · 6 patch · 7 deferred · 13 dismissed_
+
+#### Patch
+- [x] [Review][Patch] **`'disconnected'` status not in `voice_sessions` CHECK constraint — every client-disconnect close fails with a DB error** — `closeSession` maps `client_disconnect` → `dbStatus = 'disconnected'` and writes it to `voice_sessions.status`. The DB CHECK constraint (`20260504020000_create_voice_sessions.sql`) only allows `'active' | 'closed' | 'timed_out'`. Every WS client disconnect triggers a constraint violation, the session record stays `'active'`, and `findActiveSessionForHousehold` blocks the next `POST /v1/voice/sessions` with a permanent 409. Fix: add a migration adding `'disconnected'` to the CHECK constraint. [voice.service.ts — closeSession]
+- [x] [Review][Patch] **TTS failure leaves orphaned user message in `session.messages`** — When `streamTts` throws (TTS failure path), the function returns early (inside the `try`) after sending the error frame. `session.messages` already has the user transcript pushed at line ~180 but no corresponding assistant push (that happens only on success). The next turn's `agent.respond(session.messages)` receives a history with an unmatched user turn, corrupting LLM context. Fix: add `session.messages.pop()` in the TTS failure catch block, mirroring the existing agent-failure pop. [voice.service.ts ~line 210]
+- [x] [Review][Patch] **Concurrent `handleTimeout` invocations when `isProcessing === false`** — `processAudioChunk`'s wall-clock check calls `await this.handleTimeout(...)` directly before setting `isProcessing = true`. If the scheduled `setTimeout` fires while this direct `handleTimeout` is awaiting (e.g., mid-`streamTts`), the second invocation passes the `isProcessing` guard (still false), streams a second TTS closing phrase, and calls `closeSession` a second time. Fix: cancel the scheduled timeout (`clearTimeout(session.timeoutHandle)`) in `processAudioChunk`'s wall-clock path before calling `handleTimeout`, OR add an `isClosingTimeout` flag to `WsSession` that gates both entry points. [voice.service.ts — processAudioChunk wall-clock check]
+- [x] [Review][Patch] **Audio buffer not size-validated before STT upstream** — Binary WS frames are passed directly to `transcribe()` without any size check. A client sending a multi-MB frame causes an unbounded `new Uint8Array(audioBuffer)` allocation plus an equivalently large multipart POST to ElevenLabs, potentially exhausting per-process memory or API quota. Fix: add `if (audioBuffer.length > MAX_AUDIO_BYTES) { this.sendText(ws, { type:'error', code:'stt_failed', message:'Audio too long' }); return; }` (suggested MAX: `2 * 1024 * 1024` — 60 s × 16 kHz × 2B). [voice.service.ts — processAudioChunk]
+- [x] [Review][Patch] **`createSession` creates thread row before `voice_sessions` — no rollback on failure** — `createThread` succeeds, then `createVoiceSession` throws (e.g., network error). The orphaned `threads` row with `type:'onboarding'` and `status:'active'` is never cleaned up. On the next `createSession` call, `createThread` hits the `threads_one_active_per_household_type_modality` unique index and throws a raw Supabase error (unmapped 500) rather than a 409. Fix: wrap `createVoiceSession` in try/catch that closes/deletes the just-created thread on failure. [voice.service.ts — createSession]
+- [x] [Review][Patch] **On reconnect `openWsSession` sets a full new 10-min timeout but `startedAt` remains the DB creation time** — `processAudioChunk`'s wall-clock check uses `session.startedAt` (DB time). If 10+ minutes have elapsed since DB creation, every audio chunk after a reconnect triggers `handleTimeout` immediately even though a fresh 10-min timer was just set. Fix: compute remaining time from DB creation — `setTimeout(..., Math.max(0, SESSION_TIMEOUT_MS - (Date.now() - session.startedAt.getTime())))` — and call `handleTimeout` directly if remaining ≤ 0. [voice.service.ts — openWsSession]
+
+#### Deferred
+- [x] [Review][Defer] **JWT in `?token=` access logs** — already in deferred-work.md; pre-existing TODO(security) comment.
+- [x] [Review][Defer] **TOCTOU in `createSession` — no DB unique constraint on `(household_id, status='active')`** — already in deferred-work.md.
+- [x] [Review][Defer] **`session.summary` silently lost if client disconnects during `closeSession` async tail** — DB is updated correctly but client never receives the summary frame. Design-level edge case; no data loss, UX impact only.
+- [x] [Review][Defer] **JWT expiry not re-verified mid-session** — Standard WS pattern; access token is short-lived (15 min); acceptable for a 10-min session window.
+- [x] [Review][Defer] **Unbounded `session.messages` array** — accepted trade-off at beta scale (150 concurrent HH); in-memory store is already noted in deferred-work.md.
+- [x] [Review][Defer] **ElevenLabs `xi-api-key` potentially captured in fetch error cause chain** — speculative; depends on runtime fetch implementation; no direct evidence.
+- [x] [Review][Defer] **`/v1/webhooks/` still in `SKIP_PREFIXES` after webhook route removal** — dead auth-skip prefix; no route behind it so no security exposure; minor cleanup.

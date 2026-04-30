@@ -1,7 +1,7 @@
-# Test Automation Summary — Epic 2 (Batches 1, 2 & 3)
+# Test Automation Summary — Epic 2 (Batches 1, 2 & 3) + Story 2-6b
 
 Generated: 2026-04-29
-Last updated: 2026-04-29 (Batch 3 — Child profile)
+Last updated: 2026-04-30 (Story 2-6b — voice pipeline v2 patch coverage + E2E WS protocol)
 
 ## Generated Tests
 
@@ -65,12 +65,25 @@ These checks catch regressions where client code accidentally starts sending fie
 - **2-5**: notification toggles hit `/users/me/notifications` (NOT `/users/me`)
 - **2-5**: cultural language changes hit `/users/me/preferences` (NOT `/users/me`)
 
+## Story 2-6b — Voice Pipeline v2 (added 2026-04-30)
+
+The earlier batch skipped 2-6b as backend-only. On 2026-04-30 the code review
+applied 6 patches (P2–P6 + migration) and QA coverage was generated.
+
+**API unit tests (vitest)**
+- [x] `apps/api/src/modules/voice/voice.service.test.ts` — 9 cases covering P2/P3/P4/P5/P6 patches + AC1/AC4/AC9
+
+**Component tests (vitest + RTL)**
+- [x] `apps/web/src/features/onboarding/OnboardingVoice.test.tsx` — 10 cases covering all VoiceSession status states
+
+**E2E tests (Playwright)**
+- [x] `apps/web/test/e2e/2-6b-voice-pipeline-v2.spec.ts` — 5 cases covering WS session.ready, error frame, session.summary, client disconnect, full turn sequence
+
 ## Skipped — Backend-only stories
 
-These two stories have no user-facing flow that can be exercised from the preview server:
+These stories have no user-facing flow that can be exercised from the preview server:
 
 - **2-2** (RBAC prehandler + JWT rotation on use) — Fastify middleware, exercised indirectly by every authenticated test
-- **2-6b** (Voice pipeline v2 — HK-owned WebSocket + ElevenLabs STT/TTS) — backend WebSocket infrastructure
 
 ## Run instructions
 

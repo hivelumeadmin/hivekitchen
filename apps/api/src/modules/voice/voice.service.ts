@@ -83,12 +83,18 @@ export class VoiceService {
     }
 
     const thread = await this.repository.createThread(householdId, 'onboarding', 'voice');
-    const session = await this.repository.createVoiceSession({
-      userId,
-      householdId,
-      threadId: thread.id,
-      elevenLabsConversationId: null,
-    });
+    let session: Awaited<ReturnType<typeof this.repository.createVoiceSession>>;
+    try {
+      session = await this.repository.createVoiceSession({
+        userId,
+        householdId,
+        threadId: thread.id,
+        elevenLabsConversationId: null,
+      });
+    } catch (err) {
+      try { await this.repository.closeThread(thread.id); } catch { /* noop */ }
+      throw err;
+    }
 
     return { sessionId: session.id };
   }
@@ -119,9 +125,10 @@ export class VoiceService {
       clearTimeout(staleSession.timeoutHandle);
     }
 
+    const remainingMs = Math.max(0, SESSION_TIMEOUT_MS - (Date.now() - new Date(session.started_at).getTime()));
     wsSession.timeoutHandle = setTimeout(() => {
       void this.handleTimeout(sessionId, ws);
-    }, SESSION_TIMEOUT_MS);
+    }, remainingMs);
 
     this.sessions.set(sessionId, wsSession);
     // session.ready is sent by the route handler after message/close listeners
@@ -150,7 +157,25 @@ export class VoiceService {
       return;
     }
 
+    const MAX_AUDIO_BYTES = 2 * 1024 * 1024; // 60s × 16kHz × 2B ≈ 1.9 MB
+    if (audioBuffer.length > MAX_AUDIO_BYTES) {
+      this.logger.warn(
+        { module: 'voice', action: 'voice.audio_too_large', session_id: sessionId, bytes: audioBuffer.length },
+        'audio chunk exceeds size limit — dropping',
+      );
+      this.sendText(ws, {
+        type: 'error',
+        code: 'stt_failed',
+        message: 'Audio too long — please try a shorter utterance',
+      });
+      return;
+    }
+
     if (Date.now() - session.startedAt.getTime() >= SESSION_TIMEOUT_MS) {
+      if (session.timeoutHandle !== null) {
+        clearTimeout(session.timeoutHandle);
+        session.timeoutHandle = null;
+      }
       await this.handleTimeout(sessionId, ws);
       return;
     }
@@ -202,6 +227,7 @@ export class VoiceService {
       try {
         await this.streamTts(agentReply.text, ws);
       } catch (err) {
+        session.messages.pop(); // revert user push so next turn history stays balanced
         this.logger.warn(
           { err, module: 'voice', action: 'voice.tts_failed', session_id: sessionId },
           'ElevenLabs TTS streaming failed mid-stream — sending non-fatal error frame',
