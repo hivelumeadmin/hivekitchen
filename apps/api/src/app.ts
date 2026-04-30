@@ -5,6 +5,7 @@ import sensible from '@fastify/sensible';
 import cors from '@fastify/cors';
 import cookie from '@fastify/cookie';
 import jwt from '@fastify/jwt';
+import websocket from '@fastify/websocket';
 import { ZodError } from 'zod';
 import type { Env } from './common/env.js';
 import { getLoggerOptions } from './common/logger.js';
@@ -32,6 +33,8 @@ import { userRoutes } from './modules/users/user.routes.js';
 import { voiceRoutes } from './modules/voice/voice.routes.js';
 import { onboardingRoutes } from './modules/onboarding/onboarding.routes.js';
 import { complianceRoutes } from './modules/compliance/compliance.routes.js';
+import { childrenRoutes } from './modules/children/children.routes.js';
+import { culturalPriorRoutes } from './modules/cultural-priors/cultural-prior.routes.js';
 
 const REQUEST_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -92,6 +95,7 @@ export async function buildApp(opts: BuildAppOptions) {
   await app.register(householdScopeHook);
 
   await app.register(sensible);
+  await app.register(websocket);
 
   await app.register(cors, {
     origin: env.CORS_ALLOWED_ORIGINS,
@@ -140,6 +144,8 @@ export async function buildApp(opts: BuildAppOptions) {
   await app.register(voiceRoutes);
   await app.register(onboardingRoutes);
   await app.register(complianceRoutes);
+  await app.register(childrenRoutes);
+  await app.register(culturalPriorRoutes);
 
   return app;
 }

@@ -28,6 +28,10 @@ VOICE OUTPUT RULES — these are absolute:
 - Never say "I" in reference to the system. You are Lumi, present and listening.
 - If the session is running long, transition gracefully: "That's everything I needed —
   let me put together your first plan."
+
+When you have asked all three signal questions and spoken the closing summary phrase
+("That's everything I needed — let me put together your first plan."), append the literal
+token [SESSION_COMPLETE] at the very end of your response, with no text after it.
 `;
 
 const TEXT_RULES = `

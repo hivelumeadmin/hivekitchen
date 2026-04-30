@@ -3,6 +3,7 @@ import { OPENING_GREETING } from '@hivekitchen/contracts';
 import { ConflictError, UpstreamError } from '../../common/errors.js';
 import { stripExpressionTags } from '../../common/strip-expression-tags.js';
 import type { OnboardingAgent, LlmMessage } from '../../agents/onboarding.agent.js';
+import type { CulturalPriorService } from '../cultural-priors/cultural-prior.service.js';
 import {
   isUniqueViolation,
   type ThreadRepository,
@@ -13,6 +14,7 @@ import {
 export interface OnboardingServiceDeps {
   threads: ThreadRepository;
   agent: OnboardingAgent;
+  culturalPriorService: CulturalPriorService;
   logger: FastifyBaseLogger;
 }
 
@@ -57,11 +59,13 @@ const onlyStrings = (v: unknown): string[] =>
 export class OnboardingService {
   private readonly threads: ThreadRepository;
   private readonly agent: OnboardingAgent;
+  private readonly culturalPriorService: CulturalPriorService;
   private readonly logger: FastifyBaseLogger;
 
   constructor(deps: OnboardingServiceDeps) {
     this.threads = deps.threads;
     this.agent = deps.agent;
+    this.culturalPriorService = deps.culturalPriorService;
     this.logger = deps.logger;
   }
 
@@ -181,7 +185,8 @@ export class OnboardingService {
     //    detail to the client.
     let lumiText: string;
     try {
-      lumiText = await this.agent.respond(agentInput, { modality: TEXT_MODALITY });
+      const reply = await this.agent.respond(agentInput, { modality: TEXT_MODALITY });
+      lumiText = reply.text;
     } catch (err) {
       this.logger.error(
         {
@@ -378,7 +383,30 @@ export class OnboardingService {
       throw err;
     }
 
-    // 5. Close the thread.
+    // 5. Story 2.11 — infer cultural priors from the transcript and append a
+    //    ratification_prompt turn. Wrapped in try/catch so finalisation never
+    //    fails if cultural inference is degraded; silence-mode is the safe
+    //    default (UX-DR46).
+    try {
+      await this.culturalPriorService.inferFromSummary({
+        householdId: input.householdId,
+        threadId: thread.id,
+        transcript,
+      });
+    } catch (err) {
+      this.logger.warn(
+        {
+          err,
+          module: 'onboarding',
+          action: 'onboarding.cultural_inference_failed',
+          household_id: input.householdId,
+          thread_id: thread.id,
+        },
+        'cultural prior inference failed during finalize — silence-mode fallback',
+      );
+    }
+
+    // 6. Close the thread.
     await this.threads.closeThread(thread.id);
 
     this.logger.info(

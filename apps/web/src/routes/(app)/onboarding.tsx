@@ -1,12 +1,14 @@
-import { useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useScope } from '@hivekitchen/ui';
 import { useVoiceStore } from '@/stores/voice.store.js';
+import { useAuthStore } from '@/stores/auth.store.js';
 import { OnboardingVoice } from '@/features/onboarding/OnboardingVoice.js';
 import { OnboardingText } from '@/features/onboarding/OnboardingText.js';
 import { OnboardingConsent } from '@/features/onboarding/OnboardingConsent.js';
+import { CulturalRatificationStep } from '@/features/onboarding/CulturalRatificationStep.js';
 
-type OnboardingMode = 'select' | 'voice' | 'text' | 'consent';
+type OnboardingMode = 'select' | 'voice' | 'text' | 'consent' | 'cultural-ratification';
 
 export default function OnboardingPage() {
   useScope('app-scope');
@@ -16,6 +18,18 @@ export default function OnboardingPage() {
   const voiceStatus = useVoiceStore((s) => s.status);
   const voiceError = useVoiceStore((s) => s.error);
   const clearError = useVoiceStore((s) => s.clearError);
+  const householdId = useAuthStore((s) => s.user?.current_household_id ?? null);
+
+  const handleRatificationComplete = useCallback(
+    () => void navigate('/app'),
+    [navigate],
+  );
+
+  useEffect(() => {
+    if (mode === 'cultural-ratification' && householdId === null) {
+      void navigate('/app');
+    }
+  }, [mode, householdId, navigate]);
 
   if (mode === 'voice') {
     return (
@@ -43,7 +57,9 @@ export default function OnboardingPage() {
               </button>
             </div>
           ) : (
-            <OnboardingVoice onComplete={() => setMode('consent')} />
+            <OnboardingVoice
+              onComplete={() => setMode('consent')}
+            />
           )}
         </div>
       </main>
@@ -70,7 +86,32 @@ export default function OnboardingPage() {
           <h1 className="font-serif text-2xl text-stone-800 text-center">
             One final step
           </h1>
-          <OnboardingConsent onConsented={() => void navigate('/app')} />
+          <OnboardingConsent
+            onConsented={() => {
+              if (householdId !== null) {
+                setMode('cultural-ratification');
+              } else {
+                void navigate('/app');
+              }
+            }}
+          />
+        </div>
+      </main>
+    );
+  }
+
+  if (mode === 'cultural-ratification') {
+    if (householdId === null) return null;
+    return (
+      <main className="min-h-screen flex items-start justify-center px-4 py-8">
+        <div className="w-full max-w-2xl flex flex-col gap-6">
+          <h1 className="font-serif text-2xl text-stone-800 text-center">
+            Lumi noticed a few things
+          </h1>
+          <CulturalRatificationStep
+            householdId={householdId}
+            onComplete={handleRatificationComplete}
+          />
         </div>
       </main>
     );

@@ -8,14 +8,24 @@ import {
 import { ThreadRepository } from '../threads/thread.repository.js';
 import { OnboardingAgent } from '../../agents/onboarding.agent.js';
 import { authorize } from '../../middleware/authorize.hook.js';
+import { CulturalPriorRepository } from '../cultural-priors/cultural-prior.repository.js';
+import { CulturalPriorService } from '../cultural-priors/cultural-prior.service.js';
 import { OnboardingService } from './onboarding.service.js';
 
 const onboardingRoutesPlugin: FastifyPluginAsync = async (fastify) => {
   const threads = new ThreadRepository(fastify.supabase);
   const agent = new OnboardingAgent(fastify.openai);
+  const culturalPriorRepository = new CulturalPriorRepository(fastify.supabase);
+  const culturalPriorService = new CulturalPriorService({
+    repository: culturalPriorRepository,
+    threads,
+    agent,
+    logger: fastify.log,
+  });
   const service = new OnboardingService({
     threads,
     agent,
+    culturalPriorService,
     logger: fastify.log,
   });
 
