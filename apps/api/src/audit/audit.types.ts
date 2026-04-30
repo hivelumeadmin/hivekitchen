@@ -59,6 +59,11 @@ export const AUDIT_EVENT_TYPES = [
   'invite.expired',
   // llm.provider
   'llm.provider.failover',
+  // children
+  'child.add',
+  'child.bag_updated',
+  // cultural
+  'template.state_changed',
 ] as const;
 
 export type AuditEventType = (typeof AUDIT_EVENT_TYPES)[number];

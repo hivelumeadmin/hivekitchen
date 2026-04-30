@@ -57,17 +57,20 @@ export function useRequireParentalNoticeAcknowledgment(): Gate {
     return () => controller.abort();
   }, [accessToken, state, setAcknowledgmentState]);
 
-  const requireAcknowledgment = useCallback(
-    (intent: () => void) => {
-      if (state === 'acknowledged') {
-        intent();
-        return;
-      }
-      pendingIntent.current = intent;
-      setDialogOpen(true);
-    },
-    [state],
-  );
+  const requireAcknowledgment = useCallback((intent: () => void) => {
+    // Read state from the store directly, not the closed-over selector value.
+    // Callers may invalidate the cached state (e.g., after a 412 from a
+    // protected write) and immediately re-call requireAcknowledgment in the
+    // same tick — a closure-captured value would be stale and cause us to
+    // fire the intent without re-prompting.
+    const currentState = useComplianceStore.getState().parentalNoticeState;
+    if (currentState === 'acknowledged') {
+      intent();
+      return;
+    }
+    pendingIntent.current = intent;
+    setDialogOpen(true);
+  }, []);
 
   const handleAcknowledged = useCallback(
     (acknowledgedAt: string, acknowledgedVersion: string) => {

@@ -6,9 +6,17 @@ const REDACT_PATHS = [
   'req.headers.cookie',
   '*.heart_note_content',
   '*.child_name',
+  // Encrypted child fields — redacted at top-level and up to two nesting depths
+  // to cover req.body.declared_allergens, res.payload.child.declared_allergens, etc.
+  'declared_allergens',
   '*.declared_allergens',
+  '*.*.declared_allergens',
+  'cultural_identifiers',
   '*.cultural_identifiers',
+  '*.*.cultural_identifiers',
+  'dietary_preferences',
   '*.dietary_preferences',
+  '*.*.dietary_preferences',
   '*.card',
   '*.cvv',
 ];

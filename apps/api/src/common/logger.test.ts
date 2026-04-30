@@ -11,7 +11,7 @@ function fakeEnv(overrides: Partial<Env> = {}): Env {
     SUPABASE_SERVICE_ROLE_KEY: 'test-service-role',
     OPENAI_API_KEY: 'test-openai',
     ELEVENLABS_API_KEY: 'test-11',
-    ELEVENLABS_WEBHOOK_SECRET: 'test-11-webhook',
+    ELEVENLABS_VOICE_ID: 'voice_test_xyz',
     STRIPE_SECRET_KEY: 'sk_test',
     STRIPE_WEBHOOK_SECRET: 'whsec_test',
     SENDGRID_API_KEY: 'SG.test',
