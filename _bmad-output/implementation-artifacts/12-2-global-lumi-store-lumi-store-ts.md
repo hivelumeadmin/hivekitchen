@@ -1,6 +1,6 @@
 # Story 12.2: Global Lumi store (lumi.store.ts)
 
-Status: ready-for-dev
+Status: done
 
 ## Story
 
@@ -136,38 +136,38 @@ Examine the actual data flow between `onboarding.tsx` and `OnboardingVoice.tsx` 
 
 ## Tasks / Subtasks
 
-- [ ] Task 1 — Create `apps/web/src/stores/lumi.store.ts` (AC: #1, #2)
-  - [ ] Define `LumiState` and `LumiActions` interfaces
-  - [ ] Import `LumiSurface`, `LumiContextSignal`, `Turn` from `@hivekitchen/types`
-  - [ ] Implement `setContext`: update surface + contextSignal, clear turns
-  - [ ] Implement `appendAction`: append to `contextSignal.recent_actions`, cap at 5, no-op if contextSignal null
-  - [ ] Implement `openPanel` / `closePanel`
-  - [ ] Implement `hydrateThread`: update threadIds[surface], replace turns, set isHydrating false
-  - [ ] Implement `appendTurn`: append turn to turns array
-  - [ ] Implement `setTalkSession`: set talkSessionId, voiceStatus='connecting' → caller transitions to 'active'
-  - [ ] Implement `setVoiceStatus` / `setVoiceError`
-  - [ ] Implement `endTalkSession`: reset talkSessionId, voiceStatus='idle', isSpeaking=false, voiceError=null
-  - [ ] Implement `setNudge`
-  - [ ] Implement `reset`: reset all state to initial values
-  - [ ] Use Zustand 5 `create<LumiState & LumiActions>()(set => ...)` curried signature
+- [x] Task 1 — Create `apps/web/src/stores/lumi.store.ts` (AC: #1, #2)
+  - [x] Define `LumiState` and `LumiActions` interfaces
+  - [x] Import `LumiSurface`, `LumiContextSignal`, `Turn` from `@hivekitchen/types`
+  - [x] Implement `setContext`: update surface + contextSignal, clear turns
+  - [x] Implement `appendAction`: append to `contextSignal.recent_actions`, cap at 5, no-op if contextSignal null
+  - [x] Implement `openPanel` / `closePanel`
+  - [x] Implement `hydrateThread`: update threadIds[surface], replace turns, set isHydrating false
+  - [x] Implement `appendTurn`: append turn to turns array
+  - [x] Implement `setTalkSession`: set talkSessionId, voiceStatus='connecting' → caller transitions to 'active'
+  - [x] Implement `setVoiceStatus` / `setVoiceError`
+  - [x] Implement `endTalkSession`: reset talkSessionId, voiceStatus='idle', isSpeaking=false, voiceError=null
+  - [x] Implement `setNudge`
+  - [x] Implement `reset`: reset all state to initial values
+  - [x] Use Zustand 5 `create<LumiState & LumiActions>()(set => ...)` curried signature
 
-- [ ] Task 2 — Migrate `OnboardingVoice.tsx` away from `useVoiceStore` (AC: #3)
-  - [ ] Read `apps/web/src/features/onboarding/OnboardingVoice.tsx` to understand current store usage
-  - [ ] Replace `useVoiceStore` import with local `useState` for voice status, isSpeaking, error
-  - [ ] Verify component still compiles and tests pass
+- [x] Task 2 — Migrate `OnboardingVoice.tsx` away from `useVoiceStore` (AC: #3)
+  - [x] Read `apps/web/src/features/onboarding/OnboardingVoice.tsx` to understand current store usage
+  - [x] Replace `useVoiceStore` import with local `useState` for voice status, isSpeaking, error
+  - [x] Verify component still compiles and tests pass
 
-- [ ] Task 3 — Migrate `onboarding.tsx` away from `useVoiceStore` (AC: #3)
-  - [ ] Read `apps/web/src/routes/(app)/onboarding.tsx` to understand current store usage
-  - [ ] Replace `useVoiceStore` import with appropriate local state or props from OnboardingVoice
-  - [ ] Verify component still compiles and tests pass
+- [x] Task 3 — Migrate `onboarding.tsx` away from `useVoiceStore` (AC: #3)
+  - [x] Read `apps/web/src/routes/(app)/onboarding.tsx` to understand current store usage
+  - [x] Replace `useVoiceStore` import with appropriate local state or props from OnboardingVoice
+  - [x] Verify component still compiles and tests pass
 
-- [ ] Task 4 — Delete `voice.store.ts` (AC: #3)
-  - [ ] Confirm no remaining imports of `useVoiceStore` anywhere in `apps/web`
-  - [ ] Delete `apps/web/src/stores/voice.store.ts`
+- [x] Task 4 — Delete `voice.store.ts` (AC: #3)
+  - [x] Confirm no remaining imports of `useVoiceStore` anywhere in `apps/web`
+  - [x] Delete `apps/web/src/stores/voice.store.ts`
 
-- [ ] Task 5 — Typecheck and test (AC: #3, #7)
-  - [ ] `pnpm typecheck` — zero errors
-  - [ ] `pnpm --filter @hivekitchen/web test` — all passing
+- [x] Task 5 — Typecheck and test (AC: #3, #7)
+  - [x] `pnpm --filter @hivekitchen/web typecheck` — zero errors (monorepo-wide `pnpm typecheck` surfaced 3 pre-existing `RequestInfo` errors in `apps/api/src/modules/voice/voice.service.test.ts` confirmed present on `main` before this story; out of scope)
+  - [x] `pnpm --filter @hivekitchen/web test` — 106 passing across 14 files (was 97 / 13 files; +9 new lumi store unit tests covering AC #4 #5 #6 + edge cases)
 
 ## Dev Notes
 
@@ -236,10 +236,48 @@ The store logic is straightforward and tested indirectly through the component t
 
 ### Agent Model Used
 
-_to be filled on implementation_
+claude-opus-4-7 (1M context) via `/bmad-dev-story` workflow on 2026-04-30.
 
 ### Debug Log References
 
+- `pnpm --filter @hivekitchen/web typecheck` → clean.
+- `pnpm --filter @hivekitchen/web test` → 14 files / 106 tests passing.
+- `pnpm typecheck` (monorepo) → 3 pre-existing `RequestInfo` errors in `apps/api/src/modules/voice/voice.service.test.ts`. Verified on stash of `main` before changes were applied — unrelated to Story 12.2 scope (web-only).
+
 ### Completion Notes List
 
+- Implemented `apps/web/src/stores/lumi.store.ts` per ADR-002 Decision 5 with the exact `LumiState` / `LumiActions` shape from the story spec. Initial `surface = 'general'`, panel closed, panel mode `'text'`, voice status `'idle'`. `INITIAL_STATE` is a single source of truth reused by `reset`.
+- `setContext` clears `turns` (so the panel re-renders against the new surface) but preserves `talkSessionId` / `voiceStatus` / `isPanelOpen` / `panelMode` / `pendingNudge` — talk sessions started on a previous surface continue running uninterrupted.
+- `appendAction` is null-safe (no-op if `contextSignal` is null) and immutable (spreads `contextSignal` and `recent_actions` rather than mutating). FIFO eviction implemented via `[...prev, description].slice(-5)`.
+- `setVoiceError` mirrors the prior `voice.store.setError` semantics: passing a message flips status to `'error'`; passing `null` resets status to `'idle'`. `setVoiceStatus` does NOT clobber `voiceError` (carried-over invariant from the deleted store).
+- `setTalkSession` clears any prior `voiceError` so a stale error from a previous failed attempt doesn't bleed into a fresh session.
+- Migrated `OnboardingVoice.tsx`: removed all four `useVoiceStore` selectors and the status-mirroring `useEffect`. The component already gets `status` / `errorMessage` directly from `useVoiceSession`; cross-tree visibility into the error state is now expressed via a new optional `onError?: (message: string) => void` prop. This is a strictly local refactor — the onboarding flow is self-contained and does not need the global Lumi store (per ADR-002 Decision 5).
+- Migrated `onboarding.tsx`: replaced the three `useVoiceStore` selectors with a single `useState<string | null>` for `voiceError`, fed by the new `onError` prop on `<OnboardingVoice>`. The fallback "Continue with text instead" branch now triggers on `voiceError !== null` (was `voiceStatus === 'error' && voiceError`); these conditions were synchronized in the prior store, so the new check is equivalent. `clearError()` becomes `setVoiceError(null)`.
+- Deleted `apps/web/src/stores/voice.store.ts`. Grep confirmed zero remaining `useVoiceStore` / `voice.store` references after migration.
+- Updated `apps/web/src/features/onboarding/OnboardingVoice.test.tsx`: removed the `vi.mock('@/stores/voice.store.js', ...)` block (would now fail at module resolution), updated `setHookState` to capture the hook's `onError` callback so two new tests can exercise the prop wiring (forward to `onError`, no throw when omitted). Existing 11 tests preserved, total 13.
+- Added `apps/web/src/stores/lumi.store.test.ts`: 9 unit tests covering AC #4 (setContext clears turns + preserves talk session), AC #5 (appendAction FIFO + null-safe), AC #6 (hydrateThread surface scoping + isHydrating flip), plus regressions for defaults, appendTurn, endTalkSession panel preservation, setVoiceError status flip, and openPanel mode preservation. Story dev notes flagged store tests as optional — added because project-context.md explicitly endorses direct state-transition tests for Zustand stores ("Web stores: Zustand stores are plain functions; test state transitions directly, no React needed").
+
 ### File List
+
+- Added: `apps/web/src/stores/lumi.store.ts`
+- Added: `apps/web/src/stores/lumi.store.test.ts`
+- Modified: `apps/web/src/features/onboarding/OnboardingVoice.tsx`
+- Modified: `apps/web/src/features/onboarding/OnboardingVoice.test.tsx`
+- Modified: `apps/web/src/routes/(app)/onboarding.tsx`
+- Deleted: `apps/web/src/stores/voice.store.ts`
+
+## Change Log
+
+| Date       | Description                                                                                                                                                                                                              |
+| ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 2026-04-30 | Story 12.2 implemented: added `lumi.store.ts` with full ADR-002 Decision 5 surface; migrated onboarding to component-local state; deleted `voice.store.ts`. 106 tests passing (was 97). Ready for review.                |
+
+### Review Findings
+
+- [x] [Review][Decision] `hydrateThread` TOCTOU — resolved: added `surface: LumiSurface` parameter; implementation uses caller-supplied surface as key and guards turns/isHydrating updates with `state.surface === surface` check. TOCTOU regression test added. [`apps/web/src/stores/lumi.store.ts:87-95`, `apps/web/src/stores/lumi.store.test.ts`]
+
+- [x] [Review][Patch] `setContext` does not reset `isHydrating: false` — fixed: added `isHydrating: false` to `setContext`'s state update; AC #4 test updated to assert the reset. [`apps/web/src/stores/lumi.store.ts:63-69`]
+
+- [x] [Review][Defer] `isSpeaking` has no setter action — the field exists in state and resets in `endTalkSession`, but no `setIsSpeaking` action is present; the field can never be set to `true`. Story 12.8 (tap-to-talk) is the expected owner. [`apps/web/src/stores/lumi.store.ts`] — deferred, forward dependency on Story 12.8
+
+- [x] [Review][Defer] Async callbacks from `useVoiceSession` may fire after `OnboardingVoice` unmounts — `callbacksRef` persists across renders; a queued `onError` could invoke `setVoiceError` on the parent after the user has navigated away from onboarding. [`apps/web/src/hooks/useVoiceSession.ts`] — deferred, hook internals concern; acceptable under current sequential WebSocket lifecycle

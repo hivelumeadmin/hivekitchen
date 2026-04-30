@@ -9,20 +9,6 @@ vi.mock('@/hooks/useVoiceSession.js', () => ({
   useVoiceSession: vi.fn(),
 }));
 
-// Zustand store — only the setters are called from this component.
-// We provide stable no-op implementations so effects can run without errors.
-vi.mock('@/stores/voice.store.js', () => {
-  const setStatus = vi.fn();
-  const setError = vi.fn();
-  const clearError = vi.fn();
-  const setIsSpeaking = vi.fn();
-
-  return {
-    useVoiceStore: (selector: (s: object) => unknown) =>
-      selector({ setStatus, setError, clearError, setIsSpeaking }),
-  };
-});
-
 import { useVoiceSession } from '@/hooks/useVoiceSession.js';
 
 const mockStart = vi.fn().mockResolvedValue(undefined);
@@ -31,15 +17,24 @@ const mockStop = vi.fn();
 function setHookState(
   status: UseVoiceSessionResult['status'],
   errorMessage: string | null = null,
-) {
-  vi.mocked(useVoiceSession).mockReturnValue({
-    status,
-    transcriptLines: [],
-    lumiLines: [],
-    errorMessage,
-    start: mockStart,
-    stop: mockStop,
+): {
+  capturedOnError: { current: ((message: string) => void) | undefined };
+} {
+  const capturedOnError: { current: ((message: string) => void) | undefined } = {
+    current: undefined,
+  };
+  vi.mocked(useVoiceSession).mockImplementation((opts) => {
+    capturedOnError.current = opts.onError;
+    return {
+      status,
+      transcriptLines: [],
+      lumiLines: [],
+      errorMessage,
+      start: mockStart,
+      stop: mockStop,
+    };
   });
+  return { capturedOnError };
 }
 
 describe('OnboardingVoice', () => {
@@ -124,5 +119,23 @@ describe('OnboardingVoice', () => {
     render(<OnboardingVoice onComplete={vi.fn()} />);
 
     expect(mockStart).toHaveBeenCalledOnce();
+  });
+
+  it('forwards hook errors to the onError prop', () => {
+    const { capturedOnError } = setHookState('connecting');
+    const onError = vi.fn();
+    render(<OnboardingVoice onComplete={vi.fn()} onError={onError} />);
+
+    capturedOnError.current?.('Microphone permission denied');
+
+    expect(onError).toHaveBeenCalledOnce();
+    expect(onError).toHaveBeenCalledWith('Microphone permission denied');
+  });
+
+  it('does not throw when onError prop is omitted and hook reports an error', () => {
+    const { capturedOnError } = setHookState('connecting');
+    render(<OnboardingVoice onComplete={vi.fn()} />);
+
+    expect(() => capturedOnError.current?.('boom')).not.toThrow();
   });
 });

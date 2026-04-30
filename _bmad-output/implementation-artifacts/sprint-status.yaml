@@ -1,5 +1,5 @@
 # generated: 2026-04-23
-# last_updated: 2026-04-29 (Story 12-1 code review — 4 decisions resolved + 3 patches applied, story → done)
+# last_updated: 2026-04-30 (Story 12-2 code review complete — hydrateThread TOCTOU fixed, isHydrating reset in setContext, 107 tests passing, story → done)
 # project: hivekitchen
 # project_key: NOKEY
 # tracking_system: file-system
@@ -35,7 +35,7 @@
 # - Dev moves story to 'review', then runs code-review (fresh context, different LLM recommended)
 
 generated: 2026-04-23
-last_updated: 2026-04-29 (Story 12-1 code review — 4 decisions resolved + 3 patches applied, story → done)
+last_updated: 2026-04-30 (Story 12-2 code review complete — hydrateThread TOCTOU fixed, isHydrating reset in setContext, 107 tests passing, story → done)
 project: hivekitchen
 project_key: NOKEY
 tracking_system: file-system
@@ -229,7 +229,7 @@ development_status:
   # Epic 12: Ambient Lumi Companion
   epic-12: in-progress
   12-1-lumi-contracts-lumisurface-lumicontextsignal-lumiturnrequest: done
-  12-2-global-lumi-store-lumi-store-ts: ready-for-dev
+  12-2-global-lumi-store-lumi-store-ts: done
   12-3-thread-turns-endpoint-get-v1-lumi-threads-threadid-turns: ready-for-dev
   12-4-db-migration-drop-modality-discriminator-from-thread-uniqueness-constraint: ready-for-dev
   12-5-talk-session-lifecycle-post-delete-v1-lumi-voice-sessions: ready-for-dev

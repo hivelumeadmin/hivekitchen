@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useScope } from '@hivekitchen/ui';
-import { useVoiceStore } from '@/stores/voice.store.js';
 import { useAuthStore } from '@/stores/auth.store.js';
 import { OnboardingVoice } from '@/features/onboarding/OnboardingVoice.js';
 import { OnboardingText } from '@/features/onboarding/OnboardingText.js';
@@ -14,10 +13,7 @@ export default function OnboardingPage() {
   useScope('app-scope');
   const navigate = useNavigate();
   const [mode, setMode] = useState<OnboardingMode>('select');
-  // Selectors only — never pull the whole store (project rule).
-  const voiceStatus = useVoiceStore((s) => s.status);
-  const voiceError = useVoiceStore((s) => s.error);
-  const clearError = useVoiceStore((s) => s.clearError);
+  const [voiceError, setVoiceError] = useState<string | null>(null);
   const householdId = useAuthStore((s) => s.user?.current_household_id ?? null);
 
   const handleRatificationComplete = useCallback(
@@ -42,13 +38,13 @@ export default function OnboardingPage() {
             Lumi will ask three questions to personalise your plan.
           </p>
 
-          {voiceStatus === 'error' && voiceError ? (
+          {voiceError !== null ? (
             <div className="flex flex-col items-center gap-4 text-center">
               <p className="font-sans text-stone-600">{voiceError}</p>
               <button
                 type="button"
                 onClick={() => {
-                  clearError();
+                  setVoiceError(null);
                   setMode('text');
                 }}
                 className="font-sans text-sm text-amber-700 underline underline-offset-2"
@@ -59,6 +55,7 @@ export default function OnboardingPage() {
           ) : (
             <OnboardingVoice
               onComplete={() => setMode('consent')}
+              onError={(message) => setVoiceError(message)}
             />
           )}
         </div>

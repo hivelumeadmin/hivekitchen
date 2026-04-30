@@ -1,47 +1,25 @@
 import { useEffect } from 'react';
 import { useVoiceSession } from '@/hooks/useVoiceSession.js';
-import { useVoiceStore } from '@/stores/voice.store.js';
 
 export interface OnboardingVoiceProps {
   onComplete: (result: { cultural_priors_detected: boolean }) => void;
+  onError?: (message: string) => void;
 }
 
-export function OnboardingVoice({ onComplete }: OnboardingVoiceProps) {
-  const setStatus = useVoiceStore((s) => s.setStatus);
-  const setError = useVoiceStore((s) => s.setError);
-  const setIsSpeaking = useVoiceStore((s) => s.setIsSpeaking);
-  const clearError = useVoiceStore((s) => s.clearError);
-
+export function OnboardingVoice({ onComplete, onError }: OnboardingVoiceProps) {
   const { status, errorMessage, start, stop } = useVoiceSession({
     onComplete,
-    onError: (message) => setError(message),
+    onError: (message) => onError?.(message),
   });
 
   // Start the session on mount; clean up on unmount.
   useEffect(() => {
-    clearError();
     void start();
     return () => stop();
     // start/stop are stable refs from the hook by useCallback; we only want
     // to fire this on mount.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-
-  // Mirror the hook's status into the cross-tree voice store.
-  useEffect(() => {
-    setStatus(
-      status === 'connecting'
-        ? 'connecting'
-        : status === 'closed'
-          ? 'ended'
-          : status === 'error'
-            ? 'error'
-            : status === 'idle'
-              ? 'idle'
-              : 'active',
-    );
-    setIsSpeaking(status === 'speaking');
-  }, [status, setStatus, setIsSpeaking]);
 
   const isSpeaking = status === 'speaking';
 

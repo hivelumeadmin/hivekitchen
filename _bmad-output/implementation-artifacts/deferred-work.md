@@ -1,5 +1,10 @@
 # Deferred Work Log
 
+## Deferred from: code review of 12-2-global-lumi-store-lumi-store-ts (2026-04-30)
+
+- **`isSpeaking` has no setter action** — the field exists in state and resets in `endTalkSession`, but no `setIsSpeaking` action is defined; it can never be set to `true`. Story 12.8 (tap-to-talk via ElevenLabs) is the expected owner of this action. [`apps/web/src/stores/lumi.store.ts`]
+- **Async callbacks from `useVoiceSession` may fire after `OnboardingVoice` unmounts** — `callbacksRef` persists across renders; a queued `onError` callback could invoke the parent's `setVoiceError` after the user navigates away from the onboarding route. Acceptable under the current sequential WebSocket lifecycle but worth guarding in Story 12.8 when tap-to-talk introduces more complex session states. [`apps/web/src/hooks/useVoiceSession.ts`]
+
 ## Deferred from: code review of 2-6b-voice-pipeline-v2 Group A (2026-04-29)
 
 - **`session.summary` silently lost if client disconnects during `closeSession` async tail** — DB is updated correctly but the client never receives the summary frame. The household completes onboarding in the DB but the client UX cannot confirm it. Design-level gap; consider a recovery endpoint (`GET /v1/voice/sessions/:id/status`) so the client can poll on reconnect. [`voice.service.ts` — closeSession completed path]
