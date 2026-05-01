@@ -1,6 +1,7 @@
 import { useCallback, useRef, useState } from 'react';
 import { useScope } from '@hivekitchen/ui';
 import type { ChildResponse } from '@hivekitchen/types';
+import { useLumiContext } from '@/hooks/useLumiContext.js';
 import { useRequireParentalNoticeAcknowledgment } from '@/hooks/useRequireParentalNoticeAcknowledgment.js';
 import { useAuthStore } from '@/stores/auth.store.js';
 import { useComplianceStore } from '@/stores/compliance.store.js';
@@ -9,6 +10,7 @@ import { BagCompositionCard } from '@/features/children/BagCompositionCard.js';
 
 export default function AppHomePage() {
   useScope('app-scope');
+  useLumiContext({ surface: 'general' });
   const gate = useRequireParentalNoticeAcknowledgment();
   const householdId = useAuthStore((s) => s.user?.current_household_id ?? null);
   const [formOpen, setFormOpen] = useState(false);

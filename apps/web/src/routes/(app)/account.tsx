@@ -9,6 +9,7 @@ import {
   CULTURAL_LANGUAGE_VALUES,
 } from '@hivekitchen/types';
 import { hkFetch, HkApiError } from '@/lib/fetch.js';
+import { useLumiContext } from '@/hooks/useLumiContext.js';
 import { useAuthStore } from '@/stores/auth.store.js';
 import { useComplianceStore } from '@/stores/compliance.store.js';
 import { ParentalNoticeView } from '@/features/compliance/ParentalNoticeView.js';
@@ -34,6 +35,7 @@ const CULTURAL_LANGUAGE_OPTIONS = CULTURAL_LANGUAGE_VALUES.map((value) => ({
 
 export default function AccountPage() {
   useScope('app-scope');
+  useLumiContext({ surface: 'general' });
   const navigate = useNavigate();
   const accessToken = useAuthStore((s) => s.accessToken);
   const setAcknowledgmentState = useComplianceStore((s) => s.setAcknowledgmentState);
