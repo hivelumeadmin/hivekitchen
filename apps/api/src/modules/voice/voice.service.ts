@@ -5,7 +5,8 @@ import { ConflictError, UpstreamError } from '../../common/errors.js';
 import { stripExpressionTags } from '../../common/strip-expression-tags.js';
 import type { OnboardingAgent, LlmMessage } from '../../agents/onboarding.agent.js';
 import type { CulturalPriorService } from '../cultural-priors/cultural-prior.service.js';
-import type { VoiceRepository } from './voice.repository.js';
+import type { MemoryService } from '../memory/memory.service.js';
+import type { VoiceRepository, TurnRow } from './voice.repository.js';
 
 const SESSION_TIMEOUT_MS = 10 * 60 * 1000;
 
@@ -19,6 +20,7 @@ interface OnboardingSummary {
   cultural_templates: string[];
   palate_notes: string[];
   allergens_mentioned: string[];
+  family_rhythms: string[];
 }
 
 interface WsSession {
@@ -40,6 +42,7 @@ export interface VoiceServiceDeps {
   elevenLabsApiKey: string;
   voiceId: string;
   logger: FastifyBaseLogger;
+  memoryService?: MemoryService;
 }
 
 export class WsAuthFailedError extends Error {
@@ -60,6 +63,7 @@ export class VoiceService {
   private readonly elevenLabsApiKey: string;
   private readonly voiceId: string;
   private readonly logger: FastifyBaseLogger;
+  private readonly memoryService?: MemoryService;
   private readonly sessions = new Map<string, WsSession>();
 
   constructor(deps: VoiceServiceDeps) {
@@ -69,6 +73,7 @@ export class VoiceService {
     this.elevenLabsApiKey = deps.elevenLabsApiKey;
     this.voiceId = deps.voiceId;
     this.logger = deps.logger;
+    this.memoryService = deps.memoryService;
   }
 
   async createSession(
@@ -477,8 +482,9 @@ export class VoiceService {
       return;
     }
 
+    let summaryTurn: TurnRow | null = null;
     try {
-      await this.repository.appendTurnNext({
+      summaryTurn = await this.repository.appendTurnNext({
         threadId: session.threadId,
         role: 'system',
         body: {
@@ -488,11 +494,28 @@ export class VoiceService {
         },
         modality: 'voice',
       });
-    } catch (err) {
+    } catch (firstErr) {
       this.logger.warn(
-        { err, module: 'voice', action: 'voice.summary_turn_persist_failed', session_id: sessionId },
-        'failed to persist onboarding.summary system_event turn',
+        { firstErr, module: 'voice', action: 'voice.summary_turn_persist_failed', session_id: sessionId },
+        'failed to persist onboarding.summary system_event turn — retrying',
       );
+      try {
+        summaryTurn = await this.repository.appendTurnNext({
+          threadId: session.threadId,
+          role: 'system',
+          body: {
+            type: 'system_event',
+            event: 'onboarding.summary',
+            payload: { ...summary } as Record<string, unknown>,
+          },
+          modality: 'voice',
+        });
+      } catch (err) {
+        this.logger.warn(
+          { err, module: 'voice', action: 'voice.summary_turn_persist_failed_retry', session_id: sessionId },
+          'failed to persist onboarding.summary system_event turn after retry — seeding will be skipped',
+        );
+      }
     }
 
     let culturalPriorsDetected = false;
@@ -508,6 +531,46 @@ export class VoiceService {
         { err, module: 'voice', action: 'voice.cultural_inference_failed', session_id: sessionId },
         'cultural prior inference failed during voice close — silence-mode fallback',
       );
+    }
+
+    // Story 2.13 — seed visible memory nodes from the disclosed onboarding
+    // summary. Silence-mode: any failure is logged WARN and never blocks
+    // session close. Skipped when the summary turn failed to persist (no
+    // turn id to anchor provenance to).
+    if (this.memoryService && summaryTurn !== null) {
+      try {
+        const { nodeCount } = await this.memoryService.seedFromOnboarding({
+          householdId: session.householdId,
+          userId: session.userId,
+          threadId: session.threadId,
+          summaryTurnId: summaryTurn.id,
+          summary,
+        });
+        if (nodeCount > 0) {
+          this.logger.info(
+            {
+              module: 'voice',
+              action: 'voice.memory_seeded',
+              session_id: sessionId,
+              household_id: session.householdId,
+              thread_id: session.threadId,
+              node_count: nodeCount,
+            },
+            'memory nodes seeded from voice onboarding',
+          );
+        }
+      } catch (err) {
+        this.logger.warn(
+          {
+            err,
+            module: 'voice',
+            action: 'voice.memory_seed_failed',
+            session_id: sessionId,
+            household_id: session.householdId,
+          },
+          'memory seed failed during voice close — silence-mode fallback',
+        );
+      }
     }
 
     try {

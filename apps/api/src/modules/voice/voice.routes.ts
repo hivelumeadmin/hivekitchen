@@ -37,6 +37,7 @@ const voiceRoutesPlugin: FastifyPluginAsync = async (fastify) => {
     elevenLabsApiKey: fastify.env.ELEVENLABS_API_KEY,
     voiceId: fastify.env.ELEVENLABS_VOICE_ID,
     logger: fastify.log,
+    memoryService: fastify.memoryService,
   });
 
   fastify.post(
