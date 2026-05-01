@@ -1,5 +1,5 @@
 # generated: 2026-04-23
-# last_updated: 2026-04-30 (Story 12-2 code review complete — hydrateThread TOCTOU fixed, isHydrating reset in setContext, 107 tests passing, story → done)
+# last_updated: 2026-05-01 (Story 12-7 ready for review — useLumiContext hook + route wiring complete)
 # project: hivekitchen
 # project_key: NOKEY
 # tracking_system: file-system
@@ -35,7 +35,7 @@
 # - Dev moves story to 'review', then runs code-review (fresh context, different LLM recommended)
 
 generated: 2026-04-23
-last_updated: 2026-04-30 (Story 12-2 code review complete — hydrateThread TOCTOU fixed, isHydrating reset in setContext, 107 tests passing, story → done)
+last_updated: 2026-05-01 (Story 12-7 done — code review patches applied + 6 E2E tests added)
 project: hivekitchen
 project_key: NOKEY
 tracking_system: file-system
@@ -78,13 +78,13 @@ development_status:
   2-10-add-child-profile-with-envelope-encrypted-sensitive-fields: done
   2-11-cultural-template-inference-parental-confirm: done
   2-12-per-child-lunch-bag-slot-declaration: done
-  2-13-visible-memory-write-primitives-memory-nodes-seed: backlog
-  2-14-onboarding-mental-model-copy-anxiety-leakage-telemetry: backlog
+  2-13-visible-memory-write-primitives-memory-nodes-seed: done
+  2-14-onboarding-mental-model-copy-anxiety-leakage-telemetry: done
   epic-2-retrospective: optional
 
   # Epic 3: Weekly Plan & Ready-Answer Open
-  epic-3: backlog
-  3-1-allergy-guardrail-service-deterministic-authoritative-outside-agent-boundary: backlog
+  epic-3: in-progress
+  3-1-allergy-guardrail-service-deterministic-authoritative-outside-agent-boundary: review
   3-2-domain-orchestrator-llmprovider-adapter-openai-primary-anthropic-stub: backlog
   3-3-planner-specialist-agent-planner-prompt-ts-versioned: backlog
   3-4-agent-tools-recipe-memory-pantry-plan-allergy-cultural-registered-with-maxlatencyms: backlog
@@ -230,11 +230,11 @@ development_status:
   epic-12: in-progress
   12-1-lumi-contracts-lumisurface-lumicontextsignal-lumiturnrequest: done
   12-2-global-lumi-store-lumi-store-ts: done
-  12-3-thread-turns-endpoint-get-v1-lumi-threads-threadid-turns: ready-for-dev
-  12-4-db-migration-drop-modality-discriminator-from-thread-uniqueness-constraint: ready-for-dev
-  12-5-talk-session-lifecycle-post-delete-v1-lumi-voice-sessions: ready-for-dev
-  12-6-lumiorb-and-lumipanel-in-root-layout: backlog
-  12-7-route-context-registration: backlog
+  12-3-thread-turns-endpoint-get-v1-lumi-threads-threadid-turns: done
+  12-4-db-migration-drop-modality-discriminator-from-thread-uniqueness-constraint: done
+  12-5-talk-session-lifecycle-post-delete-v1-lumi-voice-sessions: done
+  12-6-lumiorb-and-lumipanel-in-root-layout: done
+  12-7-route-context-registration: done
   12-8-tap-to-talk-browser-direct-elevenlabs-stt-tts-websockets: backlog
   12-9-lumiagent-with-surface-prompt-dispatch-and-household-snapshot: backlog
   12-10-post-v1-lumi-turns-ambient-text-turn-endpoint: backlog
