@@ -1,6 +1,6 @@
 # Story 12.4: DB migration — drop modality discriminator from thread uniqueness constraint
 
-Status: ready-for-dev
+Status: done
 
 ## Story
 
@@ -96,20 +96,20 @@ Use timestamp `20260601000000` — after all existing migrations (`2026052000010
 
 ## Tasks / Subtasks
 
-- [ ] Task 1 — Create migration file (AC: #1, #2, #3, #4, #5)
-  - [ ] Create `supabase/migrations/20260601000000_ambient_lumi_thread_constraints.sql`
-  - [ ] Add rollback comment block at the top (matching migration file convention)
-  - [ ] `DROP INDEX IF EXISTS threads_one_active_per_household_type_modality`
-  - [ ] `CREATE UNIQUE INDEX threads_one_active_per_onboarding_type_modality ON threads (household_id, type, modality) WHERE status = 'active' AND type = 'onboarding'`
-  - [ ] `CREATE UNIQUE INDEX threads_one_active_per_household_type ON threads (household_id, type) WHERE status = 'active' AND type != 'onboarding'`
+- [x] Task 1 — Create migration file (AC: #1, #2, #3, #4, #5)
+  - [x] Create `supabase/migrations/20260620000000_ambient_lumi_thread_constraints.sql` (timestamp bumped from the spec's `20260601000000` — that slot is now occupied by Story 2.13's memory_nodes migration, which landed after 12.4 was authored)
+  - [x] Add rollback comment block at the top (matching migration file convention)
+  - [x] `DROP INDEX IF EXISTS threads_one_active_per_household_type_modality`
+  - [x] `CREATE UNIQUE INDEX threads_one_active_per_onboarding_type_modality ON threads (household_id, type, modality) WHERE status = 'active' AND type = 'onboarding'`
+  - [x] `CREATE UNIQUE INDEX threads_one_active_per_household_type ON threads (household_id, type) WHERE status = 'active' AND type != 'onboarding'`
 
-- [ ] Task 2 — Verify existing voice service still works with new constraint (AC: #6)
-  - [ ] Read `apps/api/src/modules/voice/voice.service.ts` — check how `threads` table is written
-  - [ ] Confirm it still passes `modality` when creating onboarding threads (the column still exists; the new onboarding index still includes modality)
-  - [ ] If voice service creates threads without `modality`, it will violate the NOT NULL constraint — verify and fix if needed
+- [x] Task 2 — Verify existing voice service still works with new constraint (AC: #6)
+  - [x] Read `apps/api/src/modules/voice/voice.service.ts` — only thread-write site is `voice.service.ts:90` (`createThread(householdId, 'onboarding', 'voice')`); also verified `onboarding.service.ts:96` (`createThread(..., ONBOARDING_THREAD_TYPE, TEXT_MODALITY)`)
+  - [x] Confirm it still passes `modality` when creating onboarding threads — both call sites pass an explicit modality, and the new onboarding-specific index still includes modality, so the existing R2-D1/R2-D2 invariant continues to hold
+  - [x] No code changes required — the migration is index-only
 
-- [ ] Task 3 — Run tests (AC: #6)
-  - [ ] `pnpm --filter @hivekitchen/api test` — all passing
+- [x] Task 3 — Run tests (AC: #6)
+  - [x] `pnpm --filter @hivekitchen/api test` — 221 pass / 11 skipped (only the same pre-existing `memory.service.test.ts > partial seeding` failure from prior uncommitted work remains; unrelated to 12.4)
 
 ## Dev Notes
 
@@ -146,7 +146,7 @@ This story modifies indexes only (and possibly the NOT NULL constraint on `modal
 
 ### Project Structure Notes
 
-- New file: `supabase/migrations/20260601000000_ambient_lumi_thread_constraints.sql`
+- New file: `supabase/migrations/20260620000000_ambient_lumi_thread_constraints.sql`
 - Possibly modified: `apps/api/src/modules/voice/voice.repository.ts` — if threads row type needs update for nullable modality
 - No changes to contracts or frontend in this story
 
@@ -162,10 +162,58 @@ This story modifies indexes only (and possibly the NOT NULL constraint on `modal
 
 ### Agent Model Used
 
-_to be filled on implementation_
+claude-opus-4-7[1m]
 
 ### Debug Log References
 
+- API tests after migration applied: `pnpm --filter @hivekitchen/api test` →
+  221 pass / 11 skipped. The single failure (`memory.service.test.ts >
+  partial seeding`) pre-existed in untracked code from a prior story and is
+  unrelated to 12.4.
+- Verified by `Grep` that the only call sites creating `threads` rows are:
+  - `apps/api/src/modules/voice/voice.service.ts:90` — `createThread(hh, 'onboarding', 'voice')`
+  - `apps/api/src/modules/onboarding/onboarding.service.ts:96` — `createThread(hh, ONBOARDING_THREAD_TYPE, TEXT_MODALITY)`
+  Both pass `type='onboarding'` with an explicit modality, so they fall under
+  the new `threads_one_active_per_onboarding_type_modality` partial index —
+  identical semantics to the dropped index for onboarding flows.
+
 ### Completion Notes List
 
+- **Timestamp bumped to `20260620000000`** (spec proposed `20260601000000`):
+  Story 2.13's memory_nodes migration now occupies `20260601000000`, and
+  Story 3.1's allergy guardrail migration occupies `20260610000000`. Bumping
+  the migration timestamp to `20260620000000` keeps the sequence monotonic.
+  Inline comment in the migration explains the bump.
+- **`modality` NOT NULL constraint retained**: Dev Notes flagged this as
+  optional. Decision: do not relax in this story. Existing tests and code all
+  write a modality value; ambient thread creation (Story 12.5) can write a
+  sentinel modality value. If a future story prefers `NULL` to "(arbitrary)
+  initial modality", it can write a follow-up `ALTER COLUMN ... DROP NOT NULL`
+  migration. Avoiding the column-level change here keeps this migration
+  small, reversible, and risk-free.
+- **No app-code changes**: the migration is index-only, and the only thread
+  creators in the codebase already supply modality.
+
 ### File List
+
+**New files:**
+- `supabase/migrations/20260620000000_ambient_lumi_thread_constraints.sql`
+
+**Modified files:**
+- _(none)_
+
+### Review Findings
+
+- [x] [Review][Patch] Rollback comment uses plain `DROP INDEX` — missing `IF EXISTS` guards on both new indexes [`supabase/migrations/20260620000000_ambient_lumi_thread_constraints.sql:31-32`]
+- [x] [Review][Patch] Spec filename field still shows `20260601000000`; actual file is `20260620000000` — update spec to match [`_bmad-output/implementation-artifacts/12-4-...:149`]
+- [x] [Review][Defer] `ThreadRepository.findActiveThreadByHousehold()` filters by modality for all types — Story 12.5 adds `LumiRepository.findActiveAmbientThread()` (modality-agnostic) which is the correct lookup for ambient types; base method remains a trap for future callers [`apps/api/src/modules/threads/thread.repository.ts:59-74`] — deferred, pre-existing
+- [x] [Review][Defer] `createThread` comment still names the dropped `threads_one_active_per_household_type_modality` index — stale documentation, out of scope for an index-only migration; update when Story 12.5 modifies the method signature [`apps/api/src/modules/threads/thread.repository.ts:41-44`] — deferred, pre-existing
+- [x] [Review][Defer] No `CREATE INDEX CONCURRENTLY` — takes ShareLock during build; can't use CONCURRENTLY inside Supabase transaction-wrapped migrations; acceptable at current table size [`supabase/migrations/20260620000000_ambient_lumi_thread_constraints.sql:42-51`] — deferred, pre-existing
+
+### Change Log
+
+| Date       | Change                                                                                                                       |
+| ---------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| 2026-05-01 | Code review complete — 2 patches, 3 deferred, 11 dismissed. Status remains `review` until patches applied. |
+| 2026-04-30 | Implemented Story 12.4 — replace the all-types modality-discriminated unique index with two narrow partial indexes (onboarding-specific modality index + ambient-type modality-agnostic index). Index-only migration; no app code changes. Status → review. |
+
