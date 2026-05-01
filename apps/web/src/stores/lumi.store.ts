@@ -112,6 +112,7 @@ export const useLumiStore = create<LumiState & LumiActions>()((set) => ({
       voiceStatus: 'idle',
       isSpeaking: false,
       voiceError: null,
+      panelMode: 'text',
     }),
 
   setNudge: (turn) => set({ pendingNudge: turn }),
