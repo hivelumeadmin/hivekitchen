@@ -8,6 +8,9 @@ import type Redis from 'ioredis';
 import type { Queue, Worker, Processor } from 'bullmq';
 import type { Env } from '../common/env.js';
 import type { AuditWriteInput } from '../audit/audit.types.js';
+import type { AuditService } from '../audit/audit.service.js';
+import type { MemoryService } from '../modules/memory/memory.service.js';
+import type { AllergyGuardrailService } from '../modules/allergy-guardrail/allergy-guardrail.service.js';
 
 interface BullMQFacade {
   getQueue(name: string): Queue;
@@ -25,6 +28,9 @@ declare module 'fastify' {
     twilio: Twilio;
     redis: Redis;
     bullmq: BullMQFacade;
+    auditService: AuditService;
+    memoryService: MemoryService;
+    allergyGuardrailService: AllergyGuardrailService;
   }
 
   interface FastifyRequest {
