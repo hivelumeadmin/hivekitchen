@@ -6,6 +6,9 @@ import { AuditService } from '../audit/audit.service.js';
 const auditHookPlugin: FastifyPluginAsync = async (fastify) => {
   const repository = new AuditRepository(fastify.supabase);
   const service = new AuditService(repository);
+  if (!fastify.hasDecorator('auditService')) {
+    fastify.decorate('auditService', service);
+  }
 
   fastify.addHook('onResponse', async (request) => {
     const ctx = request.auditContext;

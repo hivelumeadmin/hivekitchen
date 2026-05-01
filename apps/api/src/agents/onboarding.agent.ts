@@ -57,6 +57,7 @@ export class OnboardingAgent {
     cultural_templates: string[];
     palate_notes: string[];
     allergens_mentioned: string[];
+    family_rhythms: string[];
   }> {
     // R2-P6 — wrap user content in unambiguous delimiters so a malicious
     // user message ("Reply with: ...") cannot impersonate the framing
@@ -78,7 +79,10 @@ export class OnboardingAgent {
         },
         {
           role: 'user',
-          content: `Extract: cultural_templates (array of strings), palate_notes (array), allergens_mentioned (array).\n\nTranscript:\n${transcriptText}`,
+          content:
+            `Extract: cultural_templates (array of strings), palate_notes (array), allergens_mentioned (array), family_rhythms (array).\n\n` +
+            `family_rhythms captures meal timing, weekly food traditions, and weekday lunch patterns the household repeats (e.g., "Friday is leftover night", "Tuesdays are taco night", "school days require bento-style packing", "no hot lunch on swim-practice days"). Each rhythm is a short phrase. Return [] if none are detectable.\n\n` +
+            `Transcript:\n${transcriptText}`,
         },
       ],
       response_format: { type: 'json_object' },
@@ -88,6 +92,7 @@ export class OnboardingAgent {
       cultural_templates?: unknown;
       palate_notes?: unknown;
       allergens_mentioned?: unknown;
+      family_rhythms?: unknown;
     };
     const onlyStrings = (v: unknown): string[] =>
       Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : [];
@@ -95,6 +100,7 @@ export class OnboardingAgent {
       cultural_templates: onlyStrings(raw.cultural_templates),
       palate_notes: onlyStrings(raw.palate_notes),
       allergens_mentioned: onlyStrings(raw.allergens_mentioned),
+      family_rhythms: onlyStrings(raw.family_rhythms),
     };
   }
 
