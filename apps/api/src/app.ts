@@ -13,6 +13,8 @@ import { isDomainError } from './common/errors.js';
 import { otelPlugin } from './plugins/otel.plugin.js';
 import { requestIdPlugin } from './middleware/request-id.hook.js';
 import { auditHook } from './middleware/audit.hook.js';
+import { memoryHook } from './modules/memory/memory.hook.js';
+import { allergyGuardrailHook } from './modules/allergy-guardrail/allergy-guardrail.hook.js';
 import { authenticateHook } from './middleware/authenticate.hook.js';
 import { householdScopeHook } from './middleware/household-scope.hook.js';
 import { vaultPlugin } from './plugins/vault.plugin.js';
@@ -35,6 +37,8 @@ import { onboardingRoutes } from './modules/onboarding/onboarding.routes.js';
 import { complianceRoutes } from './modules/compliance/compliance.routes.js';
 import { childrenRoutes } from './modules/children/children.routes.js';
 import { culturalPriorRoutes } from './modules/cultural-priors/cultural-prior.routes.js';
+import { householdsRoutes } from './modules/households/households.routes.js';
+import { lumiRoutes } from './modules/lumi/lumi.routes.js';
 
 const REQUEST_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -83,6 +87,8 @@ export async function buildApp(opts: BuildAppOptions) {
   await app.register(bullmqPlugin);
 
   await app.register(auditHook);
+  await app.register(memoryHook);
+  await app.register(allergyGuardrailHook);
   await app.register(auditPartitionRotationPlugin);
 
   await app.register(cookie);
@@ -146,6 +152,8 @@ export async function buildApp(opts: BuildAppOptions) {
   await app.register(complianceRoutes);
   await app.register(childrenRoutes);
   await app.register(culturalPriorRoutes);
+  await app.register(householdsRoutes);
+  await app.register(lumiRoutes, { prefix: '/v1/lumi' });
 
   return app;
 }

@@ -16,6 +16,11 @@ import {
   CreatePlanResponse,
   AllergyVerdict,
   PlanUpdatedEvent,
+  ConflictSchema,
+  GuardrailResultSchema,
+  PlanItemForGuardrailSchema,
+  AllergyCheckInputSchema,
+  AllergyCheckOutputSchema,
   GroceryItem,
   GroceryList,
   Turn,
@@ -39,6 +44,12 @@ import {
   InvalidationEvent,
   ForgetRequest,
   ForgetCompletedEvent,
+  NodeTypeSchema,
+  SourceTypeSchema,
+  MemoryNodeSchema,
+  MemoryProvenanceSchema,
+  MemoryNoteInputSchema,
+  MemoryNoteOutputSchema,
   SurfaceKind,
   PresenceEvent,
   ErrorCode,
@@ -115,6 +126,13 @@ export type CreatePlanResponse = z.infer<typeof CreatePlanResponse>;
 export type AllergyVerdict = z.infer<typeof AllergyVerdict>;
 export type PlanUpdatedEvent = z.infer<typeof PlanUpdatedEvent>;
 
+// Allergy guardrail (Story 3.1)
+export type Conflict = z.infer<typeof ConflictSchema>;
+export type GuardrailResult = z.infer<typeof GuardrailResultSchema>;
+export type PlanItemForGuardrail = z.infer<typeof PlanItemForGuardrailSchema>;
+export type AllergyCheckInput = z.infer<typeof AllergyCheckInputSchema>;
+export type AllergyCheckOutput = z.infer<typeof AllergyCheckOutputSchema>;
+
 // Lists
 export type GroceryItem = z.infer<typeof GroceryItem>;
 export type GroceryList = z.infer<typeof GroceryList>;
@@ -147,6 +165,14 @@ export type InvalidationEvent = z.infer<typeof InvalidationEvent>;
 // Memory
 export type ForgetRequest = z.infer<typeof ForgetRequest>;
 export type ForgetCompletedEvent = z.infer<typeof ForgetCompletedEvent>;
+
+// Memory (Story 2.13 — visible memory write primitives)
+export type NodeType = z.infer<typeof NodeTypeSchema>;
+export type SourceType = z.infer<typeof SourceTypeSchema>;
+export type MemoryNode = z.infer<typeof MemoryNodeSchema>;
+export type MemoryProvenance = z.infer<typeof MemoryProvenanceSchema>;
+export type MemoryNoteInput = z.infer<typeof MemoryNoteInputSchema>;
+export type MemoryNoteOutput = z.infer<typeof MemoryNoteOutputSchema>;
 
 // Presence
 export type SurfaceKind = z.infer<typeof SurfaceKind>;
