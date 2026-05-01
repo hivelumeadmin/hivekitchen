@@ -7,6 +7,7 @@ export const AUDIT_EVENT_TYPES = [
   // memory
   'memory.forgotten',
   'memory.updated',
+  'memory.seeded',
   // heart_note
   'heart_note.sent',
   'heart_note.delivered',
@@ -64,6 +65,10 @@ export const AUDIT_EVENT_TYPES = [
   'child.bag_updated',
   // cultural
   'template.state_changed',
+  // onboarding
+  'onboarding.mental_model_shown',
+  // tile
+  'tile.edit_retried',
 ] as const;
 
 export type AuditEventType = (typeof AUDIT_EVENT_TYPES)[number];

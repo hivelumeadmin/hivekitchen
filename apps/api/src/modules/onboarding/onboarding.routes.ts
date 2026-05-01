@@ -27,6 +27,7 @@ const onboardingRoutesPlugin: FastifyPluginAsync = async (fastify) => {
     agent,
     culturalPriorService,
     logger: fastify.log,
+    memoryService: fastify.memoryService,
   });
 
   // R2-D3 — onboarding authors the household's cultural template, palate
@@ -81,6 +82,27 @@ const onboardingRoutesPlugin: FastifyPluginAsync = async (fastify) => {
         householdId: request.user.household_id,
       });
       return result;
+    },
+  );
+
+  // Story 2.14 — fire-and-forget breadcrumb that the no-approval mental-model
+  // copy was actually shown to the parent at the end of onboarding (UX-DR65).
+  // Non-mechanism audit: a swallowed write is fine — the screen still rendered
+  // and the user moved on. Fired via the audit hook (onResponse), so the 204
+  // returns regardless of audit outcome. No request body — the mere presence
+  // of the call is the signal.
+  fastify.post(
+    '/v1/onboarding/mental-model-shown',
+    { preHandler: requirePrimaryParent },
+    async (request, reply) => {
+      request.auditContext = {
+        event_type: 'onboarding.mental_model_shown',
+        user_id: request.user.id,
+        household_id: request.user.household_id,
+        request_id: request.id,
+        metadata: {},
+      };
+      return reply.code(204).send();
     },
   );
 };

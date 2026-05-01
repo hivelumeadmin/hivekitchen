@@ -43,6 +43,54 @@ export class HouseholdsRepository extends BaseRepository {
       .eq('id', householdId);
     if (error) throw error;
   }
+
+  // Story 2.14 — anxiety-leakage flag. Server-written only; the Plan Tile
+  // component (Epic 3) reads this to decide whether to render a "saved just
+  // now" pip after edits during the first 14 days.
+  async getTileGhostFlag(householdId: string): Promise<boolean> {
+    const { data, error } = await this.client
+      .from('households')
+      .select('tile_ghost_timestamp_enabled')
+      .eq('id', householdId)
+      .maybeSingle();
+    if (error) throw error;
+    return (data as { tile_ghost_timestamp_enabled: boolean } | null)
+      ?.tile_ghost_timestamp_enabled ?? false;
+  }
+
+  async setTileGhostFlag(householdId: string): Promise<void> {
+    const { data, error } = await this.client
+      .from('households')
+      .update({
+        tile_ghost_timestamp_enabled: true,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', householdId)
+      .select('id')
+      .maybeSingle();
+    if (error) throw error;
+    if (data === null) {
+      throw new Error(`household not found: ${householdId}`);
+    }
+  }
+
+  // Returns household age in milliseconds (now - created_at). Used by the
+  // tile-retry route to gate the ghost-timestamp escalation to week 1–2.
+  // Throws if the household row is missing — no silent zero fallback that
+  // could mis-classify an unknown household as fresh.
+  async getHouseholdAge(householdId: string): Promise<number> {
+    const { data, error } = await this.client
+      .from('households')
+      .select('created_at')
+      .eq('id', householdId)
+      .maybeSingle();
+    if (error) throw error;
+    const row = data as { created_at: string } | null;
+    if (row === null) {
+      throw new Error(`household not found: ${householdId}`);
+    }
+    return Date.now() - new Date(row.created_at).getTime();
+  }
 }
 
 export function decryptCaregiverRelationships(

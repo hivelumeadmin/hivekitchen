@@ -29,9 +29,27 @@ export const TextOnboardingFinalizeResponseSchema = z.object({
     cultural_templates: z.array(z.string()),
     palate_notes: z.array(z.string()),
     allergens_mentioned: z.array(z.string()),
+    family_rhythms: z.array(z.string()).optional(),
   }),
+});
+
+// Story 2.14 — POST /v1/households/tile-retry — anxiety-leakage telemetry.
+// edit_key groups retries that are conceptually the same edit (e.g. a single
+// per-day swap). 3 retries within 60s on the same edit_key in the week-1–2
+// window flips the household-level ghost-timestamp flag.
+export const TileRetryRequestSchema = z.object({
+  tile_id: z.string().min(1).max(255),
+  edit_key: z.string().min(1).max(255),
+  timestamp_ms: z
+    .number()
+    .int()
+    .positive()
+    .refine((v) => Math.abs(v - Date.now()) < 300_000, {
+      message: 'timestamp_ms must be within 5 minutes of current time',
+    }),
 });
 
 export type TextOnboardingTurnRequest = z.infer<typeof TextOnboardingTurnRequestSchema>;
 export type TextOnboardingTurnResponse = z.infer<typeof TextOnboardingTurnResponseSchema>;
 export type TextOnboardingFinalizeResponse = z.infer<typeof TextOnboardingFinalizeResponseSchema>;
+export type TileRetryRequest = z.infer<typeof TileRetryRequestSchema>;

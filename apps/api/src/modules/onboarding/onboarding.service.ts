@@ -4,6 +4,7 @@ import { ConflictError, UpstreamError } from '../../common/errors.js';
 import { stripExpressionTags } from '../../common/strip-expression-tags.js';
 import type { OnboardingAgent, LlmMessage } from '../../agents/onboarding.agent.js';
 import type { CulturalPriorService } from '../cultural-priors/cultural-prior.service.js';
+import type { MemoryService } from '../memory/memory.service.js';
 import {
   isUniqueViolation,
   type ThreadRepository,
@@ -16,6 +17,7 @@ export interface OnboardingServiceDeps {
   agent: OnboardingAgent;
   culturalPriorService: CulturalPriorService;
   logger: FastifyBaseLogger;
+  memoryService?: MemoryService;
 }
 
 export interface SubmitTextTurnInput {
@@ -38,6 +40,7 @@ export interface FinalizeTextOnboardingResult {
     cultural_templates: string[];
     palate_notes: string[];
     allergens_mentioned: string[];
+    family_rhythms: string[];
   };
 }
 
@@ -61,12 +64,14 @@ export class OnboardingService {
   private readonly agent: OnboardingAgent;
   private readonly culturalPriorService: CulturalPriorService;
   private readonly logger: FastifyBaseLogger;
+  private readonly memoryService?: MemoryService;
 
   constructor(deps: OnboardingServiceDeps) {
     this.threads = deps.threads;
     this.agent = deps.agent;
     this.culturalPriorService = deps.culturalPriorService;
     this.logger = deps.logger;
+    this.memoryService = deps.memoryService;
   }
 
   async submitTextTurn(input: SubmitTextTurnInput): Promise<SubmitTextTurnResult> {
@@ -288,11 +293,13 @@ export class OnboardingService {
         cultural_templates?: unknown;
         palate_notes?: unknown;
         allergens_mentioned?: unknown;
+        family_rhythms?: unknown;
       };
       const summary = {
         cultural_templates: onlyStrings(payload.cultural_templates),
         palate_notes: onlyStrings(payload.palate_notes),
         allergens_mentioned: onlyStrings(payload.allergens_mentioned),
+        family_rhythms: onlyStrings(payload.family_rhythms),
       };
       await this.threads.closeThread(thread.id);
       return { thread_id: thread.id, summary };
@@ -365,8 +372,9 @@ export class OnboardingService {
     //    events are not voice). The DB partial unique index guarantees only
     //    one summary per thread; a concurrent finalize race surfaces as a
     //    unique-violation that we map to a clean 409.
+    let summaryTurn: TurnRow | null = null;
     try {
-      await this.threads.appendTurnNext({
+      summaryTurn = await this.threads.appendTurnNext({
         threadId: thread.id,
         role: 'system',
         body: {
@@ -406,7 +414,45 @@ export class OnboardingService {
       );
     }
 
-    // 6. Close the thread.
+    // 6. Story 2.13 — seed visible memory nodes from the disclosed onboarding
+    //    summary. Silence-mode: any failure is logged WARN and never blocks
+    //    finalize (memory tier outage must not break onboarding).
+    if (this.memoryService && summaryTurn !== null) {
+      try {
+        const { nodeCount } = await this.memoryService.seedFromOnboarding({
+          householdId: input.householdId,
+          userId: input.userId,
+          threadId: thread.id,
+          summaryTurnId: summaryTurn.id,
+          summary,
+        });
+        if (nodeCount > 0) {
+          this.logger.info(
+            {
+              module: 'onboarding',
+              action: 'onboarding.memory_seeded',
+              household_id: input.householdId,
+              thread_id: thread.id,
+              node_count: nodeCount,
+            },
+            'memory nodes seeded from onboarding',
+          );
+        }
+      } catch (err) {
+        this.logger.warn(
+          {
+            err,
+            module: 'onboarding',
+            action: 'onboarding.memory_seed_failed',
+            household_id: input.householdId,
+            thread_id: thread.id,
+          },
+          'memory seed failed during finalize — silence-mode fallback',
+        );
+      }
+    }
+
+    // 7. Close the thread.
     await this.threads.closeThread(thread.id);
 
     this.logger.info(

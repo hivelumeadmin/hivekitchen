@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useScope } from '@hivekitchen/ui';
 import { useAuthStore } from '@/stores/auth.store.js';
@@ -6,8 +6,15 @@ import { OnboardingVoice } from '@/features/onboarding/OnboardingVoice.js';
 import { OnboardingText } from '@/features/onboarding/OnboardingText.js';
 import { OnboardingConsent } from '@/features/onboarding/OnboardingConsent.js';
 import { CulturalRatificationStep } from '@/features/onboarding/CulturalRatificationStep.js';
+import { OnboardingMentalModel } from '@/features/onboarding/OnboardingMentalModel.js';
 
-type OnboardingMode = 'select' | 'voice' | 'text' | 'consent' | 'cultural-ratification';
+type OnboardingMode =
+  | 'select'
+  | 'voice'
+  | 'text'
+  | 'consent'
+  | 'cultural-ratification'
+  | 'mental-model';
 
 export default function OnboardingPage() {
   useScope('app-scope');
@@ -15,17 +22,24 @@ export default function OnboardingPage() {
   const [mode, setMode] = useState<OnboardingMode>('select');
   const [voiceError, setVoiceError] = useState<string | null>(null);
   const householdId = useAuthStore((s) => s.user?.current_household_id ?? null);
+  const userRole = useAuthStore((s) => s.user?.role ?? null);
 
-  const handleRatificationComplete = useCallback(
-    () => void navigate('/app'),
-    [navigate],
-  );
-
+  // Onboarding is a primary-parent-only flow. Secondaries redeem an invite and
+  // land in /app directly — they should never be routed here.
   useEffect(() => {
-    if (mode === 'cultural-ratification' && householdId === null) {
+    if (userRole !== null && userRole !== 'primary_parent') {
       void navigate('/app');
     }
-  }, [mode, householdId, navigate]);
+  }, [userRole, navigate]);
+
+  // Story 2.14 — if a stale state lands at cultural-ratification with no
+  // household (race with auth), skip to the mental-model step so the parent
+  // never bypasses the no-approval copy on their way into /app.
+  useEffect(() => {
+    if (mode === 'cultural-ratification' && householdId === null) {
+      setMode('mental-model');
+    }
+  }, [mode, householdId]);
 
   if (mode === 'voice') {
     return (
@@ -88,7 +102,9 @@ export default function OnboardingPage() {
               if (householdId !== null) {
                 setMode('cultural-ratification');
               } else {
-                void navigate('/app');
+                // No household → skip cultural ratification but still show
+                // the mental-model copy before entering /app (Story 2.14).
+                setMode('mental-model');
               }
             }}
           />
@@ -107,8 +123,18 @@ export default function OnboardingPage() {
           </h1>
           <CulturalRatificationStep
             householdId={householdId}
-            onComplete={handleRatificationComplete}
+            onComplete={() => setMode('mental-model')}
           />
+        </div>
+      </main>
+    );
+  }
+
+  if (mode === 'mental-model') {
+    return (
+      <main className="min-h-screen flex items-center justify-center px-4">
+        <div className="w-full max-w-md">
+          <OnboardingMentalModel onComplete={() => void navigate('/app')} />
         </div>
       </main>
     );
