@@ -2,10 +2,12 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { FastifyBaseLogger } from 'fastify';
 import { DomainOrchestrator } from './orchestrator.js';
 import { TOOL_MANIFEST } from './tools.manifest.js';
+import type { ToolSpec } from './tools.manifest.js';
 import type { LLMProvider, LLMResponse } from './providers/llm-provider.interface.js';
 import type { AuditService } from '../audit/audit.service.js';
 import type { MemoryService } from '../modules/memory/memory.service.js';
 import type { AllergyGuardrailService } from '../modules/allergy-guardrail/allergy-guardrail.service.js';
+import { ForbiddenToolCallError } from '../common/errors.js';
 
 const HOUSEHOLD_ID = '11111111-1111-4111-8111-111111111111';
 const CHILD_ID = '22222222-2222-4222-8222-222222222222';
@@ -233,5 +235,106 @@ describe('DomainOrchestrator', () => {
 
     expect(secondary.complete).toHaveBeenCalledTimes(1);
     expect(result.content).toBe('from-secondary');
+  });
+
+  describe('allowed-tool filtering', () => {
+    function makeToolStub(name: string): ToolSpec {
+      return { name } as unknown as ToolSpec;
+    }
+
+    it('forwards only tools in the allowed set to the provider', async () => {
+      const primary = buildProvider('primary');
+      const { orchestrator } = buildOrchestrator([primary]);
+
+      const tools = [
+        makeToolStub('recipe.search'),
+        makeToolStub('memory.note'),
+        makeToolStub('allergy.check'),
+      ];
+      await orchestrator.complete('hi', tools, { model: 'gpt-4o' }, [
+        'recipe.search',
+        'allergy.check',
+      ]);
+
+      const completeMock = primary.complete as unknown as ReturnType<typeof vi.fn>;
+      const forwardedTools = completeMock.mock.calls[0]?.[1] as ToolSpec[];
+      expect(forwardedTools.map((t) => t.name)).toEqual(['recipe.search', 'allergy.check']);
+    });
+
+    it('forwards every tool when allowedTools is omitted (backward compatible)', async () => {
+      const primary = buildProvider('primary');
+      const { orchestrator } = buildOrchestrator([primary]);
+
+      const tools = [
+        makeToolStub('recipe.search'),
+        makeToolStub('memory.note'),
+        makeToolStub('allergy.check'),
+      ];
+      await orchestrator.complete('hi', tools, { model: 'gpt-4o' });
+
+      const completeMock = primary.complete as unknown as ReturnType<typeof vi.fn>;
+      const forwardedTools = completeMock.mock.calls[0]?.[1] as ToolSpec[];
+      expect(forwardedTools.map((t) => t.name)).toEqual([
+        'recipe.search',
+        'memory.note',
+        'allergy.check',
+      ]);
+    });
+
+    it('throws ForbiddenToolCallError when provider returns a tool call outside the allowed set', async () => {
+      const responseWithForbiddenCall: LLMResponse = {
+        content: null,
+        toolCalls: [{ id: 'call_1', name: 'memory.note', arguments: {} }],
+        finishReason: 'tool_calls',
+        usage: { promptTokens: 1, completionTokens: 1 },
+      };
+      const primary = buildProvider('primary', {
+        complete: vi.fn().mockResolvedValue(responseWithForbiddenCall),
+      });
+      const { orchestrator } = buildOrchestrator([primary]);
+
+      await expect(
+        orchestrator.complete(
+          'hi',
+          [makeToolStub('memory.note')],
+          { model: 'gpt-4o' },
+          ['recipe.search', 'allergy.check'],
+        ),
+      ).rejects.toBeInstanceOf(ForbiddenToolCallError);
+    });
+
+    it('does not trip the circuit breaker when ForbiddenToolCallError is thrown', async () => {
+      const responseWithForbiddenCall: LLMResponse = {
+        content: null,
+        toolCalls: [{ id: 'call_1', name: 'memory.note', arguments: {} }],
+        finishReason: 'tool_calls',
+        usage: { promptTokens: 1, completionTokens: 1 },
+      };
+      const primary = buildProvider('primary', {
+        complete: vi.fn().mockResolvedValue(responseWithForbiddenCall),
+      });
+      const secondary = buildProvider('secondary');
+      const { orchestrator, audit } = buildOrchestrator([primary, secondary]);
+
+      // 6 attempts — well past the 5-failure threshold that would trip the breaker
+      // if forbidden-tool errors were counted as provider failures.
+      for (let i = 0; i < 6; i += 1) {
+        await expect(
+          orchestrator.complete(
+            'hi',
+            [makeToolStub('memory.note')],
+            { model: 'gpt-4o' },
+            ['recipe.search', 'allergy.check'],
+          ),
+        ).rejects.toBeInstanceOf(ForbiddenToolCallError);
+      }
+
+      await Promise.resolve();
+      await Promise.resolve();
+
+      expect(orchestrator.getActiveProvider().name).toBe('primary');
+      expect(audit.write).not.toHaveBeenCalled();
+      expect(secondary.complete).not.toHaveBeenCalled();
+    });
   });
 });

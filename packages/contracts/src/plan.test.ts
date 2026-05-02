@@ -1,7 +1,8 @@
 import { describe, it, expect } from 'vitest';
-import { AllergyVerdict, PlanUpdatedEvent } from './plan.js';
+import { AllergyVerdict, PlanUpdatedEvent, WeeklyPlan } from './plan.js';
 
 const UUID1 = '00000000-0000-4000-8000-000000000001';
+const UUID2 = '00000000-0000-4000-8000-000000000002';
 
 describe('AllergyVerdict', () => {
   it('parses cleared verdict', () => {
@@ -85,5 +86,33 @@ describe('PlanUpdatedEvent', () => {
       week_id: 'not-a-uuid',
       guardrail_verdict: { verdict: 'cleared' },
     }).success).toBe(false);
+  });
+});
+
+describe('WeeklyPlan', () => {
+  const validPlan = {
+    id: UUID1,
+    weekOf: '2026-05-04',
+    status: 'draft' as const,
+    days: [
+      {
+        day: 'monday' as const,
+        meal: { id: UUID2, name: 'Rice and lentils' },
+      },
+    ],
+    promptVersion: 'v1.0.0',
+  };
+
+  it('parses a valid plan that includes promptVersion', () => {
+    expect(WeeklyPlan.safeParse(validPlan).success).toBe(true);
+  });
+
+  it('rejects a plan missing promptVersion', () => {
+    const { promptVersion: _drop, ...rest } = validPlan;
+    expect(WeeklyPlan.safeParse(rest).success).toBe(false);
+  });
+
+  it('rejects a plan with non-string promptVersion', () => {
+    expect(WeeklyPlan.safeParse({ ...validPlan, promptVersion: 1 }).success).toBe(false);
   });
 });

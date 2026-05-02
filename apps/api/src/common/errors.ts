@@ -71,6 +71,19 @@ export class NotImplementedError extends DomainError {
   readonly title = 'Not Implemented';
 }
 
+// Same readonly literal-type constraint as ParentalNoticeRequiredError below:
+// extends DomainError directly with status 403 instead of subclassing ForbiddenError.
+// instanceof ForbiddenError is false for this error; callers must use isDomainError()
+// or check error.type / error.status instead.
+export class ForbiddenToolCallError extends DomainError {
+  readonly type = '/errors/forbidden-tool-call';
+  readonly status = 403;
+  readonly title = 'Forbidden Tool Call';
+  constructor(toolName: string) {
+    super(`Tool '${toolName}' is not in this agent's allowed tool set.`);
+  }
+}
+
 // TypeScript prevents overriding `readonly` literal properties (type, title) declared
 // in a subclass (ForbiddenError). Extends DomainError directly with status = 403 to
 // achieve the same HTTP semantics. instanceof ForbiddenError is false for this error;

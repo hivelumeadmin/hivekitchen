@@ -19,6 +19,7 @@ export const WeeklyPlan = z.object({
   weekOf: z.string(),
   status: z.enum(['draft', 'confirmed']),
   days: z.array(DayPlan),
+  promptVersion: z.string(),
 });
 
 export const CreatePlanResponse = z.object({

@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import type { FastifyBaseLogger } from 'fastify';
+import { ForbiddenToolCallError } from '../common/errors.js';
 import type { AuditService } from '../audit/audit.service.js';
 import type { MemoryService } from '../modules/memory/memory.service.js';
 import type { AllergyGuardrailService } from '../modules/allergy-guardrail/allergy-guardrail.service.js';
@@ -57,19 +58,37 @@ export class DomainOrchestrator {
     prompt: string,
     tools: ToolSpec[],
     options: LLMCallOptions,
+    allowedTools?: readonly string[],
   ): Promise<LLMResponse> {
     const provider = this.providers[this.currentProviderIndex];
     if (!provider) {
       throw new Error(`No active LLM provider at index ${String(this.currentProviderIndex)}`);
     }
+
+    const effectiveTools = allowedTools
+      ? tools.filter((t) => allowedTools.includes(t.name))
+      : tools;
+
+    let result: LLMResponse;
     try {
-      const result = await provider.complete(prompt, tools, options);
+      result = await provider.complete(prompt, effectiveTools, options);
       this.breaker.recordSuccess();
-      return result;
     } catch (err) {
       this.breaker.recordFailure();
       throw err;
     }
+
+    // Validation runs AFTER recordSuccess so a forbidden-tool-call error is
+    // attributed to the agent's tool policy, not the provider's reliability.
+    if (allowedTools) {
+      for (const tc of result.toolCalls ?? []) {
+        if (!allowedTools.includes(tc.name)) {
+          throw new ForbiddenToolCallError(tc.name);
+        }
+      }
+    }
+
+    return result;
   }
 
   getActiveProvider(): LLMProvider {
