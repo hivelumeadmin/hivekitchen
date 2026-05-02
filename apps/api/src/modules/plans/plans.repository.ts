@@ -1,8 +1,11 @@
 import { BaseRepository } from '../../repository/base.repository.js';
-import type { CommitPlanInput, PlanRow } from '@hivekitchen/types';
+import type { CommitPlanInput, PlanRow, PlanItemRow } from '@hivekitchen/types';
 
 const PLAN_COLUMNS =
   'id, household_id, week_id, revision, generated_at, guardrail_cleared_at, guardrail_version, prompt_version, created_at, updated_at';
+
+const PLAN_ITEM_COLUMNS =
+  'id, plan_id, child_id, day, slot, recipe_id, item_id, ingredients, created_at, updated_at';
 
 export class PlansRepository extends BaseRepository {
   // Presentation-bind contract: only guardrail-cleared rows ever reach the UI.
@@ -66,6 +69,18 @@ export class PlansRepository extends BaseRepository {
       .maybeSingle(); // presentation-bypass: ops-audit — plan_id lookup only, not for rendering
     if (error) throw error;
     return (data as PlanRow | null) ?? null;
+  }
+
+  // Read shape — note recipe_id / item_id are nullable here (DB returns null
+  // for unset uuid columns). Used by BriefStateComposer.refresh() to build the
+  // plan_tile_summaries projection.
+  async findItemsByPlanId(planId: string): Promise<PlanItemRow[]> {
+    const { data, error } = await this.client
+      .from('plan_items')
+      .select(PLAN_ITEM_COLUMNS)
+      .eq('plan_id', planId);
+    if (error) throw error;
+    return (data ?? []) as PlanItemRow[];
   }
 
   // Atomic write: plan row + plan_items + guardrail_cleared_at + guardrail_version

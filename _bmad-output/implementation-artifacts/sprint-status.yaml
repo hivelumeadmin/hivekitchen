@@ -1,5 +1,5 @@
 # generated: 2026-04-23
-# last_updated: 2026-05-02 (Story 3-5 done — code review complete, 8 patches applied)
+# last_updated: 2026-05-02 (Story 3-6 done — code review complete, 4 patches applied)
 # project: hivekitchen
 # project_key: NOKEY
 # tracking_system: file-system
@@ -35,7 +35,7 @@
 # - Dev moves story to 'review', then runs code-review (fresh context, different LLM recommended)
 
 generated: 2026-04-23
-last_updated: 2026-05-02 (Story 3-5 done — code review complete, 8 patches applied)
+last_updated: 2026-05-02 (Story 3-6 done — code review complete, 4 patches applied)
 project: hivekitchen
 project_key: NOKEY
 tracking_system: file-system
@@ -89,7 +89,7 @@ development_status:
   3-3-planner-specialist-agent-planner-prompt-ts-versioned: done
   3-4-agent-tools-recipe-memory-pantry-plan-allergy-cultural-registered-with-maxlatencyms: done
   3-5-plan-repository-revision-versioning-presentation-bind-contract: done
-  3-6-brief-state-projection-writer: backlog
+  3-6-brief-state-projection-writer: done
   3-7-plan-generation-bullmq-job-with-per-tz-schedule: backlog
   3-8-briefcanvas-momentheadline-luminote-components: backlog
   3-9-plantile-component-with-all-states-variants: backlog

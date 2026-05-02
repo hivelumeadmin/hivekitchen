@@ -150,3 +150,53 @@ export const PlanRowSchema = z.object({
   created_at: z.string().datetime(),
   updated_at: z.string().datetime(),
 });
+
+// --- Story 3.6 — brief_state projection schemas ---
+// PlanItemRow is the read shape returned by PlansRepository.findItemsByPlanId().
+// It differs from PlanItemWriteSchema: recipe_id / item_id are nullable here
+// because the DB returns null (not undefined) for unset uuid columns.
+export const PlanItemRowSchema = z.object({
+  id: z.string().uuid(),
+  plan_id: z.string().uuid(),
+  child_id: z.string().uuid(),
+  day: z.enum(['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday']),
+  slot: z.string().min(1).max(SLOT_MAX),
+  recipe_id: z.string().uuid().nullable(),
+  item_id: z.string().uuid().nullable(),
+  ingredients: z.array(z.string().min(1)),
+  created_at: z.string().datetime(),
+  updated_at: z.string().datetime(),
+});
+
+// PlanTileItemSchema is the per-child-slot entry within a day's tile.
+// recipe_id / item_id are optional because the plan item may not have them
+// resolved yet (real recipe resolution lands in Story 3.7).
+const PlanTileItemSchema = z.object({
+  child_id: z.string().uuid(),
+  slot: z.string().min(1).max(SLOT_MAX),
+  ingredients: z.array(z.string().min(1)),
+  recipe_id: z.string().uuid().optional(),
+  item_id: z.string().uuid().optional(),
+});
+
+export const PlanTileSummarySchema = z.object({
+  day: z.enum(['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday']),
+  items: z.array(PlanTileItemSchema),
+});
+
+export const BriefStateRowSchema = z.object({
+  household_id: z.string().uuid(),
+  moment_headline: z.string(),
+  lumi_note: z.string(),
+  memory_prose: z.string(),
+  plan_tile_summaries: z.array(PlanTileSummarySchema),
+  generated_at: z.string().datetime(),
+  plan_revision: z.number().int().min(0),
+  updated_at: z.string().datetime(),
+});
+
+// API response for GET /v1/households/:id/brief.
+// brief is null when no projection exists yet (no plan committed for this household).
+export const BriefResponseSchema = z.object({
+  brief: BriefStateRowSchema.nullable(),
+});

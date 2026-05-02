@@ -4,7 +4,10 @@ import { GuardrailRejectionError, NotImplementedError } from '../../common/error
 import type { AllergyGuardrailService } from '../allergy-guardrail/allergy-guardrail.service.js';
 import type { AuditService } from '../../audit/audit.service.js';
 import type { PlansRepository } from './plans.repository.js';
+import type { BriefStateRepository } from './brief-state.repository.js';
+import type { BriefStateComposer } from './brief-state.composer.js';
 import type {
+  BriefStateRow,
   CommitPlanInput,
   GuardrailResult,
   PlanComposeInput,
@@ -14,6 +17,8 @@ import type {
 
 export interface PlansServiceDeps {
   repository: PlansRepository;
+  briefStateRepository: BriefStateRepository;
+  briefStateComposer: BriefStateComposer;
   allergyGuardrail: AllergyGuardrailService;
   auditService: AuditService;
   logger: FastifyBaseLogger;
@@ -23,15 +28,26 @@ const MAX_GUARDRAIL_RETRIES = 3;
 
 export class PlansService {
   private readonly repo: PlansRepository;
+  private readonly briefStateRepo: BriefStateRepository;
+  private readonly briefStateComposer: BriefStateComposer;
   private readonly allergyGuardrail: AllergyGuardrailService;
   private readonly auditService: AuditService;
   private readonly logger: FastifyBaseLogger;
 
   constructor(deps: PlansServiceDeps) {
     this.repo = deps.repository;
+    this.briefStateRepo = deps.briefStateRepository;
+    this.briefStateComposer = deps.briefStateComposer;
     this.allergyGuardrail = deps.allergyGuardrail;
     this.auditService = deps.auditService;
     this.logger = deps.logger;
+  }
+
+  // Single-row read from brief_state. Never composes at request time
+  // (architecture §1.5). Returns null when no plan has been committed yet —
+  // the frontend renders an empty/skeleton state.
+  async getBrief(householdId: string): Promise<BriefStateRow | null> {
+    return this.briefStateRepo.findByHousehold(householdId);
   }
 
   // Stub until Story 3.7 wires the BullMQ job that calls the planner agent.
@@ -80,6 +96,15 @@ export class PlansService {
       if (result.verdict === 'cleared') {
         const clearedAt = new Date().toISOString();
         await this.repo.commit(current, clearedAt, GUARDRAIL_VERSION);
+
+        // Refresh the brief_state projection — the composer swallows its own
+        // errors, so awaiting here is safe and keeps the commit → projection
+        // → audit sequence ordered.
+        await this.briefStateComposer.refresh(
+          current.household_id,
+          current.week_id,
+          requestId,
+        );
 
         try {
           await this.auditService.write({

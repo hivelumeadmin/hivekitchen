@@ -8,6 +8,10 @@ import {
   PlanItemWriteSchema,
   CommitPlanInputSchema,
   PlanRowSchema,
+  PlanItemRowSchema,
+  PlanTileSummarySchema,
+  BriefStateRowSchema,
+  BriefResponseSchema,
 } from './plan.js';
 
 const UUID1 = '00000000-0000-4000-8000-000000000001';
@@ -303,5 +307,143 @@ describe('PlanRowSchema', () => {
     expect(
       PlanRowSchema.safeParse({ ...validRow, guardrail_cleared_at: 'cleared' }).success,
     ).toBe(false);
+  });
+});
+
+describe('PlanItemRowSchema', () => {
+  const validRow = {
+    id: '00000000-0000-4000-8000-000000000010',
+    plan_id: UUID1,
+    child_id: UUID2,
+    day: 'monday',
+    slot: 'main',
+    recipe_id: '00000000-0000-4000-8000-000000000011',
+    item_id: '00000000-0000-4000-8000-000000000012',
+    ingredients: ['rice', 'lentils'],
+    created_at: '2026-05-02T11:00:00.000Z',
+    updated_at: '2026-05-02T11:00:01.000Z',
+  };
+
+  it('round-trips a valid row', () => {
+    expect(PlanItemRowSchema.safeParse(validRow).success).toBe(true);
+  });
+
+  it('accepts null recipe_id and item_id', () => {
+    expect(
+      PlanItemRowSchema.safeParse({ ...validRow, recipe_id: null, item_id: null }).success,
+    ).toBe(true);
+  });
+
+  it('rejects missing plan_id', () => {
+    const { plan_id: _drop, ...rest } = validRow;
+    expect(PlanItemRowSchema.safeParse(rest).success).toBe(false);
+  });
+});
+
+describe('PlanTileSummarySchema', () => {
+  const validSummary = {
+    day: 'monday',
+    items: [
+      { child_id: UUID1, slot: 'main', ingredients: ['rice'] },
+      {
+        child_id: UUID2,
+        slot: 'main',
+        ingredients: ['rice'],
+        recipe_id: '00000000-0000-4000-8000-000000000020',
+      },
+    ],
+  };
+
+  it('round-trips a valid summary', () => {
+    expect(PlanTileSummarySchema.safeParse(validSummary).success).toBe(true);
+  });
+
+  it('accepts saturday as a valid school day', () => {
+    expect(
+      PlanTileSummarySchema.safeParse({ ...validSummary, day: 'saturday' }).success,
+    ).toBe(true);
+  });
+
+  it('rejects unknown day value', () => {
+    expect(
+      PlanTileSummarySchema.safeParse({ ...validSummary, day: 'sunday' }).success,
+    ).toBe(false);
+  });
+
+  it('rejects an item with empty-string ingredient', () => {
+    expect(
+      PlanTileSummarySchema.safeParse({
+        day: 'monday',
+        items: [{ child_id: UUID1, slot: 'main', ingredients: [''] }],
+      }).success,
+    ).toBe(false);
+  });
+});
+
+describe('BriefStateRowSchema', () => {
+  const validRow = {
+    household_id: UUID1,
+    moment_headline: '',
+    lumi_note: '',
+    memory_prose: '',
+    plan_tile_summaries: [
+      {
+        day: 'monday' as const,
+        items: [{ child_id: UUID2, slot: 'main', ingredients: ['rice'] }],
+      },
+    ],
+    generated_at: '2026-05-02T11:00:00.000Z',
+    plan_revision: 1,
+    updated_at: '2026-05-02T11:00:01.000Z',
+  };
+
+  it('round-trips a valid row with empty plan_tile_summaries', () => {
+    expect(
+      BriefStateRowSchema.safeParse({ ...validRow, plan_tile_summaries: [] }).success,
+    ).toBe(true);
+  });
+
+  it('round-trips a valid row with a populated tile', () => {
+    expect(BriefStateRowSchema.safeParse(validRow).success).toBe(true);
+  });
+
+  it('rejects an invalid tile inside plan_tile_summaries', () => {
+    expect(
+      BriefStateRowSchema.safeParse({
+        ...validRow,
+        plan_tile_summaries: [{ day: 'unknown', items: [] }],
+      }).success,
+    ).toBe(false);
+  });
+
+  it('rejects negative plan_revision', () => {
+    expect(
+      BriefStateRowSchema.safeParse({ ...validRow, plan_revision: -1 }).success,
+    ).toBe(false);
+  });
+});
+
+describe('BriefResponseSchema', () => {
+  const validBriefRow = {
+    household_id: UUID1,
+    moment_headline: '',
+    lumi_note: '',
+    memory_prose: '',
+    plan_tile_summaries: [],
+    generated_at: '2026-05-02T11:00:00.000Z',
+    plan_revision: 0,
+    updated_at: '2026-05-02T11:00:01.000Z',
+  };
+
+  it('accepts a null brief (no projection committed yet)', () => {
+    expect(BriefResponseSchema.safeParse({ brief: null }).success).toBe(true);
+  });
+
+  it('accepts a populated brief row', () => {
+    expect(BriefResponseSchema.safeParse({ brief: validBriefRow }).success).toBe(true);
+  });
+
+  it('rejects a missing brief field', () => {
+    expect(BriefResponseSchema.safeParse({}).success).toBe(false);
   });
 });

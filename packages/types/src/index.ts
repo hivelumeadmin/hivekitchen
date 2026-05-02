@@ -122,6 +122,10 @@ import {
   PlanItemWriteSchema,
   CommitPlanInputSchema,
   PlanRowSchema,
+  PlanItemRowSchema,
+  PlanTileSummarySchema,
+  BriefStateRowSchema,
+  BriefResponseSchema,
 } from '@hivekitchen/contracts';
 
 // Auth
@@ -301,3 +305,9 @@ export type CulturalLookupOutput = z.infer<typeof CulturalLookupOutputSchema>;
 export type PlanItemWrite = z.infer<typeof PlanItemWriteSchema>;
 export type CommitPlanInput = z.infer<typeof CommitPlanInputSchema>;
 export type PlanRow = z.infer<typeof PlanRowSchema>;
+
+// brief_state projection (Story 3.6)
+export type PlanItemRow = z.infer<typeof PlanItemRowSchema>;
+export type PlanTileSummary = z.infer<typeof PlanTileSummarySchema>;
+export type BriefStateRow = z.infer<typeof BriefStateRowSchema>;
+export type BriefResponse = z.infer<typeof BriefResponseSchema>;

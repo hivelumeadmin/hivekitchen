@@ -2,6 +2,8 @@ import { describe, it, expect, vi } from 'vitest';
 import type { FastifyBaseLogger } from 'fastify';
 import { PlansService } from './plans.service.js';
 import type { PlansRepository } from './plans.repository.js';
+import type { BriefStateRepository } from './brief-state.repository.js';
+import type { BriefStateComposer } from './brief-state.composer.js';
 import type { AllergyGuardrailService } from '../allergy-guardrail/allergy-guardrail.service.js';
 import type { AuditService } from '../../audit/audit.service.js';
 import type { CommitPlanInput, GuardrailResult } from '@hivekitchen/types';
@@ -91,10 +93,27 @@ function buildAudit() {
   } as unknown as AuditService & { write: ReturnType<typeof vi.fn> };
 }
 
+function buildBriefStateRepo(): BriefStateRepository {
+  return {
+    findByHousehold: vi.fn().mockResolvedValue(null),
+    upsert: vi.fn().mockResolvedValue(undefined),
+  } as unknown as BriefStateRepository;
+}
+
+function buildBriefStateComposer(): BriefStateComposer & {
+  refresh: ReturnType<typeof vi.fn>;
+} {
+  return {
+    refresh: vi.fn().mockResolvedValue(undefined),
+  } as unknown as BriefStateComposer & { refresh: ReturnType<typeof vi.fn> };
+}
+
 describe('PlansService.compose', () => {
   it('throws NotImplementedError until Story 3.7 wires real composer', async () => {
     const service = new PlansService({
       repository: buildRepo(),
+      briefStateRepository: buildBriefStateRepo(),
+      briefStateComposer: buildBriefStateComposer(),
       allergyGuardrail: buildGuardrail([{ verdict: 'cleared', conflicts: [] }]),
       auditService: buildAudit(),
       logger: buildLogger(),
@@ -117,6 +136,8 @@ describe('PlansService.commit', () => {
     const audit = buildAudit();
     const service = new PlansService({
       repository: repo,
+      briefStateRepository: buildBriefStateRepo(),
+      briefStateComposer: buildBriefStateComposer(),
       allergyGuardrail: guardrail,
       auditService: audit,
       logger: buildLogger(),
@@ -155,6 +176,8 @@ describe('PlansService.commit', () => {
     const audit = buildAudit();
     const service = new PlansService({
       repository: repo,
+      briefStateRepository: buildBriefStateRepo(),
+      briefStateComposer: buildBriefStateComposer(),
       allergyGuardrail: guardrail,
       auditService: audit,
       logger: buildLogger(),
@@ -180,6 +203,8 @@ describe('PlansService.commit', () => {
     const audit = buildAudit();
     const service = new PlansService({
       repository: repo,
+      briefStateRepository: buildBriefStateRepo(),
+      briefStateComposer: buildBriefStateComposer(),
       allergyGuardrail: guardrail,
       auditService: audit,
       logger: buildLogger(),
@@ -213,6 +238,8 @@ describe('PlansService.commit', () => {
     const audit = buildAudit();
     const service = new PlansService({
       repository: repo,
+      briefStateRepository: buildBriefStateRepo(),
+      briefStateComposer: buildBriefStateComposer(),
       allergyGuardrail: guardrail,
       auditService: audit,
       logger: buildLogger(),
@@ -234,6 +261,8 @@ describe('PlansService.commit', () => {
     const audit = buildAudit();
     const service = new PlansService({
       repository: repo,
+      briefStateRepository: buildBriefStateRepo(),
+      briefStateComposer: buildBriefStateComposer(),
       allergyGuardrail: guardrail,
       auditService: audit,
       logger: buildLogger(),
@@ -265,6 +294,8 @@ describe('PlansService.commit', () => {
     const audit = buildAudit();
     const service = new PlansService({
       repository: repo,
+      briefStateRepository: buildBriefStateRepo(),
+      briefStateComposer: buildBriefStateComposer(),
       allergyGuardrail: guardrail,
       auditService: audit,
       logger: buildLogger(),
@@ -283,6 +314,8 @@ describe('PlansService.commit', () => {
     const audit = buildAudit();
     const service = new PlansService({
       repository: repo,
+      briefStateRepository: buildBriefStateRepo(),
+      briefStateComposer: buildBriefStateComposer(),
       allergyGuardrail: guardrail,
       auditService: audit,
       logger: buildLogger(),
@@ -300,6 +333,8 @@ describe('PlansService.commit', () => {
     const audit = buildAudit();
     const service = new PlansService({
       repository: repo,
+      briefStateRepository: buildBriefStateRepo(),
+      briefStateComposer: buildBriefStateComposer(),
       allergyGuardrail: guardrail,
       auditService: audit,
       logger: buildLogger(),
@@ -326,6 +361,8 @@ describe('PlansService.commit', () => {
     const audit = buildAudit();
     const service = new PlansService({
       repository: repo,
+      briefStateRepository: buildBriefStateRepo(),
+      briefStateComposer: buildBriefStateComposer(),
       allergyGuardrail: guardrail,
       auditService: audit,
       logger: buildLogger(),
@@ -347,6 +384,8 @@ describe('PlansService.commit', () => {
     const logger = buildLogger();
     const service = new PlansService({
       repository: repo,
+      briefStateRepository: buildBriefStateRepo(),
+      briefStateComposer: buildBriefStateComposer(),
       allergyGuardrail: guardrail,
       auditService: audit,
       logger,

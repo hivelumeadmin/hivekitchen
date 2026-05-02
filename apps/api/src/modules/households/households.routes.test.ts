@@ -149,6 +149,7 @@ function householdsTable(state: MockState) {
 
 interface BuildAppOpts {
   state: MockState;
+  plansService?: Partial<FastifyInstance['plansService']>;
 }
 
 async function buildTestApp(opts: BuildAppOpts): Promise<FastifyInstance> {
@@ -193,6 +194,9 @@ async function buildTestApp(opts: BuildAppOpts): Promise<FastifyInstance> {
     void reply.status(500).send({ type: '/errors/internal', status: 500 });
   });
 
+  if (opts.plansService) {
+    app.decorate('plansService', opts.plansService as unknown as FastifyInstance['plansService']);
+  }
   await app.register(householdsRoutes);
   await app.ready();
   return app;
@@ -416,5 +420,59 @@ describe('POST /v1/households/tile-retry', () => {
 
     expect(res.statusCode).toBe(400);
     expect(state.audit).toHaveLength(0);
+  });
+});
+
+describe('GET /v1/households/:householdId/brief', () => {
+  let app: FastifyInstance;
+
+  afterEach(async () => {
+    if (app) await app.close();
+  });
+
+  async function buildBriefApp(getBriefResult: unknown): Promise<FastifyInstance> {
+    return buildTestApp({
+      state: freshState(),
+      plansService: { getBrief: async (_id: string) => getBriefResult },
+    });
+  }
+
+  it('returns 200 with { brief: null } when no projection exists yet', async () => {
+    app = await buildBriefApp(null);
+    const token = signPrimary(app);
+
+    const res = await app.inject({
+      method: 'GET',
+      url: `/v1/households/${SAMPLE_HOUSEHOLD_ID}/brief`,
+      headers: { authorization: `Bearer ${token}` },
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual({ brief: null });
+  });
+
+  it('returns 403 when the JWT household_id does not match the URL param', async () => {
+    app = await buildBriefApp(null);
+    const OTHER_HOUSEHOLD = '99999999-9999-4999-8999-999999999999';
+    const token = signPrimary(app, SAMPLE_HOUSEHOLD_ID);
+
+    const res = await app.inject({
+      method: 'GET',
+      url: `/v1/households/${OTHER_HOUSEHOLD}/brief`,
+      headers: { authorization: `Bearer ${token}` },
+    });
+
+    expect(res.statusCode).toBe(403);
+  });
+
+  it('returns 401 without a token', async () => {
+    app = await buildBriefApp(null);
+
+    const res = await app.inject({
+      method: 'GET',
+      url: `/v1/households/${SAMPLE_HOUSEHOLD_ID}/brief`,
+    });
+
+    expect(res.statusCode).toBe(401);
   });
 });

@@ -486,3 +486,9 @@
 
 - **Concurrent `commit_plan` calls with the same `plan_id` can produce mixed plan_items under READ COMMITTED isolation** — current architecture serializes commits through a single API instance; advisory lock deferred to Story 3.7 when BullMQ job controls commit scheduling. [`supabase/migrations/20260502111000_create_commit_plan_function.sql`]
 - **Repository read methods cast DB response with `as PlanRow` without running `PlanRowSchema.parse()`** — pre-existing pattern across all repositories; address in a repository hardening pass when runtime schema validation is added project-wide. [`apps/api/src/modules/plans/plans.repository.ts`]
+
+## Deferred from: code review of 3-6-brief-state-projection-writer (2026-05-02)
+
+- **TOCTOU race in `BriefStateRepository.upsert()`** — read-then-write revision check is not atomic; two concurrent commits for the same household can both pass the `plan_revision >= incoming` guard and both write (last write wins). Documented in code; deferred to Story 3.7's BullMQ per-household advisory lock. [`apps/api/src/modules/plans/brief-state.repository.ts:35-47`]
+- **`plansService` decorator missing startup guard in `householdsRoutes`** — `fastify.plansService.getBrief()` is called at request time with no `hasDecorator()` guard at plugin boot. Registration order in `app.ts` is the implicit contract; add startup validation if plugin registration order ever changes. [`apps/api/src/modules/households/households.routes.ts:149`]
+- **`generated_at` uses Node.js process clock, not DB `now()`** — application-side timestamp is benign at single-instance scale but could produce skewed ordering in multi-instance deployments. Address in a hardening pass when horizontal scaling is introduced. [`apps/api/src/modules/plans/brief-state.composer.ts:72`]

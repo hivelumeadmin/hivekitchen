@@ -1,10 +1,12 @@
 import { Buffer } from 'node:buffer';
 import fp from 'fastify-plugin';
 import type { FastifyPluginAsync } from 'fastify';
-import { TileRetryRequestSchema } from '@hivekitchen/contracts';
+import { z } from 'zod';
+import { BriefResponseSchema, TileRetryRequestSchema } from '@hivekitchen/contracts';
 import type { TileRetryRequest } from '@hivekitchen/contracts';
 import { AuditRepository } from '../../audit/audit.repository.js';
 import { AuditService } from '../../audit/audit.service.js';
+import { ForbiddenError } from '../../common/errors.js';
 import { authorize } from '../../middleware/authorize.hook.js';
 import { HouseholdsRepository } from './households.repository.js';
 
@@ -121,6 +123,31 @@ const householdsRoutesPlugin: FastifyPluginAsync = async (fastify) => {
       }
 
       return reply.code(204).send();
+    },
+  );
+
+  // GET /v1/households/:householdId/brief — single-row read from the
+  // brief_state projection. Never composes at request time
+  // (architecture §1.5). Returns { brief: null } when no plan has been
+  // committed yet.
+  const requireParentOrCaregiver = authorize(['primary_parent', 'secondary_caregiver']);
+
+  fastify.get(
+    '/v1/households/:householdId/brief',
+    {
+      preHandler: requireParentOrCaregiver,
+      schema: {
+        params: z.object({ householdId: z.string().uuid() }),
+        response: { 200: BriefResponseSchema },
+      },
+    },
+    async (request) => {
+      const { householdId } = request.params as { householdId: string };
+      if (householdId !== request.user.household_id) {
+        throw new ForbiddenError('Cannot access another household brief');
+      }
+      const brief = await fastify.plansService.getBrief(householdId);
+      return { brief };
     },
   );
 };

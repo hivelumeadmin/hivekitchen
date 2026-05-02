@@ -12,6 +12,7 @@ import type { AuditService } from '../audit/audit.service.js';
 import type { MemoryService } from '../modules/memory/memory.service.js';
 import type { AllergyGuardrailService } from '../modules/allergy-guardrail/allergy-guardrail.service.js';
 import type { PlansService } from '../modules/plans/plans.service.js';
+import type { BriefStateComposer } from '../modules/plans/brief-state.composer.js';
 import type { DomainOrchestrator } from '../agents/orchestrator.js';
 
 interface BullMQFacade {
@@ -34,6 +35,7 @@ declare module 'fastify' {
     memoryService: MemoryService;
     allergyGuardrailService: AllergyGuardrailService;
     plansService: PlansService;
+    briefStateComposer: BriefStateComposer;
     orchestrator: DomainOrchestrator;
   }
 
