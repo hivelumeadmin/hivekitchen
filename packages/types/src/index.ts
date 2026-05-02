@@ -50,6 +50,9 @@ import {
   MemoryProvenanceSchema,
   MemoryNoteInputSchema,
   MemoryNoteOutputSchema,
+  MemoryRecallInputSchema,
+  MemoryRecallNodeSchema,
+  MemoryRecallOutputSchema,
   SurfaceKind,
   PresenceEvent,
   ErrorCode,
@@ -102,6 +105,20 @@ import {
   VoiceTalkSessionCreateSchema,
   VoiceTalkSessionResponseSchema,
   LumiNudgeEventSchema,
+  RecipeSearchInputSchema,
+  RecipeSearchOutputSchema,
+  RecipePreviewSchema,
+  RecipeFetchInputSchema,
+  RecipeFetchOutputSchema,
+  RecipeIngredientSchema,
+  RecipeDetailSchema,
+  PantryReadInputSchema,
+  PantryReadOutputSchema,
+  PantryItemSchema,
+  PlanComposeInputSchema,
+  PlanComposeOutputSchema,
+  CulturalLookupInputSchema,
+  CulturalLookupOutputSchema,
 } from '@hivekitchen/contracts';
 
 // Auth
@@ -173,6 +190,11 @@ export type MemoryNode = z.infer<typeof MemoryNodeSchema>;
 export type MemoryProvenance = z.infer<typeof MemoryProvenanceSchema>;
 export type MemoryNoteInput = z.infer<typeof MemoryNoteInputSchema>;
 export type MemoryNoteOutput = z.infer<typeof MemoryNoteOutputSchema>;
+
+// Memory (Story 3.4 — memory.recall read tool)
+export type MemoryRecallInput = z.infer<typeof MemoryRecallInputSchema>;
+export type MemoryRecallNode = z.infer<typeof MemoryRecallNodeSchema>;
+export type MemoryRecallOutput = z.infer<typeof MemoryRecallOutputSchema>;
 
 // Presence
 export type SurfaceKind = z.infer<typeof SurfaceKind>;
@@ -252,3 +274,22 @@ export type LumiThreadTurnsResponse = z.infer<typeof LumiThreadTurnsResponseSche
 export type VoiceTalkSessionCreate = z.infer<typeof VoiceTalkSessionCreateSchema>;
 export type VoiceTalkSessionResponse = z.infer<typeof VoiceTalkSessionResponseSchema>;
 export type LumiNudgeEvent = z.infer<typeof LumiNudgeEventSchema>;
+
+// Agent tools (Story 3.4 — recipe / pantry / plan / cultural lookup)
+export type RecipeSearchInput = z.infer<typeof RecipeSearchInputSchema>;
+export type RecipeSearchOutput = z.infer<typeof RecipeSearchOutputSchema>;
+export type RecipePreview = z.infer<typeof RecipePreviewSchema>;
+export type RecipeFetchInput = z.infer<typeof RecipeFetchInputSchema>;
+export type RecipeFetchOutput = z.infer<typeof RecipeFetchOutputSchema>;
+export type RecipeIngredient = z.infer<typeof RecipeIngredientSchema>;
+export type RecipeDetail = z.infer<typeof RecipeDetailSchema>;
+
+export type PantryReadInput = z.infer<typeof PantryReadInputSchema>;
+export type PantryReadOutput = z.infer<typeof PantryReadOutputSchema>;
+export type PantryItem = z.infer<typeof PantryItemSchema>;
+
+export type PlanComposeInput = z.infer<typeof PlanComposeInputSchema>;
+export type PlanComposeOutput = z.infer<typeof PlanComposeOutputSchema>;
+
+export type CulturalLookupInput = z.infer<typeof CulturalLookupInputSchema>;
+export type CulturalLookupOutput = z.infer<typeof CulturalLookupOutputSchema>;

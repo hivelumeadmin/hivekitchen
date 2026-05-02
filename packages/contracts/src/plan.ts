@@ -26,6 +26,18 @@ export const CreatePlanResponse = z.object({
   plan: WeeklyPlan,
 });
 
+// Story 3.4 — plan.compose tool I/O. Output IS a WeeklyPlan; aliasing rather
+// than duplicating the schema keeps intent explicit while letting future
+// WeeklyPlan changes flow through automatically.
+export const PlanComposeInputSchema = z.object({
+  household_id: z.string().uuid(),
+  week_of: z.string().date(),
+  days: z.array(DayPlan),
+  prompt_version: z.string(),
+});
+
+export const PlanComposeOutputSchema = WeeklyPlan;
+
 // --- Foundation Gate schemas ---
 
 export const AllergyVerdict = z.discriminatedUnion('verdict', [

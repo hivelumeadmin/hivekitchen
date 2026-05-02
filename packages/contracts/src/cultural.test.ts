@@ -9,6 +9,8 @@ import {
   TemplateStateChangedEventSchema,
   TemplateStateSchema,
   TierSchema,
+  CulturalLookupInputSchema,
+  CulturalLookupOutputSchema,
 } from './cultural.js';
 import { TurnBody, TurnBodyRatificationPrompt } from './thread.js';
 
@@ -29,6 +31,7 @@ const samplePrior = {
   opted_out_at: null,
   last_signal_at: '2026-04-28T10:00:00.000Z',
   created_at: '2026-04-28T10:00:00.000Z',
+  updated_at: '2026-04-28T10:00:00.000Z',
 };
 
 describe('CulturalKeySchema', () => {
@@ -201,6 +204,47 @@ describe('TurnBodyRatificationPrompt', () => {
     if (parsed.success) {
       expect(parsed.data.type).toBe('ratification_prompt');
     }
+  });
+});
+
+describe('CulturalLookupInputSchema / CulturalLookupOutputSchema', () => {
+  it('input round-trips with a uuid household_id', () => {
+    expect(CulturalLookupInputSchema.safeParse({ household_id: HOUSEHOLD_UUID }).success).toBe(
+      true,
+    );
+  });
+
+  it('input rejects non-uuid household_id', () => {
+    expect(CulturalLookupInputSchema.safeParse({ household_id: 'x' }).success).toBe(false);
+  });
+
+  it('output round-trips with one trimmed prior', () => {
+    const r = CulturalLookupOutputSchema.safeParse({
+      priors: [
+        {
+          id: PRIOR_UUID,
+          key: 'south_asian',
+          state: 'opt_in_confirmed',
+          tier: 'L1',
+          label: 'South Asian',
+        },
+      ],
+    });
+    expect(r.success).toBe(true);
+  });
+
+  it('output rejects entries missing label', () => {
+    const r = CulturalLookupOutputSchema.safeParse({
+      priors: [
+        {
+          id: PRIOR_UUID,
+          key: 'south_asian',
+          state: 'opt_in_confirmed',
+          tier: 'L1',
+        },
+      ],
+    });
+    expect(r.success).toBe(false);
   });
 });
 

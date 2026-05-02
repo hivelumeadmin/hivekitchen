@@ -476,3 +476,8 @@
   `elevenlabs.plugin.ts` and the `@elevenlabs/elevenlabs-js` dependency (keeping raw fetch), or
   migrate `VoiceService` to call methods on the SDK client and remove the raw fetch calls.
   [`apps/api/src/plugins/elevenlabs.plugin.ts`, `apps/api/src/modules/voice/voice.service.ts`]
+
+## Deferred from: code review of 3-4-agent-tools-recipe-memory-pantry-plan-allergy-cultural-registered-with-maxlatencyms (2026-05-02)
+
+- **`PlanComposeOutputSchema` requires `id` and `status` fields** — stub throws `NotImplementedError` now so harmless; Story 3.5 must ensure its real `compose()` returns a full `WeeklyPlan` with `id: UUID` and `status: 'draft'|'confirmed'`. [`plan.ts:39`, `plan.tools.ts`]
+- **`OnboardingAgent` instantiated inline in `orchestrator.hook.ts`** — creates an independent circuit-breaker/state object separate from any other `OnboardingAgent` instance. Revisit if `CulturalPriorService` gets a fastify decorator in a later story. [`orchestrator.hook.ts:42`]

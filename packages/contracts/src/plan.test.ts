@@ -1,5 +1,11 @@
 import { describe, it, expect } from 'vitest';
-import { AllergyVerdict, PlanUpdatedEvent, WeeklyPlan } from './plan.js';
+import {
+  AllergyVerdict,
+  PlanUpdatedEvent,
+  WeeklyPlan,
+  PlanComposeInputSchema,
+  PlanComposeOutputSchema,
+} from './plan.js';
 
 const UUID1 = '00000000-0000-4000-8000-000000000001';
 const UUID2 = '00000000-0000-4000-8000-000000000002';
@@ -114,5 +120,47 @@ describe('WeeklyPlan', () => {
 
   it('rejects a plan with non-string promptVersion', () => {
     expect(WeeklyPlan.safeParse({ ...validPlan, promptVersion: 1 }).success).toBe(false);
+  });
+});
+
+describe('PlanComposeInputSchema', () => {
+  const validInput = {
+    household_id: UUID1,
+    week_of: '2026-05-04',
+    days: [
+      {
+        day: 'monday' as const,
+        meal: { id: UUID2, name: 'Rice and lentils' },
+      },
+    ],
+    prompt_version: 'v1.0.0',
+  };
+
+  it('round-trips a valid input', () => {
+    expect(PlanComposeInputSchema.safeParse(validInput).success).toBe(true);
+  });
+
+  it('rejects an input with non-date week_of', () => {
+    expect(
+      PlanComposeInputSchema.safeParse({ ...validInput, week_of: 'next-week' }).success,
+    ).toBe(false);
+  });
+
+  it('rejects an input missing prompt_version', () => {
+    const { prompt_version: _drop, ...rest } = validInput;
+    expect(PlanComposeInputSchema.safeParse(rest).success).toBe(false);
+  });
+});
+
+describe('PlanComposeOutputSchema', () => {
+  it('round-trips a WeeklyPlan-shaped output', () => {
+    const r = PlanComposeOutputSchema.safeParse({
+      id: UUID1,
+      weekOf: '2026-05-04',
+      status: 'draft',
+      days: [{ day: 'monday', meal: { id: UUID2, name: 'Rice and lentils' } }],
+      promptVersion: 'v1.0.0',
+    });
+    expect(r.success).toBe(true);
   });
 });

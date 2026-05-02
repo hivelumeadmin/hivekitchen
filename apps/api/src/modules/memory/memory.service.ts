@@ -1,6 +1,11 @@
 import { randomUUID } from 'node:crypto';
 import type { FastifyBaseLogger } from 'fastify';
-import type { NodeType, MemoryNoteOutput } from '@hivekitchen/types';
+import type {
+  NodeType,
+  MemoryNoteOutput,
+  MemoryRecallInput,
+  MemoryRecallOutput,
+} from '@hivekitchen/types';
 import type { AuditService } from '../../audit/audit.service.js';
 import type { MemoryRepository } from './memory.repository.js';
 
@@ -149,6 +154,27 @@ export class MemoryService {
     }
 
     return { nodeCount };
+  }
+
+  async recall(input: MemoryRecallInput): Promise<MemoryRecallOutput> {
+    const rows = await this.repository.findNodes({
+      household_id: input.household_id,
+      facets: input.facets,
+      limit: input.limit,
+    });
+    return {
+      nodes: rows.map((n) => ({
+        node_id: n.id,
+        node_type: n.node_type,
+        facet: n.facet,
+        prose_text: n.prose_text,
+        subject_child_id: n.subject_child_id,
+        // memory_nodes does not currently store per-node confidence; provenance
+        // does. The planner's recall view treats unsourced reads as fully
+        // confident — provenance-aware confidence is a later refinement.
+        confidence: 1.0,
+      })),
+    };
   }
 
   async noteFromAgent(input: NoteFromAgentInput): Promise<MemoryNoteOutput> {

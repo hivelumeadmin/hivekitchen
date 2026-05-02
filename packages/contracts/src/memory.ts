@@ -69,3 +69,25 @@ export const MemoryNoteOutputSchema = z.object({
   node_id: z.string().uuid(),
   created_at: z.string().datetime(),
 });
+
+// Story 3.4 — memory.recall (read) tool I/O. Distinct from memory.note (write):
+// the planner reads memory but does not write it, so memory.recall is in
+// PLANNER_PROMPT.toolsAllowed while memory.note is not.
+export const MemoryRecallInputSchema = z.object({
+  household_id: z.string().uuid(),
+  facets: z.array(z.string()).optional(),
+  limit: z.number().int().min(1).max(50).default(20),
+});
+
+export const MemoryRecallNodeSchema = z.object({
+  node_id: z.string().uuid(),
+  node_type: NodeTypeSchema,
+  facet: z.string(),
+  prose_text: z.string(),
+  subject_child_id: z.string().uuid().nullable(),
+  confidence: z.number().min(0).max(1),
+});
+
+export const MemoryRecallOutputSchema = z.object({
+  nodes: z.array(MemoryRecallNodeSchema),
+});

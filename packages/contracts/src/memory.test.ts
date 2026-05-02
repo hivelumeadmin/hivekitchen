@@ -8,6 +8,8 @@ import {
   MemoryNoteOutputSchema,
   MemoryNodeSchema,
   MemoryProvenanceSchema,
+  MemoryRecallInputSchema,
+  MemoryRecallOutputSchema,
 } from './memory.js';
 
 const UUID1 = '00000000-0000-4000-8000-000000000001';
@@ -182,6 +184,62 @@ describe('MemoryNoteOutputSchema', () => {
 
   it('rejects invalid node_id', () => {
     expect(MemoryNoteOutputSchema.safeParse({ node_id: 'x', created_at: DT }).success).toBe(false);
+  });
+});
+
+describe('MemoryRecallInputSchema', () => {
+  it('applies limit default when omitted', () => {
+    const r = MemoryRecallInputSchema.safeParse({ household_id: UUID1 });
+    expect(r.success).toBe(true);
+    if (r.success) expect(r.data.limit).toBe(20);
+  });
+
+  it('accepts optional facets', () => {
+    const r = MemoryRecallInputSchema.safeParse({
+      household_id: UUID1,
+      facets: ['preference', 'rhythm'],
+      limit: 10,
+    });
+    expect(r.success).toBe(true);
+  });
+
+  it('rejects limit above 50', () => {
+    const r = MemoryRecallInputSchema.safeParse({ household_id: UUID1, limit: 51 });
+    expect(r.success).toBe(false);
+  });
+});
+
+describe('MemoryRecallOutputSchema', () => {
+  it('round-trips a node with subject_child_id null', () => {
+    const r = MemoryRecallOutputSchema.safeParse({
+      nodes: [
+        {
+          node_id: UUID1,
+          node_type: 'preference',
+          facet: 'avoids spicy',
+          prose_text: 'Child avoids spicy peppers.',
+          subject_child_id: null,
+          confidence: 0.9,
+        },
+      ],
+    });
+    expect(r.success).toBe(true);
+  });
+
+  it('rejects unknown node_type', () => {
+    const r = MemoryRecallOutputSchema.safeParse({
+      nodes: [
+        {
+          node_id: UUID1,
+          node_type: 'mystery',
+          facet: 'x',
+          prose_text: 'y',
+          subject_child_id: null,
+          confidence: 0.9,
+        },
+      ],
+    });
+    expect(r.success).toBe(false);
   });
 });
 

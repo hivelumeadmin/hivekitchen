@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { FastifyBaseLogger } from 'fastify';
+import type { Redis } from 'ioredis';
 import { DomainOrchestrator } from './orchestrator.js';
 import { TOOL_MANIFEST } from './tools.manifest.js';
 import type { ToolSpec } from './tools.manifest.js';
@@ -7,6 +8,10 @@ import type { LLMProvider, LLMResponse } from './providers/llm-provider.interfac
 import type { AuditService } from '../audit/audit.service.js';
 import type { MemoryService } from '../modules/memory/memory.service.js';
 import type { AllergyGuardrailService } from '../modules/allergy-guardrail/allergy-guardrail.service.js';
+import type { RecipeService } from '../modules/recipe/recipe.service.js';
+import type { PantryService } from '../modules/pantry/pantry.service.js';
+import type { PlanService } from '../modules/plans/plan.service.js';
+import type { CulturalPriorService } from '../modules/cultural-priors/cultural-prior.service.js';
 import { ForbiddenToolCallError } from '../common/errors.js';
 
 const HOUSEHOLD_ID = '11111111-1111-4111-8111-111111111111';
@@ -50,7 +55,49 @@ function buildMemoryService() {
       node_id: '33333333-3333-4333-8333-333333333333',
       created_at: '2026-05-01T12:00:00.000Z',
     }),
-  } as unknown as MemoryService & { noteFromAgent: ReturnType<typeof vi.fn> };
+    recall: vi.fn().mockResolvedValue({ nodes: [] }),
+  } as unknown as MemoryService & {
+    noteFromAgent: ReturnType<typeof vi.fn>;
+    recall: ReturnType<typeof vi.fn>;
+  };
+}
+
+function buildRecipeService() {
+  return {
+    search: vi.fn(),
+    fetch: vi.fn(),
+  } as unknown as RecipeService;
+}
+
+function buildPantryService() {
+  return {
+    read: vi.fn(),
+  } as unknown as PantryService;
+}
+
+function buildPlanService() {
+  return {
+    compose: vi.fn(),
+  } as unknown as PlanService;
+}
+
+function buildCulturalPriorService() {
+  return {
+    listByHousehold: vi.fn().mockResolvedValue([]),
+  } as unknown as CulturalPriorService;
+}
+
+function buildRedis() {
+  // Pipeline returns a thenable chain; recordToolLatency awaits .exec().
+  const pipeline = {
+    zadd: vi.fn().mockReturnThis(),
+    zremrangebyscore: vi.fn().mockReturnThis(),
+    expire: vi.fn().mockReturnThis(),
+    exec: vi.fn().mockResolvedValue([]),
+  };
+  return {
+    pipeline: vi.fn().mockReturnValue(pipeline),
+  } as unknown as Redis;
 }
 
 function buildProvider(name: string, overrides: Partial<LLMProvider> = {}): LLMProvider {
@@ -79,45 +126,57 @@ function buildOrchestrator(providers: LLMProvider[]) {
   const audit = buildAudit();
   const allergy = buildAllergyService();
   const memory = buildMemoryService();
+  const recipe = buildRecipeService();
+  const pantry = buildPantryService();
+  const plan = buildPlanService();
+  const culturalPrior = buildCulturalPriorService();
+  const redis = buildRedis();
   const logger = buildLogger();
   const orchestrator = new DomainOrchestrator(
     providers,
-    { memory, allergyGuardrail: allergy },
+    { memory, allergyGuardrail: allergy, recipe, pantry, plan, culturalPrior },
+    redis,
     audit,
     logger,
   );
-  return { orchestrator, audit, allergy, memory };
+  return { orchestrator, audit, allergy, memory, redis };
 }
 
 describe('DomainOrchestrator', () => {
   beforeEach(() => {
     const allergySpec = TOOL_MANIFEST.get('allergy.check');
     const memorySpec = TOOL_MANIFEST.get('memory.note');
-    if (!allergySpec || !memorySpec) {
+    const memoryRecallSpec = TOOL_MANIFEST.get('memory.recall');
+    const recipeSearchSpec = TOOL_MANIFEST.get('recipe.search');
+    const recipeFetchSpec = TOOL_MANIFEST.get('recipe.fetch');
+    const pantryReadSpec = TOOL_MANIFEST.get('pantry.read');
+    const planComposeSpec = TOOL_MANIFEST.get('plan.compose');
+    const culturalLookupSpec = TOOL_MANIFEST.get('cultural.lookup');
+    if (
+      !allergySpec || !memorySpec || !memoryRecallSpec ||
+      !recipeSearchSpec || !recipeFetchSpec || !pantryReadSpec ||
+      !planComposeSpec || !culturalLookupSpec
+    ) {
       throw new Error('TOOL_MANIFEST is missing expected entries — check tools.manifest.ts');
     }
     // Reset the manifest to its stub-throwing state so each test can verify
     // that the orchestrator constructor is what wires the real fns in.
-    TOOL_MANIFEST.set('allergy.check', {
-      name: 'allergy.check',
+    const makeStub = (name: string, spec: ToolSpec, maxLatencyMs: number): ToolSpec => ({
+      name,
       description: 'stub',
-      inputSchema: allergySpec.inputSchema,
-      outputSchema: allergySpec.outputSchema,
-      maxLatencyMs: 150,
-      fn: async () => {
-        throw new Error('allergy.check stub — orchestrator did not wire fn');
-      },
+      inputSchema: spec.inputSchema,
+      outputSchema: spec.outputSchema,
+      maxLatencyMs,
+      fn: async () => { throw new Error(`${name} stub — orchestrator did not wire fn`); },
     });
-    TOOL_MANIFEST.set('memory.note', {
-      name: 'memory.note',
-      description: 'stub',
-      inputSchema: memorySpec.inputSchema,
-      outputSchema: memorySpec.outputSchema,
-      maxLatencyMs: 200,
-      fn: async () => {
-        throw new Error('memory.note stub — orchestrator did not wire fn');
-      },
-    });
+    TOOL_MANIFEST.set('allergy.check', makeStub('allergy.check', allergySpec, 150));
+    TOOL_MANIFEST.set('memory.note', makeStub('memory.note', memorySpec, 200));
+    TOOL_MANIFEST.set('memory.recall', makeStub('memory.recall', memoryRecallSpec, 200));
+    TOOL_MANIFEST.set('recipe.search', makeStub('recipe.search', recipeSearchSpec, 300));
+    TOOL_MANIFEST.set('recipe.fetch', makeStub('recipe.fetch', recipeFetchSpec, 100));
+    TOOL_MANIFEST.set('pantry.read', makeStub('pantry.read', pantryReadSpec, 80));
+    TOOL_MANIFEST.set('plan.compose', makeStub('plan.compose', planComposeSpec, 2000));
+    TOOL_MANIFEST.set('cultural.lookup', makeStub('cultural.lookup', culturalLookupSpec, 80));
   });
 
   afterEach(() => {
@@ -129,7 +188,15 @@ describe('DomainOrchestrator', () => {
       () =>
         new DomainOrchestrator(
           [],
-          { memory: buildMemoryService(), allergyGuardrail: buildAllergyService() },
+          {
+            memory: buildMemoryService(),
+            allergyGuardrail: buildAllergyService(),
+            recipe: buildRecipeService(),
+            pantry: buildPantryService(),
+            plan: buildPlanService(),
+            culturalPrior: buildCulturalPriorService(),
+          },
+          buildRedis(),
           buildAudit(),
           buildLogger(),
         ),

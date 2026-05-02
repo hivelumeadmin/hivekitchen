@@ -59,6 +59,24 @@ export const RatifyCulturalPriorResponseSchema = z.object({
   lumi_response: z.string().optional(),
 });
 
+// Story 3.4 — cultural.lookup tool I/O. Returns the household's confirmed and
+// active cultural templates for the planner; trims CulturalPriorSchema to the
+// fields the planner actually uses.
+export const CulturalLookupInputSchema = z.object({
+  household_id: z.string().uuid(),
+});
+
+const CulturalLookupPriorSchema = CulturalPriorSchema.pick({
+  id: true,
+  key: true,
+  state: true,
+  tier: true,
+}).extend({ label: z.string() });
+
+export const CulturalLookupOutputSchema = z.object({
+  priors: z.array(CulturalLookupPriorSchema),
+});
+
 // SSE event — Story 5.2 wires the real fan-out. Defined here so consumers
 // can already type-check against the wire shape.
 export const TemplateStateChangedEventSchema = z.object({

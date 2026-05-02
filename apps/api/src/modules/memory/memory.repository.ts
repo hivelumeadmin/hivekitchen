@@ -69,4 +69,29 @@ export class MemoryRepository extends BaseRepository {
     if (!data) throw new Error('insertProvenance returned no data');
     return data as MemoryProvenanceRow;
   }
+
+  async findNodes(opts: {
+    household_id: string;
+    facets?: string[];
+    limit: number;
+  }): Promise<MemoryNodeRow[]> {
+    let query = this.client
+      .from('memory_nodes')
+      .select(NODE_COLUMNS)
+      .eq('household_id', opts.household_id)
+      // Exclude hard-forgotten nodes — soft-forgotten ones still surface so the
+      // planner can reason about explicit user signals; the forget job promotes
+      // them to hard-forgotten when retention expires.
+      .eq('hard_forgotten', false)
+      .order('created_at', { ascending: false })
+      .limit(opts.limit);
+
+    if (opts.facets && opts.facets.length > 0) {
+      query = query.in('facet', opts.facets);
+    }
+
+    const { data, error } = await query;
+    if (error) throw error;
+    return (data ?? []) as MemoryNodeRow[];
+  }
 }
