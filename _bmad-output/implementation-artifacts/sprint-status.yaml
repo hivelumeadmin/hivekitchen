@@ -1,5 +1,5 @@
 # generated: 2026-04-23
-# last_updated: 2026-05-01 (Story 12-7 ready for review — useLumiContext hook + route wiring complete)
+# last_updated: 2026-05-01 (Story 3-1 review complete — 18 patches applied, status → done)
 # project: hivekitchen
 # project_key: NOKEY
 # tracking_system: file-system
@@ -35,7 +35,7 @@
 # - Dev moves story to 'review', then runs code-review (fresh context, different LLM recommended)
 
 generated: 2026-04-23
-last_updated: 2026-05-01 (Story 12-7 done — code review patches applied + 6 E2E tests added)
+last_updated: 2026-05-01 (Story 3-2 ready-for-dev — story file created)
 project: hivekitchen
 project_key: NOKEY
 tracking_system: file-system
@@ -84,8 +84,8 @@ development_status:
 
   # Epic 3: Weekly Plan & Ready-Answer Open
   epic-3: in-progress
-  3-1-allergy-guardrail-service-deterministic-authoritative-outside-agent-boundary: review
-  3-2-domain-orchestrator-llmprovider-adapter-openai-primary-anthropic-stub: backlog
+  3-1-allergy-guardrail-service-deterministic-authoritative-outside-agent-boundary: done
+  3-2-domain-orchestrator-llmprovider-adapter-openai-primary-anthropic-stub: ready-for-dev
   3-3-planner-specialist-agent-planner-prompt-ts-versioned: backlog
   3-4-agent-tools-recipe-memory-pantry-plan-allergy-cultural-registered-with-maxlatencyms: backlog
   3-5-plan-repository-revision-versioning-presentation-bind-contract: backlog
