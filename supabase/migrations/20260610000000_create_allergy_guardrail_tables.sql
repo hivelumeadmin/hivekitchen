@@ -47,18 +47,46 @@ CREATE TABLE guardrail_decisions (
 CREATE INDEX guardrail_decisions_household_evaluated_at_idx
   ON guardrail_decisions (household_id, evaluated_at DESC);
 
+-- Idempotency guard for clearOrReject() retries: a network-glitch retry of the same
+-- (household, request) pair must not produce duplicate decision rows. The repository
+-- upserts with ignoreDuplicates against this constraint.
+CREATE UNIQUE INDEX guardrail_decisions_household_request_uidx
+  ON guardrail_decisions (household_id, request_id);
+
 ALTER TABLE allergy_rules ENABLE ROW LEVEL SECURITY;
 ALTER TABLE guardrail_decisions ENABLE ROW LEVEL SECURITY;
 
+-- Security model:
+--   * service-role (the API) bypasses RLS by default — all writes go through the API.
+--   * authenticated role: read-only, scoped to current household. No INSERT/UPDATE/DELETE
+--     policies are defined for authenticated, so any non-service-role write is denied
+--     by the RLS-default-deny rule. The explicit denials below are belt-and-braces:
+--     if a future migration ever loosens this default, write attempts still fail.
+
 -- Authenticated callers see FALCPA system rows + their own household's parent-declared rows.
 CREATE POLICY allergy_rules_household_select_policy ON allergy_rules
-  FOR SELECT USING (
+  FOR SELECT TO authenticated USING (
     household_id IS NULL
     OR household_id = (SELECT current_household_id FROM users WHERE id = auth.uid())
   );
 
+-- Explicit deny on writes for authenticated. Service role still bypasses.
+CREATE POLICY allergy_rules_authenticated_no_insert ON allergy_rules
+  FOR INSERT TO authenticated WITH CHECK (false);
+CREATE POLICY allergy_rules_authenticated_no_update ON allergy_rules
+  FOR UPDATE TO authenticated USING (false);
+CREATE POLICY allergy_rules_authenticated_no_delete ON allergy_rules
+  FOR DELETE TO authenticated USING (false);
+
 -- Authenticated callers see only their own household's guardrail decisions.
 CREATE POLICY guardrail_decisions_household_select_policy ON guardrail_decisions
-  FOR SELECT USING (
+  FOR SELECT TO authenticated USING (
     household_id = (SELECT current_household_id FROM users WHERE id = auth.uid())
   );
+
+CREATE POLICY guardrail_decisions_authenticated_no_insert ON guardrail_decisions
+  FOR INSERT TO authenticated WITH CHECK (false);
+CREATE POLICY guardrail_decisions_authenticated_no_update ON guardrail_decisions
+  FOR UPDATE TO authenticated USING (false);
+CREATE POLICY guardrail_decisions_authenticated_no_delete ON guardrail_decisions
+  FOR DELETE TO authenticated USING (false);

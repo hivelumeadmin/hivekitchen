@@ -1,5 +1,13 @@
 # Deferred Work Log
 
+## Deferred from: code review of 3-1-allergy-guardrail-service (2026-05-01)
+
+- **Tokenizer regex misses `+`, `*`, `|`, `\`, `[`, `]`, `@`, `#`, `%`, apostrophe, ampersand, and CJK separators** — deferred, broader matching-strategy decision (D1 in story review) governs scope. LLM-generated ingredient strings can use non-ASCII separators to dodge token-reverse match. [`apps/api/src/modules/allergy-guardrail/allergy-rules.engine.ts:25`]
+- **No Unicode normalization (NFC/NFKC) before matching** — deferred, tied to D1. Decomposed forms (`'café'` vs `'café'`), full-width Latin, and homoglyphs evade substring match; international parents declaring allergens in native script are unprotected without test coverage. [`apps/api/src/modules/allergy-guardrail/allergy-rules.engine.ts:34-35`]
+- **No allergen-name normalization at rule-write time** — deferred, rule-write path is explicitly out of Story 3.1 scope per Dev Notes ("Parent-Declared Allergy Rules Write Path" — Memory Layer 2 sync handled by Story 3.2 / Epic 2 patch). Duplicate rule rows with case/whitespace variants will produce duplicate conflicts. [`apps/api/src/modules/allergy-guardrail/allergy-guardrail.repository.ts`]
+- **No unique constraint on `(household_id, child_id, allergen)` in `allergy_rules`** — deferred, tied to rule-write path; without upstream normalization a raw-string unique constraint would not catch case/whitespace duplicates. [`supabase/migrations/20260610000000_create_allergy_guardrail_tables.sql:12-19`]
+- **`request_id` not validated as UUID at TS layer** — deferred defense-in-depth; DB enforces via `uuid NOT NULL`. Tied to a broader request-context typing pass; current safety relies on Postgres rejecting non-UUID values at insert time. [`apps/api/src/modules/allergy-guardrail/allergy-guardrail.service.ts:22`]
+
 ## Deferred from: code review of 12-7-route-context-registration (2026-05-01)
 
 - **`isHydrating` stuck `true` when surface changes mid-flight** — `hydrateThread`'s TOCTOU guard (store line 95) skips the `isHydrating: false` reset when `state.surface !== surface`; self-healing via next route's `setContext`, no practical impact for current 'general'-only routes. Revisit when surface-specific routes (Epic 3+) introduce mid-flight surface changes. [`apps/web/src/hooks/useLumiContext.ts:28-30`, `apps/web/src/stores/lumi.store.ts:94-95`]

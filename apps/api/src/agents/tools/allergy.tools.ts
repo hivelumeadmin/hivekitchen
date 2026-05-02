@@ -16,7 +16,11 @@ export function createAllergyCheckSpec(
     maxLatencyMs: 150,
     fn: async (input: unknown) => {
       const parsed = AllergyCheckInputSchema.parse(input);
-      return allergyGuardrailService.evaluate(parsed.plan_items, parsed.household_id);
+      const result = await allergyGuardrailService.evaluate(parsed.plan_items, parsed.household_id);
+      // Re-parse the engine output through the declared outputSchema. Future engine
+      // drift (e.g., a new verdict or extra conflict field) will fail loudly here
+      // rather than silently violating the tool's advertised contract.
+      return AllergyCheckOutputSchema.parse(result);
     },
   };
 }
