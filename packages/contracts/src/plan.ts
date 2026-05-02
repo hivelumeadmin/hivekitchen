@@ -103,3 +103,50 @@ export const AllergyCheckInputSchema = z.object({
 });
 
 export const AllergyCheckOutputSchema = GuardrailResultSchema;
+
+// --- Story 3.5 — plan repository write/read shapes ---
+// The presentation-bind contract requires an atomic write of plan + items +
+// guardrail_cleared_at + guardrail_version. CommitPlanInput is the caller's
+// payload to PlansRepository.commit(); the repository augments it with the
+// guardrailClearedAt timestamp + guardrailVersion string at write time.
+//
+// PlanItemWriteSchema is intentionally a write-only superset of
+// PlanItemForGuardrailSchema (adds recipe_id / item_id). Mapping happens in
+// PlansService.commit() before passing items to the guardrail. ingredients
+// enforces min(1) because the guardrail returns uncertain('empty_ingredients')
+// for zero-ingredient items, which would exhaust all retries without fixing.
+
+const PROMPT_VERSION_MAX = 32;
+const GUARDRAIL_VERSION_MAX = 32;
+
+export const PlanItemWriteSchema = z.object({
+  child_id: z.string().uuid(),
+  day: z.string().min(1).max(SLOT_MAX),
+  slot: z.string().min(1).max(SLOT_MAX),
+  recipe_id: z.string().uuid().optional(),
+  item_id: z.string().uuid().optional(),
+  ingredients: z.array(z.string().min(1).max(INGREDIENT_MAX)).min(1),
+});
+
+export const CommitPlanInputSchema = z.object({
+  plan_id: z.string().uuid(),
+  household_id: z.string().uuid(),
+  week_id: z.string().uuid(),
+  revision: z.number().int().min(1),
+  generated_at: z.string().datetime(),
+  prompt_version: z.string().min(1).max(PROMPT_VERSION_MAX),
+  items: z.array(PlanItemWriteSchema).min(1),
+});
+
+export const PlanRowSchema = z.object({
+  id: z.string().uuid(),
+  household_id: z.string().uuid(),
+  week_id: z.string().uuid(),
+  revision: z.number().int().min(1),
+  generated_at: z.string().datetime(),
+  guardrail_cleared_at: z.string().datetime().nullable(),
+  guardrail_version: z.string().max(GUARDRAIL_VERSION_MAX).nullable(),
+  prompt_version: z.string().min(1).max(PROMPT_VERSION_MAX),
+  created_at: z.string().datetime(),
+  updated_at: z.string().datetime(),
+});

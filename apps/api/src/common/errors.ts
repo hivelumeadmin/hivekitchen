@@ -71,6 +71,17 @@ export class NotImplementedError extends DomainError {
   readonly title = 'Not Implemented';
 }
 
+export class GuardrailRejectionError extends DomainError {
+  readonly type = '/errors/guardrail-rejection';
+  readonly status = 422;
+  readonly title = 'Plan blocked by allergy guardrail';
+  constructor(planId: string, attemptCount: number) {
+    super(
+      `Plan ${planId} blocked by allergy guardrail after ${String(attemptCount)} attempt(s). Regeneration required with rejection context.`,
+    );
+  }
+}
+
 // Same readonly literal-type constraint as ParentalNoticeRequiredError below:
 // extends DomainError directly with status 403 instead of subclassing ForbiddenError.
 // instanceof ForbiddenError is false for this error; callers must use isDomainError()

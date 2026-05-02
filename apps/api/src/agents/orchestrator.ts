@@ -7,7 +7,7 @@ import type { MemoryService } from '../modules/memory/memory.service.js';
 import type { AllergyGuardrailService } from '../modules/allergy-guardrail/allergy-guardrail.service.js';
 import type { RecipeService } from '../modules/recipe/recipe.service.js';
 import type { PantryService } from '../modules/pantry/pantry.service.js';
-import type { PlanService } from '../modules/plans/plan.service.js';
+import type { PlansService } from '../modules/plans/plans.service.js';
 import type { CulturalPriorService } from '../modules/cultural-priors/cultural-prior.service.js';
 import { TOOL_MANIFEST } from './tools.manifest.js';
 import { createAllergyCheckSpec } from './tools/allergy.tools.js';
@@ -29,7 +29,7 @@ export interface OrchestratorServices {
   allergyGuardrail: AllergyGuardrailService;
   recipe: RecipeService;
   pantry: PantryService;
-  plan: PlanService;
+  plan: PlansService;
   culturalPrior: CulturalPriorService;
 }
 

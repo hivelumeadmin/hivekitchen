@@ -481,3 +481,8 @@
 
 - **`PlanComposeOutputSchema` requires `id` and `status` fields** — stub throws `NotImplementedError` now so harmless; Story 3.5 must ensure its real `compose()` returns a full `WeeklyPlan` with `id: UUID` and `status: 'draft'|'confirmed'`. [`plan.ts:39`, `plan.tools.ts`]
 - **`OnboardingAgent` instantiated inline in `orchestrator.hook.ts`** — creates an independent circuit-breaker/state object separate from any other `OnboardingAgent` instance. Revisit if `CulturalPriorService` gets a fastify decorator in a later story. [`orchestrator.hook.ts:42`]
+
+## Deferred from: code review of 3-5-plan-repository-revision-versioning-presentation-bind-contract (2026-05-02)
+
+- **Concurrent `commit_plan` calls with the same `plan_id` can produce mixed plan_items under READ COMMITTED isolation** — current architecture serializes commits through a single API instance; advisory lock deferred to Story 3.7 when BullMQ job controls commit scheduling. [`supabase/migrations/20260502111000_create_commit_plan_function.sql`]
+- **Repository read methods cast DB response with `as PlanRow` without running `PlanRowSchema.parse()`** — pre-existing pattern across all repositories; address in a repository hardening pass when runtime schema validation is added project-wide. [`apps/api/src/modules/plans/plans.repository.ts`]

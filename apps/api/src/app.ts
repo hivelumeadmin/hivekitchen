@@ -15,6 +15,7 @@ import { requestIdPlugin } from './middleware/request-id.hook.js';
 import { auditHook } from './middleware/audit.hook.js';
 import { memoryHook } from './modules/memory/memory.hook.js';
 import { allergyGuardrailHook } from './modules/allergy-guardrail/allergy-guardrail.hook.js';
+import { plansHook } from './modules/plans/plans.hook.js';
 import { orchestratorHook } from './agents/orchestrator.hook.js';
 import { authenticateHook } from './middleware/authenticate.hook.js';
 import { householdScopeHook } from './middleware/household-scope.hook.js';
@@ -90,6 +91,7 @@ export async function buildApp(opts: BuildAppOptions) {
   await app.register(auditHook);
   await app.register(memoryHook);
   await app.register(allergyGuardrailHook);
+  await app.register(plansHook);
   await app.register(orchestratorHook);
   await app.register(auditPartitionRotationPlugin);
 

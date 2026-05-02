@@ -119,6 +119,9 @@ import {
   PlanComposeOutputSchema,
   CulturalLookupInputSchema,
   CulturalLookupOutputSchema,
+  PlanItemWriteSchema,
+  CommitPlanInputSchema,
+  PlanRowSchema,
 } from '@hivekitchen/contracts';
 
 // Auth
@@ -293,3 +296,8 @@ export type PlanComposeOutput = z.infer<typeof PlanComposeOutputSchema>;
 
 export type CulturalLookupInput = z.infer<typeof CulturalLookupInputSchema>;
 export type CulturalLookupOutput = z.infer<typeof CulturalLookupOutputSchema>;
+
+// Plan repository write / read shapes (Story 3.5)
+export type PlanItemWrite = z.infer<typeof PlanItemWriteSchema>;
+export type CommitPlanInput = z.infer<typeof CommitPlanInputSchema>;
+export type PlanRow = z.infer<typeof PlanRowSchema>;

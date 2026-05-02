@@ -2,11 +2,11 @@ import type { Redis } from 'ioredis';
 import { PlanComposeInputSchema, PlanComposeOutputSchema } from '@hivekitchen/contracts';
 import { recordToolLatency } from '../../observability/tool-latency.histogram.js';
 import type { ToolSpec } from '../tools.manifest.js';
-import type { PlanService } from '../../modules/plans/plan.service.js';
+import type { PlansService } from '../../modules/plans/plans.service.js';
 
 export const MANIFESTED_TOOL_NAMES = ['plan.compose'] as const;
 
-export function createPlanComposeSpec(planService: PlanService, redis: Redis): ToolSpec {
+export function createPlanComposeSpec(planService: PlansService, redis: Redis): ToolSpec {
   return {
     name: 'plan.compose',
     description:

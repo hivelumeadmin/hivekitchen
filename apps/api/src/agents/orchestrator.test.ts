@@ -10,7 +10,7 @@ import type { MemoryService } from '../modules/memory/memory.service.js';
 import type { AllergyGuardrailService } from '../modules/allergy-guardrail/allergy-guardrail.service.js';
 import type { RecipeService } from '../modules/recipe/recipe.service.js';
 import type { PantryService } from '../modules/pantry/pantry.service.js';
-import type { PlanService } from '../modules/plans/plan.service.js';
+import type { PlansService } from '../modules/plans/plans.service.js';
 import type { CulturalPriorService } from '../modules/cultural-priors/cultural-prior.service.js';
 import { ForbiddenToolCallError } from '../common/errors.js';
 
@@ -75,10 +75,10 @@ function buildPantryService() {
   } as unknown as PantryService;
 }
 
-function buildPlanService() {
+function buildPlansService() {
   return {
     compose: vi.fn(),
-  } as unknown as PlanService;
+  } as unknown as PlansService;
 }
 
 function buildCulturalPriorService() {
@@ -128,7 +128,7 @@ function buildOrchestrator(providers: LLMProvider[]) {
   const memory = buildMemoryService();
   const recipe = buildRecipeService();
   const pantry = buildPantryService();
-  const plan = buildPlanService();
+  const plan = buildPlansService();
   const culturalPrior = buildCulturalPriorService();
   const redis = buildRedis();
   const logger = buildLogger();
@@ -193,7 +193,7 @@ describe('DomainOrchestrator', () => {
             allergyGuardrail: buildAllergyService(),
             recipe: buildRecipeService(),
             pantry: buildPantryService(),
-            plan: buildPlanService(),
+            plan: buildPlansService(),
             culturalPrior: buildCulturalPriorService(),
           },
           buildRedis(),

@@ -2,7 +2,7 @@ import { describe, it, expect, vi } from 'vitest';
 import { ZodError } from 'zod';
 import type { Redis } from 'ioredis';
 import { createPlanComposeSpec } from './plan.tools.js';
-import type { PlanService } from '../../modules/plans/plan.service.js';
+import type { PlansService } from '../../modules/plans/plans.service.js';
 import { NotImplementedError } from '../../common/errors.js';
 
 const HOUSEHOLD_ID = '11111111-1111-4111-8111-111111111111';
@@ -31,7 +31,7 @@ function buildRedis() {
 describe('createPlanComposeSpec', () => {
   it('declares name and maxLatencyMs', () => {
     const { redis } = buildRedis();
-    const service = { compose: vi.fn() } as unknown as PlanService;
+    const service = { compose: vi.fn() } as unknown as PlansService;
     const spec = createPlanComposeSpec(service, redis);
     expect(spec.name).toBe('plan.compose');
     expect(spec.maxLatencyMs).toBe(2000);
@@ -39,7 +39,7 @@ describe('createPlanComposeSpec', () => {
 
   it('inputSchema rejects missing prompt_version', () => {
     const { redis } = buildRedis();
-    const service = { compose: vi.fn() } as unknown as PlanService;
+    const service = { compose: vi.fn() } as unknown as PlansService;
     const spec = createPlanComposeSpec(service, redis);
     const { prompt_version: _drop, ...rest } = VALID_INPUT;
     expect(spec.inputSchema.safeParse(rest).success).toBe(false);
@@ -49,7 +49,7 @@ describe('createPlanComposeSpec', () => {
     const { redis, pipeline } = buildRedis();
     const service = {
       compose: vi.fn().mockRejectedValue(new NotImplementedError('plan.compose — Story 3.5')),
-    } as unknown as PlanService;
+    } as unknown as PlansService;
     const spec = createPlanComposeSpec(service, redis);
     await expect(spec.fn(VALID_INPUT)).rejects.toBeInstanceOf(NotImplementedError);
     expect(pipeline.exec).toHaveBeenCalledTimes(1);
@@ -57,7 +57,7 @@ describe('createPlanComposeSpec', () => {
 
   it('rejects malformed input via inputSchema.parse before calling service', async () => {
     const { redis } = buildRedis();
-    const service = { compose: vi.fn() } as unknown as PlanService;
+    const service = { compose: vi.fn() } as unknown as PlansService;
     const spec = createPlanComposeSpec(service, redis);
     await expect(spec.fn({})).rejects.toBeInstanceOf(ZodError);
     expect(service.compose).not.toHaveBeenCalled();
