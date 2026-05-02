@@ -1,6 +1,6 @@
 # Story 3.2: Domain Orchestrator + LLMProvider Adapter (OpenAI primary, Anthropic stub)
 
-Status: ready-for-dev
+Status: done
 
 ## Story
 
@@ -37,9 +37,9 @@ So that the NFR-mandated 15-min provider failover (NFR-REL-5, AR-2) is achievabl
 
 ### Task 1 — LLMProvider interface + supporting types (AC: #1)
 
-- [ ] Create `apps/api/src/agents/providers/llm-provider.interface.ts`
-  - [ ] Import `type ToolSpec` from `'../tools.manifest.js'`
-  - [ ] Define and export:
+- [x] Create `apps/api/src/agents/providers/llm-provider.interface.ts`
+  - [x] Import `type ToolSpec` from `'../tools.manifest.js'`
+  - [x] Define and export:
     ```typescript
     export interface LLMCallOptions {
       model: string;
@@ -74,49 +74,49 @@ So that the NFR-mandated 15-min provider failover (NFR-REL-5, AR-2) is achievabl
       probe(): Promise<boolean>;
     }
     ```
-  - [ ] No SDK imports in this file — it must be SDK-agnostic
+  - [x] No SDK imports in this file — it must be SDK-agnostic
 
 ### Task 2 — OpenAI adapter (AC: #2)
 
-- [ ] Create `apps/api/src/agents/providers/openai.adapter.ts`
-  - [ ] Import `type OpenAI from 'openai'` (type-only) and the `ToolSpec` / interface types
-  - [ ] **Note:** `@openai/agents` is NOT installed — only `openai` (^4.0.0). Use `openai.chat.completions.create()` with the `tools` parameter (OpenAI function-calling format). The interface contract is the isolation boundary; the underlying SDK can be swapped later.
-  - [ ] Export `OpenAIAdapter implements LLMProvider`:
+- [x] Create `apps/api/src/agents/providers/openai.adapter.ts`
+  - [x] Import `type OpenAI from 'openai'` (type-only) and the `ToolSpec` / interface types
+  - [x] **Note:** `@openai/agents` is NOT installed — only `openai` (^4.0.0). Use `openai.chat.completions.create()` with the `tools` parameter (OpenAI function-calling format). The interface contract is the isolation boundary; the underlying SDK can be swapped later.
+  - [x] Export `OpenAIAdapter implements LLMProvider`:
     ```typescript
     constructor(private readonly client: OpenAI) {}
     readonly name = 'openai';
     ```
-  - [ ] `complete()` implementation:
+  - [x] `complete()` implementation:
     - Convert `ToolSpec[]` to OpenAI `ChatCompletionTool[]` format: each tool maps to `{ type: 'function', function: { name: spec.name, description: spec.description, parameters: zodToJsonSchema(spec.inputSchema) } }`
-    - Use `zodToJsonSchema` from `zod-to-json-schema` if installed, or manually call `spec.inputSchema._def` — **check if `zod-to-json-schema` is installed first**; if not, implement a lightweight inline converter for the schemas used
+    - Used Zod 4's built-in `z.toJSONSchema()` (no extra dependency needed — `zod-to-json-schema` was not installed and is unnecessary in this project)
     - Call `client.chat.completions.create({ model, messages, tools, tool_choice: 'auto', temperature, max_tokens })`
     - Map response to `LLMResponse`; extract `tool_calls` array from `choices[0].message`
     - Set `usage` from `response.usage` (prompt_tokens, completion_tokens)
     - Include `'OpenAI-Data-Privacy': 'zero-retention'` in request headers (zero data retention per architecture §Technical Constraints)
-  - [ ] `stream()` implementation:
+  - [x] `stream()` implementation:
     - Call `client.chat.completions.create({ ..., stream: true })`
     - Yield `LLMStreamEvent` items from the async iterable
-    - For now, a basic implementation is acceptable — full streaming optimization is Story 3.3+
-  - [ ] `probe()` implementation:
+    - Basic content + tool-call delta surfacing — full streaming optimization deferred to Story 3.3+
+  - [x] `probe()` implementation:
     - Minimal `chat.completions.create({ model: 'gpt-4o-mini', messages: [{ role: 'user', content: 'ping' }], max_tokens: 1 })` — returns `true` on success, `false` on throw
 
 ### Task 3 — Anthropic stub adapter (AC: #2)
 
-- [ ] Create `apps/api/src/agents/providers/anthropic.adapter.ts`
-  - [ ] Import `{ NotImplementedError }` from `'../../common/errors.js'` — ensure `NotImplementedError` exists in `errors.ts`; if it doesn't, add it: `export class NotImplementedError extends DomainError { constructor(feature: string) { super(501, '/errors/not-implemented', 'Not Implemented', feature) } }`
-  - [ ] Export `AnthropicAdapter implements LLMProvider`:
+- [x] Create `apps/api/src/agents/providers/anthropic.adapter.ts`
+  - [x] Import `{ NotImplementedError }` from `'../../common/errors.js'` — added `NotImplementedError` to `common/errors.ts` (status 501, type `/errors/not-implemented`)
+  - [x] Export `AnthropicAdapter implements LLMProvider`:
     ```typescript
     readonly name = 'anthropic';
     complete(): Promise<LLMResponse> { throw new NotImplementedError('AnthropicAdapter.complete'); }
     stream(): AsyncIterable<LLMStreamEvent> { throw new NotImplementedError('AnthropicAdapter.stream'); }
     probe(): Promise<boolean> { return Promise.resolve(false); }
     ```
-  - [ ] No `@anthropic-ai/sdk` import — this is a structural stub, not a real implementation
+  - [x] No `@anthropic-ai/sdk` import — this is a structural stub, not a real implementation
 
 ### Task 4 — Circuit breaker (AC: #3)
 
-- [ ] Create `apps/api/src/agents/circuit-breaker.ts`
-  - [ ] Export `CircuitBreaker` class:
+- [x] Create `apps/api/src/agents/circuit-breaker.ts`
+  - [x] Export `CircuitBreaker` class:
     ```typescript
     export class CircuitBreaker {
       private failureTimestamps: number[] = [];
@@ -131,16 +131,16 @@ So that the NFR-mandated 15-min provider failover (NFR-REL-5, AR-2) is achievabl
         private readonly onRecovered: () => void,
       ) {}
     ```
-  - [ ] `recordFailure(): void` — pushes `Date.now()` to `failureTimestamps`, prunes entries older than `windowMs`, opens if count ≥ `failureThreshold`
-  - [ ] `recordSuccess(): void` — clears `failureTimestamps`; if open, resets and calls `onRecovered`
-  - [ ] `isTripped(): boolean` — returns `this.isOpen`
-  - [ ] Opening logic: sets `isOpen = true`, calls `onOpen()`, schedules `setTimeout` after `recoveryMs` to attempt re-probe via an injected async callback
-  - [ ] Keep this a pure value class — no Pino, no imports from other app code. Accept logger callback in constructor if logging is needed.
+  - [x] `recordFailure(): void` — pushes `Date.now()` to `failureTimestamps`, prunes entries older than `windowMs`, opens if count ≥ `failureThreshold`
+  - [x] `recordSuccess(): void` — clears `failureTimestamps`; if open, resets and calls `onRecovered`
+  - [x] `isTripped(): boolean` — returns `this.isOpen`
+  - [x] Opening logic: sets `isOpen = true`, calls `onOpen()`, schedules `setTimeout` after `recoveryMs` to fire `onRecovered` (orchestrator drives the re-probe in its onRecovered callback)
+  - [x] Pure value class — no Pino, no imports from other app code
 
 ### Task 5 — DomainOrchestrator (AC: #3, #4)
 
-- [ ] Create `apps/api/src/agents/orchestrator.ts`
-  - [ ] Define and export `OrchestratorServices` interface:
+- [x] Create `apps/api/src/agents/orchestrator.ts`
+  - [x] Define and export `OrchestratorServices` interface:
     ```typescript
     export interface OrchestratorServices {
       memory: MemoryService;
@@ -148,7 +148,7 @@ So that the NFR-mandated 15-min provider failover (NFR-REL-5, AR-2) is achievabl
     }
     ```
     (recipe, pantry, cultural are Story 3.4 — do NOT add stub imports for them now)
-  - [ ] Export `DomainOrchestrator` class:
+  - [x] Export `DomainOrchestrator` class:
     ```typescript
     export class DomainOrchestrator {
       constructor(
@@ -158,7 +158,7 @@ So that the NFR-mandated 15-min provider failover (NFR-REL-5, AR-2) is achievabl
         private readonly logger: pino.Logger,
       ) {}
     ```
-  - [ ] Constructor body:
+  - [x] Constructor body:
     1. Assert `providers.length >= 1` — throw if empty
     2. Wire real tool fns into TOOL_MANIFEST (replacing stubs):
        ```typescript
@@ -168,24 +168,24 @@ So that the NFR-mandated 15-min provider failover (NFR-REL-5, AR-2) is achievabl
     3. Initialize `CircuitBreaker` for primary provider with thresholds (5, 60_000, 900_000)
     4. `onOpen` callback: log `warn` + call `swapProvider(reason)`
     5. Recovery probe: after 15 min, call `providers[0].probe()` → if `true`, restore primary + log `info`
-  - [ ] Private `currentProviderIndex = 0` field
-  - [ ] Private `swapProvider(reason: string): void`:
+  - [x] Private `currentProviderIndex = 0` field
+  - [x] Private `swapProvider(reason: string): void`:
     - Increments to next provider index (wrapping if no more: stays on last)
     - Calls `this.auditService.write({ event_type: 'llm.provider.failover', request_id: randomUUID(), metadata: { from: providers[prev].name, to: providers[current].name, reason } })`
     - Logs `error` with structured fields
-  - [ ] Public `complete(prompt: string, tools: ToolSpec[], options: LLMCallOptions): Promise<LLMResponse>`:
+  - [x] Public `complete(prompt: string, tools: ToolSpec[], options: LLMCallOptions): Promise<LLMResponse>`:
     - Calls `providers[currentProviderIndex].complete(prompt, tools, options)`
     - On success: `circuitBreaker.recordSuccess()`; return result
     - On error: `circuitBreaker.recordFailure()`; rethrow
-  - [ ] Public `getActiveProvider(): LLMProvider` — returns `providers[currentProviderIndex]`
-  - [ ] **Do NOT implement `planWeek()` or `replyToTurn()` yet** — those land in Story 3.3+
-  - [ ] Import Pino logger type: `import type pino from 'pino'`
-  - [ ] Import `randomUUID` from `'node:crypto'`
+  - [x] Public `getActiveProvider(): LLMProvider` — returns `providers[currentProviderIndex]`
+  - [x] **Do NOT implement `planWeek()` or `replyToTurn()` yet** — those land in Story 3.3+
+  - [x] Import Pino logger type — used `FastifyBaseLogger` from `fastify` (matches the existing AllergyGuardrailService pattern)
+  - [x] Import `randomUUID` from `'node:crypto'`
 
 ### Task 6 — Orchestrator Fastify hook (AC: #5)
 
-- [ ] Create `apps/api/src/agents/orchestrator.hook.ts`
-  - [ ] Follow the exact pattern from `allergy-guardrail.hook.ts` + `memory.hook.ts`:
+- [x] Create `apps/api/src/agents/orchestrator.hook.ts`
+  - [x] Follow the exact pattern from `allergy-guardrail.hook.ts` + `memory.hook.ts`:
     ```typescript
     import fp from 'fastify-plugin';
     import type { FastifyPluginAsync } from 'fastify';
@@ -211,36 +211,36 @@ So that the NFR-mandated 15-min provider failover (NFR-REL-5, AR-2) is achievabl
     export const orchestratorHook = fp(orchestratorHookPlugin, { name: 'orchestrator-hook' });
     ```
 
-- [ ] In `apps/api/src/types/fastify.d.ts`:
-  - [ ] Add `import type { DomainOrchestrator } from '../agents/orchestrator.js'`
-  - [ ] Add `orchestrator: DomainOrchestrator` to `FastifyInstance`
+- [x] In `apps/api/src/types/fastify.d.ts`:
+  - [x] Add `import type { DomainOrchestrator } from '../agents/orchestrator.js'`
+  - [x] Add `orchestrator: DomainOrchestrator` to `FastifyInstance`
 
-- [ ] In `apps/api/src/app.ts`:
-  - [ ] Import `orchestratorHook` from `'./agents/orchestrator.hook.js'`
-  - [ ] Register: `await app.register(orchestratorHook)` — after `allergyGuardrailHook` (line ~91), before route registrations
+- [x] In `apps/api/src/app.ts`:
+  - [x] Import `orchestratorHook` from `'./agents/orchestrator.hook.js'`
+  - [x] Register: `await app.register(orchestratorHook)` — after `allergyGuardrailHook`, before `auditPartitionRotationPlugin` and route registrations
 
 ### Task 7 — Tests (AC: all)
 
-- [ ] Create `apps/api/src/agents/providers/openai.adapter.test.ts`
-  - [ ] Mock `OpenAI` client
-  - [ ] `complete()` with no tools → calls `chat.completions.create` with empty tools array; returns `LLMResponse` with `finishReason: 'stop'`
-  - [ ] `complete()` when model returns tool_calls → returns `LLMResponse` with `finishReason: 'tool_calls'` and `toolCalls` populated
-  - [ ] `complete()` when API throws → re-throws (no swallowing)
-  - [ ] `probe()` returns `true` on success, `false` on throw
+- [x] Create `apps/api/src/agents/providers/openai.adapter.test.ts`
+  - [x] Mock `OpenAI` client
+  - [x] `complete()` with no tools → calls `chat.completions.create` with empty tools array; returns `LLMResponse` with `finishReason: 'stop'`
+  - [x] `complete()` when model returns tool_calls → returns `LLMResponse` with `finishReason: 'tool_calls'` and `toolCalls` populated
+  - [x] `complete()` when API throws → re-throws (no swallowing)
+  - [x] `probe()` returns `true` on success, `false` on throw
 
-- [ ] Create `apps/api/src/agents/circuit-breaker.test.ts`
-  - [ ] `recordFailure()` called < threshold → `isTripped()` returns `false`
-  - [ ] `recordFailure()` called = threshold within window → `isTripped()` returns `true`, `onOpen` called
-  - [ ] Failures older than `windowMs` are pruned — does not count toward threshold
-  - [ ] `recordSuccess()` when open → clears, `isTripped()` returns `false`
-  - [ ] Recovery timeout fires → calls probe callback
+- [x] Create `apps/api/src/agents/circuit-breaker.test.ts`
+  - [x] `recordFailure()` called < threshold → `isTripped()` returns `false`
+  - [x] `recordFailure()` called = threshold within window → `isTripped()` returns `true`, `onOpen` called
+  - [x] Failures older than `windowMs` are pruned — does not count toward threshold
+  - [x] `recordSuccess()` when open → clears, `isTripped()` returns `false`
+  - [x] Recovery timeout fires → calls probe callback
 
-- [ ] Create `apps/api/src/agents/orchestrator.test.ts`
-  - [ ] Constructor wires `allergy.check` fn in TOOL_MANIFEST → calling `TOOL_MANIFEST.get('allergy.check')!.fn(validInput)` does NOT throw `NotImplementedError`
-  - [ ] Constructor wires `memory.note` fn in TOOL_MANIFEST → same
-  - [ ] `complete()` delegates to primary provider and returns result
-  - [ ] After 5 consecutive provider failures, `swapProvider` fires, `auditService.write` called with `event_type: 'llm.provider.failover'`
-  - [ ] `complete()` after swap delegates to secondary provider (index 1)
+- [x] Create `apps/api/src/agents/orchestrator.test.ts`
+  - [x] Constructor wires `allergy.check` fn in TOOL_MANIFEST → calling `TOOL_MANIFEST.get('allergy.check')!.fn(validInput)` does NOT throw `NotImplementedError`
+  - [x] Constructor wires `memory.note` fn in TOOL_MANIFEST → same
+  - [x] `complete()` delegates to primary provider and returns result
+  - [x] After 5 consecutive provider failures, `swapProvider` fires, `auditService.write` called with `event_type: 'llm.provider.failover'`
+  - [x] `complete()` after swap delegates to secondary provider (index 1)
 
 ---
 
@@ -405,10 +405,76 @@ No contracts changes needed. No migration needed.
 
 ### Agent Model Used
 
-{{agent_model_name_version}}
+Claude Opus 4.7 (1M context) via Claude Code
 
 ### Debug Log References
 
+- `pnpm vitest run src/agents` — 30/30 passed (4 files: circuit-breaker, orchestrator, openai.adapter, allergy.tools)
+- `pnpm typecheck` — only pre-existing errors in `voice.service.test.ts` (unchanged from `main`)
+- `pnpm lint` — only pre-existing errors in `households/`, `children/`, and `voice/` files (unchanged from `main`); zero new findings in Story 3.2 files
+- `pnpm tools:check` — pre-existing failure in `memory.tools.ts` (unchanged from `main`)
+
 ### Completion Notes List
 
+- **Used Zod 4's built-in `z.toJSONSchema()`** for tool-parameter schema conversion in `OpenAIAdapter`. The story suggested `zod-to-json-schema` or an inline converter; the project already runs Zod 4.3.6 which ships JSON-Schema export natively, so no extra dependency was needed and no inline converter has to be maintained.
+- **OpenAI tool-name compatibility**: dotted manifest names (`allergy.check`, `memory.note`) are not valid for OpenAI function calling (`^[a-zA-Z0-9_-]+$`). The adapter rewrites `.` → `__` when sending tools and `__` → `.` when extracting tool-call results, so the orchestrator continues to see canonical dotted names while OpenAI accepts the wire-safe form.
+- **CircuitBreaker recovery**: the breaker schedules a `setTimeout(recoveryMs)` and fires `onRecovered` when it elapses (and resets `isOpen` to false at the same time). The orchestrator's `onRecovered` performs `providers[0].probe()` and only restores the primary provider index if the probe succeeds; a failed probe leaves the orchestrator on the secondary, matching the architecture's 15-min passive health-check intent.
+- **AnthropicAdapter** is a structural stub per the story: `complete()` and `stream()` synchronously throw `NotImplementedError`, `probe()` resolves to `false`. Required adding `NotImplementedError` (status 501, type `/errors/not-implemented`) to `apps/api/src/common/errors.ts`.
+- **No `planWeek()` / `replyToTurn()` / `planner.prompt.ts`** — those are explicitly out of scope and land in Story 3.3+.
+- **Pre-existing test/lint/typecheck failures** in `voice.service.test.ts`, `memory.service.test.ts`, `households/`, and `children/` are unrelated to Story 3.2 and were verified to exist on `main` prior to any of these changes (via `git stash --include-untracked`).
+
 ### File List
+
+**New files:**
+- `apps/api/src/agents/providers/llm-provider.interface.ts`
+- `apps/api/src/agents/providers/openai.adapter.ts`
+- `apps/api/src/agents/providers/openai.adapter.test.ts`
+- `apps/api/src/agents/providers/anthropic.adapter.ts`
+- `apps/api/src/agents/circuit-breaker.ts`
+- `apps/api/src/agents/circuit-breaker.test.ts`
+- `apps/api/src/agents/orchestrator.ts`
+- `apps/api/src/agents/orchestrator.test.ts`
+- `apps/api/src/agents/orchestrator.hook.ts`
+
+**Modified files:**
+- `apps/api/src/common/errors.ts` — added `NotImplementedError`
+- `apps/api/src/types/fastify.d.ts` — added `DomainOrchestrator` import + `orchestrator` decorator
+- `apps/api/src/app.ts` — registered `orchestratorHook` after `allergyGuardrailHook`
+
+## Change Log
+
+| Date       | Version | Description                                                                                                  | Author |
+| ---------- | ------- | ------------------------------------------------------------------------------------------------------------ | ------ |
+| 2026-05-01 | 0.1.0   | Initial implementation: LLMProvider interface, OpenAI adapter, Anthropic stub, circuit breaker, orchestrator + hook, fastify decorator wiring, comprehensive unit tests (20 new) | Dev    |
+
+---
+
+## Review Findings
+
+### Decision-Needed
+
+- [x] [Review][Decision] Constructor signature uses positional parameters — accepted deviation from AC #3's object-destructuring spec wording; positional is idiomatic TypeScript and was confirmed as the correct approach.
+
+### Patches
+
+- [x] [Review][Patch] `TOOL_MANIFEST` global singleton mutated in constructor — skipped (design decision required; single-instance-per-process is the intended runtime invariant) [apps/api/src/agents/orchestrator.ts:44-45]
+- [x] [Review][Patch] `complete()` never checks `isTripped()` before dispatching — skipped (fixing requires CB state machine redesign; the existing swap-on-open behavior is correct for the two-provider case) [apps/api/src/agents/orchestrator.ts:57]
+- [x] [Review][Patch] `recordSuccess()` while open calls `onRecovered()` immediately — **fixed**: `recordSuccess()` now sets `isOpen = false` without cancelling the timer or calling `onRecovered()`; the 15-min probe fires only via the scheduled timeout [apps/api/src/agents/circuit-breaker.ts:26-31]
+- [x] [Review][Patch] `swapProvider()` silently stays on last provider when all exhausted — skipped (throwing from the CB onOpen callback complicates error propagation; logged as `error` is the intended sentinel) [apps/api/src/agents/orchestrator.ts:103-108]
+- [x] [Review][Patch] No `dispose()` on `DomainOrchestrator` — **fixed**: added `dispose()` method on orchestrator + wired to Fastify `onClose` hook [apps/api/src/agents/orchestrator.ts, apps/api/src/agents/orchestrator.hook.ts]
+- [x] [Review][Patch] `AnthropicAdapter.stream()` synchronous throw violates `AsyncIterable` interface — **fixed**: changed to `async *stream(): AsyncGenerator<LLMStreamEvent>` [apps/api/src/agents/providers/anthropic.adapter.ts:15-17]
+- [x] [Review][Patch] `stream()` — `!Symbol.asyncIterator` dead code — **fixed**: removed dead first condition [apps/api/src/agents/providers/openai.adapter.ts]
+- [x] [Review][Patch] `stream()` — inline manual type cast — **fixed**: imported `ChatCompletionChunk` from SDK and replaced verbose inline type [apps/api/src/agents/providers/openai.adapter.ts]
+- [x] [Review][Patch] `complete()` — empty `response.choices[]` produces silent `undefined` — **fixed**: added explicit early-return guard when `choices[0]` is absent [apps/api/src/agents/providers/openai.adapter.ts]
+- [x] [Review][Patch] `toExternalName`/`toInternalName` lossy mapping — **fixed**: added runtime assertion in `toExternalName` rejecting internal names containing `__` [apps/api/src/agents/providers/openai.adapter.ts]
+- [x] [Review][Patch] `orchestrator.test.ts` `beforeEach` non-null assertion — **fixed**: replaced `!` assertions with explicit existence check that throws a clear error [apps/api/src/agents/orchestrator.test.ts]
+
+### Deferred
+
+- [x] [Review][Defer] `stream()` — `tc.id ?? ''` for subsequent streaming delta chunks [apps/api/src/agents/providers/openai.adapter.ts:178] — deferred, expected OpenAI streaming protocol; id is sent only on first chunk, consumers accumulate by index
+- [x] [Review][Defer] `stream()` — `finish_reason` never surfaced in stream events [apps/api/src/agents/providers/openai.adapter.ts] — deferred, explicitly deferred to Story 3.3+ per dev notes ("Basic content + tool-call delta surfacing — full streaming optimization deferred to Story 3.3+")
+- [x] [Review][Defer] `toJsonSchemaParameters()` — no validation that resulting schema has `type: 'object'` [apps/api/src/agents/providers/openai.adapter.ts:32-39] — deferred, all current tool inputs are `z.object()` schemas; Story 3.4 should validate when new tools land
+- [x] [Review][Defer] Audit failover event `request_id` is a fresh `randomUUID()`, not the triggering request's ID [apps/api/src/agents/orchestrator.ts:116] — deferred, `complete()` accepts no `request_id`; threading it would require a larger API change out of scope for this story
+- [x] [Review][Defer] `orchestratorHook` `fp()` has no `dependencies` array [apps/api/src/agents/orchestrator.hook.ts:35] — deferred, registration order in `app.ts` is the implicit contract; add when a dependency-graph enforcement pass runs
+- [x] [Review][Defer] `probe()` hardcodes `gpt-4o-mini` and consumes tokens per health check [apps/api/src/agents/providers/openai.adapter.ts:196-204] — deferred, spec-specified behavior; optimize to a zero-cost endpoint (e.g., `/v1/models`) in a later hardening story
+- [x] [Review][Defer] `llm-provider.interface.ts` imports `ToolSpec` from `tools.manifest` [apps/api/src/agents/providers/llm-provider.interface.ts:1] — deferred, intentional per story task spec; revisit if the interface file needs to move to `packages/types`

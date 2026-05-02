@@ -65,6 +65,12 @@ export class UpstreamError extends DomainError {
   readonly title = 'Upstream Service Unavailable';
 }
 
+export class NotImplementedError extends DomainError {
+  readonly type = '/errors/not-implemented';
+  readonly status = 501;
+  readonly title = 'Not Implemented';
+}
+
 // TypeScript prevents overriding `readonly` literal properties (type, title) declared
 // in a subclass (ForbiddenError). Extends DomainError directly with status = 403 to
 // achieve the same HTTP semantics. instanceof ForbiddenError is false for this error;

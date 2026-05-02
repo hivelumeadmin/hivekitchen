@@ -1,5 +1,15 @@
 # Deferred Work Log
 
+## Deferred from: code review of 3-2-domain-orchestrator-llmprovider-adapter-openai-primary-anthropic-stub (2026-05-01)
+
+- **`stream()` — `tc.id ?? ''` for subsequent streaming delta chunks** — expected OpenAI streaming protocol; id is sent only on first chunk, consumers accumulate by index. [`apps/api/src/agents/providers/openai.adapter.ts:178`]
+- **`stream()` — `finish_reason` never surfaced in stream events** — explicitly deferred to Story 3.3+ per dev notes ("Basic content + tool-call delta surfacing — full streaming optimization deferred to Story 3.3+"). [`apps/api/src/agents/providers/openai.adapter.ts`]
+- **`toJsonSchemaParameters()` — no validation that resulting schema has `type: 'object'`** — all current tool inputs are `z.object()` schemas; validate when Story 3.4 introduces new tools with non-object inputs. [`apps/api/src/agents/providers/openai.adapter.ts:32-39`]
+- **Audit failover event `request_id` is a fresh UUID, not traceable to triggering request** — `complete()` accepts no `request_id`; threading it requires a larger API change; address in a traceability hardening pass. [`apps/api/src/agents/orchestrator.ts:116`]
+- **`orchestratorHook` `fp()` has no `dependencies` array** — registration order in `app.ts` is the implicit contract; add `dependencies: ['audit-hook', 'memory-hook', 'allergy-guardrail-hook', 'openai-plugin']` in a dependency-graph enforcement pass. [`apps/api/src/agents/orchestrator.hook.ts:35`]
+- **`probe()` hardcodes `gpt-4o-mini` and consumes tokens per health check** — spec-specified behavior; optimize to a zero-cost endpoint (e.g., `GET /v1/models`) in a later hardening story to eliminate inference cost. [`apps/api/src/agents/providers/openai.adapter.ts:196-204`]
+- **`llm-provider.interface.ts` imports `ToolSpec` from `tools.manifest`** — intentional per story task spec; revisit if interface file needs to move to `packages/types` for layer independence. [`apps/api/src/agents/providers/llm-provider.interface.ts:1`]
+
 ## Deferred from: code review of 3-1-allergy-guardrail-service (2026-05-01)
 
 - **Tokenizer regex misses `+`, `*`, `|`, `\`, `[`, `]`, `@`, `#`, `%`, apostrophe, ampersand, and CJK separators** — deferred, broader matching-strategy decision (D1 in story review) governs scope. LLM-generated ingredient strings can use non-ASCII separators to dodge token-reverse match. [`apps/api/src/modules/allergy-guardrail/allergy-rules.engine.ts:25`]
