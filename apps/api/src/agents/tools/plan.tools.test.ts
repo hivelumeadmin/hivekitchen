@@ -6,12 +6,17 @@ import type { PlansService } from '../../modules/plans/plans.service.js';
 import { NotImplementedError } from '../../common/errors.js';
 
 const HOUSEHOLD_ID = '11111111-1111-4111-8111-111111111111';
-const MEAL_ID = '22222222-2222-4222-8222-222222222222';
+const CHILD_ID = '22222222-2222-4222-8222-222222222222';
 
 const VALID_INPUT = {
   household_id: HOUSEHOLD_ID,
-  week_of: '2026-05-04',
-  days: [{ day: 'monday' as const, meal: { id: MEAL_ID, name: 'Rice and lentils' } }],
+  week_of: '2026-05-11',
+  days: [
+    {
+      day: 'monday' as const,
+      items: [{ child_id: CHILD_ID, slot: 'main', ingredients: ['rice', 'lentils'] }],
+    },
+  ],
   prompt_version: 'v1.0.0',
 };
 

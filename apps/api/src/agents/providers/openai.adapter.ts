@@ -1,14 +1,17 @@
 import { z } from 'zod';
 import type OpenAI from 'openai';
 import type {
+  ChatCompletion,
   ChatCompletionChunk,
   ChatCompletionCreateParams,
   ChatCompletionMessageParam,
   ChatCompletionTool,
+  ChatCompletionToolMessageParam,
 } from 'openai/resources/chat/completions';
 import type { ToolSpec } from '../tools.manifest.js';
 import type {
   LLMCallOptions,
+  LLMMessage,
   LLMProvider,
   LLMResponse,
   LLMStreamEvent,
@@ -65,6 +68,44 @@ function buildMessages(prompt: string, systemPrompt: string | undefined): ChatCo
   return messages;
 }
 
+// Maps the orchestrator's neutral LLMMessage shape onto the OpenAI SDK's
+// ChatCompletionMessageParam. Tool results carry tool_call_id; assistant
+// messages with tool_calls round-trip the SDK's wire shape (function calls
+// only — non-function call types are not produced by toOpenAITools).
+function buildMessagesFromLLM(messages: LLMMessage[]): ChatCompletionMessageParam[] {
+  return messages.map((m): ChatCompletionMessageParam => {
+    if (m.role === 'tool') {
+      if (!m.toolCallId) {
+        throw new Error(`buildMessagesFromLLM: tool message is missing toolCallId (name=${m.name ?? 'unknown'})`);
+      }
+      return {
+        role: 'tool',
+        tool_call_id: m.toolCallId,
+        content: m.content ?? '',
+      } satisfies ChatCompletionToolMessageParam;
+    }
+    if (m.role === 'assistant' && m.toolCalls && m.toolCalls.length > 0) {
+      return {
+        role: 'assistant',
+        content: m.content,
+        tool_calls: m.toolCalls.map((tc) => ({
+          id: tc.id,
+          type: 'function' as const,
+          function: {
+            name: toExternalName(tc.name),
+            arguments:
+              typeof tc.arguments === 'string' ? tc.arguments : JSON.stringify(tc.arguments),
+          },
+        })),
+      };
+    }
+    return {
+      role: m.role as 'system' | 'user' | 'assistant',
+      content: m.content ?? '',
+    };
+  });
+}
+
 function mapFinishReason(reason: string | null | undefined): LLMResponse['finishReason'] {
   switch (reason) {
     case 'stop':
@@ -90,6 +131,41 @@ function parseToolCallArguments(raw: string): unknown {
   }
 }
 
+function mapChatCompletion(response: ChatCompletion): LLMResponse {
+  const choice = response.choices[0];
+  if (!choice) {
+    return {
+      content: null,
+      toolCalls: [],
+      finishReason: 'error',
+      usage: {
+        promptTokens: response.usage?.prompt_tokens ?? 0,
+        completionTokens: response.usage?.completion_tokens ?? 0,
+      },
+    };
+  }
+  const message = choice.message;
+  const toolCalls: LLMToolCall[] = (message?.tool_calls ?? [])
+    .filter((c): c is { id: string; type: 'function'; function: { name: string; arguments: string } } =>
+      c.type === 'function',
+    )
+    .map((c) => ({
+      id: c.id,
+      name: toInternalName(c.function.name),
+      arguments: parseToolCallArguments(c.function.arguments),
+    }));
+
+  return {
+    content: message?.content ?? null,
+    toolCalls,
+    finishReason: mapFinishReason(choice.finish_reason),
+    usage: {
+      promptTokens: response.usage?.prompt_tokens ?? 0,
+      completionTokens: response.usage?.completion_tokens ?? 0,
+    },
+  };
+}
+
 export class OpenAIAdapter implements LLMProvider {
   readonly name = 'openai';
 
@@ -108,42 +184,35 @@ export class OpenAIAdapter implements LLMProvider {
       ...(tools.length > 0 ? { tools: toOpenAITools(tools), tool_choice: 'auto' } : {}),
     };
 
-    const response = await this.client.chat.completions.create(params, {
+    const response = (await this.client.chat.completions.create(params, {
       headers: { ...ZERO_RETENTION_HEADER },
-    });
+    })) as ChatCompletion;
 
-    const choice = response.choices[0];
-    if (!choice) {
-      return {
-        content: null,
-        toolCalls: [],
-        finishReason: 'error',
-        usage: {
-          promptTokens: response.usage?.prompt_tokens ?? 0,
-          completionTokens: response.usage?.completion_tokens ?? 0,
-        },
-      };
-    }
-    const message = choice.message;
-    const toolCalls: LLMToolCall[] = (message?.tool_calls ?? [])
-      .filter((c): c is { id: string; type: 'function'; function: { name: string; arguments: string } } =>
-        c.type === 'function',
-      )
-      .map((c) => ({
-        id: c.id,
-        name: toInternalName(c.function.name),
-        arguments: parseToolCallArguments(c.function.arguments),
-      }));
+    return mapChatCompletion(response);
+  }
 
-    return {
-      content: message?.content ?? null,
-      toolCalls,
-      finishReason: mapFinishReason(choice?.finish_reason),
-      usage: {
-        promptTokens: response.usage?.prompt_tokens ?? 0,
-        completionTokens: response.usage?.completion_tokens ?? 0,
-      },
+  // Multi-turn entry point used by the agentic planner loop. Mirrors complete()
+  // but accepts the full conversation history (system / user / assistant /
+  // tool turns) so the LLM can iterate on tool results until plan.compose
+  // is called.
+  async completeWithMessages(
+    messages: LLMMessage[],
+    tools: ToolSpec[],
+    options: LLMCallOptions,
+  ): Promise<LLMResponse> {
+    const params: ChatCompletionCreateParams = {
+      model: options.model,
+      messages: buildMessagesFromLLM(messages),
+      ...(options.temperature !== undefined ? { temperature: options.temperature } : {}),
+      ...(options.maxTokens !== undefined ? { max_tokens: options.maxTokens } : {}),
+      ...(tools.length > 0 ? { tools: toOpenAITools(tools), tool_choice: 'auto' } : {}),
     };
+
+    const response = (await this.client.chat.completions.create(params, {
+      headers: { ...ZERO_RETENTION_HEADER },
+    })) as ChatCompletion;
+
+    return mapChatCompletion(response);
   }
 
   async *stream(

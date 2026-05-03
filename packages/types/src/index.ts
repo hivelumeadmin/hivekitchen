@@ -297,6 +297,7 @@ export type PantryItem = z.infer<typeof PantryItemSchema>;
 
 export type PlanComposeInput = z.infer<typeof PlanComposeInputSchema>;
 export type PlanComposeOutput = z.infer<typeof PlanComposeOutputSchema>;
+export type { PlanComposeItem, PlanComposeDay } from '@hivekitchen/contracts';
 
 export type CulturalLookupInput = z.infer<typeof CulturalLookupInputSchema>;
 export type CulturalLookupOutput = z.infer<typeof CulturalLookupOutputSchema>;

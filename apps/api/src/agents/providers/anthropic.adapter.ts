@@ -12,6 +12,12 @@ export class AnthropicAdapter implements LLMProvider {
     throw new NotImplementedError('AnthropicAdapter.complete');
   }
 
+  // Failover stub for the planner agentic loop. Anthropic is the circuit-breaker
+  // failover throughout Epic 3 — a future story will wire a real implementation.
+  completeWithMessages(): Promise<LLMResponse> {
+    throw new NotImplementedError('AnthropicAdapter.completeWithMessages');
+  }
+
   // eslint-disable-next-line require-yield
   async *stream(): AsyncGenerator<LLMStreamEvent> {
     throw new NotImplementedError('AnthropicAdapter.stream');

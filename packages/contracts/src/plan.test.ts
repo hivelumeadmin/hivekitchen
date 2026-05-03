@@ -130,14 +130,14 @@ describe('WeeklyPlan', () => {
   });
 });
 
-describe('PlanComposeInputSchema', () => {
+describe('PlanComposeInputSchema (Story 3.7 — per-child/per-slot days)', () => {
   const validInput = {
     household_id: UUID1,
-    week_of: '2026-05-04',
+    week_of: '2026-05-11',
     days: [
       {
         day: 'monday' as const,
-        meal: { id: UUID2, name: 'Rice and lentils' },
+        items: [{ child_id: UUID2, slot: 'main', ingredients: ['rice', 'lentils'] }],
       },
     ],
     prompt_version: 'v1.0.0',
@@ -147,7 +147,29 @@ describe('PlanComposeInputSchema', () => {
     expect(PlanComposeInputSchema.safeParse(validInput).success).toBe(true);
   });
 
-  it('rejects an input with non-date week_of', () => {
+  it('rejects missing household_id', () => {
+    const { household_id: _drop, ...rest } = validInput;
+    expect(PlanComposeInputSchema.safeParse(rest).success).toBe(false);
+  });
+
+  it('rejects empty days array', () => {
+    expect(
+      PlanComposeInputSchema.safeParse({ ...validInput, days: [] }).success,
+    ).toBe(false);
+  });
+
+  it('rejects an item with empty ingredients', () => {
+    expect(
+      PlanComposeInputSchema.safeParse({
+        ...validInput,
+        days: [
+          { day: 'monday', items: [{ child_id: UUID2, slot: 'main', ingredients: [] }] },
+        ],
+      }).success,
+    ).toBe(false);
+  });
+
+  it('rejects non-date week_of', () => {
     expect(
       PlanComposeInputSchema.safeParse({ ...validInput, week_of: 'next-week' }).success,
     ).toBe(false);
@@ -159,16 +181,32 @@ describe('PlanComposeInputSchema', () => {
   });
 });
 
-describe('PlanComposeOutputSchema', () => {
-  it('round-trips a WeeklyPlan-shaped output', () => {
-    const r = PlanComposeOutputSchema.safeParse({
-      id: UUID1,
-      weekOf: '2026-05-04',
-      status: 'draft',
-      days: [{ day: 'monday', meal: { id: UUID2, name: 'Rice and lentils' } }],
-      promptVersion: 'v1.0.0',
-    });
-    expect(r.success).toBe(true);
+describe('PlanComposeOutputSchema (Story 3.7 — carries plan_id)', () => {
+  const PLAN_ID = '00000000-0000-4000-8000-000000000099';
+  const validOutput = {
+    plan_id: PLAN_ID,
+    household_id: UUID1,
+    week_of: '2026-05-11',
+    days: [
+      {
+        day: 'monday' as const,
+        items: [{ child_id: UUID2, slot: 'main', ingredients: ['rice', 'lentils'] }],
+      },
+    ],
+    prompt_version: 'v1.0.0',
+  };
+
+  it('round-trips a valid output with plan_id', () => {
+    expect(PlanComposeOutputSchema.safeParse(validOutput).success).toBe(true);
+  });
+
+  it('rejects an output missing plan_id', () => {
+    const { plan_id: _drop, ...rest } = validOutput;
+    expect(PlanComposeOutputSchema.safeParse(rest).success).toBe(false);
+  });
+
+  it('rejects an output with empty days array', () => {
+    expect(PlanComposeOutputSchema.safeParse({ ...validOutput, days: [] }).success).toBe(false);
   });
 });
 

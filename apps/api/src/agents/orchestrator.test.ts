@@ -108,6 +108,8 @@ function buildProvider(name: string, overrides: Partial<LLMProvider> = {}): LLMP
     usage: { promptTokens: 1, completionTokens: 1 },
   };
   const complete = overrides.complete ?? vi.fn().mockResolvedValue(stoppedResponse);
+  const completeWithMessages =
+    overrides.completeWithMessages ?? vi.fn().mockResolvedValue(stoppedResponse);
   const stream =
     overrides.stream ??
     (async function* () {
@@ -117,6 +119,7 @@ function buildProvider(name: string, overrides: Partial<LLMProvider> = {}): LLMP
   return {
     name,
     complete,
+    completeWithMessages,
     stream,
     probe,
   } as LLMProvider;

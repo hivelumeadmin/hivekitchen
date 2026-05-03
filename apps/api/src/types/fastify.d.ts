@@ -5,7 +5,7 @@ import type Stripe from 'stripe';
 import type { MailService } from '@sendgrid/mail';
 import type { Twilio } from 'twilio';
 import type Redis from 'ioredis';
-import type { Queue, Worker, Processor } from 'bullmq';
+import type { Queue, Worker, Processor, WorkerOptions } from 'bullmq';
 import type { Env } from '../common/env.js';
 import type { AuditWriteInput } from '../audit/audit.types.js';
 import type { AuditService } from '../audit/audit.service.js';
@@ -17,7 +17,7 @@ import type { DomainOrchestrator } from '../agents/orchestrator.js';
 
 interface BullMQFacade {
   getQueue(name: string): Queue;
-  getWorker(name: string, processor: Processor): Worker;
+  getWorker(name: string, processor: Processor, opts?: Partial<WorkerOptions>): Worker;
 }
 
 declare module 'fastify' {

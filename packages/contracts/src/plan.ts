@@ -26,18 +26,6 @@ export const CreatePlanResponse = z.object({
   plan: WeeklyPlan,
 });
 
-// Story 3.4 — plan.compose tool I/O. Output IS a WeeklyPlan; aliasing rather
-// than duplicating the schema keeps intent explicit while letting future
-// WeeklyPlan changes flow through automatically.
-export const PlanComposeInputSchema = z.object({
-  household_id: z.string().uuid(),
-  week_of: z.string().date(),
-  days: z.array(DayPlan),
-  prompt_version: z.string(),
-});
-
-export const PlanComposeOutputSchema = WeeklyPlan;
-
 // --- Foundation Gate schemas ---
 
 export const AllergyVerdict = z.discriminatedUnion('verdict', [
@@ -71,6 +59,42 @@ const INGREDIENT_MAX = 200;
 const SLOT_MAX = 64;
 const PLAN_ITEMS_MAX = 50;
 const INGREDIENTS_MAX = 20;
+
+// --- Story 3.7 — plan.compose tool I/O schemas ---
+// Per-child, per-slot item within a single day's plan.
+// recipe_id / item_id are optional at compose time; resolver fills them in
+// later stories. Schemas are tool-internal — only the inferred types are
+// re-exported for consumers (planner agent + BullMQ worker).
+const PlanComposeItemSchema = z.object({
+  child_id: z.string().uuid(),
+  slot: z.string().min(1).max(SLOT_MAX),
+  ingredients: z.array(z.string().min(1).max(INGREDIENT_MAX)).min(1),
+  recipe_id: z.string().uuid().optional(),
+  item_id: z.string().uuid().optional(),
+});
+export type PlanComposeItem = z.infer<typeof PlanComposeItemSchema>;
+
+const PlanComposeDaySchema = z.object({
+  day: z.enum(['monday', 'tuesday', 'wednesday', 'thursday', 'friday']),
+  items: z.array(PlanComposeItemSchema).min(1),
+});
+export type PlanComposeDay = z.infer<typeof PlanComposeDaySchema>;
+
+export const PlanComposeInputSchema = z.object({
+  household_id: z.string().uuid(),
+  week_of: z.string().date(),
+  days: z.array(PlanComposeDaySchema).min(1),
+  prompt_version: z.string().min(1),
+});
+
+// plan.compose output — carries plan_id so the BullMQ worker can build CommitPlanInput.
+export const PlanComposeOutputSchema = z.object({
+  plan_id: z.string().uuid(),
+  household_id: z.string().uuid(),
+  week_of: z.string().date(),
+  days: z.array(PlanComposeDaySchema).min(1),
+  prompt_version: z.string().min(1),
+});
 
 export const ConflictSchema = z.object({
   child_id: z.string().uuid(),

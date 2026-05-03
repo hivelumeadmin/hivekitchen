@@ -74,6 +74,18 @@ export class HouseholdsRepository extends BaseRepository {
     }
   }
 
+  // Returns every household's id + timezone for the plan-generation fan-out.
+  // Service-role client bypasses RLS — this is a background system query, not
+  // a user-scoped read. No active/inactive flag exists yet; all households
+  // qualify for plan generation in beta.
+  async findAllActive(): Promise<Array<{ id: string; timezone: string }>> {
+    const { data, error } = await this.client
+      .from('households')
+      .select('id, timezone');
+    if (error) throw error;
+    return (data ?? []) as Array<{ id: string; timezone: string }>;
+  }
+
   // Returns household age in milliseconds (now - created_at). Used by the
   // tile-retry route to gate the ghost-timestamp escalation to week 1–2.
   // Throws if the household row is missing — no silent zero fallback that

@@ -26,9 +26,24 @@ export interface LLMStreamEvent {
   toolCallDelta?: { id: string; name?: string; argumentsDelta?: string };
 }
 
+// Multi-turn message for agentic loops (e.g., planWeek). The 'tool' role
+// links a tool result back to its triggering call via toolCallId.
+export interface LLMMessage {
+  role: 'system' | 'user' | 'assistant' | 'tool';
+  content: string | null;
+  toolCalls?: LLMToolCall[];
+  toolCallId?: string;
+  name?: string;
+}
+
 export interface LLMProvider {
   readonly name: string;
   complete(prompt: string, tools: ToolSpec[], options: LLMCallOptions): Promise<LLMResponse>;
+  completeWithMessages(
+    messages: LLMMessage[],
+    tools: ToolSpec[],
+    options: LLMCallOptions,
+  ): Promise<LLMResponse>;
   stream(prompt: string, tools: ToolSpec[], options: LLMCallOptions): AsyncIterable<LLMStreamEvent>;
   probe(): Promise<boolean>;
 }

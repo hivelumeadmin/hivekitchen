@@ -1,6 +1,6 @@
 import fp from 'fastify-plugin';
 import { Queue, Worker } from 'bullmq';
-import type { Processor } from 'bullmq';
+import type { Processor, WorkerOptions } from 'bullmq';
 
 export const bullmqPlugin = fp(async (fastify) => {
   const connection = fastify.redis;
@@ -17,10 +17,10 @@ export const bullmqPlugin = fp(async (fastify) => {
       }
       return q;
     },
-    getWorker: (name: string, processor: Processor) => {
+    getWorker: (name: string, processor: Processor, opts?: Partial<WorkerOptions>) => {
       let w = workers.get(name);
       if (!w) {
-        w = new Worker(name, processor, { connection });
+        w = new Worker(name, processor, { connection, ...opts });
         workers.set(name, w);
       }
       return w;

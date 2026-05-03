@@ -6,8 +6,12 @@ import type { BriefStateRepository } from './brief-state.repository.js';
 import type { BriefStateComposer } from './brief-state.composer.js';
 import type { AllergyGuardrailService } from '../allergy-guardrail/allergy-guardrail.service.js';
 import type { AuditService } from '../../audit/audit.service.js';
-import type { CommitPlanInput, GuardrailResult } from '@hivekitchen/types';
-import { GuardrailRejectionError, NotImplementedError } from '../../common/errors.js';
+import type {
+  CommitPlanInput,
+  GuardrailResult,
+  PlanComposeInput,
+} from '@hivekitchen/types';
+import { GuardrailRejectionError } from '../../common/errors.js';
 import { GUARDRAIL_VERSION } from '../allergy-guardrail/allergy-rules.engine.js';
 
 const PLAN_ID = '11111111-1111-4111-8111-111111111111';
@@ -108,8 +112,8 @@ function buildBriefStateComposer(): BriefStateComposer & {
   } as unknown as BriefStateComposer & { refresh: ReturnType<typeof vi.fn> };
 }
 
-describe('PlansService.compose', () => {
-  it('throws NotImplementedError until Story 3.7 wires real composer', async () => {
+describe('PlansService.compose (Story 3.7 — pure transform with generated plan_id)', () => {
+  it('returns a PlanComposeOutput with a freshly-generated plan_id', async () => {
     const service = new PlansService({
       repository: buildRepo(),
       briefStateRepository: buildBriefStateRepo(),
@@ -118,14 +122,51 @@ describe('PlansService.compose', () => {
       auditService: buildAudit(),
       logger: buildLogger(),
     });
-    await expect(
-      service.compose({
-        household_id: HOUSEHOLD_ID,
-        week_of: '2026-05-04',
-        days: [],
-        prompt_version: 'v1.0.0',
-      }),
-    ).rejects.toBeInstanceOf(NotImplementedError);
+    const input: PlanComposeInput = {
+      household_id: HOUSEHOLD_ID,
+      week_of: '2026-05-11',
+      days: [
+        {
+          day: 'monday',
+          items: [{ child_id: CHILD_ID, slot: 'main', ingredients: ['rice'] }],
+        },
+      ],
+      prompt_version: 'v1.0.0',
+    };
+
+    const output = await service.compose(input);
+
+    expect(output.plan_id).toMatch(/^[0-9a-f-]{36}$/);
+    expect(output.household_id).toBe(HOUSEHOLD_ID);
+    expect(output.week_of).toBe('2026-05-11');
+    expect(output.days).toEqual(input.days);
+    expect(output.prompt_version).toBe('v1.0.0');
+  });
+
+  it('mints a different plan_id on repeated calls (does not memoize)', async () => {
+    const service = new PlansService({
+      repository: buildRepo(),
+      briefStateRepository: buildBriefStateRepo(),
+      briefStateComposer: buildBriefStateComposer(),
+      allergyGuardrail: buildGuardrail([{ verdict: 'cleared', conflicts: [] }]),
+      auditService: buildAudit(),
+      logger: buildLogger(),
+    });
+    const input: PlanComposeInput = {
+      household_id: HOUSEHOLD_ID,
+      week_of: '2026-05-11',
+      days: [
+        {
+          day: 'monday',
+          items: [{ child_id: CHILD_ID, slot: 'main', ingredients: ['rice'] }],
+        },
+      ],
+      prompt_version: 'v1.0.0',
+    };
+
+    const first = await service.compose(input);
+    const second = await service.compose(input);
+    expect(first.plan_id).not.toBe(second.plan_id);
   });
 });
 

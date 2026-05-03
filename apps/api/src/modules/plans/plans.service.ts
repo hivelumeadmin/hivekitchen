@@ -1,6 +1,7 @@
+import { randomUUID } from 'node:crypto';
 import type { FastifyBaseLogger } from 'fastify';
 import { GUARDRAIL_VERSION } from '../allergy-guardrail/allergy-rules.engine.js';
-import { GuardrailRejectionError, NotImplementedError } from '../../common/errors.js';
+import { GuardrailRejectionError } from '../../common/errors.js';
 import type { AllergyGuardrailService } from '../allergy-guardrail/allergy-guardrail.service.js';
 import type { AuditService } from '../../audit/audit.service.js';
 import type { PlansRepository } from './plans.repository.js';
@@ -50,10 +51,18 @@ export class PlansService {
     return this.briefStateRepo.findByHousehold(householdId);
   }
 
-  // Stub until Story 3.7 wires the BullMQ job that calls the planner agent.
-  // The plan.compose tool dispatches here and surfaces the 501 to the caller.
-  async compose(_input: PlanComposeInput): Promise<PlanComposeOutput> {
-    throw new NotImplementedError('plan.compose — real generation lands in Story 3.7 BullMQ job');
+  // Pure transform: converts the planner agent's PlanComposeInput into a
+  // PlanComposeOutput by attaching a freshly-generated plan_id. Does NOT
+  // commit — the BullMQ worker drives the commit flow separately so the
+  // agent layer remains stateless.
+  async compose(input: PlanComposeInput): Promise<PlanComposeOutput> {
+    return Promise.resolve({
+      plan_id: randomUUID(),
+      household_id: input.household_id,
+      week_of: input.week_of,
+      days: input.days,
+      prompt_version: input.prompt_version,
+    });
   }
 
   // Presentation-bind transaction: clear-or-reject the plan, and on clearance
