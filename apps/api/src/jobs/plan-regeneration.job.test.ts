@@ -59,7 +59,7 @@ async function runRegenerationJob(
     getCurrentPlanItems: ReturnType<typeof vi.fn>;
   },
 ): Promise<void> {
-  const { plan_id, household_id, week_of, week_id, scope, day, request_id } = data;
+  const { plan_id, household_id, week_of, week_id, current_revision, scope, day, request_id } = data;
 
   const composeOutput: PlanComposeOutput = await deps.planWeek(
     household_id,
@@ -108,7 +108,7 @@ async function runRegenerationJob(
     household_id,
     week_id,
     week_of,
-    revision: 1,
+    revision: current_revision + 1,
     generated_at: new Date().toISOString(),
     prompt_version: filteredOutput.prompt_version,
     items: commitItems,
@@ -140,6 +140,7 @@ describe('plan-regeneration job (Story 3.13)', () => {
         household_id: HOUSEHOLD_ID,
         week_of: '2026-05-04',
         week_id: WEEK_ID,
+        current_revision: 1,
         scope: 'week',
         request_id: REQUEST_ID,
       },
@@ -173,6 +174,7 @@ describe('plan-regeneration job (Story 3.13)', () => {
         household_id: HOUSEHOLD_ID,
         week_of: '2026-05-04',
         week_id: WEEK_ID,
+        current_revision: 1,
         scope: 'day',
         day: 'tuesday',
         request_id: REQUEST_ID,
@@ -223,6 +225,7 @@ describe('plan-regeneration job (Story 3.13)', () => {
         household_id: HOUSEHOLD_ID,
         week_of: '2026-05-04',
         week_id: WEEK_ID,
+        current_revision: 1,
         scope: 'day',
         day: 'tuesday',
         request_id: REQUEST_ID,
@@ -258,6 +261,7 @@ describe('plan-regeneration job (Story 3.13)', () => {
           household_id: HOUSEHOLD_ID,
           week_of: '2026-05-04',
           week_id: WEEK_ID,
+          current_revision: 1,
           scope: 'day',
           day: 'tuesday',
           request_id: REQUEST_ID,

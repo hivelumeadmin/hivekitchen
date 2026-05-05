@@ -33,6 +33,10 @@ function buildSelectClient(result: ClientResult): {
       steps.push({ op: 'eq', args: [col, val] });
       return builder;
     },
+    is(col: string, val: unknown) {
+      steps.push({ op: 'is', args: [col, val] });
+      return builder;
+    },
     not(col: string, op: string, val: unknown) {
       steps.push({ op: 'not', args: [col, op, val] });
       return builder;
@@ -251,6 +255,7 @@ const SAMPLE_ITEM_ROW = {
   item_id: null,
   ingredients: ['rice', 'lentils'],
   paused_at: null,
+  replaced_by_plan_id: null,
   created_at: '2026-05-02T11:00:00.000Z',
   updated_at: '2026-05-02T11:00:01.000Z',
 };
@@ -271,6 +276,7 @@ describe('PlansRepository.findItemById (Story 3.12)', () => {
         { op: 'from', args: ['plan_items'] },
         { op: 'eq', args: ['id', SAMPLE_ITEM_ROW.id] },
         { op: 'eq', args: ['plan_id', PLAN_ID] },
+        { op: 'is', args: ['replaced_by_plan_id', null] },
       ]),
     );
   });

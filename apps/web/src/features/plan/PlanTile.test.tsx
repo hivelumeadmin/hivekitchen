@@ -12,6 +12,7 @@ function makeSummary(
     day: 'monday',
     items: [
       {
+        plan_item_id: null,
         child_id: CHILD_ID,
         slot: 'main',
         ingredients: ['rice', 'beans', 'cheese'],
@@ -57,7 +58,7 @@ describe('PlanTile structure', () => {
       <PlanTile
         summary={makeSummary({
           items: [
-            { child_id: CHILD_ID, slot: 'main', ingredients: ['rice', 'beans'] },
+            { plan_item_id: null, child_id: CHILD_ID, slot: 'main', ingredients: ['rice', 'beans'] },
           ],
         })}
       />,
@@ -71,6 +72,7 @@ describe('PlanTile structure', () => {
         summary={makeSummary({
           items: [
             {
+              plan_item_id: null,
               child_id: CHILD_ID,
               slot: 'main',
               ingredients: ['rice', 'beans', 'cheese', 'salsa', 'lime'],
@@ -92,8 +94,8 @@ describe('PlanTile structure', () => {
       <PlanTile
         summary={makeSummary({
           items: [
-            { child_id: CHILD_ID, slot: 'main', ingredients: ['rice', 'beans'] },
-            { child_id: CHILD_ID, slot: 'extra', ingredients: ['rice', 'fruit'] },
+            { plan_item_id: null, child_id: CHILD_ID, slot: 'main', ingredients: ['rice', 'beans'] },
+            { plan_item_id: null, child_id: CHILD_ID, slot: 'extra', ingredients: ['rice', 'fruit'] },
           ],
         })}
       />,

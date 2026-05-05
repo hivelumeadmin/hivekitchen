@@ -197,13 +197,16 @@ export const PlanItemRowSchema = z.object({
 });
 
 // Story 3.13 — POST /v1/plans/:planId/regenerate?scope=week|day&day=monday query params.
-// day is required when scope='day'.
+// day is required when scope='day' and must be absent when scope='week'.
 export const RegeneratePlanQuerySchema = z.object({
   scope: z.enum(['week', 'day']),
   day: z.enum(['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday']).optional(),
 }).refine(
   (val) => val.scope !== 'day' || val.day !== undefined,
   { message: "'day' query param is required when scope=day", path: ['day'] },
+).refine(
+  (val) => val.scope !== 'week' || val.day === undefined,
+  { message: "'day' query param must be omitted when scope=week", path: ['day'] },
 );
 
 // Story 3.13 — 202 Accepted response body. job_id correlates to the BullMQ job for
@@ -241,7 +244,7 @@ export const PausePlanDayInputSchema = z.object({
 // client can call PATCH /v1/plans/:planId/items/:itemId without a separate lookup.
 // Optional because pre-3.12 brief_state rows will not have it in their JSON.
 const PlanTileItemSchema = z.object({
-  plan_item_id: z.string().uuid().optional(),  // Story 3.12 — DB row id for PATCH
+  plan_item_id: z.string().uuid().nullable().default(null),  // Story 3.12 — DB row id for PATCH; null for pre-3.12 brief_state rows
   child_id: z.string().uuid(),
   slot: z.string().min(1).max(SLOT_MAX),
   ingredients: z.array(z.string().min(1)),

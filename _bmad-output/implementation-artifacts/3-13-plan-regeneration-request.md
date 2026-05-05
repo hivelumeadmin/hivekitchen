@@ -1,6 +1,6 @@
 # Story 3.13: Plan regeneration request
 
-Status: review
+Status: done
 
 ## Story
 
@@ -1405,9 +1405,65 @@ _bmad-output/implementation-artifacts/deferred-work.md
 _bmad-output/implementation-artifacts/3-13-plan-regeneration-request.md
 ```
 
+### Review Findings
+
+Group A reviewed 2026-05-04 (DB Migrations, Contracts, Types). 1 decision-needed, 5 patch, 3 defer, 8 dismissed.
+
+- [x] [Review][Decision] `RegeneratePlanQuerySchema` silently accepts `{ scope:'week', day:'tuesday' }` — resolved: added second `.refine()` leg rejecting `day` when `scope='week'`. Test added. [packages/contracts/src/plan.ts — RegeneratePlanQuerySchema]
+
+- [x] [Review][Patch] `buildCommitInput()` hardcodes `revision: 1` — fixed: added `current_revision` to `PlanRegenerationJobData`; set in `requestRegeneration()` from `plan.revision`; worker overrides `commitInput.revision = current_revision + 1` (and same for `retryCommit`). [apps/api/src/jobs/plan-regeneration.job.ts, plans.service.ts]
+
+- [x] [Review][Patch] `countItemsForDay` counts archived items after regeneration — fixed: added `.is('replaced_by_plan_id', null)` filter. [apps/api/src/modules/plans/plans.repository.ts]
+
+- [x] [Review][Patch] `findItemById` can match and expose archived items — fixed: added `.is('replaced_by_plan_id', null)` filter; test mock and assertion updated. [apps/api/src/modules/plans/plans.repository.ts]
+
+- [x] [Review][Patch] `pauseDay` can pause archived items — fixed: added `.is('replaced_by_plan_id', null)` filter. [apps/api/src/modules/plans/plans.repository.ts]
+
+- [x] [Review][Patch] `PlanTileItemSchema.plan_item_id` uses `.optional()` instead of `.nullable().default(null)` — fixed: changed to `.nullable().default(null)`; PlanTile.test.tsx and plan.test.ts fixtures updated. [packages/contracts/src/plan.ts]
+
+- [x] [Review][Defer] SSE `plan.updated` not emitted from regeneration job — AC #2 requires it; intentionally deferred to Story 5.2 per dev notes; already in deferred-work.md. [apps/api/src/jobs/plan-regeneration.job.ts:~179]
+
+- [x] [Review][Defer] Rate-limit INCR before job enqueue — failed enqueue consumes a rate-limit token; already in deferred-work.md as a MULTI/EXEC Redis transaction fix. [apps/api/src/modules/plans/plans.service.ts — requestRegeneration]
+
+- [x] [Review][Defer] `week_of VARCHAR(10)` has no DB-level CHECK constraint — Zod enforces `YYYY-MM-DD` format at the API boundary; a CHECK constraint or `DATE` column type would add defense-in-depth for direct DB access. Low priority at MVP scale. [supabase/migrations/20260630000000_add_week_of_to_plans.sql]
+
+Group B reviewed 2026-05-04 (errors.ts, app.ts, orchestrator.ts, plan-generation.job.ts, plan-regeneration.job.ts + test). 0 decisions, 2 patches, 6 defers, 8 dismissed. All 10 ACs confirmed passing.
+
+- [x] [Review][Patch] Empty `rejectionContext` string passed to `planWeek` on guardrail retry — when no blocked verdicts exist, `flatMap` returns `[]` and `join` returns `""`; orchestrator injects "first generation attempt" context instead of signalling a retry, giving the LLM no corrective signal. Fixed: coerce empty string to `undefined` (`conflictLines.length > 0 ? ... : undefined`). [apps/api/src/jobs/plan-regeneration.job.ts:131-134]
+
+- [x] [Review][Patch] TOCTOU: `getCurrentPlanItems` called twice (outer merge + guardrail-retry callback) — a concurrent swap between the two calls causes the retry to overwrite the swap with stale pre-swap ingredients. Fixed: capture `existingItems` once before `plansService.commit()`, close over it in the retry callback; eliminates the race and removes one redundant DB round-trip. [apps/api/src/jobs/plan-regeneration.job.ts:101-104, 153]
+
+- [x] [Review][Defer] Non-atomic INCR + EXPIRE in `requestRegeneration` — process crash between the two Redis calls leaves a no-TTL key, permanently rate-limiting the household for that week_id. Fix: use `SET key 1 EX ttl NX` + `INCR` Lua script or pipeline. Added to deferred-work.md. [apps/api/src/modules/plans/plans.service.ts — requestRegeneration]
+
+- [x] [Review][Defer] `REGEN_JOB_OPTS` defined in job file but duplicated inline at enqueue call site in `plans.service.ts` — divergence risk if one is updated. Fix: export `REGEN_JOB_OPTS` and import at the call site. Reviewed in Group C. [apps/api/src/jobs/plan-regeneration.job.ts:26-31, plans.service.ts]
+
+- [x] [Review][Defer] Rate-limit TTL is 8-day rolling window from first use, not calendar-aligned to Sunday midnight — a household who first regenerates on Thursday carries the counter into the next week. Architectural note says "expires Sunday midnight"; code implements flat 8-day TTL. Fix: compute time-to-Sunday-midnight as the TTL. Added to deferred-work.md. [apps/api/src/modules/plans/plans.service.ts — requestRegeneration]
+
+- [x] [Review][Defer] Day-scope regen silently un-pauses paused days on other days — `PlanItemWrite` has no `paused_at` field; other-day items re-inserted with `paused_at = NULL`, undoing any user-set sick-day pause. Multi-layer fix needed (extend `PlanItemWrite` schema + `commit_plan` RPC). Added to deferred-work.md. [apps/api/src/jobs/plan-regeneration.job.ts:110-120]
+
+- [x] [Review][Defer] Concurrent regen workers for same plan produce last-write-wins race — two jobs enqueued rapidly (within rate-limit) can both commit `revision = N+1` via `ON CONFLICT DO UPDATE`; second one silently discards first result. Fix requires distributed lock or revision-fencing in `commit_plan`. Story 5.x scope. Added to deferred-work.md.
+
+- [x] [Review][Defer] `getCurrentPlanItems` may fail with NotFoundError if the plan lacks `guardrail_cleared_at` — would cause the job to fail before the LLM call completes on retry. Reviewed in Group C. [apps/api/src/modules/plans/plans.service.ts — getCurrentPlanItems]
+
+Group C reviewed 2026-05-04 (plans.routes.ts, plans.service.ts, plans.repository.ts + tests). 1 patch, 4 deferred, 11 dismissed. All 10 ACs re-confirmed passing.
+
+- [x] [Review][Patch] 5th-call test (`count=5, rateLimitRemaining=0`) did not assert `queue.add` was called — a regression accidentally throwing at the rate-limit boundary would silently pass. Fixed: added `expect(queue.add).toHaveBeenCalledTimes(1)` assertion; extracted `queue` variable from anonymous `buildRegenQueue()` call to enable the check. [apps/api/src/modules/plans/plans.service.test.ts:925-942]
+
+- [x] [Review][Defer] Client retry with same `Idempotency-Key` increments Redis INCR even though BullMQ deduplicates the job — burns a rate-limit slot per retry with no new work enqueued. Added to deferred-work.md. [apps/api/src/modules/plans/plans.service.ts — requestRegeneration]
+
+- [x] [Review][Defer] When TTL=-1 (no-TTL key from the tracked non-atomic INCR+EXPIRE crash), the 429 `Retry-After` fallback returns 8 days — misleading because the key will never expire. Added to non-atomic INCR+EXPIRE defer note in deferred-work.md. [apps/api/src/modules/plans/plans.service.ts — requestRegeneration]
+
+- [x] [Review][Defer] Route-level tests for `POST /v1/plans/:planId/regenerate` are absent — 202 body shape, 429 `Retry-After` header, Zod query validation, missing `Idempotency-Key` header are all untested at the HTTP layer. Added to deferred-work.md. [apps/api/src/modules/plans/plans.routes.test.ts]
+
+- [x] [Review][Defer] `requireIdempotencyKey` length-guard dead code — `trimmed.length > 128` can never be true when the UUID regex (36-char fixed) already passed. Comment says "max 128 chars" implying non-UUID keys should be accepted, but the implementation UUID-only restricts. Low severity; pre-existing Story 3.12 code. [apps/api/src/modules/plans/plans.routes.ts — requireIdempotencyKey]
+
 ## Change Log
 
 | Date       | Author | Change                                   |
 | ---------- | ------ | ---------------------------------------- |
 | 2026-05-04 | Menon  | Story 3.13 created — ready-for-dev.       |
 | 2026-05-04 | Amelia | Story 3.13 implementation complete — DB migrations, contracts, errors, orchestrator dayScope, regeneration job + worker, PlansService.requestRegeneration + getCurrentPlanItems, hook wiring, app registration, route, frontend mutation + BriefCanvas + DisambiguationPicker UI, contract / API / job / frontend tests. Status → review. |
+| 2026-05-04 | Menon  | Group A code review — 1 decision-needed, 5 patch, 3 deferred, 8 dismissed. |
+| 2026-05-04 | Menon  | Group B code review — 2 patches, 6 deferred, 8 dismissed. All 10 ACs confirmed passing. |
+| 2026-05-04 | Menon  | Group C code review — 1 patch, 4 deferred, 11 dismissed. All 10 ACs re-confirmed passing. |
+| 2026-05-04 | Menon  | Group D code review — 3 patches (freshnessVariant priority, lastPlanRevisionRef baseline, DisambiguationPicker onRegenDay tests), 4 deferred, 4 dismissed. All 15 DisambiguationPicker tests passing. Status → done. |

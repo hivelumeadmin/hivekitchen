@@ -465,6 +465,7 @@ export class PlansService {
       household_id: opts.householdId,
       week_of: plan.week_of,
       week_id: plan.week_id,
+      current_revision: plan.revision,  // worker sets revision = current_revision + 1
       scope: opts.query.scope,
       ...(opts.query.day !== undefined ? { day: opts.query.day } : {}),
       request_id: opts.requestId,

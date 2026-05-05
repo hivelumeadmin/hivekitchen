@@ -11,12 +11,13 @@ import { buildCommitInput } from './plan-generation.job.js';
 export const REGEN_QUEUE = 'plan-regeneration';
 
 export interface PlanRegenerationJobData {
-  plan_id: string;       // The plan row to regenerate (same id reused via commit upsert)
+  plan_id: string;        // The plan row to regenerate (same id reused via commit upsert)
   household_id: string;
-  week_of: string;       // ISO date string — needed by orchestrator.planWeek()
-  week_id: string;       // Derived from week_of; stored to avoid recomputing
+  week_of: string;        // ISO date string — needed by orchestrator.planWeek()
+  week_id: string;        // Derived from week_of; stored to avoid recomputing
+  current_revision: number; // Plan's revision at enqueue time; worker sets revision = current_revision + 1
   scope: 'week' | 'day';
-  day?: string;          // Required when scope='day'
+  day?: string;           // Required when scope='day'
   request_id: string;
 }
 
@@ -49,7 +50,7 @@ const planRegenerationPlugin: FastifyPluginAsync = async (fastify) => {
   const regenWorker = fastify.bullmq.getWorker(
     REGEN_QUEUE,
     async (job: Job<PlanRegenerationJobData>) => {
-      const { plan_id, household_id, week_of, week_id, scope, day, request_id } = job.data;
+      const { plan_id, household_id, week_of, week_id, current_revision, scope, day, request_id } = job.data;
 
       fastify.log.info(
         {
@@ -90,15 +91,22 @@ const planRegenerationPlugin: FastifyPluginAsync = async (fastify) => {
       }
 
       const commitInput = buildCommitInput(filteredOutput, week_id, request_id);
+      // Increment revision so brief.plan_revision bumps and BriefCanvas polling terminates.
+      commitInput.revision = current_revision + 1;
+
+      // Capture existing items once for day-scope so both the initial merge and
+      // the guardrail-retry callback use the same snapshot. Fetching twice creates
+      // a TOCTOU window where a concurrent swap could cause the retry to overwrite
+      // the swap with stale pre-swap ingredients.
+      const existingItems =
+        scope === 'day' && day !== undefined
+          ? await fastify.plansService.getCurrentPlanItems(plan_id, household_id)
+          : [];
 
       // For day-scope regeneration: merge with existing current items for other
       // days so commit_plan() keeps the other days' items as-is (archives the
       // previous set, re-inserts other-day items + new day items as current).
       if (scope === 'day' && day !== undefined) {
-        const existingItems = await fastify.plansService.getCurrentPlanItems(
-          plan_id,
-          household_id,
-        );
         const otherDayItems: PlanItemWrite[] = existingItems
           .filter((item) => item.day !== day)
           .map((item) => ({
@@ -118,10 +126,12 @@ const planRegenerationPlugin: FastifyPluginAsync = async (fastify) => {
         commitInput,
         request_id,
         async (rejections: GuardrailResult[]): Promise<CommitPlanInput> => {
-          const rejectionContext = rejections
+          const conflictLines = rejections
             .flatMap((r) => (r.verdict === 'blocked' ? r.conflicts : []))
-            .map((c) => `allergen: ${c.allergen}, ingredient: ${c.ingredient}`)
-            .join('; ');
+            .map((c) => `allergen: ${c.allergen}, ingredient: ${c.ingredient}`);
+          // Pass undefined rather than "" so planWeek doesn't inject the
+          // "first generation attempt" context line when no blocked verdicts exist.
+          const rejectionContext = conflictLines.length > 0 ? conflictLines.join('; ') : undefined;
 
           const retryOutput = await fastify.orchestrator.planWeek(
             household_id,
@@ -137,12 +147,9 @@ const planRegenerationPlugin: FastifyPluginAsync = async (fastify) => {
               : retryOutput;
 
           const retryCommit = buildCommitInput(filteredRetry, week_id, request_id);
+          retryCommit.revision = current_revision + 1;
 
           if (scope === 'day' && day !== undefined) {
-            const existingItems = await fastify.plansService.getCurrentPlanItems(
-              plan_id,
-              household_id,
-            );
             const otherDayItems: PlanItemWrite[] = existingItems
               .filter((item) => item.day !== day)
               .map((item) => ({

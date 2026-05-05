@@ -661,12 +661,15 @@ describe('PlanTileItemSchema (Story 3.12 — plan_item_id)', () => {
     expect(result.success).toBe(true);
   });
 
-  it('parses a tile item without plan_item_id (optional for pre-3.12 cached rows)', () => {
+  it('parses a tile item without plan_item_id — defaults to null for pre-3.12 cached rows', () => {
     const result = PlanTileSummarySchema.safeParse({
       day: 'monday',
       items: [{ child_id: UUID1, slot: 'main', ingredients: ['rice'] }],
     });
     expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.items[0].plan_item_id).toBeNull();
+    }
   });
 
   it('rejects a non-uuid plan_item_id', () => {
@@ -860,6 +863,12 @@ describe('RegeneratePlanQuerySchema (Story 3.13)', () => {
   it('rejects unknown day value', () => {
     expect(
       RegeneratePlanQuerySchema.safeParse({ scope: 'day', day: 'sunday' }).success,
+    ).toBe(false);
+  });
+
+  it('rejects { scope: week, day: tuesday } — day must be absent when scope=week', () => {
+    expect(
+      RegeneratePlanQuerySchema.safeParse({ scope: 'week', day: 'tuesday' }).success,
     ).toBe(false);
   });
 });

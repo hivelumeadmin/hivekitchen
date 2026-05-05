@@ -64,10 +64,10 @@ export function BriefCanvas() {
   // isError covers initial load failures (no data); error !== null also catches
   // background refetch failures where TanStack keeps the cached data but sets error.
   const hasFetchError = isError || error !== null;
-  const freshnessVariant = isRegenerating
-    ? 'loading'
-    : hasFetchError
-      ? 'failed'
+  const freshnessVariant = hasFetchError
+    ? 'failed'
+    : isRegenerating
+      ? 'loading'
       : isFetching && isStale
         ? 'stale'
         : 'fresh';
@@ -102,6 +102,9 @@ export function BriefCanvas() {
       { planId, scope, day },
       {
         onSuccess: () => {
+          if (brief) {
+            lastPlanRevisionRef.current = brief.plan_revision;
+          }
           setIsRegenerating(true);
         },
         onError: (err) => {

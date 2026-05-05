@@ -111,6 +111,7 @@ export class PlansRepository extends BaseRepository {
       .select(PLAN_ITEM_COLUMNS)
       .eq('id', opts.itemId)
       .eq('plan_id', opts.planId)
+      .is('replaced_by_plan_id', null)  // exclude archived items from prior regenerations
       .maybeSingle();
     if (error) throw error;
     return (data as PlanItemRow | null) ?? null;
@@ -164,15 +165,16 @@ export class PlansRepository extends BaseRepository {
       .update({ paused_at: opts.pausedAt, updated_at: new Date().toISOString() })
       .eq('plan_id', opts.planId)
       .eq('day', opts.day)
-      .is('paused_at', null)  // only flip rows that aren't already paused — app-level idempotency
+      .is('paused_at', null)          // only flip rows that aren't already paused — app-level idempotency
+      .is('replaced_by_plan_id', null) // exclude archived items from prior regenerations
       .select(PLAN_ITEM_COLUMNS);
     if (error) throw error;
     return (data ?? []) as PlanItemRow[];
   }
 
-  // Story 3.12 — count of plan_items rows for a (plan, day) pair, regardless of
-  // pause state. Used by pauseDay-the-service to distinguish "no items for this
-  // day" (422) from "already paused" (idempotent 204).
+  // Story 3.12 — count of CURRENT (non-archived) plan_items for a (plan, day) pair,
+  // regardless of pause state. Used by pauseDay-the-service to distinguish "no items
+  // for this day" (422) from "already paused" (idempotent 204).
   async countItemsForDay(opts: {
     planId: string;
     day: PlanItemRow['day'];
@@ -181,7 +183,8 @@ export class PlansRepository extends BaseRepository {
       .from('plan_items')
       .select('id', { count: 'exact', head: true })
       .eq('plan_id', opts.planId)
-      .eq('day', opts.day);
+      .eq('day', opts.day)
+      .is('replaced_by_plan_id', null); // exclude archived items from prior regenerations
     if (error) throw error;
     return count ?? 0;
   }

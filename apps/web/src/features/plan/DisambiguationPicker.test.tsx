@@ -72,6 +72,7 @@ function renderPicker(
       onDismiss={props.onDismiss ?? onDismiss}
       onSwapStarted={props.onSwapStarted ?? onSwapStarted}
       onSwapSettled={props.onSwapSettled ?? onSwapSettled}
+      onRegenDay={props.onRegenDay}
     />,
     { wrapper },
   );
@@ -125,6 +126,27 @@ describe('DisambiguationPicker — L1', () => {
     const { onDismiss } = renderPicker();
     fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
     expect(onDismiss).toHaveBeenCalled();
+  });
+});
+
+describe('DisambiguationPicker — L1 onRegenDay', () => {
+  it('renders "Ask Lumi to redo this day" button when onRegenDay is provided', () => {
+    const onRegenDay = vi.fn();
+    renderPicker({ onRegenDay });
+    expect(screen.getByRole('button', { name: /Ask Lumi to redo this day/i })).toBeDefined();
+  });
+
+  it('does not render "Ask Lumi to redo this day" button when onRegenDay is undefined', () => {
+    renderPicker();
+    expect(screen.queryByRole('button', { name: /Ask Lumi to redo this day/i })).toBeNull();
+  });
+
+  it('clicking the button calls onRegenDay with the current day', () => {
+    const onRegenDay = vi.fn();
+    renderPicker({ onRegenDay });
+    fireEvent.click(screen.getByRole('button', { name: /Ask Lumi to redo this day/i }));
+    expect(onRegenDay).toHaveBeenCalledTimes(1);
+    expect(onRegenDay).toHaveBeenCalledWith('monday');
   });
 });
 

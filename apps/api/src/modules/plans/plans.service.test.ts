@@ -924,10 +924,11 @@ describe('PlansService.requestRegeneration (Story 3.13)', () => {
 
   it('5th call: succeeds with rateLimitRemaining=0', async () => {
     const redis = buildRedis({ incrCount: 5 });
+    const queue = buildRegenQueue();
     const service = buildService({
       repo: buildRegenRepo({ plan: makePlanRow() }),
       redis,
-      queue: buildRegenQueue(),
+      queue,
     });
 
     const res = await service.requestRegeneration({
@@ -939,6 +940,9 @@ describe('PlansService.requestRegeneration (Story 3.13)', () => {
 
     expect(res.rateLimitRemaining).toBe(0);
     expect(redis.expire).not.toHaveBeenCalled();
+    // Guard against a regression that accidentally throws on count===REGEN_RATE_LIMIT
+    // (the exact boundary — the 5th call must still enqueue a job).
+    expect(queue.add).toHaveBeenCalledTimes(1);
   });
 
   it('6th call: throws TooManyRequestsError', async () => {
