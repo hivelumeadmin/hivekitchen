@@ -173,3 +173,27 @@ pnpm --filter @hivekitchen/web exec playwright test test/e2e/2-12-bag-compositio
 3. Add to CI (`.github/workflows/ci.yml`) — currently no E2E job exists
 4. Story 12-6 E2E spec generated — run against a `VITE_E2E=true` build to exercise the thread hydration test (requires `window.__lumiStore` exposure)
 5. Wire into `bmad-code-review` — Step 6 of the review workflow now invokes `bmad-qa-generate-e2e-tests` when no E2E coverage exists for a new story
+
+---
+
+## Story 3-12 — Per-slot swap, day-swap, skip/sick (added 2026-05-04)
+
+**E2E tests (Playwright)**
+- [x] `apps/web/test/e2e/3-12-per-slot-swap-pause.spec.ts` — 13 cases — all passing
+
+| Group | Cases | Coverage |
+|-------|-------|----------|
+| Picker opens / dismisses | 4 | Tile click opens picker (AC #1); Escape dismisses when focus inside picker; Cancel dismisses; paused tiles non-interactive (AC #2) |
+| Sick-day pause | 2 | PATCH `/days/:day/pause` with valid Idempotency-Key UUID + `{ reason: 'sick' }`; failure keeps picker open |
+| Change item — L1 → L2 → L3 | 3 | Single-item day skips L2; multi-item day routes L1→L2→L3; L3 Back returns to L1 |
+| Non-allergen swap (optimistic) | 1 | PATCH `/items/:itemId` fires with Idempotency-Key, picker dismisses immediately (AC #1) |
+| Allergen-affecting swap (pending) | 2 | 422 keeps picker open with allergy-conflict copy; Swap button disabled when input empty (AC #1) |
+| canSwap guard | 1 | Tiles non-interactive when `brief.plan_id === null` (pre-migration) |
+
+**Mocked endpoints**: `GET /v1/users/me`, `GET /v1/households/:id/brief`, `PATCH /v1/plans/:planId/items/:itemId`, `PATCH /v1/plans/:planId/days/:day/pause`.
+
+**Findings during E2E generation**:
+- DisambiguationPicker has no inline error region in L1 — `error` state only renders inside L3. When `handleSickDay` fails, the parent never sees the message. Logged in `deferred-work.md`.
+- Picker `Escape` only dismisses when focus is inside the picker subtree (handler is on the picker's `<div role="group">`, not document-level). Documented in the test name to make the contract explicit.
+
+Run: `pnpm --filter @hivekitchen/web build && pnpm --filter @hivekitchen/web exec playwright test test/e2e/3-12-per-slot-swap-pause.spec.ts`

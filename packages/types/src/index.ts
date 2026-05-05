@@ -124,8 +124,15 @@ import {
   PlanRowSchema,
   PlanItemRowSchema,
   PlanTileSummarySchema,
+  ClearedAllergyEntrySchema,
+  ScaffoldingDiffSchema,
   BriefStateRowSchema,
   BriefResponseSchema,
+  SwapPlanItemInputSchema,
+  SwapPlanItemResponseSchema,
+  PausePlanDayInputSchema,
+  RegeneratePlanQuerySchema,
+  RegeneratePlanResponseSchema,
 } from '@hivekitchen/contracts';
 
 // Auth
@@ -312,3 +319,18 @@ export type PlanItemRow = z.infer<typeof PlanItemRowSchema>;
 export type PlanTileSummary = z.infer<typeof PlanTileSummarySchema>;
 export type BriefStateRow = z.infer<typeof BriefStateRowSchema>;
 export type BriefResponse = z.infer<typeof BriefResponseSchema>;
+
+// Cleared allergies (Story 3.10 — composer-emitted entry per child/allergen)
+export type ClearedAllergyEntry = z.infer<typeof ClearedAllergyEntrySchema>;
+
+// Scaffolding diff (Story 3.11 — QuietDiff rear-view)
+export type ScaffoldingDiff = z.infer<typeof ScaffoldingDiffSchema>;
+
+// Story 3.12 — plan swap + pause mutation types
+export type SwapPlanItemInput = z.infer<typeof SwapPlanItemInputSchema>;
+export type SwapPlanItemResponse = z.infer<typeof SwapPlanItemResponseSchema>;
+export type PausePlanDayInput = z.infer<typeof PausePlanDayInputSchema>;
+
+// Story 3.13 — plan regeneration types
+export type RegeneratePlanQuery = z.infer<typeof RegeneratePlanQuerySchema>;
+export type RegeneratePlanResponse = z.infer<typeof RegeneratePlanResponseSchema>;

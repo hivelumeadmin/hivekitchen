@@ -6,6 +6,7 @@ export interface HkFetchInit {
   method: 'GET' | 'POST' | 'PATCH' | 'DELETE';
   body?: unknown;
   signal?: AbortSignal;
+  headers?: Record<string, string>;  // Story 3.12: caller-provided headers (e.g. Idempotency-Key)
 }
 
 export class HkApiError extends Error {
@@ -19,7 +20,8 @@ export class HkApiError extends Error {
 
 export async function hkFetch<T = unknown>(path: string, init: HkFetchInit): Promise<T> {
   const accessToken = useAuthStore.getState().accessToken;
-  const headers: Record<string, string> = {};
+  // Caller headers first; then overwrite with Content-Type and Authorization so auth always wins.
+  const headers: Record<string, string> = { ...(init.headers ?? {}) };
   if (init.body !== undefined) headers['Content-Type'] = 'application/json';
   if (accessToken !== null) headers['Authorization'] = `Bearer ${accessToken}`;
 

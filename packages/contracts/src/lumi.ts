@@ -4,9 +4,11 @@ import { Turn } from './thread.js';
 // LumiSurface — every screen the ambient Lumi companion can be aware of.
 // 'onboarding' is included so the onboarding voice path keeps a valid surface
 // after VoiceSessionCreateSchema migrates from a literal to this enum (ADR-002).
+// 'brief' is the weekly-plan ready-answer surface (Story 3.8, BriefCanvas).
 export const LumiSurfaceSchema = z.enum([
   'onboarding',
   'planning',
+  'brief',
   'meal-detail',
   'child-profile',
   'grocery-list',

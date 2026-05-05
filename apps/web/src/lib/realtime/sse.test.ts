@@ -96,7 +96,7 @@ const TURN_FIXTURE = {
 };
 
 describe('SseBridge — event dispatch', () => {
-  it('plan.updated calls invalidateQueries with plan key', () => {
+  it('plan.updated calls invalidateQueries with plan key AND brief key (Story 3.10)', () => {
     const qc = makeMockQueryClient();
     const bridge = createSseBridge(qc);
     bridge.connect();
@@ -108,6 +108,8 @@ describe('SseBridge — event dispatch', () => {
     );
 
     expect(vi.mocked(qc.invalidateQueries)).toHaveBeenCalledWith({ queryKey: ['plan', UUID1] });
+    expect(vi.mocked(qc.invalidateQueries)).toHaveBeenCalledWith({ queryKey: ['brief'] });
+    expect(vi.mocked(qc.invalidateQueries)).toHaveBeenCalledTimes(2);
   });
 
   it('memory.updated calls invalidateQueries with memory key', () => {

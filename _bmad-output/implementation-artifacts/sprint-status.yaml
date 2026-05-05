@@ -1,5 +1,5 @@
 # generated: 2026-04-23
-# last_updated: 2026-05-02 (Story 3-7 code review complete — status → done)
+# last_updated: 2026-05-04 (Story 3-13 → review)
 # project: hivekitchen
 # project_key: NOKEY
 # tracking_system: file-system
@@ -35,7 +35,7 @@
 # - Dev moves story to 'review', then runs code-review (fresh context, different LLM recommended)
 
 generated: 2026-04-23
-last_updated: 2026-05-02 (Story 3-7 code review complete — status → done)
+last_updated: 2026-05-04 (Story 3-13 → review)
 project: hivekitchen
 project_key: NOKEY
 tracking_system: file-system
@@ -91,12 +91,12 @@ development_status:
   3-5-plan-repository-revision-versioning-presentation-bind-contract: done
   3-6-brief-state-projection-writer: done
   3-7-plan-generation-bullmq-job-with-per-tz-schedule: done
-  3-8-briefcanvas-momentheadline-luminote-components: backlog
-  3-9-plantile-component-with-all-states-variants: backlog
-  3-10-allergyclearedbadge-popover-with-audit-link: backlog
-  3-11-freshnessstate-quietdiff-components: backlog
-  3-12-per-slot-independent-swap-day-swap-skip-sick: backlog
-  3-13-plan-regeneration-request: backlog
+  3-8-briefcanvas-momentheadline-luminote-components: done
+  3-9-plantile-component-with-all-states-variants: done
+  3-10-allergyclearedbadge-popover-with-audit-link: done
+  3-11-freshnessstate-quietdiff-components: done
+  3-12-per-slot-independent-swap-day-swap-skip-sick: done
+  3-13-plan-regeneration-request: review
   3-14-following-weeks-draft-view: backlog
   3-15-historical-plans-outcomes-view: backlog
   3-16-school-policy-update-propagation: backlog

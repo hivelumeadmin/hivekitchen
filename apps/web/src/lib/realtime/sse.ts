@@ -119,6 +119,10 @@ export function createSseBridge(queryClient: QueryClient): SseBridge {
     switch (event.type) {
       case 'plan.updated':
         void queryClient.invalidateQueries({ queryKey: QueryKeys.plan(event.week_id) });
+        // Story 3.10: refresh AllergyClearedBadge state. Wildcard ['brief']
+        // matches every ['brief', householdId] key — at most one is hot per
+        // session (one current_household_id), so this is safe.
+        void queryClient.invalidateQueries({ queryKey: ['brief'] });
         break;
 
       case 'memory.updated':

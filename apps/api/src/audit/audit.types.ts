@@ -5,6 +5,8 @@ export const AUDIT_EVENT_TYPES = [
   'plan.regeneration_requested',
   'plan.hard_fail',
   'plan.generation.failed',
+  'plan.item_swapped',
+  'plan.day_paused',
   'brief.projection.failure',
   // memory
   'memory.forgotten',

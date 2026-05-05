@@ -168,6 +168,7 @@ export class DomainOrchestrator {
     weekOf: string,
     requestId: string,
     rejectionContext?: string,
+    dayScope?: string,  // Story 3.13 — ISO day name ('tuesday') for day-scoped regen
   ): Promise<PlanComposeOutput> {
     const MAX_PLAN_ITERATIONS = 20;
     const tools = Array.from(TOOL_MANIFEST.values());
@@ -176,10 +177,13 @@ export class DomainOrchestrator {
       `Household ID: ${householdId}`,
       `Planning week starting: ${weekOf} (Monday)`,
       `Request ID: ${requestId}`,
+      dayScope !== undefined
+        ? `Regeneration scope: DAY ONLY. Only generate a new plan for ${dayScope.toUpperCase()}. Keep all other days exactly as previously composed. Only call plan.compose with items for ${dayScope} — do not include other days.`
+        : undefined,
       rejectionContext !== undefined && rejectionContext.length > 0
         ? `Previous attempt was blocked by the allergy guardrail. Blocked ingredients/reasons:\n${rejectionContext}\nCompose a revised plan that avoids these.`
         : 'This is the first generation attempt for this household and week.',
-    ];
+    ].filter((line): line is string => line !== undefined);
 
     const messages: LLMMessage[] = [
       { role: 'system', content: PLANNER_PROMPT.text },

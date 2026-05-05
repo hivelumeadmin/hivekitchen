@@ -1,15 +1,23 @@
 import { BaseRepository } from '../../repository/base.repository.js';
-import type { BriefStateRow, PlanTileSummary } from '@hivekitchen/types';
+import type {
+  BriefStateRow,
+  ClearedAllergyEntry,
+  PlanTileSummary,
+  ScaffoldingDiff,
+} from '@hivekitchen/types';
 
 const BRIEF_STATE_COLUMNS =
-  'household_id, moment_headline, lumi_note, memory_prose, plan_tile_summaries, generated_at, plan_revision, updated_at';
+  'household_id, plan_id, moment_headline, lumi_note, memory_prose, plan_tile_summaries, cleared_allergies, scaffolding_diff, generated_at, plan_revision, updated_at';
 
 export interface BriefStateUpsertInput {
   household_id: string;
+  plan_id: string | null;  // Story 3.12
   moment_headline: string;
   lumi_note: string;
   memory_prose: string;
   plan_tile_summaries: PlanTileSummary[];
+  cleared_allergies: ClearedAllergyEntry[];
+  scaffolding_diff: ScaffoldingDiff | null;
   generated_at: string;
   plan_revision: number;
 }
@@ -26,15 +34,21 @@ export class BriefStateRepository extends BaseRepository {
   }
 
   // Idempotent upsert with application-level plan_revision guard. Skips the
-  // write when the stored revision is already >= incoming revision so a stale
-  // background recompose cannot clobber a fresher write.
+  // write only when the stored revision is strictly greater than the incoming
+  // revision, so an older recompose cannot clobber a fresher one.
   //
-  // The read-then-write has a TOCTOU race: two concurrent writes can both read
-  // a stale revision and both proceed. Story 3.7's BullMQ job serializes
-  // commits per household (advisory lock), which removes the race in practice.
+  // Same-revision writes are allowed by design: Story 3.12 swap/pause refreshes
+  // mutate `paused_at` and `scaffolding_diff` without bumping `plan_revision`,
+  // so the projection must be rewritable at the same revision. Cross-revision
+  // ordering is preserved because a stored higher revision short-circuits.
+  //
+  // Concurrent same-revision writes (e.g., two BullMQ jobs racing on the same
+  // household) are serialized by Story 3.7's per-household BullMQ job, which is
+  // the actual mutual-exclusion mechanism — the in-row guard only protects
+  // against cross-revision regressions, not concurrent same-revision races.
   async upsert(input: BriefStateUpsertInput): Promise<void> {
     const current = await this.findByHousehold(input.household_id);
-    if (current && current.plan_revision >= input.plan_revision) {
+    if (current && current.plan_revision > input.plan_revision) {
       return;
     }
     const { error } = await this.client

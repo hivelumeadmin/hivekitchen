@@ -1,5 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import type { FastifyBaseLogger } from 'fastify';
+import type Redis from 'ioredis';
+import type { Queue } from 'bullmq';
 import { PlansService } from './plans.service.js';
 import type { PlansRepository } from './plans.repository.js';
 import type { BriefStateRepository } from './brief-state.repository.js';
@@ -11,8 +13,15 @@ import type {
   GuardrailResult,
   PlanComposeInput,
 } from '@hivekitchen/types';
-import { GuardrailRejectionError } from '../../common/errors.js';
+import {
+  GuardrailRejectionError,
+  NotFoundError,
+  SwapGuardrailBlockedError,
+  TooManyRequestsError,
+  ValidationError,
+} from '../../common/errors.js';
 import { GUARDRAIL_VERSION } from '../allergy-guardrail/allergy-rules.engine.js';
+import type { PlanItemRow, PlanRow } from '@hivekitchen/types';
 
 const PLAN_ID = '11111111-1111-4111-8111-111111111111';
 const HOUSEHOLD_ID = '22222222-2222-4222-8222-222222222222';
@@ -40,6 +49,7 @@ function makeInput(overrides: Partial<CommitPlanInput> = {}): CommitPlanInput {
     plan_id: PLAN_ID,
     household_id: HOUSEHOLD_ID,
     week_id: WEEK_ID,
+    week_of: '2026-05-04',
     revision: 1,
     generated_at: '2026-05-02T11:00:00.000Z',
     prompt_version: 'v1.0.0',
@@ -53,6 +63,32 @@ function makeInput(overrides: Partial<CommitPlanInput> = {}): CommitPlanInput {
     ],
     ...overrides,
   };
+}
+
+// Story 3.13 — minimal Redis + Queue stubs for PlansService construction.
+// Individual tests override these with vi.fn() to assert call-site behavior.
+type RedisMock = Redis & {
+  incr: ReturnType<typeof vi.fn>;
+  expire: ReturnType<typeof vi.fn>;
+  ttl: ReturnType<typeof vi.fn>;
+};
+
+function buildRedis(opts: { incrCount?: number; ttl?: number } = {}): RedisMock {
+  return {
+    incr: vi.fn().mockResolvedValue(opts.incrCount ?? 1),
+    expire: vi.fn().mockResolvedValue(1),
+    ttl: vi.fn().mockResolvedValue(opts.ttl ?? 60),
+  } as unknown as RedisMock;
+}
+
+type QueueMock = Queue & { add: ReturnType<typeof vi.fn> };
+
+function buildRegenQueue(opts: { jobId?: string } = {}): QueueMock {
+  return {
+    add: vi
+      .fn()
+      .mockResolvedValue({ id: opts.jobId ?? 'test-regen-job-id' }),
+  } as unknown as QueueMock;
 }
 
 function buildRepo(opts: {
@@ -121,6 +157,8 @@ describe('PlansService.compose (Story 3.7 — pure transform with generated plan
       allergyGuardrail: buildGuardrail([{ verdict: 'cleared', conflicts: [] }]),
       auditService: buildAudit(),
       logger: buildLogger(),
+      redis: buildRedis(),
+      regenQueue: buildRegenQueue(),
     });
     const input: PlanComposeInput = {
       household_id: HOUSEHOLD_ID,
@@ -151,6 +189,8 @@ describe('PlansService.compose (Story 3.7 — pure transform with generated plan
       allergyGuardrail: buildGuardrail([{ verdict: 'cleared', conflicts: [] }]),
       auditService: buildAudit(),
       logger: buildLogger(),
+      redis: buildRedis(),
+      regenQueue: buildRegenQueue(),
     });
     const input: PlanComposeInput = {
       household_id: HOUSEHOLD_ID,
@@ -182,6 +222,8 @@ describe('PlansService.commit', () => {
       allergyGuardrail: guardrail,
       auditService: audit,
       logger: buildLogger(),
+      redis: buildRedis(),
+      regenQueue: buildRegenQueue(),
     });
 
     const regenerate = vi.fn();
@@ -222,6 +264,8 @@ describe('PlansService.commit', () => {
       allergyGuardrail: guardrail,
       auditService: audit,
       logger: buildLogger(),
+      redis: buildRedis(),
+      regenQueue: buildRegenQueue(),
     });
 
     const regenerate = vi.fn(async () => makeInput());
@@ -249,6 +293,8 @@ describe('PlansService.commit', () => {
       allergyGuardrail: guardrail,
       auditService: audit,
       logger: buildLogger(),
+      redis: buildRedis(),
+      regenQueue: buildRegenQueue(),
     });
 
     const regenerate = vi.fn(async () => makeInput());
@@ -284,6 +330,8 @@ describe('PlansService.commit', () => {
       allergyGuardrail: guardrail,
       auditService: audit,
       logger: buildLogger(),
+      redis: buildRedis(),
+      regenQueue: buildRegenQueue(),
     });
 
     const regenerate = vi.fn(async () => makeInput());
@@ -307,6 +355,8 @@ describe('PlansService.commit', () => {
       allergyGuardrail: guardrail,
       auditService: audit,
       logger: buildLogger(),
+      redis: buildRedis(),
+      regenQueue: buildRegenQueue(),
     });
 
     const input = makeInput({
@@ -340,6 +390,8 @@ describe('PlansService.commit', () => {
       allergyGuardrail: guardrail,
       auditService: audit,
       logger: buildLogger(),
+      redis: buildRedis(),
+      regenQueue: buildRegenQueue(),
     });
 
     await service.commit(makeInput(), REQUEST_ID, vi.fn());
@@ -360,6 +412,8 @@ describe('PlansService.commit', () => {
       allergyGuardrail: guardrail,
       auditService: audit,
       logger: buildLogger(),
+      redis: buildRedis(),
+      regenQueue: buildRegenQueue(),
     });
 
     const result = await service.commit(makeInput(), REQUEST_ID, vi.fn());
@@ -379,6 +433,8 @@ describe('PlansService.commit', () => {
       allergyGuardrail: guardrail,
       auditService: audit,
       logger: buildLogger(),
+      redis: buildRedis(),
+      regenQueue: buildRegenQueue(),
     });
 
     const regenerate = vi.fn();
@@ -407,6 +463,8 @@ describe('PlansService.commit', () => {
       allergyGuardrail: guardrail,
       auditService: audit,
       logger: buildLogger(),
+      redis: buildRedis(),
+      regenQueue: buildRegenQueue(),
     });
 
     const regenerate = vi.fn().mockRejectedValue(new Error('LLM unavailable'));
@@ -430,6 +488,8 @@ describe('PlansService.commit', () => {
       allergyGuardrail: guardrail,
       auditService: audit,
       logger,
+      redis: buildRedis(),
+      regenQueue: buildRegenQueue(),
     });
 
     const result = await service.commit(makeInput(), REQUEST_ID, vi.fn());
@@ -439,6 +499,614 @@ describe('PlansService.commit', () => {
     expect((logger.error as ReturnType<typeof vi.fn>)).toHaveBeenCalledWith(
       expect.objectContaining({ plan_id: PLAN_ID }),
       expect.stringContaining('audit write failed'),
+    );
+  });
+});
+
+// --- Story 3.12 — swapItem + pauseDay ---
+
+const ITEM_ID = '00000000-0000-4000-8000-000000000010';
+
+function makePlanRow(overrides: Partial<PlanRow> = {}): PlanRow {
+  return {
+    id: PLAN_ID,
+    household_id: HOUSEHOLD_ID,
+    week_id: WEEK_ID,
+    week_of: '2026-05-04',
+    revision: 1,
+    generated_at: '2026-05-02T11:00:00.000Z',
+    guardrail_cleared_at: '2026-05-02T11:00:01.000Z',
+    guardrail_version: '1.1.0',
+    prompt_version: 'v1.0.0',
+    created_at: '2026-05-02T11:00:00.000Z',
+    updated_at: '2026-05-02T11:00:01.000Z',
+    ...overrides,
+  };
+}
+
+function makeItemRow(overrides: Partial<PlanItemRow> = {}): PlanItemRow {
+  return {
+    id: ITEM_ID,
+    plan_id: PLAN_ID,
+    child_id: CHILD_ID,
+    day: 'monday',
+    slot: 'main',
+    recipe_id: null,
+    item_id: null,
+    ingredients: ['rice'],
+    paused_at: null,
+    replaced_by_plan_id: null,
+    created_at: '2026-05-02T11:00:00.000Z',
+    updated_at: '2026-05-02T11:00:00.000Z',
+    ...overrides,
+  };
+}
+
+function buildSwapRepo(opts: {
+  plan?: PlanRow | null;
+  existingItem?: PlanItemRow | null;
+  updatedItem?: PlanItemRow;
+  pauseDayThrows?: Error;
+  // Story 3.12 Round 2: pauseDay returns the rows it actually flipped (empty
+  // means already-paused). countItemsForDay returns the total row count for
+  // the (plan, day) pair (zero means the day doesn't exist in the plan).
+  pausedRows?: PlanItemRow[];
+  itemCountForDay?: number;
+} = {}): PlansRepository & {
+  findByIdForPresentation: ReturnType<typeof vi.fn>;
+  findItemById: ReturnType<typeof vi.fn>;
+  updateItemIngredients: ReturnType<typeof vi.fn>;
+  pauseDay: ReturnType<typeof vi.fn>;
+  countItemsForDay: ReturnType<typeof vi.fn>;
+} {
+  const findByIdForPresentation = vi.fn().mockResolvedValue(opts.plan ?? null);
+  const findItemById = vi.fn().mockResolvedValue(opts.existingItem ?? null);
+  const updateItemIngredients = vi
+    .fn()
+    .mockResolvedValue(opts.updatedItem ?? makeItemRow());
+  const pauseDay = vi.fn(async () => {
+    if (opts.pauseDayThrows) throw opts.pauseDayThrows;
+    return opts.pausedRows ?? [makeItemRow()];
+  });
+  const countItemsForDay = vi
+    .fn()
+    .mockResolvedValue(opts.itemCountForDay ?? 1);
+  return {
+    findByIdForPresentation,
+    findItemById,
+    updateItemIngredients,
+    pauseDay,
+    countItemsForDay,
+  } as unknown as PlansRepository & {
+    findByIdForPresentation: ReturnType<typeof vi.fn>;
+    findItemById: ReturnType<typeof vi.fn>;
+    updateItemIngredients: ReturnType<typeof vi.fn>;
+    pauseDay: ReturnType<typeof vi.fn>;
+    countItemsForDay: ReturnType<typeof vi.fn>;
+  };
+}
+
+function buildEvalGuardrail(verdict: GuardrailResult): AllergyGuardrailService & {
+  evaluate: ReturnType<typeof vi.fn>;
+} {
+  return {
+    evaluate: vi.fn().mockResolvedValue(verdict),
+  } as unknown as AllergyGuardrailService & {
+    evaluate: ReturnType<typeof vi.fn>;
+  };
+}
+
+describe('PlansService.swapItem (Story 3.12)', () => {
+  it('throws NotFoundError when plan does not exist (or not owned by household)', async () => {
+    const repo = buildSwapRepo({ plan: null });
+    const service = new PlansService({
+      repository: repo,
+      briefStateRepository: buildBriefStateRepo(),
+      briefStateComposer: buildBriefStateComposer(),
+      allergyGuardrail: buildEvalGuardrail({ verdict: 'cleared', conflicts: [] }),
+      auditService: buildAudit(),
+      logger: buildLogger(),
+      redis: buildRedis(),
+      regenQueue: buildRegenQueue(),
+    });
+
+    await expect(
+      service.swapItem({
+        planId: PLAN_ID,
+        itemId: ITEM_ID,
+        householdId: HOUSEHOLD_ID,
+        input: { ingredients: ['hummus'] },
+        requestId: REQUEST_ID,
+      }),
+    ).rejects.toBeInstanceOf(NotFoundError);
+
+    expect(repo.findItemById).not.toHaveBeenCalled();
+    expect(repo.updateItemIngredients).not.toHaveBeenCalled();
+  });
+
+  it('throws NotFoundError when item does not exist on plan', async () => {
+    const repo = buildSwapRepo({ plan: makePlanRow(), existingItem: null });
+    const service = new PlansService({
+      repository: repo,
+      briefStateRepository: buildBriefStateRepo(),
+      briefStateComposer: buildBriefStateComposer(),
+      allergyGuardrail: buildEvalGuardrail({ verdict: 'cleared', conflicts: [] }),
+      auditService: buildAudit(),
+      logger: buildLogger(),
+      redis: buildRedis(),
+      regenQueue: buildRegenQueue(),
+    });
+
+    await expect(
+      service.swapItem({
+        planId: PLAN_ID,
+        itemId: ITEM_ID,
+        householdId: HOUSEHOLD_ID,
+        input: { ingredients: ['hummus'] },
+        requestId: REQUEST_ID,
+      }),
+    ).rejects.toBeInstanceOf(NotFoundError);
+
+    expect(repo.updateItemIngredients).not.toHaveBeenCalled();
+  });
+
+  it('throws SwapGuardrailBlockedError on blocked verdict and writes guardrail_rejection audit', async () => {
+    const repo = buildSwapRepo({
+      plan: makePlanRow(),
+      existingItem: makeItemRow(),
+    });
+    const audit = buildAudit();
+    const service = new PlansService({
+      repository: repo,
+      briefStateRepository: buildBriefStateRepo(),
+      briefStateComposer: buildBriefStateComposer(),
+      allergyGuardrail: buildEvalGuardrail({
+        verdict: 'blocked',
+        conflicts: [
+          { child_id: CHILD_ID, allergen: 'peanut', ingredient: 'peanut butter', day: 'monday', slot: 'main' },
+        ],
+      }),
+      auditService: audit,
+      logger: buildLogger(),
+      redis: buildRedis(),
+      regenQueue: buildRegenQueue(),
+    });
+
+    await expect(
+      service.swapItem({
+        planId: PLAN_ID,
+        itemId: ITEM_ID,
+        householdId: HOUSEHOLD_ID,
+        input: { ingredients: ['peanut butter'] },
+        requestId: REQUEST_ID,
+      }),
+    ).rejects.toBeInstanceOf(SwapGuardrailBlockedError);
+
+    expect(repo.updateItemIngredients).not.toHaveBeenCalled();
+    expect(audit.write).toHaveBeenCalledWith(
+      expect.objectContaining({
+        event_type: 'allergy.guardrail_rejection',
+        metadata: expect.objectContaining({
+          plan_id: PLAN_ID,
+          item_id: ITEM_ID,
+          source: 'user_swap',
+          verdict: 'blocked',
+          allergens: ['peanut'],
+        }),
+      }),
+    );
+  });
+
+  it('throws SwapGuardrailBlockedError on uncertain verdict', async () => {
+    const repo = buildSwapRepo({
+      plan: makePlanRow(),
+      existingItem: makeItemRow(),
+    });
+    const service = new PlansService({
+      repository: repo,
+      briefStateRepository: buildBriefStateRepo(),
+      briefStateComposer: buildBriefStateComposer(),
+      allergyGuardrail: buildEvalGuardrail({
+        verdict: 'uncertain',
+        conflicts: [],
+        reason: 'no_rules_loaded',
+      }),
+      auditService: buildAudit(),
+      logger: buildLogger(),
+      redis: buildRedis(),
+      regenQueue: buildRegenQueue(),
+    });
+
+    await expect(
+      service.swapItem({
+        planId: PLAN_ID,
+        itemId: ITEM_ID,
+        householdId: HOUSEHOLD_ID,
+        input: { ingredients: ['hummus'] },
+        requestId: REQUEST_ID,
+      }),
+    ).rejects.toBeInstanceOf(SwapGuardrailBlockedError);
+
+    expect(repo.updateItemIngredients).not.toHaveBeenCalled();
+  });
+
+  it('on cleared verdict: updates ingredients, refreshes brief with userInitiated:true, and writes plan.item_swapped audit', async () => {
+    const updatedItem = makeItemRow({ ingredients: ['hummus', 'crackers'] });
+    const repo = buildSwapRepo({
+      plan: makePlanRow(),
+      existingItem: makeItemRow(),
+      updatedItem,
+    });
+    const composer = buildBriefStateComposer();
+    const audit = buildAudit();
+    const service = new PlansService({
+      repository: repo,
+      briefStateRepository: buildBriefStateRepo(),
+      briefStateComposer: composer,
+      allergyGuardrail: buildEvalGuardrail({ verdict: 'cleared', conflicts: [] }),
+      auditService: audit,
+      logger: buildLogger(),
+      redis: buildRedis(),
+      regenQueue: buildRegenQueue(),
+    });
+
+    const result = await service.swapItem({
+      planId: PLAN_ID,
+      itemId: ITEM_ID,
+      householdId: HOUSEHOLD_ID,
+      input: { ingredients: ['hummus', 'crackers'] },
+      requestId: REQUEST_ID,
+    });
+
+    expect(result).toEqual(updatedItem);
+    expect(repo.updateItemIngredients).toHaveBeenCalledWith({
+      itemId: ITEM_ID,
+      planId: PLAN_ID,
+      ingredients: ['hummus', 'crackers'],
+      recipeId: undefined,
+      itemSlotId: undefined,
+    });
+    expect(composer.refresh).toHaveBeenCalledWith(
+      HOUSEHOLD_ID,
+      WEEK_ID,
+      REQUEST_ID,
+      { userInitiated: true },
+    );
+    expect(audit.write).toHaveBeenCalledWith(
+      expect.objectContaining({
+        event_type: 'plan.item_swapped',
+        metadata: expect.objectContaining({
+          plan_id: PLAN_ID,
+          item_id: ITEM_ID,
+          day: 'monday',
+          slot: 'main',
+          new_ingredients: ['hummus', 'crackers'],
+          guardrail_version: GUARDRAIL_VERSION,
+        }),
+      }),
+    );
+  });
+
+  it('audit failure after successful swap is logged but does not rethrow', async () => {
+    const repo = buildSwapRepo({
+      plan: makePlanRow(),
+      existingItem: makeItemRow(),
+      updatedItem: makeItemRow(),
+    });
+    const audit = {
+      write: vi.fn().mockRejectedValue(new Error('audit DB down')),
+    } as unknown as AuditService & { write: ReturnType<typeof vi.fn> };
+    const logger = buildLogger();
+    const service = new PlansService({
+      repository: repo,
+      briefStateRepository: buildBriefStateRepo(),
+      briefStateComposer: buildBriefStateComposer(),
+      allergyGuardrail: buildEvalGuardrail({ verdict: 'cleared', conflicts: [] }),
+      auditService: audit,
+      logger,
+      redis: buildRedis(),
+      regenQueue: buildRegenQueue(),
+    });
+
+    await expect(
+      service.swapItem({
+        planId: PLAN_ID,
+        itemId: ITEM_ID,
+        householdId: HOUSEHOLD_ID,
+        input: { ingredients: ['hummus'] },
+        requestId: REQUEST_ID,
+      }),
+    ).resolves.toBeDefined();
+
+    expect((logger.error as ReturnType<typeof vi.fn>)).toHaveBeenCalledWith(
+      expect.objectContaining({ plan_id: PLAN_ID, item_id: ITEM_ID }),
+      expect.stringContaining('audit write failed after item swap'),
+    );
+  });
+});
+
+describe('PlansService.requestRegeneration (Story 3.13)', () => {
+  function buildRegenRepo(opts: { plan?: PlanRow | null }): PlansRepository & {
+    findByIdForPresentation: ReturnType<typeof vi.fn>;
+  } {
+    const findByIdForPresentation = vi.fn().mockResolvedValue(opts.plan ?? null);
+    return { findByIdForPresentation } as unknown as PlansRepository & {
+      findByIdForPresentation: ReturnType<typeof vi.fn>;
+    };
+  }
+
+  function buildService(deps: {
+    repo: PlansRepository;
+    redis: RedisMock;
+    queue: QueueMock;
+    audit?: AuditService;
+    logger?: FastifyBaseLogger;
+  }) {
+    return new PlansService({
+      repository: deps.repo,
+      briefStateRepository: buildBriefStateRepo(),
+      briefStateComposer: buildBriefStateComposer(),
+      allergyGuardrail: buildEvalGuardrail({ verdict: 'cleared', conflicts: [] }),
+      auditService: deps.audit ?? buildAudit(),
+      logger: deps.logger ?? buildLogger(),
+      redis: deps.redis,
+      regenQueue: deps.queue,
+    });
+  }
+
+  it('throws NotFoundError when plan does not exist', async () => {
+    const service = buildService({
+      repo: buildRegenRepo({ plan: null }),
+      redis: buildRedis(),
+      queue: buildRegenQueue(),
+    });
+
+    await expect(
+      service.requestRegeneration({
+        planId: PLAN_ID,
+        householdId: HOUSEHOLD_ID,
+        query: { scope: 'week' },
+        requestId: REQUEST_ID,
+      }),
+    ).rejects.toBeInstanceOf(NotFoundError);
+  });
+
+  it('throws ValidationError when plan.week_of is null (pre-3.13 row)', async () => {
+    const service = buildService({
+      repo: buildRegenRepo({ plan: makePlanRow({ week_of: null }) }),
+      redis: buildRedis(),
+      queue: buildRegenQueue(),
+    });
+
+    await expect(
+      service.requestRegeneration({
+        planId: PLAN_ID,
+        householdId: HOUSEHOLD_ID,
+        query: { scope: 'week' },
+        requestId: REQUEST_ID,
+      }),
+    ).rejects.toBeInstanceOf(ValidationError);
+  });
+
+  it('first call: increments redis counter, sets TTL, enqueues job, returns rateLimitRemaining=4', async () => {
+    const redis = buildRedis({ incrCount: 1 });
+    const queue = buildRegenQueue({ jobId: 'regen-1' });
+    const audit = buildAudit();
+    const service = buildService({
+      repo: buildRegenRepo({ plan: makePlanRow() }),
+      redis,
+      queue,
+      audit,
+    });
+
+    const res = await service.requestRegeneration({
+      planId: PLAN_ID,
+      householdId: HOUSEHOLD_ID,
+      query: { scope: 'week' },
+      requestId: REQUEST_ID,
+    });
+
+    expect(res).toEqual({ jobId: 'regen-1', rateLimitRemaining: 4 });
+    expect(redis.incr).toHaveBeenCalledWith(`regen-limit:${HOUSEHOLD_ID}:${WEEK_ID}`);
+    expect(redis.expire).toHaveBeenCalledTimes(1);
+    expect(queue.add).toHaveBeenCalledTimes(1);
+    expect(audit.write).toHaveBeenCalledWith(
+      expect.objectContaining({
+        event_type: 'plan.regeneration_requested',
+        metadata: expect.objectContaining({
+          plan_id: PLAN_ID,
+          scope: 'week',
+          rate_limit_used: 1,
+        }),
+      }),
+    );
+  });
+
+  it('5th call: succeeds with rateLimitRemaining=0', async () => {
+    const redis = buildRedis({ incrCount: 5 });
+    const service = buildService({
+      repo: buildRegenRepo({ plan: makePlanRow() }),
+      redis,
+      queue: buildRegenQueue(),
+    });
+
+    const res = await service.requestRegeneration({
+      planId: PLAN_ID,
+      householdId: HOUSEHOLD_ID,
+      query: { scope: 'week' },
+      requestId: REQUEST_ID,
+    });
+
+    expect(res.rateLimitRemaining).toBe(0);
+    expect(redis.expire).not.toHaveBeenCalled();
+  });
+
+  it('6th call: throws TooManyRequestsError', async () => {
+    const redis = buildRedis({ incrCount: 6, ttl: 3600 });
+    const queue = buildRegenQueue();
+    const service = buildService({
+      repo: buildRegenRepo({ plan: makePlanRow() }),
+      redis,
+      queue,
+    });
+
+    await expect(
+      service.requestRegeneration({
+        planId: PLAN_ID,
+        householdId: HOUSEHOLD_ID,
+        query: { scope: 'week' },
+        requestId: REQUEST_ID,
+      }),
+    ).rejects.toBeInstanceOf(TooManyRequestsError);
+
+    expect(queue.add).not.toHaveBeenCalled();
+  });
+
+  it('day-scope query: enqueues job with day field set', async () => {
+    const queue = buildRegenQueue();
+    const service = buildService({
+      repo: buildRegenRepo({ plan: makePlanRow() }),
+      redis: buildRedis(),
+      queue,
+    });
+
+    await service.requestRegeneration({
+      planId: PLAN_ID,
+      householdId: HOUSEHOLD_ID,
+      query: { scope: 'day', day: 'tuesday' },
+      requestId: REQUEST_ID,
+    });
+
+    const enqueued = queue.add.mock.calls[0]?.[1];
+    expect(enqueued).toMatchObject({
+      plan_id: PLAN_ID,
+      household_id: HOUSEHOLD_ID,
+      scope: 'day',
+      day: 'tuesday',
+    });
+  });
+
+  it('audit failure does not rethrow (job stays enqueued)', async () => {
+    const audit = {
+      write: vi.fn().mockRejectedValue(new Error('audit DB down')),
+    } as unknown as AuditService & { write: ReturnType<typeof vi.fn> };
+    const service = buildService({
+      repo: buildRegenRepo({ plan: makePlanRow() }),
+      redis: buildRedis(),
+      queue: buildRegenQueue(),
+      audit,
+    });
+
+    await expect(
+      service.requestRegeneration({
+        planId: PLAN_ID,
+        householdId: HOUSEHOLD_ID,
+        query: { scope: 'week' },
+        requestId: REQUEST_ID,
+      }),
+    ).resolves.toMatchObject({ rateLimitRemaining: expect.any(Number) });
+  });
+});
+
+describe('PlansService.pauseDay (Story 3.12)', () => {
+  it('throws NotFoundError when plan does not exist', async () => {
+    const repo = buildSwapRepo({ plan: null });
+    const service = new PlansService({
+      repository: repo,
+      briefStateRepository: buildBriefStateRepo(),
+      briefStateComposer: buildBriefStateComposer(),
+      allergyGuardrail: buildEvalGuardrail({ verdict: 'cleared', conflicts: [] }),
+      auditService: buildAudit(),
+      logger: buildLogger(),
+      redis: buildRedis(),
+      regenQueue: buildRegenQueue(),
+    });
+
+    await expect(
+      service.pauseDay({
+        planId: PLAN_ID,
+        day: 'tuesday',
+        householdId: HOUSEHOLD_ID,
+        requestId: REQUEST_ID,
+      }),
+    ).rejects.toBeInstanceOf(NotFoundError);
+
+    expect(repo.pauseDay).not.toHaveBeenCalled();
+  });
+
+  it('on success: calls repo.pauseDay, refreshes brief userInitiated:true, and audits plan.day_paused', async () => {
+    const repo = buildSwapRepo({ plan: makePlanRow() });
+    const composer = buildBriefStateComposer();
+    const audit = buildAudit();
+    const service = new PlansService({
+      repository: repo,
+      briefStateRepository: buildBriefStateRepo(),
+      briefStateComposer: composer,
+      allergyGuardrail: buildEvalGuardrail({ verdict: 'cleared', conflicts: [] }),
+      auditService: audit,
+      logger: buildLogger(),
+      redis: buildRedis(),
+      regenQueue: buildRegenQueue(),
+    });
+
+    await service.pauseDay({
+      planId: PLAN_ID,
+      day: 'tuesday',
+      householdId: HOUSEHOLD_ID,
+      requestId: REQUEST_ID,
+    });
+
+    expect(repo.pauseDay).toHaveBeenCalledWith({
+      planId: PLAN_ID,
+      day: 'tuesday',
+      pausedAt: expect.any(String),
+    });
+    expect(composer.refresh).toHaveBeenCalledWith(
+      HOUSEHOLD_ID,
+      WEEK_ID,
+      REQUEST_ID,
+      { userInitiated: true },
+    );
+    expect(audit.write).toHaveBeenCalledWith(
+      expect.objectContaining({
+        event_type: 'plan.day_paused',
+        metadata: expect.objectContaining({
+          plan_id: PLAN_ID,
+          day: 'tuesday',
+        }),
+      }),
+    );
+  });
+
+  it('audit failure after successful pause is logged but does not rethrow', async () => {
+    const repo = buildSwapRepo({ plan: makePlanRow() });
+    const audit = {
+      write: vi.fn().mockRejectedValue(new Error('audit DB down')),
+    } as unknown as AuditService & { write: ReturnType<typeof vi.fn> };
+    const logger = buildLogger();
+    const service = new PlansService({
+      repository: repo,
+      briefStateRepository: buildBriefStateRepo(),
+      briefStateComposer: buildBriefStateComposer(),
+      allergyGuardrail: buildEvalGuardrail({ verdict: 'cleared', conflicts: [] }),
+      auditService: audit,
+      logger,
+      redis: buildRedis(),
+      regenQueue: buildRegenQueue(),
+    });
+
+    await expect(
+      service.pauseDay({
+        planId: PLAN_ID,
+        day: 'tuesday',
+        householdId: HOUSEHOLD_ID,
+        requestId: REQUEST_ID,
+      }),
+    ).resolves.toBeUndefined();
+
+    expect((logger.error as ReturnType<typeof vi.fn>)).toHaveBeenCalledWith(
+      expect.objectContaining({ plan_id: PLAN_ID }),
+      expect.stringContaining('audit write failed after day pause'),
     );
   });
 });

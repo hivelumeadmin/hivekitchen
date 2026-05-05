@@ -23,4 +23,7 @@ export const QueryKeys = {
 
   /** @example QueryKeys.presence('thread-uuid') → ['presence', 'thread-uuid'] */
   presence: (threadId: string): ['presence', string] => ['presence', threadId],
+
+  /** @example QueryKeys.brief('household-uuid') → ['brief', 'household-uuid'] */
+  brief: (householdId: string): ['brief', string] => ['brief', householdId],
 } as const;

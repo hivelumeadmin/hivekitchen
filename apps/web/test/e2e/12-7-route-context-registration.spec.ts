@@ -60,13 +60,13 @@ async function spaNavigate(page: import('@playwright/test').Page, path: string):
 }
 
 test.describe('Story 12-7: Route context registration', () => {
-  test('useLumiContext sets surface=general and contextSignal on /app mount (AC #1, #7)', async ({
+  test('useLumiContext sets surface=brief and contextSignal on /app mount (AC #1, #7)', async ({
     page,
   }) => {
     await page.goto('/app');
     const { surface, contextSignal } = await getLumiState(page);
-    expect(surface).toBe('general');
-    expect(contextSignal).toEqual({ surface: 'general' });
+    expect(surface).toBe('brief');
+    expect(contextSignal).toEqual({ surface: 'brief' });
   });
 
   test('useLumiContext sets surface=general and contextSignal on /account mount (AC #1, #8)', async ({

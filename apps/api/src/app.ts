@@ -9,7 +9,7 @@ import websocket from '@fastify/websocket';
 import { ZodError } from 'zod';
 import type { Env } from './common/env.js';
 import { getLoggerOptions } from './common/logger.js';
-import { isDomainError } from './common/errors.js';
+import { isDomainError, TooManyRequestsError } from './common/errors.js';
 import { otelPlugin } from './plugins/otel.plugin.js';
 import { requestIdPlugin } from './middleware/request-id.hook.js';
 import { auditHook } from './middleware/audit.hook.js';
@@ -30,6 +30,7 @@ import { ioredisPlugin } from './plugins/ioredis.plugin.js';
 import { bullmqPlugin } from './plugins/bullmq.plugin.js';
 import { auditPartitionRotationPlugin } from './jobs/audit-partition-rotation.job.js';
 import { planGenerationJobPlugin } from './jobs/plan-generation.job.js';
+import { planRegenerationJobPlugin } from './jobs/plan-regeneration.job.js';
 import { healthRoutes } from './modules/internal/health.routes.js';
 import { eventsRoutes } from './routes/v1/events/events.routes.js';
 import { authRoutes } from './modules/auth/auth.routes.js';
@@ -41,6 +42,7 @@ import { complianceRoutes } from './modules/compliance/compliance.routes.js';
 import { childrenRoutes } from './modules/children/children.routes.js';
 import { culturalPriorRoutes } from './modules/cultural-priors/cultural-prior.routes.js';
 import { householdsRoutes } from './modules/households/households.routes.js';
+import { plansRoutes } from './modules/plans/plans.routes.js';
 import { lumiRoutes } from './modules/lumi/lumi.routes.js';
 
 const REQUEST_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -96,6 +98,7 @@ export async function buildApp(opts: BuildAppOptions) {
   await app.register(orchestratorHook);
   await app.register(auditPartitionRotationPlugin);
   await app.register(planGenerationJobPlugin);
+  await app.register(planRegenerationJobPlugin);
 
   await app.register(cookie);
   await app.register(jwt, {
@@ -117,6 +120,21 @@ export async function buildApp(opts: BuildAppOptions) {
 
   app.setErrorHandler((err, request, reply) => {
     if (isDomainError(err)) {
+      // Story 3.13 — 429 responses must carry Retry-After per architecture §3.6.
+      if (err instanceof TooManyRequestsError) {
+        void reply
+          .status(429)
+          .header('Retry-After', String(err.retryAfterSeconds))
+          .type('application/problem+json')
+          .send({
+            type: err.type,
+            status: err.status,
+            title: err.title,
+            detail: err.detail,
+            instance: request.id,
+          });
+        return;
+      }
       void reply.status(err.status).type('application/problem+json').send({
         type: err.type,
         status: err.status,
@@ -159,6 +177,7 @@ export async function buildApp(opts: BuildAppOptions) {
   await app.register(childrenRoutes);
   await app.register(culturalPriorRoutes);
   await app.register(householdsRoutes);
+  await app.register(plansRoutes);
   await app.register(lumiRoutes, { prefix: '/v1/lumi' });
 
   return app;

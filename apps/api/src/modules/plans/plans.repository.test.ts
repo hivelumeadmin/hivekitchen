@@ -201,11 +201,232 @@ describe('PlansRepository.findActiveByHouseholdAndWeek', () => {
   });
 });
 
+function buildItemUpdateClient(result: ClientResult): {
+  client: SupabaseClient;
+  steps: QueryStep[];
+} {
+  const steps: QueryStep[] = [];
+  const builder = {
+    update(patch: Record<string, unknown>) {
+      steps.push({ op: 'update', args: [patch] });
+      return builder;
+    },
+    select(cols: string) {
+      steps.push({ op: 'select', args: [cols] });
+      return builder;
+    },
+    eq(col: string, val: unknown) {
+      steps.push({ op: 'eq', args: [col, val] });
+      return builder;
+    },
+    is(col: string, val: unknown) {
+      steps.push({ op: 'is', args: [col, val] });
+      return builder;
+    },
+    single: vi.fn().mockResolvedValue(result),
+    maybeSingle: vi.fn().mockResolvedValue(result),
+    then(resolve: (value: ClientResult) => void) {
+      // Allow `await client.from('x').update(...)...select(...)` chain to be
+      // awaited as a thenable. pauseDay now selects after .is/.eq filters.
+      return Promise.resolve(result).then(resolve);
+    },
+  };
+  const fromMock = vi.fn().mockImplementation((table: string) => {
+    steps.push({ op: 'from', args: [table] });
+    return builder;
+  });
+  return {
+    client: { from: fromMock } as unknown as SupabaseClient,
+    steps,
+  };
+}
+
+const SAMPLE_ITEM_ROW = {
+  id: '00000000-0000-4000-8000-000000000010',
+  plan_id: PLAN_ID,
+  child_id: CHILD_ID,
+  day: 'monday',
+  slot: 'main',
+  recipe_id: null,
+  item_id: null,
+  ingredients: ['rice', 'lentils'],
+  paused_at: null,
+  created_at: '2026-05-02T11:00:00.000Z',
+  updated_at: '2026-05-02T11:00:01.000Z',
+};
+
+describe('PlansRepository.findItemById (Story 3.12)', () => {
+  it('returns the row when found, scoped by plan_id + id', async () => {
+    const { client, steps } = buildSelectClient({ data: SAMPLE_ITEM_ROW, error: null });
+    const repo = new PlansRepository(client);
+
+    const out = await repo.findItemById({
+      itemId: SAMPLE_ITEM_ROW.id,
+      planId: PLAN_ID,
+    });
+
+    expect(out).toEqual(SAMPLE_ITEM_ROW);
+    expect(steps).toEqual(
+      expect.arrayContaining([
+        { op: 'from', args: ['plan_items'] },
+        { op: 'eq', args: ['id', SAMPLE_ITEM_ROW.id] },
+        { op: 'eq', args: ['plan_id', PLAN_ID] },
+      ]),
+    );
+  });
+
+  it('returns null when the row is not found', async () => {
+    const { client } = buildSelectClient({ data: null, error: null });
+    const repo = new PlansRepository(client);
+
+    const out = await repo.findItemById({
+      itemId: SAMPLE_ITEM_ROW.id,
+      planId: PLAN_ID,
+    });
+
+    expect(out).toBeNull();
+  });
+
+  it('throws when supabase returns an error', async () => {
+    const { client } = buildSelectClient({
+      data: null,
+      error: { code: '42P01', message: 'oops' },
+    });
+    const repo = new PlansRepository(client);
+
+    await expect(
+      repo.findItemById({ itemId: SAMPLE_ITEM_ROW.id, planId: PLAN_ID }),
+    ).rejects.toMatchObject({ code: '42P01' });
+  });
+});
+
+describe('PlansRepository.updateItemIngredients (Story 3.12)', () => {
+  it('updates ingredients and returns the patched row', async () => {
+    const updatedRow = { ...SAMPLE_ITEM_ROW, ingredients: ['hummus', 'crackers'] };
+    const { client, steps } = buildItemUpdateClient({ data: updatedRow, error: null });
+    const repo = new PlansRepository(client);
+
+    const out = await repo.updateItemIngredients({
+      itemId: SAMPLE_ITEM_ROW.id,
+      planId: PLAN_ID,
+      ingredients: ['hummus', 'crackers'],
+    });
+
+    expect(out).toEqual(updatedRow);
+    const updateStep = steps.find((s) => s.op === 'update');
+    expect(updateStep?.args[0]).toMatchObject({
+      ingredients: ['hummus', 'crackers'],
+    });
+    expect(steps).toEqual(
+      expect.arrayContaining([
+        { op: 'from', args: ['plan_items'] },
+        { op: 'eq', args: ['id', SAMPLE_ITEM_ROW.id] },
+        { op: 'eq', args: ['plan_id', PLAN_ID] },
+      ]),
+    );
+  });
+
+  it('includes recipe_id and item_id in patch when supplied', async () => {
+    const { client, steps } = buildItemUpdateClient({ data: SAMPLE_ITEM_ROW, error: null });
+    const repo = new PlansRepository(client);
+
+    await repo.updateItemIngredients({
+      itemId: SAMPLE_ITEM_ROW.id,
+      planId: PLAN_ID,
+      ingredients: ['hummus'],
+      recipeId: RECIPE_ID,
+      itemSlotId: '00000000-0000-4000-8000-000000000099',
+    });
+
+    const updateStep = steps.find((s) => s.op === 'update');
+    expect(updateStep?.args[0]).toMatchObject({
+      ingredients: ['hummus'],
+      recipe_id: RECIPE_ID,
+      item_id: '00000000-0000-4000-8000-000000000099',
+    });
+  });
+
+  it('throws when supabase returns an error', async () => {
+    const { client } = buildItemUpdateClient({
+      data: null,
+      error: { code: '23503', message: 'fk_violation' },
+    });
+    const repo = new PlansRepository(client);
+
+    await expect(
+      repo.updateItemIngredients({
+        itemId: SAMPLE_ITEM_ROW.id,
+        planId: PLAN_ID,
+        ingredients: ['hummus'],
+      }),
+    ).rejects.toMatchObject({ code: '23503' });
+  });
+});
+
+describe('PlansRepository.pauseDay (Story 3.12)', () => {
+  it('sets paused_at on all not-yet-paused plan_items and returns the flipped rows', async () => {
+    const flippedRow = { ...SAMPLE_ITEM_ROW, day: 'tuesday', paused_at: '2026-05-04T12:00:00.000Z' };
+    const { client, steps } = buildItemUpdateClient({ data: [flippedRow], error: null });
+    const repo = new PlansRepository(client);
+
+    const out = await repo.pauseDay({
+      planId: PLAN_ID,
+      day: 'tuesday',
+      pausedAt: '2026-05-04T12:00:00.000Z',
+    });
+
+    expect(out).toEqual([flippedRow]);
+    const updateStep = steps.find((s) => s.op === 'update');
+    expect(updateStep?.args[0]).toMatchObject({
+      paused_at: '2026-05-04T12:00:00.000Z',
+    });
+    expect(steps).toEqual(
+      expect.arrayContaining([
+        { op: 'from', args: ['plan_items'] },
+        { op: 'eq', args: ['plan_id', PLAN_ID] },
+        { op: 'eq', args: ['day', 'tuesday'] },
+        // App-level idempotency: only flip rows that aren't already paused.
+        { op: 'is', args: ['paused_at', null] },
+      ]),
+    );
+  });
+
+  it('returns [] when every row was already paused (idempotent no-op)', async () => {
+    const { client } = buildItemUpdateClient({ data: [], error: null });
+    const repo = new PlansRepository(client);
+
+    const out = await repo.pauseDay({
+      planId: PLAN_ID,
+      day: 'tuesday',
+      pausedAt: '2026-05-04T12:00:00.000Z',
+    });
+
+    expect(out).toEqual([]);
+  });
+
+  it('throws when supabase returns an error', async () => {
+    const { client } = buildItemUpdateClient({
+      data: null,
+      error: { code: '42P01', message: 'oops' },
+    });
+    const repo = new PlansRepository(client);
+
+    await expect(
+      repo.pauseDay({
+        planId: PLAN_ID,
+        day: 'tuesday',
+        pausedAt: '2026-05-04T12:00:00.000Z',
+      }),
+    ).rejects.toMatchObject({ code: '42P01' });
+  });
+});
+
 describe('PlansRepository.commit', () => {
   const validInput: CommitPlanInput = {
     plan_id: PLAN_ID,
     household_id: HOUSEHOLD_ID,
     week_id: WEEK_ID,
+    week_of: '2026-05-04',
     revision: 1,
     generated_at: '2026-05-02T11:00:00.000Z',
     prompt_version: 'v1.0.0',
@@ -233,6 +454,7 @@ describe('PlansRepository.commit', () => {
       p_plan_id: PLAN_ID,
       p_household_id: HOUSEHOLD_ID,
       p_week_id: WEEK_ID,
+      p_week_of: '2026-05-04',
       p_revision: 1,
       p_generated_at: '2026-05-02T11:00:00.000Z',
       p_guardrail_cleared_at: '2026-05-02T11:00:01.000Z',

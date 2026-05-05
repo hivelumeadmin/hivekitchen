@@ -82,6 +82,35 @@ export class GuardrailRejectionError extends DomainError {
   }
 }
 
+export class SwapGuardrailBlockedError extends DomainError {
+  readonly type = '/errors/swap-guardrail-blocked';
+  readonly status = 422;
+  readonly title = 'Swap blocked by allergy guardrail';
+  constructor(itemId: string, allergens: string[]) {
+    super(
+      allergens.length > 0
+        ? `Item ${itemId} swap blocked: would introduce ${allergens.join(', ')}`
+        : `Item ${itemId} swap blocked: guardrail evaluation inconclusive`,
+    );
+  }
+}
+
+// Story 3.13 — Returned when a household exceeds the regeneration rate limit
+// (5 requests per plan-week per household). Carries retryAfterSeconds so the
+// global error handler can emit the matching Retry-After response header.
+export class TooManyRequestsError extends DomainError {
+  readonly type = '/errors/too-many-requests';
+  readonly status = 429;
+  readonly title = 'Too Many Requests';
+  readonly retryAfterSeconds: number;
+  constructor(retryAfterSeconds: number) {
+    super(
+      `Rate limit exceeded. Try again in ${String(retryAfterSeconds)} seconds.`,
+    );
+    this.retryAfterSeconds = retryAfterSeconds;
+  }
+}
+
 // Same readonly literal-type constraint as ParentalNoticeRequiredError below:
 // extends DomainError directly with status 403 instead of subclassing ForbiddenError.
 // instanceof ForbiddenError is false for this error; callers must use isDomainError()

@@ -1,5 +1,5 @@
 import { test, expect, type Page } from '@playwright/test';
-import { loginAndNavigate, userProfile } from './_helpers.js';
+import { loginAndNavigate, userProfile, SAMPLE_HOUSEHOLD_ID } from './_helpers.js';
 
 // Shape must satisfy the contract: exactly 6 processors with unique names from
 // the canonical list, structured retention entries, non-empty data categories.
@@ -53,7 +53,11 @@ async function mockUnacknowledgedProfile(page: Page) {
 }
 
 test.describe('Story 2-9: parental notice disclosure (pre-data-collection gate)', () => {
-  test('clicking "Add your first child" with no prior ack opens the parental notice dialog', async ({
+  // Story 3-8 moved "Add your first child" into BriefCanvas's empty state.
+  // The parental-notice gate (AppHomePage) now auto-opens the dialog for
+  // unacknowledged users before BriefCanvas ever renders — so tests 1-4 no
+  // longer click the button; the dialog appears automatically on landing.
+  test('landing on /app with no prior ack auto-opens the parental notice dialog', async ({
     page,
   }) => {
     await mockUnacknowledgedProfile(page);
@@ -66,7 +70,6 @@ test.describe('Story 2-9: parental notice disclosure (pre-data-collection gate)'
     );
 
     await loginAndNavigate(page, '/app');
-    await page.getByRole('button', { name: /add your first child/i }).click();
     await expect(
       page.getByRole('heading', { name: /before we collect data about your family/i }),
     ).toBeVisible();
@@ -97,7 +100,6 @@ test.describe('Story 2-9: parental notice disclosure (pre-data-collection gate)'
     });
 
     await loginAndNavigate(page, '/app');
-    await page.getByRole('button', { name: /add your first child/i }).click();
     const ackButton = page.getByRole('button', { name: /i.ve read this — start adding/i });
     // Wait for the notice to render before scrolling, then scroll to the bottom
     // to release the scroll gate that disables the ack button.
@@ -107,8 +109,7 @@ test.describe('Story 2-9: parental notice disclosure (pre-data-collection gate)'
     await ackButton.click();
     await expect.poll(() => ackBody).not.toBeNull();
     expect(ackBody).toEqual({ document_version: 'v1' });
-    // After acknowledgment the dialog closes and the gated intent (open the
-    // child form) fires automatically.
+    // After acknowledgment the dialog closes.
     await expect(
       page.getByRole('heading', { name: /before we collect data about your family/i }),
     ).toHaveCount(0);
@@ -136,7 +137,6 @@ test.describe('Story 2-9: parental notice disclosure (pre-data-collection gate)'
     });
 
     await loginAndNavigate(page, '/app');
-    await page.getByRole('button', { name: /add your first child/i }).click();
     await expect(page.getByRole('alert')).toContainText(/couldn.t load the notice/i);
     await page.getByRole('button', { name: /try again/i }).click();
     await expect(
@@ -162,7 +162,6 @@ test.describe('Story 2-9: parental notice disclosure (pre-data-collection gate)'
     );
 
     await loginAndNavigate(page, '/app');
-    await page.getByRole('button', { name: /add your first child/i }).click();
     const ackButton = page.getByRole('button', { name: /i.ve read this — start adding/i });
     await expect(ackButton).toBeVisible();
     await scrollNoticeToBottom(page);
@@ -184,13 +183,17 @@ test.describe('Story 2-9: parental notice disclosure (pre-data-collection gate)'
         body: JSON.stringify(userProfile()), // default factory has acknowledged_at set
       }),
     );
+    // Return empty brief so BriefCanvas enters its empty state and shows the
+    // "Add your first child" CTA (story 3-8 moved the form entry point here).
+    await page.route(`**/v1/households/${SAMPLE_HOUSEHOLD_ID}/brief`, (route) =>
+      route.fulfill({
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ brief: null }),
+      }),
+    );
 
-    const profileResponse = page.waitForResponse('**/v1/users/me');
     await loginAndNavigate(page, '/app');
-    // The parental-notice gate hydrates lazily from /v1/users/me — clicking
-    // before hydration sees state='unknown' and conservatively opens the
-    // dialog. Wait for hydration so the test asserts true bypass behavior.
-    await profileResponse;
     await page.getByRole('button', { name: /add your first child/i }).click();
     // The notice dialog never appears; the child form opens directly.
     await expect(

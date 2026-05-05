@@ -34,6 +34,13 @@ async function reachBagCompositionCard(page: Page) {
       body: JSON.stringify(userProfile()), // factory has prior ack
     }),
   );
+  await page.route(`**/v1/households/${SAMPLE_HOUSEHOLD_ID}/brief`, (route) =>
+    route.fulfill({
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ brief: null }),
+    }),
+  );
   await page.route(`**/v1/households/*/children`, (route) =>
     route.fulfill({
       status: 201,

@@ -28,6 +28,15 @@ async function reachAddChildForm(page: Page) {
       body: JSON.stringify(userProfile()), // factory has acknowledgment set
     }),
   );
+  // Return an empty brief so BriefCanvas enters the empty state and shows
+  // the "Add your first child" CTA (story 3-8 moved the form here).
+  await page.route(`**/v1/households/${SAMPLE_HOUSEHOLD_ID}/brief`, (route) =>
+    route.fulfill({
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ brief: null }),
+    }),
+  );
   await loginAndNavigate(page, '/app');
   await page.getByRole('button', { name: /add your first child/i }).click();
   await expect(page.getByRole('heading', { name: /tell us about your child/i })).toBeVisible();

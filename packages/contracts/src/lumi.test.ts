@@ -24,10 +24,11 @@ const TURN_FIXTURE = {
 } as const;
 
 describe('LumiSurfaceSchema', () => {
-  it('pins the exact set of 8 surface values (drift guard)', () => {
+  it('pins the exact set of 9 surface values (drift guard)', () => {
     expect(LumiSurfaceSchema.options).toEqual([
       'onboarding',
       'planning',
+      'brief',
       'meal-detail',
       'child-profile',
       'grocery-list',
@@ -41,6 +42,7 @@ describe('LumiSurfaceSchema', () => {
     for (const surface of [
       'onboarding',
       'planning',
+      'brief',
       'meal-detail',
       'child-profile',
       'grocery-list',

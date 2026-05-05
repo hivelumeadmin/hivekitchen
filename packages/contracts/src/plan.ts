@@ -156,6 +156,7 @@ export const CommitPlanInputSchema = z.object({
   plan_id: z.string().uuid(),
   household_id: z.string().uuid(),
   week_id: z.string().uuid(),
+  week_of: z.string().date(),  // Story 3.13 — ISO 8601 date string ('2026-04-28')
   revision: z.number().int().min(1),
   generated_at: z.string().datetime(),
   prompt_version: z.string().min(1).max(PROMPT_VERSION_MAX),
@@ -166,6 +167,7 @@ export const PlanRowSchema = z.object({
   id: z.string().uuid(),
   household_id: z.string().uuid(),
   week_id: z.string().uuid(),
+  week_of: z.string().date().nullable().default(null),  // Story 3.13 — null for pre-migration rows
   revision: z.number().int().min(1),
   generated_at: z.string().datetime(),
   guardrail_cleared_at: z.string().datetime().nullable(),
@@ -188,14 +190,58 @@ export const PlanItemRowSchema = z.object({
   recipe_id: z.string().uuid().nullable(),
   item_id: z.string().uuid().nullable(),
   ingredients: z.array(z.string().min(1)),
+  paused_at: z.string().datetime().nullable().default(null),  // Story 3.12
+  replaced_by_plan_id: z.string().uuid().nullable().default(null),  // Story 3.13 — null = current
   created_at: z.string().datetime(),
   updated_at: z.string().datetime(),
 });
 
+// Story 3.13 — POST /v1/plans/:planId/regenerate?scope=week|day&day=monday query params.
+// day is required when scope='day'.
+export const RegeneratePlanQuerySchema = z.object({
+  scope: z.enum(['week', 'day']),
+  day: z.enum(['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday']).optional(),
+}).refine(
+  (val) => val.scope !== 'day' || val.day !== undefined,
+  { message: "'day' query param is required when scope=day", path: ['day'] },
+);
+
+// Story 3.13 — 202 Accepted response body. job_id correlates to the BullMQ job for
+// debugging; rate_limit_remaining tracks how many more regenerations this
+// household can request this week.
+export const RegeneratePlanResponseSchema = z.object({
+  job_id: z.string().min(1),
+  rate_limit_remaining: z.number().int().min(0),
+});
+
+// PATCH /v1/plans/:planId/items/:itemId body.
+// ingredients replaces the existing set in full — client owns the complete replacement list.
+// recipe_id / item_id are optional until recipe resolution lands in a future story.
+export const SwapPlanItemInputSchema = z.object({
+  ingredients: z
+    .array(z.string().min(1).max(INGREDIENT_MAX))
+    .min(1)
+    .max(INGREDIENTS_MAX),
+  recipe_id: z.string().uuid().optional(),
+  item_id: z.string().uuid().optional(),
+});
+
+export const SwapPlanItemResponseSchema = z.object({
+  item: PlanItemRowSchema,
+});
+
+// PATCH /v1/plans/:planId/days/:day/pause body.
+// reason is informational for audit; Lunch Link delivery (Epic 4) reads paused_at, not reason.
+export const PausePlanDayInputSchema = z.object({
+  reason: z.enum(['sick', 'absent', 'holiday']).optional(),
+});
+
 // PlanTileItemSchema is the per-child-slot entry within a day's tile.
-// recipe_id / item_id are optional because the plan item may not have them
-// resolved yet (real recipe resolution lands in Story 3.7).
+// plan_item_id is the plan_items.id from the DB — Story 3.12 exposes it so the
+// client can call PATCH /v1/plans/:planId/items/:itemId without a separate lookup.
+// Optional because pre-3.12 brief_state rows will not have it in their JSON.
 const PlanTileItemSchema = z.object({
+  plan_item_id: z.string().uuid().optional(),  // Story 3.12 — DB row id for PATCH
   child_id: z.string().uuid(),
   slot: z.string().min(1).max(SLOT_MAX),
   ingredients: z.array(z.string().min(1)),
@@ -206,14 +252,36 @@ const PlanTileItemSchema = z.object({
 export const PlanTileSummarySchema = z.object({
   day: z.enum(['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday']),
   items: z.array(PlanTileItemSchema),
+  paused: z.boolean().default(false),  // Story 3.12: true when all items for the day are paused
+});
+
+// Story 3.10 — populated by brief-state.composer; one entry per
+// (child_id, allergen) pair the guardrail cleared for the current plan.
+// child_name is plain (decrypted) and crosses the wire over the JWT-gated
+// brief query (same exposure model as GET /v1/households/:id/children/:childId).
+export const ClearedAllergyEntrySchema = z.object({
+  child_id: z.string().uuid(),
+  child_name: z.string().min(1).max(100),
+  allergen: z.string().min(1).max(100),
+});
+
+// Story 3.11 — populated by brief-state.composer when scaffolding-level
+// mutations exist since the last plan view. null when the plan is unchanged
+// or mutations are safety/dietary (those are loud, not quiet per UX-DR19).
+export const ScaffoldingDiffSchema = z.object({
+  summary: z.string().min(1).max(200),
+  explanation: z.string().min(1).max(500).optional(),
 });
 
 export const BriefStateRowSchema = z.object({
   household_id: z.string().uuid(),
+  plan_id: z.string().uuid().nullable().default(null),  // Story 3.12 — null for pre-migration rows
   moment_headline: z.string(),
   lumi_note: z.string(),
   memory_prose: z.string(),
   plan_tile_summaries: z.array(PlanTileSummarySchema),
+  cleared_allergies: z.array(ClearedAllergyEntrySchema).default([]),
+  scaffolding_diff: ScaffoldingDiffSchema.nullable().default(null),
   generated_at: z.string().datetime(),
   plan_revision: z.number().int().min(0),
   updated_at: z.string().datetime(),

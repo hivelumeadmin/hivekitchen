@@ -10,8 +10,14 @@ import {
   PlanRowSchema,
   PlanItemRowSchema,
   PlanTileSummarySchema,
+  ClearedAllergyEntrySchema,
+  ScaffoldingDiffSchema,
   BriefStateRowSchema,
   BriefResponseSchema,
+  SwapPlanItemInputSchema,
+  PausePlanDayInputSchema,
+  RegeneratePlanQuerySchema,
+  RegeneratePlanResponseSchema,
 } from './plan.js';
 
 const UUID1 = '00000000-0000-4000-8000-000000000001';
@@ -259,6 +265,7 @@ describe('CommitPlanInputSchema', () => {
     plan_id: UUID1,
     household_id: UUID2,
     week_id: '00000000-0000-4000-8000-000000000003',
+    week_of: '2026-05-04',
     revision: 1,
     generated_at: '2026-05-02T11:00:00.000Z',
     prompt_version: 'v1.0.0',
@@ -418,6 +425,98 @@ describe('PlanTileSummarySchema', () => {
   });
 });
 
+describe('ClearedAllergyEntrySchema (Story 3.10)', () => {
+  const validEntry = {
+    child_id: UUID1,
+    child_name: 'Asha',
+    allergen: 'peanut',
+  };
+
+  it('parses a valid entry', () => {
+    expect(ClearedAllergyEntrySchema.safeParse(validEntry).success).toBe(true);
+  });
+
+  it('rejects missing child_id', () => {
+    const { child_id: _drop, ...rest } = validEntry;
+    expect(ClearedAllergyEntrySchema.safeParse(rest).success).toBe(false);
+  });
+
+  it('rejects non-uuid child_id', () => {
+    expect(
+      ClearedAllergyEntrySchema.safeParse({ ...validEntry, child_id: 'not-a-uuid' }).success,
+    ).toBe(false);
+  });
+
+  it('rejects missing child_name', () => {
+    const { child_name: _drop, ...rest } = validEntry;
+    expect(ClearedAllergyEntrySchema.safeParse(rest).success).toBe(false);
+  });
+
+  it('rejects empty child_name', () => {
+    expect(
+      ClearedAllergyEntrySchema.safeParse({ ...validEntry, child_name: '' }).success,
+    ).toBe(false);
+  });
+
+  it('rejects missing allergen', () => {
+    const { allergen: _drop, ...rest } = validEntry;
+    expect(ClearedAllergyEntrySchema.safeParse(rest).success).toBe(false);
+  });
+
+  it('rejects empty allergen', () => {
+    expect(
+      ClearedAllergyEntrySchema.safeParse({ ...validEntry, allergen: '' }).success,
+    ).toBe(false);
+  });
+});
+
+describe('ScaffoldingDiffSchema (Story 3.11)', () => {
+  it('parses a valid entry with only summary', () => {
+    expect(
+      ScaffoldingDiffSchema.safeParse({ summary: 'Swapped Tuesday’s protein' }).success,
+    ).toBe(true);
+  });
+
+  it('parses a valid entry with both summary and explanation', () => {
+    expect(
+      ScaffoldingDiffSchema.safeParse({
+        summary: 'Swapped Tuesday’s protein',
+        explanation: 'Pantry had no chicken this week.',
+      }).success,
+    ).toBe(true);
+  });
+
+  it('rejects an entry with an empty summary (min 1)', () => {
+    expect(ScaffoldingDiffSchema.safeParse({ summary: '' }).success).toBe(false);
+  });
+
+  it('rejects an entry where summary exceeds 200 chars', () => {
+    expect(
+      ScaffoldingDiffSchema.safeParse({ summary: 'x'.repeat(201) }).success,
+    ).toBe(false);
+  });
+
+  it('treats explanation as optional', () => {
+    const parsed = ScaffoldingDiffSchema.safeParse({ summary: 'Swapped protein' });
+    expect(parsed.success).toBe(true);
+    if (parsed.success) {
+      expect(parsed.data.explanation).toBeUndefined();
+    }
+  });
+
+  it('rejects an entry with an empty explanation (min 1)', () => {
+    expect(
+      ScaffoldingDiffSchema.safeParse({ summary: 'Swapped protein', explanation: '' }).success,
+    ).toBe(false);
+  });
+
+  it('rejects an entry where explanation exceeds 500 chars', () => {
+    expect(
+      ScaffoldingDiffSchema.safeParse({ summary: 'Swapped protein', explanation: 'x'.repeat(501) }).success,
+    ).toBe(false);
+  });
+});
+
 describe('BriefStateRowSchema', () => {
   const validRow = {
     household_id: UUID1,
@@ -430,6 +529,10 @@ describe('BriefStateRowSchema', () => {
         items: [{ child_id: UUID2, slot: 'main', ingredients: ['rice'] }],
       },
     ],
+    cleared_allergies: [
+      { child_id: UUID2, child_name: 'Asha', allergen: 'peanut' },
+    ],
+    scaffolding_diff: null,
     generated_at: '2026-05-02T11:00:00.000Z',
     plan_revision: 1,
     updated_at: '2026-05-02T11:00:01.000Z',
@@ -437,11 +540,15 @@ describe('BriefStateRowSchema', () => {
 
   it('round-trips a valid row with empty plan_tile_summaries', () => {
     expect(
-      BriefStateRowSchema.safeParse({ ...validRow, plan_tile_summaries: [] }).success,
+      BriefStateRowSchema.safeParse({
+        ...validRow,
+        plan_tile_summaries: [],
+        cleared_allergies: [],
+      }).success,
     ).toBe(true);
   });
 
-  it('round-trips a valid row with a populated tile', () => {
+  it('round-trips a valid row with a populated tile and cleared_allergies', () => {
     expect(BriefStateRowSchema.safeParse(validRow).success).toBe(true);
   });
 
@@ -458,6 +565,58 @@ describe('BriefStateRowSchema', () => {
     expect(
       BriefStateRowSchema.safeParse({ ...validRow, plan_revision: -1 }).success,
     ).toBe(false);
+  });
+
+  it('defaults cleared_allergies to [] when omitted from input', () => {
+    const { cleared_allergies: _drop, ...rest } = validRow;
+    const parsed = BriefStateRowSchema.safeParse(rest);
+    expect(parsed.success).toBe(true);
+    if (parsed.success) {
+      expect(parsed.data.cleared_allergies).toEqual([]);
+    }
+  });
+
+  it('rejects an invalid entry inside cleared_allergies', () => {
+    expect(
+      BriefStateRowSchema.safeParse({
+        ...validRow,
+        cleared_allergies: [{ child_id: UUID2, child_name: '', allergen: 'peanut' }],
+      }).success,
+    ).toBe(false);
+  });
+
+  it('accepts scaffolding_diff: null', () => {
+    const parsed = BriefStateRowSchema.safeParse({ ...validRow, scaffolding_diff: null });
+    expect(parsed.success).toBe(true);
+    if (parsed.success) {
+      expect(parsed.data.scaffolding_diff).toBeNull();
+    }
+  });
+
+  it('defaults scaffolding_diff to null when omitted from input', () => {
+    const { scaffolding_diff: _drop, ...rest } = validRow;
+    const parsed = BriefStateRowSchema.safeParse(rest);
+    expect(parsed.success).toBe(true);
+    if (parsed.success) {
+      expect(parsed.data.scaffolding_diff).toBeNull();
+    }
+  });
+
+  it('round-trips a populated scaffolding_diff with summary + explanation', () => {
+    const parsed = BriefStateRowSchema.safeParse({
+      ...validRow,
+      scaffolding_diff: {
+        summary: 'Swapped protein',
+        explanation: 'Pantry had no chicken.',
+      },
+    });
+    expect(parsed.success).toBe(true);
+    if (parsed.success) {
+      expect(parsed.data.scaffolding_diff).toEqual({
+        summary: 'Swapped protein',
+        explanation: 'Pantry had no chicken.',
+      });
+    }
   });
 });
 
@@ -483,5 +642,391 @@ describe('BriefResponseSchema', () => {
 
   it('rejects a missing brief field', () => {
     expect(BriefResponseSchema.safeParse({}).success).toBe(false);
+  });
+});
+
+describe('PlanTileItemSchema (Story 3.12 — plan_item_id)', () => {
+  it('parses a tile item with plan_item_id present', () => {
+    const result = PlanTileSummarySchema.safeParse({
+      day: 'monday',
+      items: [
+        {
+          plan_item_id: '00000000-0000-4000-8000-000000000050',
+          child_id: UUID1,
+          slot: 'main',
+          ingredients: ['rice'],
+        },
+      ],
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('parses a tile item without plan_item_id (optional for pre-3.12 cached rows)', () => {
+    const result = PlanTileSummarySchema.safeParse({
+      day: 'monday',
+      items: [{ child_id: UUID1, slot: 'main', ingredients: ['rice'] }],
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('rejects a non-uuid plan_item_id', () => {
+    expect(
+      PlanTileSummarySchema.safeParse({
+        day: 'monday',
+        items: [
+          {
+            plan_item_id: 'not-a-uuid',
+            child_id: UUID1,
+            slot: 'main',
+            ingredients: ['rice'],
+          },
+        ],
+      }).success,
+    ).toBe(false);
+  });
+});
+
+describe('PlanTileSummarySchema — paused (Story 3.12)', () => {
+  const validSummary = {
+    day: 'monday' as const,
+    items: [{ child_id: UUID1, slot: 'main', ingredients: ['rice'] }],
+  };
+
+  it('defaults paused to false when omitted', () => {
+    const parsed = PlanTileSummarySchema.safeParse(validSummary);
+    expect(parsed.success).toBe(true);
+    if (parsed.success) {
+      expect(parsed.data.paused).toBe(false);
+    }
+  });
+
+  it('round-trips paused: true', () => {
+    const parsed = PlanTileSummarySchema.safeParse({ ...validSummary, paused: true });
+    expect(parsed.success).toBe(true);
+    if (parsed.success) {
+      expect(parsed.data.paused).toBe(true);
+    }
+  });
+});
+
+describe('PlanItemRowSchema — paused_at (Story 3.12)', () => {
+  const validRow = {
+    id: '00000000-0000-4000-8000-000000000010',
+    plan_id: UUID1,
+    child_id: UUID2,
+    day: 'monday',
+    slot: 'main',
+    recipe_id: null,
+    item_id: null,
+    ingredients: ['rice'],
+    created_at: '2026-05-02T11:00:00.000Z',
+    updated_at: '2026-05-02T11:00:01.000Z',
+  };
+
+  it('parses with paused_at: null', () => {
+    expect(
+      PlanItemRowSchema.safeParse({ ...validRow, paused_at: null }).success,
+    ).toBe(true);
+  });
+
+  it('parses with paused_at as a datetime string', () => {
+    expect(
+      PlanItemRowSchema.safeParse({
+        ...validRow,
+        paused_at: '2026-05-04T12:00:00.000Z',
+      }).success,
+    ).toBe(true);
+  });
+
+  it('defaults paused_at to null when omitted', () => {
+    const parsed = PlanItemRowSchema.safeParse(validRow);
+    expect(parsed.success).toBe(true);
+    if (parsed.success) {
+      expect(parsed.data.paused_at).toBeNull();
+    }
+  });
+
+  it('rejects non-datetime paused_at', () => {
+    expect(
+      PlanItemRowSchema.safeParse({ ...validRow, paused_at: 'yesterday' }).success,
+    ).toBe(false);
+  });
+});
+
+describe('BriefStateRowSchema — plan_id (Story 3.12)', () => {
+  const baseRow = {
+    household_id: UUID1,
+    moment_headline: '',
+    lumi_note: '',
+    memory_prose: '',
+    plan_tile_summaries: [],
+    cleared_allergies: [],
+    scaffolding_diff: null,
+    generated_at: '2026-05-02T11:00:00.000Z',
+    plan_revision: 0,
+    updated_at: '2026-05-02T11:00:01.000Z',
+  };
+
+  it('parses with plan_id: null', () => {
+    const parsed = BriefStateRowSchema.safeParse({ ...baseRow, plan_id: null });
+    expect(parsed.success).toBe(true);
+    if (parsed.success) {
+      expect(parsed.data.plan_id).toBeNull();
+    }
+  });
+
+  it('parses with a valid uuid plan_id', () => {
+    const parsed = BriefStateRowSchema.safeParse({
+      ...baseRow,
+      plan_id: '00000000-0000-4000-8000-000000000099',
+    });
+    expect(parsed.success).toBe(true);
+    if (parsed.success) {
+      expect(parsed.data.plan_id).toBe('00000000-0000-4000-8000-000000000099');
+    }
+  });
+
+  it('defaults plan_id to null when omitted', () => {
+    const parsed = BriefStateRowSchema.safeParse(baseRow);
+    expect(parsed.success).toBe(true);
+    if (parsed.success) {
+      expect(parsed.data.plan_id).toBeNull();
+    }
+  });
+
+  it('rejects non-uuid plan_id', () => {
+    expect(
+      BriefStateRowSchema.safeParse({ ...baseRow, plan_id: 'not-a-uuid' }).success,
+    ).toBe(false);
+  });
+});
+
+describe('SwapPlanItemInputSchema (Story 3.12)', () => {
+  it('parses a body with only ingredients', () => {
+    expect(
+      SwapPlanItemInputSchema.safeParse({ ingredients: ['hummus', 'crackers'] }).success,
+    ).toBe(true);
+  });
+
+  it('parses a body with optional recipe_id and item_id', () => {
+    expect(
+      SwapPlanItemInputSchema.safeParse({
+        ingredients: ['hummus'],
+        recipe_id: '00000000-0000-4000-8000-000000000060',
+        item_id: '00000000-0000-4000-8000-000000000061',
+      }).success,
+    ).toBe(true);
+  });
+
+  it('rejects empty ingredients array', () => {
+    expect(SwapPlanItemInputSchema.safeParse({ ingredients: [] }).success).toBe(false);
+  });
+
+  it('rejects ingredients with empty-string entry', () => {
+    expect(
+      SwapPlanItemInputSchema.safeParse({ ingredients: [''] }).success,
+    ).toBe(false);
+  });
+
+  it('rejects non-uuid recipe_id', () => {
+    expect(
+      SwapPlanItemInputSchema.safeParse({
+        ingredients: ['hummus'],
+        recipe_id: 'not-a-uuid',
+      }).success,
+    ).toBe(false);
+  });
+});
+
+describe('RegeneratePlanQuerySchema (Story 3.13)', () => {
+  it('parses { scope: week } without day', () => {
+    expect(RegeneratePlanQuerySchema.safeParse({ scope: 'week' }).success).toBe(true);
+  });
+
+  it('parses { scope: day, day: tuesday }', () => {
+    expect(
+      RegeneratePlanQuerySchema.safeParse({ scope: 'day', day: 'tuesday' }).success,
+    ).toBe(true);
+  });
+
+  it('rejects { scope: day } without a day param', () => {
+    expect(RegeneratePlanQuerySchema.safeParse({ scope: 'day' }).success).toBe(false);
+  });
+
+  it('rejects unknown scope value', () => {
+    expect(RegeneratePlanQuerySchema.safeParse({ scope: 'month' }).success).toBe(false);
+  });
+
+  it('rejects unknown day value', () => {
+    expect(
+      RegeneratePlanQuerySchema.safeParse({ scope: 'day', day: 'sunday' }).success,
+    ).toBe(false);
+  });
+});
+
+describe('RegeneratePlanResponseSchema (Story 3.13)', () => {
+  it('parses a valid 202 body', () => {
+    expect(
+      RegeneratePlanResponseSchema.safeParse({
+        job_id: 'regen-1',
+        rate_limit_remaining: 4,
+      }).success,
+    ).toBe(true);
+  });
+
+  it('rejects empty job_id', () => {
+    expect(
+      RegeneratePlanResponseSchema.safeParse({
+        job_id: '',
+        rate_limit_remaining: 4,
+      }).success,
+    ).toBe(false);
+  });
+
+  it('rejects negative rate_limit_remaining', () => {
+    expect(
+      RegeneratePlanResponseSchema.safeParse({
+        job_id: 'regen-1',
+        rate_limit_remaining: -1,
+      }).success,
+    ).toBe(false);
+  });
+});
+
+describe('CommitPlanInputSchema — week_of (Story 3.13)', () => {
+  const validInput = {
+    plan_id: '00000000-0000-4000-8000-000000000001',
+    household_id: '00000000-0000-4000-8000-000000000002',
+    week_id: '00000000-0000-4000-8000-000000000003',
+    week_of: '2026-04-28',
+    revision: 1,
+    generated_at: '2026-05-02T11:00:00.000Z',
+    prompt_version: 'v1.0.0',
+    items: [
+      {
+        child_id: '00000000-0000-4000-8000-000000000001',
+        day: 'monday',
+        slot: 'main',
+        ingredients: ['rice'],
+      },
+    ],
+  };
+
+  it('round-trips with week_of present', () => {
+    expect(CommitPlanInputSchema.safeParse(validInput).success).toBe(true);
+  });
+
+  it('rejects when week_of is missing', () => {
+    const { week_of: _drop, ...rest } = validInput;
+    expect(CommitPlanInputSchema.safeParse(rest).success).toBe(false);
+  });
+
+  it('rejects when week_of is not an ISO date', () => {
+    expect(
+      CommitPlanInputSchema.safeParse({ ...validInput, week_of: 'next-week' }).success,
+    ).toBe(false);
+  });
+});
+
+describe('PlanRowSchema — week_of (Story 3.13)', () => {
+  const baseRow = {
+    id: '00000000-0000-4000-8000-000000000001',
+    household_id: '00000000-0000-4000-8000-000000000002',
+    week_id: '00000000-0000-4000-8000-000000000003',
+    revision: 1,
+    generated_at: '2026-05-02T11:00:00.000Z',
+    guardrail_cleared_at: '2026-05-02T11:00:01.000Z',
+    guardrail_version: '1.1.0',
+    prompt_version: 'v1.0.0',
+    created_at: '2026-05-02T11:00:00.000Z',
+    updated_at: '2026-05-02T11:00:01.000Z',
+  };
+
+  it('parses with week_of: null', () => {
+    expect(PlanRowSchema.safeParse({ ...baseRow, week_of: null }).success).toBe(true);
+  });
+
+  it('parses with a valid ISO week_of', () => {
+    expect(
+      PlanRowSchema.safeParse({ ...baseRow, week_of: '2026-04-28' }).success,
+    ).toBe(true);
+  });
+
+  it('defaults week_of to null when omitted', () => {
+    const parsed = PlanRowSchema.safeParse(baseRow);
+    expect(parsed.success).toBe(true);
+    if (parsed.success) {
+      expect(parsed.data.week_of).toBeNull();
+    }
+  });
+});
+
+describe('PlanItemRowSchema — replaced_by_plan_id (Story 3.13)', () => {
+  const baseRow = {
+    id: '00000000-0000-4000-8000-000000000010',
+    plan_id: '00000000-0000-4000-8000-000000000001',
+    child_id: '00000000-0000-4000-8000-000000000002',
+    day: 'monday',
+    slot: 'main',
+    recipe_id: null,
+    item_id: null,
+    ingredients: ['rice'],
+    paused_at: null,
+    created_at: '2026-05-02T11:00:00.000Z',
+    updated_at: '2026-05-02T11:00:01.000Z',
+  };
+
+  it('parses with replaced_by_plan_id: null', () => {
+    expect(
+      PlanItemRowSchema.safeParse({ ...baseRow, replaced_by_plan_id: null }).success,
+    ).toBe(true);
+  });
+
+  it('parses with a valid uuid replaced_by_plan_id', () => {
+    expect(
+      PlanItemRowSchema.safeParse({
+        ...baseRow,
+        replaced_by_plan_id: '00000000-0000-4000-8000-000000000001',
+      }).success,
+    ).toBe(true);
+  });
+
+  it('defaults replaced_by_plan_id to null when omitted', () => {
+    const parsed = PlanItemRowSchema.safeParse(baseRow);
+    expect(parsed.success).toBe(true);
+    if (parsed.success) {
+      expect(parsed.data.replaced_by_plan_id).toBeNull();
+    }
+  });
+
+  it('rejects non-uuid replaced_by_plan_id', () => {
+    expect(
+      PlanItemRowSchema.safeParse({
+        ...baseRow,
+        replaced_by_plan_id: 'not-a-uuid',
+      }).success,
+    ).toBe(false);
+  });
+});
+
+describe('PausePlanDayInputSchema (Story 3.12)', () => {
+  it('parses an empty body (reason is optional)', () => {
+    expect(PausePlanDayInputSchema.safeParse({}).success).toBe(true);
+  });
+
+  it('parses with reason: sick', () => {
+    expect(PausePlanDayInputSchema.safeParse({ reason: 'sick' }).success).toBe(true);
+  });
+
+  it('parses with reason: absent', () => {
+    expect(PausePlanDayInputSchema.safeParse({ reason: 'absent' }).success).toBe(true);
+  });
+
+  it('parses with reason: holiday', () => {
+    expect(PausePlanDayInputSchema.safeParse({ reason: 'holiday' }).success).toBe(true);
+  });
+
+  it('rejects unknown reason', () => {
+    expect(PausePlanDayInputSchema.safeParse({ reason: 'other' }).success).toBe(false);
   });
 });

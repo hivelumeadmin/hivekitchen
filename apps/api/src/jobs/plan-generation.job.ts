@@ -101,6 +101,7 @@ export function buildCommitInput(
     plan_id: output.plan_id,
     household_id: output.household_id,
     week_id: weekId,
+    week_of: output.week_of,   // Story 3.13 — PlanComposeOutput.week_of is already available
     revision: 1,
     generated_at: new Date().toISOString(),
     prompt_version: output.prompt_version,

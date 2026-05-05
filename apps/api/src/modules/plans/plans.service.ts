@@ -1,19 +1,32 @@
 import { randomUUID } from 'node:crypto';
 import type { FastifyBaseLogger } from 'fastify';
+import type { Queue } from 'bullmq';
+import type Redis from 'ioredis';
 import { GUARDRAIL_VERSION } from '../allergy-guardrail/allergy-rules.engine.js';
-import { GuardrailRejectionError } from '../../common/errors.js';
+import {
+  GuardrailRejectionError,
+  NotFoundError,
+  SwapGuardrailBlockedError,
+  TooManyRequestsError,
+  ValidationError,
+} from '../../common/errors.js';
 import type { AllergyGuardrailService } from '../allergy-guardrail/allergy-guardrail.service.js';
 import type { AuditService } from '../../audit/audit.service.js';
 import type { PlansRepository } from './plans.repository.js';
 import type { BriefStateRepository } from './brief-state.repository.js';
 import type { BriefStateComposer } from './brief-state.composer.js';
+import type { PlanRegenerationJobData } from '../../jobs/plan-regeneration.job.js';
 import type {
   BriefStateRow,
   CommitPlanInput,
   GuardrailResult,
+  PausePlanDayInput,
   PlanComposeInput,
   PlanComposeOutput,
   PlanItemForGuardrail,
+  PlanItemRow,
+  RegeneratePlanQuery,
+  SwapPlanItemInput,
 } from '@hivekitchen/types';
 
 export interface PlansServiceDeps {
@@ -23,7 +36,13 @@ export interface PlansServiceDeps {
   allergyGuardrail: AllergyGuardrailService;
   auditService: AuditService;
   logger: FastifyBaseLogger;
+  redis: Redis;                     // Story 3.13 — for rate limiting
+  regenQueue: Queue;                // Story 3.13 — BullMQ plan-regeneration queue
 }
+
+// Story 3.13 — regeneration rate limit (architecture §3.6).
+const REGEN_RATE_LIMIT = 5;              // max requests per household per week
+const REGEN_TTL_SECONDS = 8 * 24 * 3600; // 8 days — covers the full plan week + buffer
 
 const MAX_GUARDRAIL_RETRIES = 3;
 
@@ -34,6 +53,8 @@ export class PlansService {
   private readonly allergyGuardrail: AllergyGuardrailService;
   private readonly auditService: AuditService;
   private readonly logger: FastifyBaseLogger;
+  private readonly redis: Redis;
+  private readonly regenQueue: Queue;
 
   constructor(deps: PlansServiceDeps) {
     this.repo = deps.repository;
@@ -42,6 +63,8 @@ export class PlansService {
     this.allergyGuardrail = deps.allergyGuardrail;
     this.auditService = deps.auditService;
     this.logger = deps.logger;
+    this.redis = deps.redis;
+    this.regenQueue = deps.regenQueue;
   }
 
   // Single-row read from brief_state. Never composes at request time
@@ -178,5 +201,315 @@ export class PlansService {
     }
 
     throw new GuardrailRejectionError(planId, lastAttempt);
+  }
+
+  // Story 3.12 — per-slot ingredient swap with guardrail validation.
+  // Runs allergyGuardrail.evaluate on ONLY the swapped item (the rest of the
+  // plan was cleared at generation time and is unchanged). On guardrail block
+  // → 422. On success → brief_state projection refreshed (userInitiated:true
+  // → scaffolding_diff null).
+  async swapItem(opts: {
+    planId: string;
+    itemId: string;
+    householdId: string;
+    input: SwapPlanItemInput;
+    requestId: string;
+  }): Promise<PlanItemRow> {
+    // 1. Load plan — validates household ownership via findByIdForPresentation.
+    const plan = await this.repo.findByIdForPresentation({
+      planId: opts.planId,
+      householdId: opts.householdId,
+    });
+    if (!plan) throw new NotFoundError(`plan ${opts.planId}`);
+
+    // 2. Load item — validates it belongs to this plan.
+    const existingItem = await this.repo.findItemById({
+      itemId: opts.itemId,
+      planId: opts.planId,
+    });
+    if (!existingItem) throw new NotFoundError(`plan_item ${opts.itemId}`);
+
+    // 3. Guardrail: check only the swapped item's new ingredients.
+    const guardrailItem: PlanItemForGuardrail = {
+      child_id: existingItem.child_id,
+      day: existingItem.day,
+      slot: existingItem.slot,
+      ingredients: opts.input.ingredients,
+    };
+    const result = await this.allergyGuardrail.evaluate(
+      [guardrailItem],
+      opts.householdId,
+    );
+
+    if (result.verdict === 'blocked' || result.verdict === 'uncertain') {
+      const allergens =
+        result.verdict === 'blocked'
+          ? result.conflicts.map((c) => c.allergen)
+          : [];
+      try {
+        await this.auditService.write({
+          event_type: 'allergy.guardrail_rejection',
+          household_id: opts.householdId,
+          request_id: opts.requestId,
+          metadata: {
+            plan_id: opts.planId,
+            item_id: opts.itemId,
+            source: 'user_swap',
+            verdict: result.verdict,
+            allergens,
+            // Surface the guardrail's reason (e.g. 'no_rules_loaded',
+            // 'rules_outdated') so ops can triage why uncertain results occur.
+            ...(result.verdict === 'uncertain' && { reason: result.reason }),
+          },
+        });
+      } catch (auditErr) {
+        this.logger.error(
+          { auditErr },
+          'audit write failed for swap guardrail rejection',
+        );
+      }
+      throw new SwapGuardrailBlockedError(opts.itemId, allergens);
+    }
+
+    // 4. Re-check plan revision before write — guards against a BullMQ
+    // regeneration committing a new revision between findItemById and the
+    // update. Without this check, our swap could write to plan_items rows that
+    // no longer belong to the current plan, and the change would never reach
+    // the projection. NotFoundError signals the client to refetch the brief.
+    const planAfter = await this.repo.findByIdForPresentation({
+      planId: opts.planId,
+      householdId: opts.householdId,
+    });
+    if (!planAfter || planAfter.revision !== plan.revision) {
+      throw new NotFoundError(`plan ${opts.planId}`);
+    }
+
+    // 5. Commit the ingredient update.
+    const updatedItem = await this.repo.updateItemIngredients({
+      itemId: opts.itemId,
+      planId: opts.planId,
+      ingredients: opts.input.ingredients,
+      recipeId: opts.input.recipe_id,
+      itemSlotId: opts.input.item_id,
+    });
+
+    // 6. Refresh brief_state projection. userInitiated:true → scaffolding_diff stays null.
+    await this.briefStateComposer.refresh(
+      opts.householdId,
+      plan.week_id,
+      opts.requestId,
+      { userInitiated: true },
+    );
+
+    // 7. Audit the successful swap.
+    try {
+      await this.auditService.write({
+        event_type: 'plan.item_swapped',
+        household_id: opts.householdId,
+        request_id: opts.requestId,
+        metadata: {
+          plan_id: opts.planId,
+          item_id: opts.itemId,
+          day: existingItem.day,
+          slot: existingItem.slot,
+          new_ingredients: opts.input.ingredients,
+          guardrail_version: GUARDRAIL_VERSION,
+        },
+      });
+    } catch (err) {
+      this.logger.error(
+        { err, plan_id: opts.planId, item_id: opts.itemId },
+        'audit write failed after item swap — swap committed',
+      );
+    }
+
+    return updatedItem;
+  }
+
+  // Story 3.12 — sick-day pause: marks paused_at on all plan_items for the day.
+  // The underlying plan is unchanged — ingredients are preserved for Lunch
+  // Link context and future un-pause.
+  //
+  // App-level idempotency: pauseDay returns the rows it actually flipped. If
+  // every item for the day is already paused we return 204 without a redundant
+  // audit/refresh, so client retries with the same Idempotency-Key don't burn
+  // audit rows or recompute the projection. If the (plan, day) pair has zero
+  // items we throw ValidationError (422), distinguishing it from the silent-
+  // success case.
+  async pauseDay(opts: {
+    planId: string;
+    day: PlanItemRow['day'];
+    householdId: string;
+    requestId: string;
+    reason?: PausePlanDayInput['reason'];
+  }): Promise<void> {
+    // 1. Validate plan ownership.
+    const plan = await this.repo.findByIdForPresentation({
+      planId: opts.planId,
+      householdId: opts.householdId,
+    });
+    if (!plan) throw new NotFoundError(`plan ${opts.planId}`);
+
+    // 2. Reject pause requests for days that don't exist in the plan (e.g., a
+    //    school holiday the planner skipped). 422 with a domain reason rather
+    //    than a silent 204 success.
+    const itemCount = await this.repo.countItemsForDay({
+      planId: opts.planId,
+      day: opts.day,
+    });
+    if (itemCount === 0) {
+      throw new ValidationError(
+        `plan ${opts.planId} has no items for day '${opts.day}'`,
+      );
+    }
+
+    // 3. Pause all not-yet-paused items for the day. Returns the rows that were
+    //    actually flipped — empty array means every item was already paused.
+    const pausedAt = new Date().toISOString();
+    const pausedRows = await this.repo.pauseDay({
+      planId: opts.planId,
+      day: opts.day,
+      pausedAt,
+    });
+    if (pausedRows.length === 0) {
+      // Already-paused day: idempotent no-op. Skip refresh + audit.
+      return;
+    }
+
+    // 4. Refresh brief_state — paused field will propagate to PlanTileSummary.
+    await this.briefStateComposer.refresh(
+      opts.householdId,
+      plan.week_id,
+      opts.requestId,
+      { userInitiated: true },
+    );
+
+    // 5. Audit. `reason` (if provided by the route) is threaded into metadata
+    //    so ops can distinguish parent-declared sick days from other pause
+    //    reasons in the timeline.
+    try {
+      await this.auditService.write({
+        event_type: 'plan.day_paused',
+        household_id: opts.householdId,
+        request_id: opts.requestId,
+        metadata: {
+          plan_id: opts.planId,
+          day: opts.day,
+          paused_at: pausedAt,
+          ...(opts.reason !== undefined && { reason: opts.reason }),
+        },
+      });
+    } catch (err) {
+      this.logger.error(
+        { err, plan_id: opts.planId },
+        'audit write failed after day pause — pause committed',
+      );
+    }
+  }
+
+  // Story 3.13 — fetch current (non-archived) items for a plan, with household
+  // ownership check. Used by the plan-regeneration job to merge day-scope new
+  // items with the existing other-day items before committing.
+  async getCurrentPlanItems(planId: string, householdId: string): Promise<PlanItemRow[]> {
+    const plan = await this.repo.findByIdForPresentation({ planId, householdId });
+    if (!plan) throw new NotFoundError(`plan ${planId}`);
+    return this.repo.findItemsByPlanId(planId);
+  }
+
+  // Story 3.13 — user-triggered plan regeneration.
+  // Rate-limited to REGEN_RATE_LIMIT per household per plan-week via Redis INCR.
+  // Enqueues a PlanRegenerationJobData job and returns the BullMQ job ID + remaining limit.
+  // Does NOT wait for the job to complete — returns 202 immediately.
+  async requestRegeneration(opts: {
+    planId: string;
+    householdId: string;
+    query: RegeneratePlanQuery;
+    requestId: string;
+  }): Promise<{ jobId: string; rateLimitRemaining: number }> {
+    // 1. Load plan — validates household ownership and that plan exists.
+    const plan = await this.repo.findByIdForPresentation({
+      planId: opts.planId,
+      householdId: opts.householdId,
+    });
+    if (!plan) throw new NotFoundError(`plan ${opts.planId}`);
+    if (!plan.week_of) {
+      // Pre-3.13 plan row with no week_of — cannot regenerate without the date.
+      throw new ValidationError(
+        `plan ${opts.planId} was created before Story 3.13 and lacks week_of; view the current week's brief to regenerate`,
+      );
+    }
+
+    // 2. Rate limit: per-household per-week_id counter in Redis.
+    // Key expires in REGEN_TTL_SECONDS so old counters don't linger past the plan week.
+    const rateLimitKey = `regen-limit:${opts.householdId}:${plan.week_id}`;
+    const count = await this.redis.incr(rateLimitKey);
+    if (count === 1) {
+      // First increment: set TTL. Subsequent INCRs inherit the existing TTL.
+      await this.redis.expire(rateLimitKey, REGEN_TTL_SECONDS);
+    }
+    if (count > REGEN_RATE_LIMIT) {
+      const ttl = await this.redis.ttl(rateLimitKey);
+      const retryAfter = ttl > 0 ? ttl : REGEN_TTL_SECONDS;
+      throw new TooManyRequestsError(retryAfter);
+    }
+    const rateLimitRemaining = REGEN_RATE_LIMIT - count;
+
+    // 3. Enqueue. jobId includes requestId so duplicate client retries dedupe.
+    const jobIdKey =
+      `regen-${opts.householdId}-${plan.week_id}-${opts.query.scope}` +
+      (opts.query.scope === 'day' ? `-${opts.query.day ?? ''}` : '') +
+      `-${opts.requestId}`;
+
+    const jobData: PlanRegenerationJobData = {
+      plan_id: opts.planId,
+      household_id: opts.householdId,
+      week_of: plan.week_of,
+      week_id: plan.week_id,
+      scope: opts.query.scope,
+      ...(opts.query.day !== undefined ? { day: opts.query.day } : {}),
+      request_id: opts.requestId,
+    };
+
+    const job = await this.regenQueue.add('regenerate-plan', jobData, {
+      attempts: 2,
+      backoff: { type: 'exponential', delay: 60_000 },
+      removeOnComplete: { count: 100 },
+      removeOnFail: { count: 50 },
+      jobId: jobIdKey,
+    });
+
+    // 4. Audit the regeneration request. Audit failure does not throw.
+    try {
+      await this.auditService.write({
+        event_type: 'plan.regeneration_requested',
+        household_id: opts.householdId,
+        request_id: opts.requestId,
+        metadata: {
+          plan_id: opts.planId,
+          scope: opts.query.scope,
+          day: opts.query.day ?? null,
+          week_of: plan.week_of,
+          rate_limit_used: count,
+        },
+      });
+    } catch (err) {
+      this.logger.error(
+        { err, plan_id: opts.planId },
+        'audit write failed for regeneration request — job still enqueued',
+      );
+    }
+
+    this.logger.info(
+      {
+        plan_id: opts.planId,
+        scope: opts.query.scope,
+        job_id: job.id,
+        count,
+        rateLimitRemaining,
+      },
+      'plan regeneration job enqueued',
+    );
+
+    return { jobId: job.id ?? jobIdKey, rateLimitRemaining };
   }
 }

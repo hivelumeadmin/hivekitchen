@@ -3,6 +3,10 @@ import type { FastifyBaseLogger } from 'fastify';
 import { BriefStateComposer } from './brief-state.composer.js';
 import type { PlansRepository } from './plans.repository.js';
 import type { BriefStateRepository } from './brief-state.repository.js';
+import type {
+  ChildrenRepository,
+  DecryptedChildRow,
+} from '../children/children.repository.js';
 import type { AuditService } from '../../audit/audit.service.js';
 import type { PlanItemRow, PlanRow } from '@hivekitchen/types';
 
@@ -46,6 +50,7 @@ function buildPlanRow(overrides: Partial<PlanRow> = {}): PlanRow {
     id: PLAN_ID,
     household_id: HOUSEHOLD_ID,
     week_id: WEEK_ID,
+    week_of: null,
     revision: 1,
     generated_at: '2026-05-02T11:00:00.000Z',
     guardrail_cleared_at: '2026-05-02T11:00:01.000Z',
@@ -67,6 +72,8 @@ function makeItem(overrides: Partial<PlanItemRow> = {}): PlanItemRow {
     recipe_id: null,
     item_id: null,
     ingredients: ['rice', 'lentils'],
+    paused_at: null,
+    replaced_by_plan_id: null,
     created_at: '2026-05-02T11:00:00.000Z',
     updated_at: '2026-05-02T11:00:00.000Z',
     ...overrides,
@@ -121,6 +128,38 @@ function buildAudit(opts: { writeThrows?: Error } = {}): AuditService & {
   return { write } as unknown as AuditService & { write: ReturnType<typeof vi.fn> };
 }
 
+function makeChild(overrides: Partial<DecryptedChildRow> = {}): DecryptedChildRow {
+  return {
+    id: CHILD_A,
+    household_id: HOUSEHOLD_ID,
+    name: 'Asha',
+    age_band: 'child',
+    school_policy_notes: null,
+    declared_allergens: [],
+    cultural_identifiers: [],
+    dietary_preferences: [],
+    allergen_rule_version: '1.0.0',
+    bag_composition: { main: true, snack: true, extra: true },
+    created_at: '2026-05-02T11:00:00.000Z',
+    ...overrides,
+  };
+}
+
+function buildChildrenRepo(opts: {
+  children?: DecryptedChildRow[];
+  findThrows?: Error;
+} = {}): ChildrenRepository & {
+  findByHouseholdId: ReturnType<typeof vi.fn>;
+} {
+  const findByHouseholdId = vi.fn(async () => {
+    if (opts.findThrows) throw opts.findThrows;
+    return opts.children ?? [];
+  });
+  return { findByHouseholdId } as unknown as ChildrenRepository & {
+    findByHouseholdId: ReturnType<typeof vi.fn>;
+  };
+}
+
 describe('BriefStateComposer.refresh', () => {
   it('reads cleared plan, builds tile summaries, and calls upsert with the plan revision', async () => {
     const plan = buildPlanRow({ revision: 3 });
@@ -135,6 +174,7 @@ describe('BriefStateComposer.refresh', () => {
     const composer = new BriefStateComposer({
       plansRepository: plansRepo,
       briefStateRepository: briefRepo,
+      childrenRepository: buildChildrenRepo(),
       auditService: audit,
       logger,
     });
@@ -151,20 +191,25 @@ describe('BriefStateComposer.refresh', () => {
     const upsertArg = briefRepo.upsert.mock.calls[0]?.[0];
     expect(upsertArg).toMatchObject({
       household_id: HOUSEHOLD_ID,
+      plan_id: PLAN_ID,
       moment_headline: '',
       lumi_note: '',
       memory_prose: '',
+      scaffolding_diff: null,
       plan_revision: 3,
     });
     expect(upsertArg.plan_tile_summaries).toEqual([
       {
         day: 'monday',
         items: [
-          { child_id: CHILD_A, slot: 'main', ingredients: ['rice'] },
-          { child_id: CHILD_B, slot: 'main', ingredients: ['quinoa'] },
+          { plan_item_id: 'a', child_id: CHILD_A, slot: 'main', ingredients: ['rice'] },
+          { plan_item_id: 'b', child_id: CHILD_B, slot: 'main', ingredients: ['quinoa'] },
         ],
+        paused: false,
       },
     ]);
+    // No children supplied → no cleared_allergies entries; default to [].
+    expect(upsertArg.cleared_allergies).toEqual([]);
     expect(audit.write).not.toHaveBeenCalled();
   });
 
@@ -175,6 +220,7 @@ describe('BriefStateComposer.refresh', () => {
     const composer = new BriefStateComposer({
       plansRepository: plansRepo,
       briefStateRepository: briefRepo,
+      childrenRepository: buildChildrenRepo(),
       auditService: audit,
       logger: buildLogger(),
     });
@@ -198,6 +244,7 @@ describe('BriefStateComposer.refresh', () => {
     const composer = new BriefStateComposer({
       plansRepository: plansRepo,
       briefStateRepository: briefRepo,
+      childrenRepository: buildChildrenRepo(),
       auditService: audit,
       logger,
     });
@@ -230,6 +277,7 @@ describe('BriefStateComposer.refresh', () => {
     const composer = new BriefStateComposer({
       plansRepository: plansRepo,
       briefStateRepository: briefRepo,
+      childrenRepository: buildChildrenRepo(),
       auditService: audit,
       logger,
     });
@@ -255,6 +303,7 @@ describe('BriefStateComposer.refresh', () => {
     const composer = new BriefStateComposer({
       plansRepository: plansRepo,
       briefStateRepository: briefRepo,
+      childrenRepository: buildChildrenRepo(),
       auditService: audit,
       logger,
     });
@@ -287,6 +336,7 @@ describe('BriefStateComposer.refresh', () => {
     const composer = new BriefStateComposer({
       plansRepository: plansRepo,
       briefStateRepository: briefRepo,
+      childrenRepository: buildChildrenRepo(),
       auditService: buildAudit(),
       logger: buildLogger(),
     });
@@ -316,6 +366,7 @@ describe('BriefStateComposer.refresh', () => {
     const composer = new BriefStateComposer({
       plansRepository: plansRepo,
       briefStateRepository: briefRepo,
+      childrenRepository: buildChildrenRepo(),
       auditService: buildAudit(),
       logger: buildLogger(),
     });
@@ -325,5 +376,397 @@ describe('BriefStateComposer.refresh', () => {
     const upsertArg = briefRepo.upsert.mock.calls[0]?.[0];
     expect(upsertArg.plan_tile_summaries).toEqual([]);
     expect(briefRepo.upsert).toHaveBeenCalledTimes(1);
+  });
+
+  it('emits scaffolding_diff: null unconditionally until Story 3.12', async () => {
+    const plan = buildPlanRow();
+    const plansRepo = buildPlansRepo({ currentPlan: plan, items: [makeItem()] });
+    const briefRepo = buildBriefStateRepo();
+    const composer = new BriefStateComposer({
+      plansRepository: plansRepo,
+      briefStateRepository: briefRepo,
+      childrenRepository: buildChildrenRepo(),
+      auditService: buildAudit(),
+      logger: buildLogger(),
+    });
+
+    await composer.refresh(HOUSEHOLD_ID, WEEK_ID, REQUEST_ID);
+
+    const upsertArg = briefRepo.upsert.mock.calls[0]?.[0];
+    expect(upsertArg.scaffolding_diff).toBeNull();
+  });
+});
+
+describe('BriefStateComposer.refresh — cleared_allergies (Story 3.10)', () => {
+  it('emits cleared_allergies entries for children-with-allergens whose plan items appear', async () => {
+    const plan = buildPlanRow();
+    const items = [makeItem({ child_id: CHILD_A, day: 'monday', slot: 'main' })];
+    const children = [
+      makeChild({ id: CHILD_A, name: 'Asha', declared_allergens: ['peanut'] }),
+    ];
+    const plansRepo = buildPlansRepo({ currentPlan: plan, items });
+    const briefRepo = buildBriefStateRepo();
+    const composer = new BriefStateComposer({
+      plansRepository: plansRepo,
+      briefStateRepository: briefRepo,
+      childrenRepository: buildChildrenRepo({ children }),
+      auditService: buildAudit(),
+      logger: buildLogger(),
+    });
+
+    await composer.refresh(HOUSEHOLD_ID, WEEK_ID, REQUEST_ID);
+
+    const upsertArg = briefRepo.upsert.mock.calls[0]?.[0];
+    expect(upsertArg.cleared_allergies).toEqual([
+      { child_id: CHILD_A, child_name: 'Asha', allergen: 'peanut' },
+    ]);
+  });
+
+  it('omits children whose declared_allergens is empty', async () => {
+    const plan = buildPlanRow();
+    const items = [makeItem({ child_id: CHILD_A })];
+    const children = [makeChild({ id: CHILD_A, declared_allergens: [] })];
+    const plansRepo = buildPlansRepo({ currentPlan: plan, items });
+    const briefRepo = buildBriefStateRepo();
+    const composer = new BriefStateComposer({
+      plansRepository: plansRepo,
+      briefStateRepository: briefRepo,
+      childrenRepository: buildChildrenRepo({ children }),
+      auditService: buildAudit(),
+      logger: buildLogger(),
+    });
+
+    await composer.refresh(HOUSEHOLD_ID, WEEK_ID, REQUEST_ID);
+
+    const upsertArg = briefRepo.upsert.mock.calls[0]?.[0];
+    expect(upsertArg.cleared_allergies).toEqual([]);
+  });
+
+  it('omits children not present in plan_items', async () => {
+    const plan = buildPlanRow();
+    const items = [makeItem({ child_id: CHILD_A })];
+    const children = [
+      makeChild({ id: CHILD_A, name: 'Asha', declared_allergens: ['peanut'] }),
+      makeChild({ id: CHILD_B, name: 'Rohan', declared_allergens: ['gluten'] }),
+    ];
+    const plansRepo = buildPlansRepo({ currentPlan: plan, items });
+    const briefRepo = buildBriefStateRepo();
+    const composer = new BriefStateComposer({
+      plansRepository: plansRepo,
+      briefStateRepository: briefRepo,
+      childrenRepository: buildChildrenRepo({ children }),
+      auditService: buildAudit(),
+      logger: buildLogger(),
+    });
+
+    await composer.refresh(HOUSEHOLD_ID, WEEK_ID, REQUEST_ID);
+
+    const upsertArg = briefRepo.upsert.mock.calls[0]?.[0];
+    expect(upsertArg.cleared_allergies).toEqual([
+      { child_id: CHILD_A, child_name: 'Asha', allergen: 'peanut' },
+    ]);
+  });
+
+  it('emits empty array when no household child has declared allergens', async () => {
+    const plan = buildPlanRow();
+    const items = [makeItem({ child_id: CHILD_A })];
+    const children = [
+      makeChild({ id: CHILD_A, declared_allergens: [] }),
+      makeChild({ id: CHILD_B, declared_allergens: [] }),
+    ];
+    const plansRepo = buildPlansRepo({ currentPlan: plan, items });
+    const briefRepo = buildBriefStateRepo();
+    const composer = new BriefStateComposer({
+      plansRepository: plansRepo,
+      briefStateRepository: briefRepo,
+      childrenRepository: buildChildrenRepo({ children }),
+      auditService: buildAudit(),
+      logger: buildLogger(),
+    });
+
+    await composer.refresh(HOUSEHOLD_ID, WEEK_ID, REQUEST_ID);
+
+    const upsertArg = briefRepo.upsert.mock.calls[0]?.[0];
+    expect(upsertArg.cleared_allergies).toEqual([]);
+  });
+
+  it('emits one entry per (child, allergen) pair when a child has multiple allergens', async () => {
+    const plan = buildPlanRow();
+    const items = [makeItem({ child_id: CHILD_A })];
+    const children = [
+      makeChild({
+        id: CHILD_A,
+        name: 'Asha',
+        declared_allergens: ['peanut', 'tree nut', 'sesame'],
+      }),
+    ];
+    const plansRepo = buildPlansRepo({ currentPlan: plan, items });
+    const briefRepo = buildBriefStateRepo();
+    const composer = new BriefStateComposer({
+      plansRepository: plansRepo,
+      briefStateRepository: briefRepo,
+      childrenRepository: buildChildrenRepo({ children }),
+      auditService: buildAudit(),
+      logger: buildLogger(),
+    });
+
+    await composer.refresh(HOUSEHOLD_ID, WEEK_ID, REQUEST_ID);
+
+    const upsertArg = briefRepo.upsert.mock.calls[0]?.[0];
+    expect(upsertArg.cleared_allergies).toEqual([
+      { child_id: CHILD_A, child_name: 'Asha', allergen: 'peanut' },
+      { child_id: CHILD_A, child_name: 'Asha', allergen: 'tree nut' },
+      { child_id: CHILD_A, child_name: 'Asha', allergen: 'sesame' },
+    ]);
+  });
+
+  it('does NOT throw when childrenRepository.findByHouseholdId fails — audits brief.projection.failure', async () => {
+    const plan = buildPlanRow();
+    const plansRepo = buildPlansRepo({ currentPlan: plan, items: [makeItem()] });
+    const briefRepo = buildBriefStateRepo();
+    const audit = buildAudit();
+    const childrenRepo = buildChildrenRepo({
+      findThrows: new Error('children query failed'),
+    });
+    const composer = new BriefStateComposer({
+      plansRepository: plansRepo,
+      briefStateRepository: briefRepo,
+      childrenRepository: childrenRepo,
+      auditService: audit,
+      logger: buildLogger(),
+    });
+
+    await expect(composer.refresh(HOUSEHOLD_ID, WEEK_ID, REQUEST_ID)).resolves.toBeUndefined();
+
+    expect(briefRepo.upsert).not.toHaveBeenCalled();
+    expect(audit.write).toHaveBeenCalledTimes(1);
+    expect(audit.write.mock.calls[0]?.[0]).toMatchObject({
+      event_type: 'brief.projection.failure',
+      metadata: expect.objectContaining({ error: 'children query failed' }),
+    });
+  });
+});
+
+describe('BriefStateComposer.refresh — Story 3.12 (plan_id, paused, scaffolding_diff)', () => {
+  function buildBriefStateRepoWithPrevious(
+    previousTileSummaries: ReadonlyArray<{
+      day: string;
+      items: ReadonlyArray<{ child_id: string; slot: string; ingredients: string[] }>;
+      paused?: boolean;
+    }> | null,
+  ): BriefStateRepository & {
+    upsert: ReturnType<typeof vi.fn>;
+    findByHousehold: ReturnType<typeof vi.fn>;
+  } {
+    const previous =
+      previousTileSummaries === null
+        ? null
+        : { plan_tile_summaries: previousTileSummaries };
+    return {
+      upsert: vi.fn().mockResolvedValue(undefined),
+      findByHousehold: vi.fn().mockResolvedValue(previous),
+    } as unknown as BriefStateRepository & {
+      upsert: ReturnType<typeof vi.fn>;
+      findByHousehold: ReturnType<typeof vi.fn>;
+    };
+  }
+
+  it('exposes plan.id as plan_id in upsertInput', async () => {
+    const plan = buildPlanRow();
+    const plansRepo = buildPlansRepo({ currentPlan: plan, items: [makeItem()] });
+    const briefRepo = buildBriefStateRepoWithPrevious(null);
+    const composer = new BriefStateComposer({
+      plansRepository: plansRepo,
+      briefStateRepository: briefRepo,
+      childrenRepository: buildChildrenRepo(),
+      auditService: buildAudit(),
+      logger: buildLogger(),
+    });
+
+    await composer.refresh(HOUSEHOLD_ID, WEEK_ID, REQUEST_ID);
+
+    const upsertArg = briefRepo.upsert.mock.calls[0]?.[0];
+    expect(upsertArg.plan_id).toBe(PLAN_ID);
+  });
+
+  it('emits plan_item_id on each tile item (matches plan_items.id)', async () => {
+    const plan = buildPlanRow();
+    const items = [makeItem({ id: 'item-1', child_id: CHILD_A, day: 'monday' })];
+    const plansRepo = buildPlansRepo({ currentPlan: plan, items });
+    const briefRepo = buildBriefStateRepoWithPrevious(null);
+    const composer = new BriefStateComposer({
+      plansRepository: plansRepo,
+      briefStateRepository: briefRepo,
+      childrenRepository: buildChildrenRepo(),
+      auditService: buildAudit(),
+      logger: buildLogger(),
+    });
+
+    await composer.refresh(HOUSEHOLD_ID, WEEK_ID, REQUEST_ID);
+
+    const upsertArg = briefRepo.upsert.mock.calls[0]?.[0];
+    expect(upsertArg.plan_tile_summaries[0].items[0]).toMatchObject({
+      plan_item_id: 'item-1',
+    });
+  });
+
+  it('emits paused: true when ALL items for a day have paused_at set', async () => {
+    const plan = buildPlanRow();
+    const pausedAt = '2026-05-04T12:00:00.000Z';
+    const items = [
+      makeItem({ id: 'a', child_id: CHILD_A, day: 'tuesday', paused_at: pausedAt }),
+      makeItem({ id: 'b', child_id: CHILD_B, day: 'tuesday', paused_at: pausedAt }),
+    ];
+    const plansRepo = buildPlansRepo({ currentPlan: plan, items });
+    const briefRepo = buildBriefStateRepoWithPrevious(null);
+    const composer = new BriefStateComposer({
+      plansRepository: plansRepo,
+      briefStateRepository: briefRepo,
+      childrenRepository: buildChildrenRepo(),
+      auditService: buildAudit(),
+      logger: buildLogger(),
+    });
+
+    await composer.refresh(HOUSEHOLD_ID, WEEK_ID, REQUEST_ID);
+
+    const upsertArg = briefRepo.upsert.mock.calls[0]?.[0];
+    expect(upsertArg.plan_tile_summaries[0]).toMatchObject({
+      day: 'tuesday',
+      paused: true,
+    });
+  });
+
+  it('emits paused: false when only some items for a day are paused (partial)', async () => {
+    const plan = buildPlanRow();
+    const items = [
+      makeItem({
+        id: 'a',
+        child_id: CHILD_A,
+        day: 'tuesday',
+        paused_at: '2026-05-04T12:00:00.000Z',
+      }),
+      makeItem({ id: 'b', child_id: CHILD_B, day: 'tuesday', paused_at: null }),
+    ];
+    const plansRepo = buildPlansRepo({ currentPlan: plan, items });
+    const briefRepo = buildBriefStateRepoWithPrevious(null);
+    const composer = new BriefStateComposer({
+      plansRepository: plansRepo,
+      briefStateRepository: briefRepo,
+      childrenRepository: buildChildrenRepo(),
+      auditService: buildAudit(),
+      logger: buildLogger(),
+    });
+
+    await composer.refresh(HOUSEHOLD_ID, WEEK_ID, REQUEST_ID);
+
+    const upsertArg = briefRepo.upsert.mock.calls[0]?.[0];
+    expect(upsertArg.plan_tile_summaries[0]).toMatchObject({
+      day: 'tuesday',
+      paused: false,
+    });
+  });
+
+  it('scaffolding_diff stays null when userInitiated:true even if ingredients differ', async () => {
+    const plan = buildPlanRow();
+    const previousTileSummaries = [
+      {
+        day: 'monday',
+        items: [{ child_id: CHILD_A, slot: 'main', ingredients: ['rice'] }],
+      },
+    ];
+    const items = [
+      makeItem({ id: 'item-1', child_id: CHILD_A, day: 'monday', ingredients: ['hummus'] }),
+    ];
+    const plansRepo = buildPlansRepo({ currentPlan: plan, items });
+    const briefRepo = buildBriefStateRepoWithPrevious(previousTileSummaries);
+    const composer = new BriefStateComposer({
+      plansRepository: plansRepo,
+      briefStateRepository: briefRepo,
+      childrenRepository: buildChildrenRepo(),
+      auditService: buildAudit(),
+      logger: buildLogger(),
+    });
+
+    await composer.refresh(HOUSEHOLD_ID, WEEK_ID, REQUEST_ID, {
+      userInitiated: true,
+    });
+
+    const upsertArg = briefRepo.upsert.mock.calls[0]?.[0];
+    expect(upsertArg.scaffolding_diff).toBeNull();
+  });
+
+  it('scaffolding_diff stays null when no previous brief_state exists', async () => {
+    const plan = buildPlanRow();
+    const items = [makeItem({ ingredients: ['hummus'] })];
+    const plansRepo = buildPlansRepo({ currentPlan: plan, items });
+    const briefRepo = buildBriefStateRepoWithPrevious(null);
+    const composer = new BriefStateComposer({
+      plansRepository: plansRepo,
+      briefStateRepository: briefRepo,
+      childrenRepository: buildChildrenRepo(),
+      auditService: buildAudit(),
+      logger: buildLogger(),
+    });
+
+    await composer.refresh(HOUSEHOLD_ID, WEEK_ID, REQUEST_ID);
+
+    const upsertArg = briefRepo.upsert.mock.calls[0]?.[0];
+    expect(upsertArg.scaffolding_diff).toBeNull();
+  });
+
+  it('scaffolding_diff non-null when system-initiated and ingredients differ', async () => {
+    const plan = buildPlanRow();
+    const previousTileSummaries = [
+      {
+        day: 'monday',
+        items: [{ child_id: CHILD_A, slot: 'main', ingredients: ['rice'] }],
+      },
+    ];
+    const items = [
+      makeItem({ id: 'item-1', child_id: CHILD_A, day: 'monday', ingredients: ['hummus'] }),
+    ];
+    const plansRepo = buildPlansRepo({ currentPlan: plan, items });
+    const briefRepo = buildBriefStateRepoWithPrevious(previousTileSummaries);
+    const composer = new BriefStateComposer({
+      plansRepository: plansRepo,
+      briefStateRepository: briefRepo,
+      childrenRepository: buildChildrenRepo(),
+      auditService: buildAudit(),
+      logger: buildLogger(),
+    });
+
+    // No opts → userInitiated defaults to false → diff is computed.
+    await composer.refresh(HOUSEHOLD_ID, WEEK_ID, REQUEST_ID);
+
+    const upsertArg = briefRepo.upsert.mock.calls[0]?.[0];
+    expect(upsertArg.scaffolding_diff).not.toBeNull();
+    expect(upsertArg.scaffolding_diff.summary).toMatch(/Monday/);
+  });
+
+  it('scaffolding_diff null when system-initiated and ingredients are unchanged', async () => {
+    const plan = buildPlanRow();
+    const previousTileSummaries = [
+      {
+        day: 'monday',
+        items: [{ child_id: CHILD_A, slot: 'main', ingredients: ['rice', 'lentils'] }],
+      },
+    ];
+    const items = [
+      makeItem({ id: 'item-1', child_id: CHILD_A, day: 'monday', ingredients: ['rice', 'lentils'] }),
+    ];
+    const plansRepo = buildPlansRepo({ currentPlan: plan, items });
+    const briefRepo = buildBriefStateRepoWithPrevious(previousTileSummaries);
+    const composer = new BriefStateComposer({
+      plansRepository: plansRepo,
+      briefStateRepository: briefRepo,
+      childrenRepository: buildChildrenRepo(),
+      auditService: buildAudit(),
+      logger: buildLogger(),
+    });
+
+    await composer.refresh(HOUSEHOLD_ID, WEEK_ID, REQUEST_ID);
+
+    const upsertArg = briefRepo.upsert.mock.calls[0]?.[0];
+    expect(upsertArg.scaffolding_diff).toBeNull();
   });
 });
