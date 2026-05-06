@@ -88,6 +88,12 @@ import {
   BagCompositionSchema,
   SetBagCompositionBodySchema,
   SetBagCompositionResponseSchema,
+  SlotScopeSchema,
+  SchoolPolicySchema,
+  UpdateSchoolPolicyInputSchema,
+  UpdateSchoolPolicyResponseSchema,
+  GetSchoolPoliciesResponseSchema,
+  SchoolPolicyChildIdParamSchema,
   CulturalKeySchema,
   TierSchema,
   TemplateStateSchema,
@@ -133,6 +139,11 @@ import {
   PausePlanDayInputSchema,
   RegeneratePlanQuerySchema,
   RegeneratePlanResponseSchema,
+  GetPlansQuerySchema,
+  GetPlansResponseSchema,
+  PlanItemSwapSummarySchema,
+  PlanWeekIdParamSchema,
+  PlanHistoryResponseSchema,
 } from '@hivekitchen/contracts';
 
 // Auth
@@ -268,6 +279,14 @@ export type BagComposition = z.infer<typeof BagCompositionSchema>;
 export type SetBagCompositionBody = z.infer<typeof SetBagCompositionBodySchema>;
 export type SetBagCompositionResponse = z.infer<typeof SetBagCompositionResponseSchema>;
 
+// School policies (Story 3.16 — per-slot policy update + plan propagation)
+export type SlotScope = z.infer<typeof SlotScopeSchema>;
+export type SchoolPolicy = z.infer<typeof SchoolPolicySchema>;
+export type UpdateSchoolPolicyInput = z.infer<typeof UpdateSchoolPolicyInputSchema>;
+export type UpdateSchoolPolicyResponse = z.infer<typeof UpdateSchoolPolicyResponseSchema>;
+export type GetSchoolPoliciesResponse = z.infer<typeof GetSchoolPoliciesResponseSchema>;
+export type SchoolPolicyChildIdParam = z.infer<typeof SchoolPolicyChildIdParamSchema>;
+
 // Cultural priors (Story 2.11)
 export type CulturalKey = z.infer<typeof CulturalKeySchema>;
 export type Tier = z.infer<typeof TierSchema>;
@@ -334,3 +353,12 @@ export type PausePlanDayInput = z.infer<typeof PausePlanDayInputSchema>;
 // Story 3.13 — plan regeneration types
 export type RegeneratePlanQuery = z.infer<typeof RegeneratePlanQuerySchema>;
 export type RegeneratePlanResponse = z.infer<typeof RegeneratePlanResponseSchema>;
+
+// Story 3.14 — following-week draft view types
+export type GetPlansQuery = z.infer<typeof GetPlansQuerySchema>;
+export type GetPlansResponse = z.infer<typeof GetPlansResponseSchema>;
+
+// Story 3.15 — historical plans + outcomes view types
+export type PlanItemSwapSummary = z.infer<typeof PlanItemSwapSummarySchema>;
+export type PlanWeekIdParam = z.infer<typeof PlanWeekIdParamSchema>;
+export type PlanHistoryResponse = z.infer<typeof PlanHistoryResponseSchema>;

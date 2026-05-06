@@ -18,6 +18,11 @@ import {
   PausePlanDayInputSchema,
   RegeneratePlanQuerySchema,
   RegeneratePlanResponseSchema,
+  GetPlansQuerySchema,
+  GetPlansResponseSchema,
+  PlanItemSwapSummarySchema,
+  PlanWeekIdParamSchema,
+  PlanHistoryResponseSchema,
 } from './plan.js';
 
 const UUID1 = '00000000-0000-4000-8000-000000000001';
@@ -1018,6 +1023,108 @@ describe('PlanItemRowSchema — replaced_by_plan_id (Story 3.13)', () => {
   });
 });
 
+describe('GetPlansQuerySchema (Story 3.14)', () => {
+  it('parses { week: "current" }', () => {
+    expect(GetPlansQuerySchema.safeParse({ week: 'current' }).success).toBe(true);
+  });
+
+  it('parses { week: "next" }', () => {
+    expect(GetPlansQuerySchema.safeParse({ week: 'next' }).success).toBe(true);
+  });
+
+  it('defaults week to "current" when omitted', () => {
+    const parsed = GetPlansQuerySchema.safeParse({});
+    expect(parsed.success).toBe(true);
+    if (parsed.success) {
+      expect(parsed.data.week).toBe('current');
+    }
+  });
+
+  it('rejects an unknown week selector', () => {
+    expect(GetPlansQuerySchema.safeParse({ week: 'previous' }).success).toBe(false);
+  });
+});
+
+describe('GetPlansResponseSchema (Story 3.14)', () => {
+  const validPlanRow = {
+    id: UUID1,
+    household_id: UUID2,
+    week_id: '00000000-0000-4000-8000-000000000003',
+    week_of: '2026-05-04',
+    revision: 1,
+    generated_at: '2026-05-02T11:00:00.000Z',
+    guardrail_cleared_at: '2026-05-02T11:00:01.000Z',
+    guardrail_version: 'v1.0.0',
+    prompt_version: 'v1.0.0',
+    created_at: '2026-05-02T11:00:00.000Z',
+    updated_at: '2026-05-02T11:00:01.000Z',
+  };
+
+  const validPlanItemRow = {
+    id: '00000000-0000-4000-8000-000000000010',
+    plan_id: UUID1,
+    child_id: '00000000-0000-4000-8000-000000000020',
+    day: 'monday' as const,
+    slot: 'main',
+    recipe_id: null,
+    item_id: null,
+    ingredients: ['rice', 'beans'],
+    paused_at: null,
+    replaced_by_plan_id: null,
+    created_at: '2026-05-02T11:00:00.000Z',
+    updated_at: '2026-05-02T11:00:00.000Z',
+  };
+
+  it('accepts the not-yet-generated draft shape (plan: null)', () => {
+    const parsed = GetPlansResponseSchema.safeParse({
+      plan: null,
+      plan_items: [],
+      is_draft: true,
+      week_of: '2026-05-11',
+    });
+    expect(parsed.success).toBe(true);
+    if (parsed.success) {
+      expect(parsed.data.plan).toBeNull();
+      expect(parsed.data.is_draft).toBe(true);
+    }
+  });
+
+  it('accepts a populated current-week response', () => {
+    const parsed = GetPlansResponseSchema.safeParse({
+      plan: validPlanRow,
+      plan_items: [validPlanItemRow],
+      is_draft: false,
+      week_of: '2026-05-04',
+    });
+    expect(parsed.success).toBe(true);
+    if (parsed.success) {
+      expect(parsed.data.plan_items).toHaveLength(1);
+      expect(parsed.data.is_draft).toBe(false);
+    }
+  });
+
+  it('rejects a missing is_draft field', () => {
+    expect(
+      GetPlansResponseSchema.safeParse({
+        plan: null,
+        plan_items: [],
+        week_of: '2026-05-11',
+      }).success,
+    ).toBe(false);
+  });
+
+  it('rejects a non-ISO-date week_of', () => {
+    expect(
+      GetPlansResponseSchema.safeParse({
+        plan: null,
+        plan_items: [],
+        is_draft: true,
+        week_of: '05/04/2026',
+      }).success,
+    ).toBe(false);
+  });
+});
+
 describe('PausePlanDayInputSchema (Story 3.12)', () => {
   it('parses an empty body (reason is optional)', () => {
     expect(PausePlanDayInputSchema.safeParse({}).success).toBe(true);
@@ -1037,5 +1144,219 @@ describe('PausePlanDayInputSchema (Story 3.12)', () => {
 
   it('rejects unknown reason', () => {
     expect(PausePlanDayInputSchema.safeParse({ reason: 'other' }).success).toBe(false);
+  });
+});
+
+describe('PlanItemSwapSummarySchema (Story 3.15)', () => {
+  const validSwap = {
+    child_id: '00000000-0000-4000-8000-000000000020',
+    day: 'monday' as const,
+    slot: 'main',
+    previous_ingredients: ['rice', 'beans'],
+    replaced_at: '2026-05-02T11:00:00.000Z',
+  };
+
+  it('accepts a valid swap summary', () => {
+    expect(PlanItemSwapSummarySchema.safeParse(validSwap).success).toBe(true);
+  });
+
+  it('accepts an empty previous_ingredients array', () => {
+    expect(
+      PlanItemSwapSummarySchema.safeParse({ ...validSwap, previous_ingredients: [] }).success,
+    ).toBe(true);
+  });
+
+  it('rejects when day is missing', () => {
+    const { day: _omit, ...rest } = validSwap;
+    expect(PlanItemSwapSummarySchema.safeParse(rest).success).toBe(false);
+  });
+
+  it('rejects when child_id is missing', () => {
+    const { child_id: _omit, ...rest } = validSwap;
+    expect(PlanItemSwapSummarySchema.safeParse(rest).success).toBe(false);
+  });
+
+  it('rejects when child_id is not a uuid', () => {
+    expect(
+      PlanItemSwapSummarySchema.safeParse({ ...validSwap, child_id: 'not-a-uuid' }).success,
+    ).toBe(false);
+  });
+
+  it('rejects an unknown day enum value', () => {
+    expect(
+      PlanItemSwapSummarySchema.safeParse({ ...validSwap, day: 'sunday' }).success,
+    ).toBe(false);
+  });
+
+  it('rejects an empty slot string', () => {
+    expect(PlanItemSwapSummarySchema.safeParse({ ...validSwap, slot: '' }).success).toBe(false);
+  });
+
+  it('rejects a non-ISO replaced_at', () => {
+    expect(
+      PlanItemSwapSummarySchema.safeParse({ ...validSwap, replaced_at: 'not-a-date' }).success,
+    ).toBe(false);
+  });
+});
+
+describe('PlanWeekIdParamSchema (Story 3.15)', () => {
+  it('accepts a valid uuid weekId', () => {
+    expect(PlanWeekIdParamSchema.safeParse({ weekId: UUID1 }).success).toBe(true);
+  });
+
+  it('rejects a non-uuid weekId', () => {
+    expect(PlanWeekIdParamSchema.safeParse({ weekId: 'not-a-uuid' }).success).toBe(false);
+  });
+});
+
+describe('PlanHistoryResponseSchema (Story 3.15)', () => {
+  const validPlanRow = {
+    id: UUID1,
+    household_id: UUID2,
+    week_id: '00000000-0000-4000-8000-000000000003',
+    week_of: '2026-04-21',
+    revision: 1,
+    generated_at: '2026-04-19T11:00:00.000Z',
+    guardrail_cleared_at: '2026-04-19T11:00:01.000Z',
+    guardrail_version: 'v1.0.0',
+    prompt_version: 'v1.0.0',
+    created_at: '2026-04-19T11:00:00.000Z',
+    updated_at: '2026-04-19T11:00:01.000Z',
+  };
+
+  const validPlanItemRow = {
+    id: '00000000-0000-4000-8000-000000000010',
+    plan_id: UUID1,
+    child_id: '00000000-0000-4000-8000-000000000020',
+    day: 'monday' as const,
+    slot: 'main',
+    recipe_id: null,
+    item_id: null,
+    ingredients: ['rice', 'beans'],
+    paused_at: null,
+    replaced_by_plan_id: null,
+    created_at: '2026-04-19T11:00:00.000Z',
+    updated_at: '2026-04-19T11:00:00.000Z',
+  };
+
+  const validSwap = {
+    child_id: '00000000-0000-4000-8000-000000000020',
+    day: 'monday' as const,
+    slot: 'main',
+    previous_ingredients: ['rice', 'beans'],
+    replaced_at: '2026-04-22T11:00:00.000Z',
+  };
+
+  it('rejects null plan (missing plan → 404, never a 200 null)', () => {
+    expect(
+      PlanHistoryResponseSchema.safeParse({
+        plan: null,
+        plan_items: [],
+        swap_history: [],
+        week_of: null,
+        ratings: {},
+      }).success,
+    ).toBe(false);
+  });
+
+  it('accepts the minimal shape with a plan row and null week_of', () => {
+    const parsed = PlanHistoryResponseSchema.safeParse({
+      plan: validPlanRow,
+      plan_items: [],
+      swap_history: [],
+      week_of: null,
+      ratings: {},
+    });
+    expect(parsed.success).toBe(true);
+    if (parsed.success) {
+      expect(parsed.data.plan.id).toBe(UUID1);
+      expect(parsed.data.week_of).toBeNull();
+    }
+  });
+
+  it('accepts a populated history with plan, items, swaps', () => {
+    const parsed = PlanHistoryResponseSchema.safeParse({
+      plan: validPlanRow,
+      plan_items: [validPlanItemRow],
+      swap_history: [validSwap],
+      week_of: '2026-04-21',
+      ratings: {},
+    });
+    expect(parsed.success).toBe(true);
+    if (parsed.success) {
+      expect(parsed.data.plan_items).toHaveLength(1);
+      expect(parsed.data.swap_history).toHaveLength(1);
+    }
+  });
+
+  it('accepts ratings keyed by child_id (Epic 4 forward-compatibility)', () => {
+    const parsed = PlanHistoryResponseSchema.safeParse({
+      plan: validPlanRow,
+      plan_items: [validPlanItemRow],
+      swap_history: [],
+      week_of: '2026-04-21',
+      ratings: { '00000000-0000-4000-8000-000000000020': '🧡' },
+    });
+    expect(parsed.success).toBe(true);
+    if (parsed.success) {
+      expect(parsed.data.ratings['00000000-0000-4000-8000-000000000020']).toBe('🧡');
+    }
+  });
+
+  it('accepts a null rating value (child has no rated session yet)', () => {
+    const parsed = PlanHistoryResponseSchema.safeParse({
+      plan: validPlanRow,
+      plan_items: [validPlanItemRow],
+      swap_history: [],
+      week_of: '2026-04-21',
+      ratings: { '00000000-0000-4000-8000-000000000020': null },
+    });
+    expect(parsed.success).toBe(true);
+  });
+
+  it('rejects ratings keyed by a non-uuid string', () => {
+    expect(
+      PlanHistoryResponseSchema.safeParse({
+        plan: validPlanRow,
+        plan_items: [validPlanItemRow],
+        swap_history: [],
+        week_of: '2026-04-21',
+        ratings: { 'maya': '🧡' },
+      }).success,
+    ).toBe(false);
+  });
+
+  it('rejects an empty-string rating value', () => {
+    expect(
+      PlanHistoryResponseSchema.safeParse({
+        plan: validPlanRow,
+        plan_items: [validPlanItemRow],
+        swap_history: [],
+        week_of: '2026-04-21',
+        ratings: { '00000000-0000-4000-8000-000000000020': '' },
+      }).success,
+    ).toBe(false);
+  });
+
+  it('rejects when ratings field is missing', () => {
+    expect(
+      PlanHistoryResponseSchema.safeParse({
+        plan: null,
+        plan_items: [],
+        swap_history: [],
+        week_of: null,
+      }).success,
+    ).toBe(false);
+  });
+
+  it('rejects when swap_history is missing', () => {
+    expect(
+      PlanHistoryResponseSchema.safeParse({
+        plan: null,
+        plan_items: [],
+        week_of: null,
+        ratings: {},
+      }).success,
+    ).toBe(false);
   });
 });

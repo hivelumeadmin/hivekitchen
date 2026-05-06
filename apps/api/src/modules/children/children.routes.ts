@@ -7,14 +7,26 @@ import {
   GetChildResponseSchema,
   SetBagCompositionBodySchema,
   SetBagCompositionResponseSchema,
+  UpdateSchoolPolicyInputSchema,
+  UpdateSchoolPolicyResponseSchema,
+  GetSchoolPoliciesResponseSchema,
+  SchoolPolicyChildIdParamSchema,
 } from '@hivekitchen/contracts';
-import type { AddChildBody, SetBagCompositionBody } from '@hivekitchen/types';
+import type {
+  AddChildBody,
+  SetBagCompositionBody,
+  UpdateSchoolPolicyInput,
+} from '@hivekitchen/types';
 import { authorize } from '../../middleware/authorize.hook.js';
 import { ForbiddenError } from '../../common/errors.js';
 import { ComplianceRepository } from '../compliance/compliance.repository.js';
 import { ComplianceService } from '../compliance/compliance.service.js';
 import { ChildrenRepository } from './children.repository.js';
 import { ChildrenService } from './children.service.js';
+import { SchoolPoliciesRepository } from './school-policies.repository.js';
+import { SchoolPoliciesService } from './school-policies.service.js';
+import { PlansRepository } from '../plans/plans.repository.js';
+import { REGEN_QUEUE } from '../../jobs/plan-regeneration.job.js';
 
 const childrenRoutesPlugin: FastifyPluginAsync = async (fastify) => {
   const kekHex = fastify.env.ENVELOPE_ENCRYPTION_MASTER_KEY;
@@ -29,6 +41,18 @@ const childrenRoutesPlugin: FastifyPluginAsync = async (fastify) => {
     new ComplianceRepository(fastify.supabase),
     fastify.log,
   );
+
+  // Story 3.16 — school policy service. Reuses the existing children + plans
+  // repositories so household ownership and future-plan discovery share the
+  // same query patterns; plumbs the BullMQ regen queue (also used by 3.13).
+  const schoolPoliciesService = new SchoolPoliciesService({
+    repository: new SchoolPoliciesRepository(fastify.supabase),
+    childrenRepository,
+    plansRepository: new PlansRepository(fastify.supabase),
+    regenQueue: fastify.bullmq.getQueue(REGEN_QUEUE),
+    auditService: fastify.auditService,
+    logger: fastify.log,
+  });
 
   const requirePrimaryParent = authorize(['primary_parent']);
   const requireMember = authorize(['primary_parent', 'secondary_caregiver']);
@@ -125,6 +149,63 @@ const childrenRoutesPlugin: FastifyPluginAsync = async (fastify) => {
       };
 
       return { child: result.child };
+    },
+  );
+  // Story 3.16: PATCH /v1/children/:id/school-policies
+  // Primary Parent only — policy changes are household-level decisions and
+  // affect every member of the family, not just one caregiver.
+  fastify.patch(
+    '/v1/children/:id/school-policies',
+    {
+      preHandler: requirePrimaryParent,
+      schema: {
+        params: SchoolPolicyChildIdParamSchema,
+        body: UpdateSchoolPolicyInputSchema,
+        response: { 200: UpdateSchoolPolicyResponseSchema },
+      },
+    },
+    async (request, reply) => {
+      const { id: childId } = request.params as { id: string };
+      const householdId = request.user.household_id;
+      const body = request.body as UpdateSchoolPolicyInput;
+
+      const result = await schoolPoliciesService.updatePolicy({
+        childId,
+        householdId,
+        input: body,
+        requestId: request.id,
+      });
+
+      return reply.status(200).send({
+        policy: result.policy,
+        regeneration_triggered: result.regenerationTriggered,
+        affected_plan_ids: result.affectedPlanIds,
+      });
+    },
+  );
+
+  // Story 3.16: GET /v1/children/:id/school-policies
+  // Either caregiver may read; the audit trail captures the parent who
+  // mutated. Verifies child belongs to the caller's household.
+  fastify.get(
+    '/v1/children/:id/school-policies',
+    {
+      preHandler: requireMember,
+      schema: {
+        params: SchoolPolicyChildIdParamSchema,
+        response: { 200: GetSchoolPoliciesResponseSchema },
+      },
+    },
+    async (request, reply) => {
+      const { id: childId } = request.params as { id: string };
+      const householdId = request.user.household_id;
+
+      const policies = await schoolPoliciesService.getPoliciesForChild({
+        childId,
+        householdId,
+      });
+
+      return reply.status(200).send({ policies });
     },
   );
 };

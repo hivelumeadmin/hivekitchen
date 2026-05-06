@@ -7,12 +7,17 @@ import {
   SwapPlanItemResponseSchema,
   RegeneratePlanQuerySchema,
   RegeneratePlanResponseSchema,
+  GetPlansQuerySchema,
+  GetPlansResponseSchema,
+  PlanWeekIdParamSchema,
+  PlanHistoryResponseSchema,
 } from '@hivekitchen/contracts';
 import type {
   PausePlanDayInput,
   PlanItemRow,
   SwapPlanItemInput,
   RegeneratePlanQuery,
+  GetPlansQuery,
 } from '@hivekitchen/types';
 import { ValidationError } from '../../common/errors.js';
 import { authorize } from '../../middleware/authorize.hook.js';
@@ -38,6 +43,67 @@ function requireIdempotencyKey(raw: unknown): string {
 
 const plansRoutesPlugin: FastifyPluginAsync = async (fastify) => {
   const requireMember = authorize(['primary_parent', 'secondary_caregiver']);
+
+  // GET /v1/plans?week=current|next
+  // Story 3.14 — drives the upcoming-week tab on the brief surface (FR21).
+  // Returns { plan: null, plan_items: [], is_draft: true, week_of: <ISO> } when
+  // the week's plan has not yet been generated; the client renders the
+  // "Lumi is drafting next week" loading state.
+  fastify.get(
+    '/v1/plans',
+    {
+      preHandler: requireMember,
+      schema: {
+        querystring: GetPlansQuerySchema,
+        response: { 200: GetPlansResponseSchema },
+      },
+    },
+    async (request, reply) => {
+      const { week } = request.query as GetPlansQuery;
+      const { plan, planItems, isDraft, weekOf } = await fastify.plansService.getPlanForWeek({
+        householdId: request.user.household_id,
+        week,
+      });
+      return reply.status(200).send({
+        plan: plan ?? null,
+        plan_items: planItems,
+        is_draft: isDraft,
+        week_of: weekOf,
+      });
+    },
+  );
+
+  // GET /v1/plans/:weekId/history
+  // Story 3.15 — historical plan + outcomes view (FR25).
+  // Returns the FINAL plan committed for a week + a per-slot swap audit
+  // derived from archived plan_items. ratings is keyed by child_id; it is
+  // always {} until Epic 4 lunch_link_sessions ships and Story 4.14 wires
+  // the rating projection in here.
+  fastify.get(
+    '/v1/plans/:weekId/history',
+    {
+      preHandler: requireMember,
+      schema: {
+        params: PlanWeekIdParamSchema,
+        response: { 200: PlanHistoryResponseSchema },
+      },
+    },
+    async (request, reply) => {
+      const { weekId } = request.params as { weekId: string };
+      const { plan, planItems, swapHistory, weekOf } =
+        await fastify.plansService.getPlanHistory({
+          householdId: request.user.household_id,
+          weekId,
+        });
+      return reply.status(200).send({
+        plan,
+        plan_items: planItems,
+        swap_history: swapHistory,
+        week_of: weekOf,
+        ratings: {},
+      });
+    },
+  );
 
   // PATCH /v1/plans/:planId/items/:itemId
   // Per-slot ingredient swap. Runs allergyGuardrail.evaluate on the new item only.

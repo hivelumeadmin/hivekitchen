@@ -1,4 +1,4 @@
-import { createHash, randomUUID } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
 import fp from 'fastify-plugin';
 import type { FastifyPluginAsync } from 'fastify';
 import type { Job } from 'bullmq';
@@ -9,6 +9,9 @@ import type {
   PlanItemWrite,
 } from '@hivekitchen/types';
 import { HouseholdsRepository } from '../modules/households/households.repository.js';
+import { deriveWeekId } from '../lib/derive-week-id.js';
+
+export { deriveWeekId };
 
 const SCHEDULE_QUEUE = 'plan-generation-schedule';
 const GENERATE_QUEUE = 'plan-generation';
@@ -31,19 +34,6 @@ export interface PlanGenerationJobData {
   household_id: string;
   week_of: string;
   request_id: string;
-}
-
-// Produces a deterministic UUID-v4-shaped identifier from the week's Monday
-// date. The same weekOf string always yields the same week_id, which prevents
-// duplicate (household_id, week_id) plan rows on job retries and lets
-// PlansService.commit() find an existing plan row to update.
-export function deriveWeekId(weekOf: string): string {
-  const hash = createHash('sha256').update(`hivekitchen-week:${weekOf}`).digest();
-  // Set UUID v4 version (0100xxxx) and RFC 4122 variant (10xxxxxx) bits.
-  hash[6] = (hash[6] & 0x0f) | 0x40;
-  hash[8] = (hash[8] & 0x3f) | 0x80;
-  const h = hash.subarray(0, 16).toString('hex');
-  return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20, 32)}`;
 }
 
 // Given a Friday date at fan-out time, returns the ISO date of the following

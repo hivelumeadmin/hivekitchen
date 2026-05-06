@@ -295,3 +295,56 @@ export const BriefStateRowSchema = z.object({
 export const BriefResponseSchema = z.object({
   brief: BriefStateRowSchema.nullable(),
 });
+
+// Story 3.14 — GET /v1/plans?week=current|next
+// Drives the upcoming-week tab on the brief surface (FR21). week=next is enabled
+// from Friday afternoon onward; pre-clearance drafts return plan=null so the
+// client can render the "Lumi is drafting next week" loading state.
+export const GetPlansQuerySchema = z.object({
+  week: z.enum(['current', 'next']).default('current'),
+});
+
+// is_draft mirrors the (week === 'next') decision so the frontend doesn't
+// recompute date math; week_of is always the ISO Monday for the resolved week.
+export const GetPlansResponseSchema = z.object({
+  plan: PlanRowSchema.nullable(),
+  plan_items: z.array(PlanItemRowSchema),
+  is_draft: z.boolean(),
+  week_of: z.string().date(),
+});
+
+// --- Story 3.15 — historical plans + outcomes view (FR25) ---
+// Each archived plan_item row (replaced_by_plan_id IS NOT NULL) is one swap
+// event from a slot-swap (Story 3.12) or a day/week regeneration (Story 3.13).
+// previous_ingredients are the ingredients that existed BEFORE the swap;
+// the route handler derives this directly from the archived row's columns.
+// child_id is preserved so multi-child households can attribute each swap.
+export const PlanItemSwapSummarySchema = z.object({
+  child_id: z.string().uuid(),
+  day: z.enum(['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday']),
+  slot: z.string().min(1),
+  previous_ingredients: z.array(z.string()),
+  replaced_at: z.string().datetime(),
+});
+
+// Story 3.15 — route param schema for GET /v1/plans/:weekId/history.
+export const PlanWeekIdParamSchema = z.object({
+  weekId: z.string().uuid(),
+});
+
+// Story 3.15 — response shape for GET /v1/plans/:weekId/history.
+//   Missing weekId → 404 (service throws NotFoundError); this 200 shape always
+//   carries a non-null plan. week_of may be null for pre-3.13 rows that have no
+//   stored Monday date.
+//   plan_items is the FINAL (current, non-archived) item set — what actually shipped.
+//   swap_history is the per-slot audit derived from archived rows.
+//   ratings is keyed by child_id → emoji string (Layer 1 from FR36). It is always {}
+//   until Epic 4 Story 4.14 populates it from lunch_link_sessions.rating; the field
+//   is typed up front so the contract stays stable when Epic 4 ships.
+export const PlanHistoryResponseSchema = z.object({
+  plan: PlanRowSchema,
+  plan_items: z.array(PlanItemRowSchema),
+  swap_history: z.array(PlanItemSwapSummarySchema),
+  week_of: z.string().date().nullable(),
+  ratings: z.record(z.string().uuid(), z.string().min(1).nullable()),
+});

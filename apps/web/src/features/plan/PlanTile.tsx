@@ -20,6 +20,10 @@ export interface PlanTileProps {
   partnerName?: string;
   trustChips?: ReadonlyArray<{ variant: TrustChipVariant; label: string }>;
   onSwapIntent?: () => void;
+  // Story 3.15 — historical plan view forces every tile into the past variant
+  // regardless of day-of-week. Default behavior (deriveVariant) compares the
+  // tile's day to today, which is wrong when rendering a prior week's plan.
+  forceVariant?: PlanTileVariant;
 }
 
 const DAY_LABELS: Record<PlanTileSummary['day'], string> = {
@@ -67,8 +71,9 @@ export function PlanTile({
   partnerName,
   trustChips,
   onSwapIntent,
+  forceVariant,
 }: PlanTileProps) {
-  const variant = deriveVariant(summary.day);
+  const variant = forceVariant ?? deriveVariant(summary.day);
   const tileRef = useRef<HTMLElement>(null);
   const [explainOpen, setExplainOpen] = useState(false);
 

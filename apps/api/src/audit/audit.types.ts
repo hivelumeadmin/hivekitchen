@@ -3,6 +3,7 @@ export const AUDIT_EVENT_TYPES = [
   'plan.generated',
   'plan.regenerated',
   'plan.regeneration_requested',
+  'plan.policy_regeneration_triggered',
   'plan.hard_fail',
   'plan.generation.failed',
   'plan.item_swapped',
@@ -67,6 +68,8 @@ export const AUDIT_EVENT_TYPES = [
   // children
   'child.add',
   'child.bag_updated',
+  // school policies
+  'school_policy.updated',
   // cultural
   'template.state_changed',
   // onboarding

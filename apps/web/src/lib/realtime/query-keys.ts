@@ -9,6 +9,24 @@ export const QueryKeys = {
   /** @example QueryKeys.plan('week-uuid') → ['plan', 'week-uuid'] */
   plan: (weekId: string): ['plan', string] => ['plan', weekId],
 
+  /**
+   * Story 3.14 — current/next week tab cache key for the brief surface.
+   * Distinct from `plan(weekId)` which is keyed by SSE-emitted week_id; this
+   * one is keyed by the user-facing tab so the same response shape can be
+   * reused across the two tabs without colliding with SSE invalidation.
+   * @example QueryKeys.planByWeek('next') → ['plan', 'by-week', 'next']
+   */
+  planByWeek: (week: 'current' | 'next'): ['plan', 'by-week', 'current' | 'next'] =>
+    ['plan', 'by-week', week],
+
+  /**
+   * Story 3.15 — historical plan + outcomes view (FR25).
+   * Keyed by week_id so each historical week gets its own cache entry; we don't
+   * subscribe these to SSE since past plans are immutable.
+   * @example QueryKeys.planHistory('week-uuid') → ['plan', 'history', 'week-uuid']
+   */
+  planHistory: (weekId: string): ['plan', 'history', string] => ['plan', 'history', weekId],
+
   /** @example QueryKeys.thread('thread-uuid') → ['thread', 'thread-uuid'] */
   thread: (threadId: string): ['thread', string] => ['thread', threadId],
 

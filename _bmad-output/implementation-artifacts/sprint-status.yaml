@@ -1,5 +1,5 @@
 # generated: 2026-04-23
-# last_updated: 2026-05-04 (Story 3-13 → done)
+# last_updated: 2026-05-05 (Story 3-15 → done)
 # project: hivekitchen
 # project_key: NOKEY
 # tracking_system: file-system
@@ -35,7 +35,7 @@
 # - Dev moves story to 'review', then runs code-review (fresh context, different LLM recommended)
 
 generated: 2026-04-23
-last_updated: 2026-05-04 (Story 3-13 → review)
+last_updated: 2026-05-05 (Story 3-16 → review)
 project: hivekitchen
 project_key: NOKEY
 tracking_system: file-system
@@ -97,23 +97,23 @@ development_status:
   3-11-freshnessstate-quietdiff-components: done
   3-12-per-slot-independent-swap-day-swap-skip-sick: done
   3-13-plan-regeneration-request: done
-  3-14-following-weeks-draft-view: backlog
-  3-15-historical-plans-outcomes-view: backlog
-  3-16-school-policy-update-propagation: backlog
-  3-17-system-adjusts-on-policy-leftover-calendar-changes: backlog
-  3-18-cultural-calendar-awareness-l0-l1-priors: backlog
-  3-19-day-level-context-overrides: backlog
-  3-20-lunch-bag-composition-modification-snack-vs-main-modeling: backlog
-  3-21-pin-ban-extra-component-types-reusable-extra-library: backlog
-  3-22-passive-bias-from-extra-removals-high-activity-extra-proposal: backlog
-  3-23-per-slot-policy-scoping-bag-wide-allergy-rule: backlog
-  3-24-allergy-uncertainty-flagging-safe-substitution: backlog
-  3-25-hard-fail-escalation-no-safe-plan-possible: backlog
-  3-26-graceful-degradation-state-ux: backlog
-  3-27-variant-preparation-active-learning-visible-to-parent-before-delivery: backlog
-  3-28-pause-lunch-link-for-child-on-day-without-altering-plan: backlog
-  3-29-degraded-propose-state-with-try-alternating-sovereignty-toggle: backlog
-  3-30-llm-provider-failover-circuit-breaker-audit: backlog
+  3-14-following-weeks-draft-view: done
+  3-15-historical-plans-outcomes-view: done
+  3-16-school-policy-update-propagation: review
+  3-17-system-adjusts-on-policy-leftover-calendar-changes: ready-for-dev
+  3-18-cultural-calendar-awareness-l0-l1-priors: ready-for-dev
+  3-19-day-level-context-overrides: ready-for-dev
+  3-20-lunch-bag-composition-modification-snack-vs-main-modeling: ready-for-dev
+  3-21-pin-ban-extra-component-types-reusable-extra-library: ready-for-dev
+  3-22-passive-bias-from-extra-removals-high-activity-extra-proposal: ready-for-dev
+  3-23-per-slot-policy-scoping-bag-wide-allergy-rule: ready-for-dev
+  3-24-allergy-uncertainty-flagging-safe-substitution: ready-for-dev
+  3-25-hard-fail-escalation-no-safe-plan-possible: ready-for-dev
+  3-26-graceful-degradation-state-ux: ready-for-dev
+  3-27-variant-preparation-active-learning-visible-to-parent-before-delivery: ready-for-dev
+  3-28-pause-lunch-link-for-child-on-day-without-altering-plan: ready-for-dev
+  3-29-degraded-propose-state-with-try-alternating-sovereignty-toggle: ready-for-dev
+  3-30-llm-provider-failover-circuit-breaker-audit: ready-for-dev
   epic-3-retrospective: optional
 
   # Epic 4: Lunch Link & Heart Note Sacred Channel

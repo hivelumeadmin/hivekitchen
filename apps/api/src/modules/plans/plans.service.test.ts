@@ -2,7 +2,12 @@ import { describe, it, expect, vi } from 'vitest';
 import type { FastifyBaseLogger } from 'fastify';
 import type Redis from 'ioredis';
 import type { Queue } from 'bullmq';
-import { PlansService } from './plans.service.js';
+import {
+  PlansService,
+  getCurrentWeekMonday,
+  getNextWeekMonday,
+} from './plans.service.js';
+import { deriveWeekId } from '../../jobs/plan-generation.job.js';
 import type { PlansRepository } from './plans.repository.js';
 import type { BriefStateRepository } from './brief-state.repository.js';
 import type { BriefStateComposer } from './brief-state.composer.js';
@@ -1112,5 +1117,378 @@ describe('PlansService.pauseDay (Story 3.12)', () => {
       expect.objectContaining({ plan_id: PLAN_ID }),
       expect.stringContaining('audit write failed after day pause'),
     );
+  });
+});
+
+describe('PlansService.getPlanForWeek (Story 3.14)', () => {
+  function buildWeekRepo(opts: {
+    plan?: PlanRow | null;
+    items?: PlanItemRow[];
+  } = {}): PlansRepository & {
+    findByHouseholdAndWeek: ReturnType<typeof vi.fn>;
+    findItemsByPlanId: ReturnType<typeof vi.fn>;
+  } {
+    return {
+      findByHouseholdAndWeek: vi.fn().mockResolvedValue(opts.plan ?? null),
+      findItemsByPlanId: vi.fn().mockResolvedValue(opts.items ?? []),
+    } as unknown as PlansRepository & {
+      findByHouseholdAndWeek: ReturnType<typeof vi.fn>;
+      findItemsByPlanId: ReturnType<typeof vi.fn>;
+    };
+  }
+
+  function makePlanRow(overrides: Partial<PlanRow> = {}): PlanRow {
+    return {
+      id: PLAN_ID,
+      household_id: HOUSEHOLD_ID,
+      week_id: WEEK_ID,
+      week_of: '2026-05-04',
+      revision: 1,
+      generated_at: '2026-05-02T11:00:00.000Z',
+      guardrail_cleared_at: '2026-05-02T11:00:01.000Z',
+      guardrail_version: 'v1.0.0',
+      prompt_version: 'v1.0.0',
+      created_at: '2026-05-02T11:00:00.000Z',
+      updated_at: '2026-05-02T11:00:01.000Z',
+      ...overrides,
+    };
+  }
+
+  function makeItem(day: PlanItemRow['day']): PlanItemRow {
+    return {
+      id: '00000000-0000-4000-8000-000000000010',
+      plan_id: PLAN_ID,
+      child_id: CHILD_ID,
+      day,
+      slot: 'main',
+      recipe_id: null,
+      item_id: null,
+      ingredients: ['rice'],
+      paused_at: null,
+      replaced_by_plan_id: null,
+      created_at: '2026-05-02T11:00:00.000Z',
+      updated_at: '2026-05-02T11:00:00.000Z',
+    };
+  }
+
+  function buildService(
+    repo: PlansRepository,
+  ): PlansService {
+    return new PlansService({
+      repository: repo,
+      briefStateRepository: buildBriefStateRepo(),
+      briefStateComposer: buildBriefStateComposer(),
+      allergyGuardrail: buildGuardrail([{ verdict: 'cleared', conflicts: [] }]),
+      auditService: buildAudit(),
+      logger: buildLogger(),
+      redis: buildRedis(),
+      regenQueue: buildRegenQueue(),
+    });
+  }
+
+  it('returns null plan + empty items when the repository has no row for the week', async () => {
+    const repo = buildWeekRepo({ plan: null });
+    const service = buildService(repo);
+
+    const result = await service.getPlanForWeek({
+      householdId: HOUSEHOLD_ID,
+      week: 'current',
+    });
+
+    expect(result.plan).toBeNull();
+    expect(result.planItems).toEqual([]);
+    expect(result.isDraft).toBe(false);
+    expect(result.weekOf).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+    expect(repo.findByHouseholdAndWeek).toHaveBeenCalledTimes(1);
+  });
+
+  it('week=next sets isDraft true regardless of plan presence', async () => {
+    const repoNoPlan = buildWeekRepo({ plan: null });
+    const r1 = await buildService(repoNoPlan).getPlanForWeek({
+      householdId: HOUSEHOLD_ID,
+      week: 'next',
+    });
+    expect(r1.isDraft).toBe(true);
+    expect(r1.plan).toBeNull();
+
+    const planRow = makePlanRow();
+    const repoWithPlan = buildWeekRepo({ plan: planRow, items: [makeItem('monday')] });
+    const r2 = await buildService(repoWithPlan).getPlanForWeek({
+      householdId: HOUSEHOLD_ID,
+      week: 'next',
+    });
+    expect(r2.isDraft).toBe(true);
+    expect(r2.plan).not.toBeNull();
+  });
+
+  it('week=current sets isDraft false when a plan exists', async () => {
+    const planRow = makePlanRow();
+    const repo = buildWeekRepo({
+      plan: planRow,
+      items: [makeItem('monday'), makeItem('tuesday')],
+    });
+    const service = buildService(repo);
+
+    const result = await service.getPlanForWeek({
+      householdId: HOUSEHOLD_ID,
+      week: 'current',
+    });
+
+    expect(result.plan).toEqual(planRow);
+    expect(result.planItems).toHaveLength(2);
+    expect(result.isDraft).toBe(false);
+    expect(repo.findItemsByPlanId).toHaveBeenCalledWith(PLAN_ID);
+  });
+
+  it('passes a deterministic week_id derived from the resolved Monday to the repository', async () => {
+    const repo = buildWeekRepo({ plan: null });
+    const service = buildService(repo);
+
+    await service.getPlanForWeek({ householdId: HOUSEHOLD_ID, week: 'next' });
+
+    const expectedWeekId = deriveWeekId(getNextWeekMonday());
+    const findCall = (repo.findByHouseholdAndWeek as ReturnType<typeof vi.fn>).mock.calls[0]?.[0] as {
+      householdId: string;
+      weekId: string;
+    };
+    expect(findCall.weekId).toBe(expectedWeekId);
+    expect(findCall.householdId).toBe(HOUSEHOLD_ID);
+  });
+});
+
+describe('week-monday helpers (Story 3.14)', () => {
+  it('getCurrentWeekMonday on a Wednesday returns the Monday two days back', () => {
+    // 2026-05-06 is a Wednesday (UTC).
+    const wed = new Date('2026-05-06T12:00:00Z');
+    expect(getCurrentWeekMonday(wed)).toBe('2026-05-04');
+  });
+
+  it('getCurrentWeekMonday on a Monday returns the same day', () => {
+    // 2026-05-04 is a Monday (UTC).
+    const mon = new Date('2026-05-04T03:00:00Z');
+    expect(getCurrentWeekMonday(mon)).toBe('2026-05-04');
+  });
+
+  it('getCurrentWeekMonday on a Sunday returns the prior Monday', () => {
+    // 2026-05-03 is a Sunday (UTC).
+    const sun = new Date('2026-05-03T20:00:00Z');
+    expect(getCurrentWeekMonday(sun)).toBe('2026-04-27');
+  });
+
+  it('getNextWeekMonday on a Friday returns Monday three days later', () => {
+    // 2026-05-01 is a Friday (UTC).
+    const fri = new Date('2026-05-01T20:00:00Z');
+    expect(getNextWeekMonday(fri)).toBe('2026-05-04');
+  });
+
+  it('getNextWeekMonday on a Monday returns the following Monday', () => {
+    const mon = new Date('2026-05-04T08:00:00Z');
+    expect(getNextWeekMonday(mon)).toBe('2026-05-11');
+  });
+
+  it('getNextWeekMonday on a Sunday returns the next day (Monday)', () => {
+    const sun = new Date('2026-05-03T20:00:00Z');
+    expect(getNextWeekMonday(sun)).toBe('2026-05-04');
+  });
+
+  it('deriveWeekId is stable for the same Monday', () => {
+    const id1 = deriveWeekId(getNextWeekMonday(new Date('2026-05-01T20:00:00Z')));
+    const id2 = deriveWeekId(getNextWeekMonday(new Date('2026-05-02T20:00:00Z')));
+    // Same target Monday (2026-05-04) → same UUID.
+    expect(id1).toBe(id2);
+    expect(id1).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+  });
+});
+
+describe('PlansService.getPlanHistory (Story 3.15)', () => {
+  function makePlanRow(overrides: Partial<PlanRow> = {}): PlanRow {
+    return {
+      id: PLAN_ID,
+      household_id: HOUSEHOLD_ID,
+      week_id: WEEK_ID,
+      week_of: '2026-04-21',
+      revision: 1,
+      generated_at: '2026-04-19T11:00:00.000Z',
+      guardrail_cleared_at: '2026-04-19T11:00:01.000Z',
+      guardrail_version: 'v1.0.0',
+      prompt_version: 'v1.0.0',
+      created_at: '2026-04-19T11:00:00.000Z',
+      updated_at: '2026-04-19T11:00:01.000Z',
+      ...overrides,
+    };
+  }
+
+  function makeItem(overrides: Partial<PlanItemRow> = {}): PlanItemRow {
+    return {
+      id: '00000000-0000-4000-8000-000000000010',
+      plan_id: PLAN_ID,
+      child_id: CHILD_ID,
+      day: 'monday',
+      slot: 'main',
+      recipe_id: null,
+      item_id: null,
+      ingredients: ['rice'],
+      paused_at: null,
+      replaced_by_plan_id: null,
+      created_at: '2026-04-19T11:00:00.000Z',
+      updated_at: '2026-04-19T11:00:00.000Z',
+      ...overrides,
+    };
+  }
+
+  function buildHistoryRepo(opts: {
+    plan?: PlanRow | null;
+    items?: PlanItemRow[];
+    swapHistory?: Array<{
+      child_id: string;
+      day: PlanItemRow['day'];
+      slot: string;
+      previous_ingredients: string[];
+      replaced_at: string;
+    }>;
+    findItemsBlocker?: { resolve: () => void; promise: Promise<void> };
+    findSwapHistoryBlocker?: { resolve: () => void; promise: Promise<void> };
+  } = {}): PlansRepository & {
+    findByHouseholdAndWeek: ReturnType<typeof vi.fn>;
+    findItemsByPlanId: ReturnType<typeof vi.fn>;
+    findSwapHistory: ReturnType<typeof vi.fn>;
+  } {
+    const findByHouseholdAndWeek = vi.fn().mockResolvedValue(opts.plan ?? null);
+    const findItemsByPlanId = vi.fn(async () => {
+      if (opts.findItemsBlocker !== undefined) {
+        await opts.findItemsBlocker.promise;
+      }
+      return opts.items ?? [];
+    });
+    const findSwapHistory = vi.fn(async () => {
+      if (opts.findSwapHistoryBlocker !== undefined) {
+        await opts.findSwapHistoryBlocker.promise;
+      }
+      return opts.swapHistory ?? [];
+    });
+    return {
+      findByHouseholdAndWeek,
+      findItemsByPlanId,
+      findSwapHistory,
+    } as unknown as PlansRepository & {
+      findByHouseholdAndWeek: ReturnType<typeof vi.fn>;
+      findItemsByPlanId: ReturnType<typeof vi.fn>;
+      findSwapHistory: ReturnType<typeof vi.fn>;
+    };
+  }
+
+  function makeBlocker(): { resolve: () => void; promise: Promise<void> } {
+    let resolve!: () => void;
+    const promise = new Promise<void>((r) => {
+      resolve = r;
+    });
+    return { resolve, promise };
+  }
+
+  function buildService(repo: PlansRepository): PlansService {
+    return new PlansService({
+      repository: repo,
+      briefStateRepository: buildBriefStateRepo(),
+      briefStateComposer: buildBriefStateComposer(),
+      allergyGuardrail: buildGuardrail([{ verdict: 'cleared', conflicts: [] }]),
+      auditService: buildAudit(),
+      logger: buildLogger(),
+      redis: buildRedis(),
+      regenQueue: buildRegenQueue(),
+    });
+  }
+
+  it('throws NotFoundError and skips item/history reads when no plan exists for the week', async () => {
+    const repo = buildHistoryRepo({ plan: null });
+    const service = buildService(repo);
+
+    await expect(
+      service.getPlanHistory({ householdId: HOUSEHOLD_ID, weekId: WEEK_ID }),
+    ).rejects.toBeInstanceOf(NotFoundError);
+
+    expect(repo.findByHouseholdAndWeek).toHaveBeenCalledWith({
+      householdId: HOUSEHOLD_ID,
+      weekId: WEEK_ID,
+    });
+    expect(repo.findItemsByPlanId).not.toHaveBeenCalled();
+    expect(repo.findSwapHistory).not.toHaveBeenCalled();
+  });
+
+  it('returns final items + swap history + weekOf for an existing past plan', async () => {
+    const plan = makePlanRow();
+    const items = [makeItem({ day: 'monday' }), makeItem({ day: 'tuesday' })];
+    const swap = {
+      child_id: '00000000-0000-4000-8000-000000000020',
+      day: 'monday' as const,
+      slot: 'main',
+      previous_ingredients: ['hummus'],
+      replaced_at: '2026-04-22T10:00:00.000Z',
+    };
+    const repo = buildHistoryRepo({
+      plan,
+      items,
+      swapHistory: [swap],
+    });
+    const service = buildService(repo);
+
+    const result = await service.getPlanHistory({
+      householdId: HOUSEHOLD_ID,
+      weekId: WEEK_ID,
+    });
+
+    expect(result.plan).toEqual(plan);
+    expect(result.planItems).toEqual(items);
+    expect(result.swapHistory).toEqual([swap]);
+    expect(result.weekOf).toBe('2026-04-21');
+    expect(repo.findItemsByPlanId).toHaveBeenCalledWith(PLAN_ID);
+    expect(repo.findSwapHistory).toHaveBeenCalledWith(PLAN_ID);
+  });
+
+  it('runs findItemsByPlanId and findSwapHistory in parallel via Promise.all', async () => {
+    // Deterministic parallelism check: hold both repo calls behind blockers.
+    // If the service serializes them, only the first call would be invoked
+    // before the test resolves either blocker.
+    const plan = makePlanRow();
+    const itemsBlocker = makeBlocker();
+    const swapBlocker = makeBlocker();
+    const repo = buildHistoryRepo({
+      plan,
+      items: [],
+      swapHistory: [],
+      findItemsBlocker: itemsBlocker,
+      findSwapHistoryBlocker: swapBlocker,
+    });
+    const service = buildService(repo);
+
+    const promise = service.getPlanHistory({
+      householdId: HOUSEHOLD_ID,
+      weekId: WEEK_ID,
+    });
+
+    // Yield once so both fn bodies can begin (Promise.all dispatches eagerly).
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(repo.findItemsByPlanId).toHaveBeenCalledTimes(1);
+    expect(repo.findSwapHistory).toHaveBeenCalledTimes(1);
+
+    itemsBlocker.resolve();
+    swapBlocker.resolve();
+    await promise;
+  });
+
+  it('passes weekId through to findByHouseholdAndWeek verbatim', async () => {
+    const otherWeekId = '99999999-9999-4999-8999-999999999999';
+    const repo = buildHistoryRepo({ plan: null });
+    const service = buildService(repo);
+
+    await expect(
+      service.getPlanHistory({ householdId: HOUSEHOLD_ID, weekId: otherWeekId }),
+    ).rejects.toBeInstanceOf(NotFoundError);
+
+    expect(repo.findByHouseholdAndWeek).toHaveBeenCalledWith({
+      householdId: HOUSEHOLD_ID,
+      weekId: otherWeekId,
+    });
   });
 });

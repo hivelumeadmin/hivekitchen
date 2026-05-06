@@ -10,6 +10,8 @@ import AppLayout from './routes/(app)/layout.js';
 import AppHomePage from './routes/(app)/index.js';
 import OnboardingPage from './routes/(app)/onboarding.js';
 import AccountPage from './routes/(app)/account.js';
+import PlanRoute from './routes/(app)/plan.js';
+import PlanHistoryRoute from './routes/(app)/plan-history.js';
 
 function RootRedirect() {
   const hash = typeof window !== 'undefined' ? window.location.hash : '';
@@ -35,6 +37,8 @@ const router = createBrowserRouter([
     element: <AppLayout />,
     children: [
       { path: '/app', element: <AppHomePage /> },
+      { path: '/app/plan', element: <PlanRoute /> },
+      { path: '/app/plan/:weekId', element: <PlanHistoryRoute /> },
       { path: '/account', element: <AccountPage /> },
     ],
   },

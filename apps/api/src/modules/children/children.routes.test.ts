@@ -28,10 +28,34 @@ interface ChildRowDb {
   created_at: string;
 }
 
+// Story 3.16 — school_policies + plans rows for the policy-update routes.
+interface SchoolPolicyRowDb {
+  id: string;
+  child_id: string;
+  policy_type: string;
+  policy_description: string | null;
+  slot_scope: 'bag_wide' | 'main' | 'snack' | 'extra';
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+interface PlanRowForPropagation {
+  id: string;
+  household_id: string;
+  week_id: string;
+  week_of: string;
+  revision: number;
+  guardrail_cleared_at: string | null;
+}
+
 interface MockDbState {
   children: ChildRowDb[];
   ackedUserIds: Set<string>;
   insertSpy?: (row: ChildRowDb) => void;
+  // Story 3.16
+  schoolPolicies: SchoolPolicyRowDb[];
+  plans: PlanRowForPropagation[];
 }
 
 // In-memory Supabase mock — children + users (for parental_notice gate).
@@ -45,10 +69,121 @@ function buildMockSupabase(state: MockDbState) {
       if (table === 'users') return usersTable(state);
       if (table === 'households') return householdsTable();
       if (table === 'vpc_consents') return vpcConsentsNoop();
+      if (table === 'school_policies') return schoolPoliciesTable(state);
+      if (table === 'plans') return plansTable(state);
       throw new Error(`unexpected table: ${table}`);
     },
     rpc(_fnName: string) {
       return Promise.resolve({ data: [], error: null });
+    },
+  };
+}
+
+// In-memory supabase for school_policies. Implements only the fluent-chain
+// shapes the SchoolPoliciesRepository actually calls.
+function schoolPoliciesTable(state: MockDbState) {
+  return {
+    upsert(row: {
+      child_id: string;
+      policy_type: string;
+      policy_description: string | null;
+      slot_scope: SchoolPolicyRowDb['slot_scope'];
+      is_active: boolean;
+    }) {
+      const idx = state.schoolPolicies.findIndex(
+        (p) => p.child_id === row.child_id && p.policy_type === row.policy_type,
+      );
+      const now = '2026-05-05T11:00:00.000Z';
+      let stored: SchoolPolicyRowDb;
+      if (idx === -1) {
+        stored = {
+          id: randomUUID(),
+          child_id: row.child_id,
+          policy_type: row.policy_type,
+          policy_description: row.policy_description,
+          slot_scope: row.slot_scope,
+          is_active: row.is_active,
+          created_at: now,
+          updated_at: now,
+        };
+        state.schoolPolicies.push(stored);
+      } else {
+        stored = {
+          ...state.schoolPolicies[idx]!,
+          policy_description: row.policy_description,
+          slot_scope: row.slot_scope,
+          is_active: row.is_active,
+          updated_at: now,
+        };
+        state.schoolPolicies[idx] = stored;
+      }
+      return {
+        select() {
+          return {
+            single: vi.fn().mockResolvedValue({ data: stored, error: null }),
+          };
+        },
+      };
+    },
+    select() {
+      const filters: Record<string, unknown> = {};
+      const chain = {
+        eq(column: string, value: unknown) {
+          filters[column] = value;
+          return chain;
+        },
+        order() {
+          // mock ignores ordering — list is already deterministic by insertion
+          return Promise.resolve({
+            data: state.schoolPolicies.filter(
+              (p) =>
+                p.child_id === filters.child_id &&
+                (filters.is_active === undefined || p.is_active === filters.is_active),
+            ),
+            error: null,
+          });
+        },
+      };
+      return chain;
+    },
+  };
+}
+
+// In-memory supabase for plans. Only supports the .findActiveFuturePlanIds()
+// query: select('id, week_id, week_of, revision').eq('household_id').gte('week_of').not('guardrail_cleared_at','is',null).
+function plansTable(state: MockDbState) {
+  return {
+    select() {
+      const filters: Record<string, unknown> = {};
+      let weekOfMin: string | undefined;
+      let requireClearedNotNull = false;
+      const chain = {
+        eq(column: string, value: unknown) {
+          filters[column] = value;
+          return chain;
+        },
+        gte(column: string, value: string) {
+          if (column === 'week_of') weekOfMin = value;
+          return chain;
+        },
+        not(column: string) {
+          if (column === 'guardrail_cleared_at') requireClearedNotNull = true;
+          return Promise.resolve({
+            data: state.plans
+              .filter((p) => p.household_id === filters.household_id)
+              .filter((p) => weekOfMin === undefined || p.week_of >= weekOfMin)
+              .filter((p) => !requireClearedNotNull || p.guardrail_cleared_at !== null)
+              .map((p) => ({
+                id: p.id,
+                week_id: p.week_id,
+                week_of: p.week_of,
+                revision: p.revision,
+              })),
+            error: null,
+          });
+        },
+      };
+      return chain;
     },
   };
 }
@@ -185,6 +320,12 @@ function vpcConsentsNoop() {
 interface BuildAppOpts {
   state: MockDbState;
   capturedAudit?: { value: AuditWriteInput | undefined };
+  // Story 3.16 — capture queue.add() calls for assertion.
+  queueAddSpy?: ReturnType<typeof vi.fn>;
+  // Story 3.16 — capture explicit auditService.write() calls (the school-
+  // policy routes write through fastify.auditService directly, not via
+  // request.auditContext like the older bag-composition route).
+  auditWriteSpy?: ReturnType<typeof vi.fn>;
 }
 
 async function buildTestApp(opts: BuildAppOpts): Promise<FastifyInstance> {
@@ -198,6 +339,18 @@ async function buildTestApp(opts: BuildAppOpts): Promise<FastifyInstance> {
     'supabase',
     buildMockSupabase(opts.state) as unknown as FastifyInstance['supabase'],
   );
+
+  // Story 3.16 — minimum viable bullmq + auditService decorators so the
+  // children-routes plugin can construct SchoolPoliciesService.
+  const queueAdd = opts.queueAddSpy ?? vi.fn().mockResolvedValue({ id: 'mock-job' });
+  app.decorate('bullmq', {
+    getQueue: vi.fn().mockReturnValue({ add: queueAdd }),
+    getWorker: vi.fn(),
+  } as unknown as FastifyInstance['bullmq']);
+  const auditWrite = opts.auditWriteSpy ?? vi.fn().mockResolvedValue(undefined);
+  app.decorate('auditService', {
+    write: auditWrite,
+  } as unknown as FastifyInstance['auditService']);
 
   await app.register(jwt, { secret: JWT_SECRET, sign: { expiresIn: '15m' } });
   await app.register(authenticateHook);
@@ -259,11 +412,18 @@ async function buildTestApp(opts: BuildAppOpts): Promise<FastifyInstance> {
   return app;
 }
 
-function emptyState(opts: { acked?: string[]; insertSpy?: (row: ChildRowDb) => void } = {}): MockDbState {
+function emptyState(opts: {
+  acked?: string[];
+  insertSpy?: (row: ChildRowDb) => void;
+  plans?: PlanRowForPropagation[];
+  schoolPolicies?: SchoolPolicyRowDb[];
+} = {}): MockDbState {
   return {
     children: [],
     ackedUserIds: new Set(opts.acked ?? []),
     insertSpy: opts.insertSpy,
+    plans: opts.plans ?? [],
+    schoolPolicies: opts.schoolPolicies ?? [],
   };
 }
 
@@ -722,5 +882,351 @@ describe('PATCH /v1/children/:id/bag-composition', () => {
       child: { bag_composition: { main: boolean; snack: boolean; extra: boolean } };
     };
     expect(body.child.bag_composition).toEqual({ main: true, snack: false, extra: false });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Story 3.16 — school-policy routes
+
+describe('PATCH /v1/children/:id/school-policies', () => {
+  let app: FastifyInstance;
+
+  afterEach(async () => {
+    if (app) await app.close();
+  });
+
+  async function createChildAs(token: string): Promise<{
+    childId: string;
+    state: MockDbState;
+  }> {
+    const res = await app.inject({
+      method: 'POST',
+      url: `/v1/households/${SAMPLE_HOUSEHOLD_ID}/children`,
+      headers: { authorization: `Bearer ${token}` },
+      payload: VALID_BODY,
+    });
+    expect(res.statusCode).toBe(201);
+    return {
+      childId: (JSON.parse(res.body) as { child: { id: string } }).child.id,
+      state: undefined as unknown as MockDbState,
+    };
+  }
+
+  it('happy path activation with no future plans → 200, regeneration_triggered=false, audit fired', async () => {
+    const state = emptyState({ acked: [SAMPLE_USER_ID] });
+    const queueAdd = vi.fn().mockResolvedValue({ id: 'job-1' });
+    const auditWrite = vi.fn().mockResolvedValue(undefined);
+    app = await buildTestApp({ state, queueAddSpy: queueAdd, auditWriteSpy: auditWrite });
+    const token = signPrimaryParentToken(app);
+    const { childId } = await createChildAs(token);
+
+    const res = await app.inject({
+      method: 'PATCH',
+      url: `/v1/children/${childId}/school-policies`,
+      headers: { authorization: `Bearer ${token}` },
+      payload: { policy_type: 'nut_free', is_active: true },
+    });
+
+    expect(res.statusCode).toBe(200);
+    const body = JSON.parse(res.body) as {
+      policy: { policy_type: string; is_active: boolean; slot_scope: string };
+      regeneration_triggered: boolean;
+      affected_plan_ids: string[];
+    };
+    expect(body.policy.policy_type).toBe('nut_free');
+    expect(body.policy.slot_scope).toBe('bag_wide');
+    expect(body.policy.is_active).toBe(true);
+    expect(body.regeneration_triggered).toBe(false);
+    expect(body.affected_plan_ids).toEqual([]);
+
+    expect(queueAdd).not.toHaveBeenCalled();
+    expect(auditWrite).toHaveBeenCalledWith(
+      expect.objectContaining({ event_type: 'school_policy.updated' }),
+    );
+  });
+
+  it('activation with cleared future plans enqueues regen jobs and returns affected ids', async () => {
+    const PLAN_A = '77777777-7777-4777-8777-777777777777';
+    const PLAN_B = '88888888-8888-4888-8888-888888888888';
+    const futureWeek = '2099-12-28';
+    const state = emptyState({
+      acked: [SAMPLE_USER_ID],
+      plans: [
+        {
+          id: PLAN_A,
+          household_id: SAMPLE_HOUSEHOLD_ID,
+          week_id: '90000000-0000-4000-8000-000000000001',
+          week_of: futureWeek,
+          revision: 1,
+          guardrail_cleared_at: '2099-12-21T11:00:01.000Z',
+        },
+        {
+          id: PLAN_B,
+          household_id: SAMPLE_HOUSEHOLD_ID,
+          week_id: '90000000-0000-4000-8000-000000000002',
+          week_of: futureWeek,
+          revision: 3,
+          guardrail_cleared_at: '2099-12-21T11:00:01.000Z',
+        },
+      ],
+    });
+    const queueAdd = vi.fn().mockResolvedValue({ id: 'job' });
+    const auditWrite = vi.fn().mockResolvedValue(undefined);
+    app = await buildTestApp({ state, queueAddSpy: queueAdd, auditWriteSpy: auditWrite });
+    const token = signPrimaryParentToken(app);
+    const { childId } = await createChildAs(token);
+
+    const res = await app.inject({
+      method: 'PATCH',
+      url: `/v1/children/${childId}/school-policies`,
+      headers: { authorization: `Bearer ${token}` },
+      payload: { policy_type: 'nut_free', is_active: true, slot_scope: 'main' },
+    });
+
+    expect(res.statusCode).toBe(200);
+    const body = JSON.parse(res.body) as {
+      regeneration_triggered: boolean;
+      affected_plan_ids: string[];
+      policy: { slot_scope: string };
+    };
+    expect(body.regeneration_triggered).toBe(true);
+    expect(body.affected_plan_ids.sort()).toEqual([PLAN_A, PLAN_B].sort());
+    expect(body.policy.slot_scope).toBe('main');
+
+    expect(queueAdd).toHaveBeenCalledTimes(2);
+    expect(auditWrite).toHaveBeenCalledWith(
+      expect.objectContaining({ event_type: 'plan.policy_regeneration_triggered' }),
+    );
+  });
+
+  it('deactivation does NOT enqueue regen even when future plans exist', async () => {
+    const PLAN_A = '77777777-7777-4777-8777-777777777777';
+    const futureWeek = '2099-12-28';
+    const state = emptyState({
+      acked: [SAMPLE_USER_ID],
+      plans: [
+        {
+          id: PLAN_A,
+          household_id: SAMPLE_HOUSEHOLD_ID,
+          week_id: '90000000-0000-4000-8000-000000000001',
+          week_of: futureWeek,
+          revision: 1,
+          guardrail_cleared_at: '2099-12-21T11:00:01.000Z',
+        },
+      ],
+    });
+    const queueAdd = vi.fn().mockResolvedValue({ id: 'job' });
+    app = await buildTestApp({ state, queueAddSpy: queueAdd });
+    const token = signPrimaryParentToken(app);
+    const { childId } = await createChildAs(token);
+
+    const res = await app.inject({
+      method: 'PATCH',
+      url: `/v1/children/${childId}/school-policies`,
+      headers: { authorization: `Bearer ${token}` },
+      payload: { policy_type: 'nut_free', is_active: false },
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(queueAdd).not.toHaveBeenCalled();
+  });
+
+  it('rejects unknown body keys (.strict()) → 400 /errors/validation', async () => {
+    const state = emptyState({ acked: [SAMPLE_USER_ID] });
+    app = await buildTestApp({ state });
+    const token = signPrimaryParentToken(app);
+    const { childId } = await createChildAs(token);
+
+    const res = await app.inject({
+      method: 'PATCH',
+      url: `/v1/children/${childId}/school-policies`,
+      headers: { authorization: `Bearer ${token}` },
+      payload: { policy_type: 'nut_free', is_active: true, smuggled: 'evil' },
+    });
+
+    expect(res.statusCode).toBe(400);
+    expect((JSON.parse(res.body) as { type: string }).type).toBe('/errors/validation');
+  });
+
+  it('missing policy_type → 400', async () => {
+    const state = emptyState({ acked: [SAMPLE_USER_ID] });
+    app = await buildTestApp({ state });
+    const token = signPrimaryParentToken(app);
+    const { childId } = await createChildAs(token);
+
+    const res = await app.inject({
+      method: 'PATCH',
+      url: `/v1/children/${childId}/school-policies`,
+      headers: { authorization: `Bearer ${token}` },
+      payload: { is_active: true },
+    });
+
+    expect(res.statusCode).toBe(400);
+  });
+
+  it('secondary_caregiver token → 403 (primary_parent only)', async () => {
+    const state = emptyState({ acked: [SAMPLE_USER_ID] });
+    app = await buildTestApp({ state });
+    const primaryToken = signPrimaryParentToken(app);
+    const { childId } = await createChildAs(primaryToken);
+
+    const secondaryToken = signSecondaryCaregiverToken(app);
+    const res = await app.inject({
+      method: 'PATCH',
+      url: `/v1/children/${childId}/school-policies`,
+      headers: { authorization: `Bearer ${secondaryToken}` },
+      payload: { policy_type: 'nut_free', is_active: true },
+    });
+
+    expect(res.statusCode).toBe(403);
+  });
+
+  it('cross-household child id → 403', async () => {
+    const state = emptyState({ acked: [SAMPLE_USER_ID] });
+    app = await buildTestApp({ state });
+    const tokenA = signPrimaryParentToken(app, SAMPLE_HOUSEHOLD_ID);
+    const { childId } = await createChildAs(tokenA);
+
+    const tokenB = signPrimaryParentToken(app, OTHER_HOUSEHOLD_ID);
+    const res = await app.inject({
+      method: 'PATCH',
+      url: `/v1/children/${childId}/school-policies`,
+      headers: { authorization: `Bearer ${tokenB}` },
+      payload: { policy_type: 'nut_free', is_active: true },
+    });
+
+    expect(res.statusCode).toBe(403);
+  });
+
+  it('unauthenticated → 401', async () => {
+    const state = emptyState();
+    app = await buildTestApp({ state });
+
+    const res = await app.inject({
+      method: 'PATCH',
+      url: `/v1/children/${randomUUID()}/school-policies`,
+      payload: { policy_type: 'nut_free', is_active: true },
+    });
+
+    expect(res.statusCode).toBe(401);
+  });
+
+  it('subsequent toggle updates the existing row (upsert on child_id+policy_type)', async () => {
+    const state = emptyState({ acked: [SAMPLE_USER_ID] });
+    app = await buildTestApp({ state });
+    const token = signPrimaryParentToken(app);
+    const { childId } = await createChildAs(token);
+
+    const first = await app.inject({
+      method: 'PATCH',
+      url: `/v1/children/${childId}/school-policies`,
+      headers: { authorization: `Bearer ${token}` },
+      payload: { policy_type: 'nut_free', is_active: true },
+    });
+    expect(first.statusCode).toBe(200);
+    const firstId = (JSON.parse(first.body) as { policy: { id: string } }).policy.id;
+
+    const second = await app.inject({
+      method: 'PATCH',
+      url: `/v1/children/${childId}/school-policies`,
+      headers: { authorization: `Bearer ${token}` },
+      payload: { policy_type: 'nut_free', is_active: false },
+    });
+    expect(second.statusCode).toBe(200);
+    const secondPolicy = (JSON.parse(second.body) as {
+      policy: { id: string; is_active: boolean };
+    }).policy;
+    expect(secondPolicy.id).toBe(firstId);
+    expect(secondPolicy.is_active).toBe(false);
+  });
+});
+
+describe('GET /v1/children/:id/school-policies', () => {
+  let app: FastifyInstance;
+
+  afterEach(async () => {
+    if (app) await app.close();
+  });
+
+  it('returns the active policy list for an authorized member', async () => {
+    const state = emptyState({ acked: [SAMPLE_USER_ID] });
+    app = await buildTestApp({ state });
+    const token = signPrimaryParentToken(app);
+
+    const created = await app.inject({
+      method: 'POST',
+      url: `/v1/households/${SAMPLE_HOUSEHOLD_ID}/children`,
+      headers: { authorization: `Bearer ${token}` },
+      payload: VALID_BODY,
+    });
+    const childId = (JSON.parse(created.body) as { child: { id: string } }).child.id;
+
+    await app.inject({
+      method: 'PATCH',
+      url: `/v1/children/${childId}/school-policies`,
+      headers: { authorization: `Bearer ${token}` },
+      payload: { policy_type: 'nut_free', is_active: true },
+    });
+    await app.inject({
+      method: 'PATCH',
+      url: `/v1/children/${childId}/school-policies`,
+      headers: { authorization: `Bearer ${token}` },
+      payload: { policy_type: 'no_heating', is_active: false },
+    });
+
+    const res = await app.inject({
+      method: 'GET',
+      url: `/v1/children/${childId}/school-policies`,
+      headers: { authorization: `Bearer ${token}` },
+    });
+    expect(res.statusCode).toBe(200);
+    const body = JSON.parse(res.body) as { policies: Array<{ policy_type: string }> };
+    // Only the active policy is returned by findActiveByChildId.
+    expect(body.policies).toHaveLength(1);
+    expect(body.policies[0]?.policy_type).toBe('nut_free');
+  });
+
+  it('secondary_caregiver may also read', async () => {
+    const state = emptyState({ acked: [SAMPLE_USER_ID] });
+    app = await buildTestApp({ state });
+    const primary = signPrimaryParentToken(app);
+
+    const created = await app.inject({
+      method: 'POST',
+      url: `/v1/households/${SAMPLE_HOUSEHOLD_ID}/children`,
+      headers: { authorization: `Bearer ${primary}` },
+      payload: VALID_BODY,
+    });
+    const childId = (JSON.parse(created.body) as { child: { id: string } }).child.id;
+
+    const secondary = signSecondaryCaregiverToken(app);
+    const res = await app.inject({
+      method: 'GET',
+      url: `/v1/children/${childId}/school-policies`,
+      headers: { authorization: `Bearer ${secondary}` },
+    });
+    expect(res.statusCode).toBe(200);
+  });
+
+  it('cross-household → 403', async () => {
+    const state = emptyState({ acked: [SAMPLE_USER_ID] });
+    app = await buildTestApp({ state });
+    const tokenA = signPrimaryParentToken(app, SAMPLE_HOUSEHOLD_ID);
+
+    const created = await app.inject({
+      method: 'POST',
+      url: `/v1/households/${SAMPLE_HOUSEHOLD_ID}/children`,
+      headers: { authorization: `Bearer ${tokenA}` },
+      payload: VALID_BODY,
+    });
+    const childId = (JSON.parse(created.body) as { child: { id: string } }).child.id;
+
+    const tokenB = signPrimaryParentToken(app, OTHER_HOUSEHOLD_ID);
+    const res = await app.inject({
+      method: 'GET',
+      url: `/v1/children/${childId}/school-policies`,
+      headers: { authorization: `Bearer ${tokenB}` },
+    });
+    expect(res.statusCode).toBe(403);
   });
 });

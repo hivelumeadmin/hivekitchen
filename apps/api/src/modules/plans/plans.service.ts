@@ -3,6 +3,7 @@ import type { FastifyBaseLogger } from 'fastify';
 import type { Queue } from 'bullmq';
 import type Redis from 'ioredis';
 import { GUARDRAIL_VERSION } from '../allergy-guardrail/allergy-rules.engine.js';
+import { deriveWeekId, getCurrentWeekMonday, getNextWeekMonday } from '../../lib/derive-week-id.js';
 import {
   GuardrailRejectionError,
   NotFoundError,
@@ -25,6 +26,8 @@ import type {
   PlanComposeOutput,
   PlanItemForGuardrail,
   PlanItemRow,
+  PlanItemSwapSummary,
+  PlanRow,
   RegeneratePlanQuery,
   SwapPlanItemInput,
 } from '@hivekitchen/types';
@@ -45,6 +48,8 @@ const REGEN_RATE_LIMIT = 5;              // max requests per household per week
 const REGEN_TTL_SECONDS = 8 * 24 * 3600; // 8 days — covers the full plan week + buffer
 
 const MAX_GUARDRAIL_RETRIES = 3;
+
+export { getCurrentWeekMonday, getNextWeekMonday };
 
 export class PlansService {
   private readonly repo: PlansRepository;
@@ -72,6 +77,37 @@ export class PlansService {
   // the frontend renders an empty/skeleton state.
   async getBrief(householdId: string): Promise<BriefStateRow | null> {
     return this.briefStateRepo.findByHousehold(householdId);
+  }
+
+  // Story 3.14 — Following-week draft view (FR21).
+  // Resolves the requested week's Monday (UTC), derives the deterministic week_id,
+  // and returns the cleared plan + items, or null when the week's plan is not yet
+  // generated. is_draft mirrors (week === 'next') so the client doesn't recompute
+  // date math; week_of is always populated from the resolved Monday.
+  async getPlanForWeek(opts: {
+    householdId: string;
+    week: 'current' | 'next';
+  }): Promise<{
+    plan: PlanRow | null;
+    planItems: PlanItemRow[];
+    isDraft: boolean;
+    weekOf: string;
+  }> {
+    const weekOf =
+      opts.week === 'next' ? getNextWeekMonday() : getCurrentWeekMonday();
+    const weekId = deriveWeekId(weekOf);
+    const isDraft = opts.week === 'next';
+
+    const plan = await this.repo.findByHouseholdAndWeek({
+      householdId: opts.householdId,
+      weekId,
+    });
+    if (!plan) {
+      return { plan: null, planItems: [], isDraft, weekOf };
+    }
+
+    const planItems = await this.repo.findItemsByPlanId(plan.id);
+    return { plan, planItems, isDraft, weekOf };
   }
 
   // Pure transform: converts the planner agent's PlanComposeInput into a
@@ -405,6 +441,37 @@ export class PlansService {
         'audit write failed after day pause — pause committed',
       );
     }
+  }
+
+  // Story 3.15 — Historical plans view (FR25).
+  // Resolves a past week's plan by week_id and returns the final committed
+  // items + a per-slot swap audit derived from archived plan_items.
+  // findItemsByPlanId() and findSwapHistory() touch disjoint row sets
+  // (replaced_by_plan_id IS NULL vs IS NOT NULL), so Promise.all is safe and
+  // halves the round-trip latency relative to a sequential pair of queries.
+  async getPlanHistory(opts: {
+    householdId: string;
+    weekId: string;
+  }): Promise<{
+    plan: PlanRow;
+    planItems: PlanItemRow[];
+    swapHistory: PlanItemSwapSummary[];
+    weekOf: string | null;
+  }> {
+    const plan = await this.repo.findByHouseholdAndWeek({
+      householdId: opts.householdId,
+      weekId: opts.weekId,
+    });
+    if (!plan) {
+      throw new NotFoundError(`plan for week ${opts.weekId}`);
+    }
+
+    const [planItems, swapHistory] = await Promise.all([
+      this.repo.findItemsByPlanId(plan.id),
+      this.repo.findSwapHistory(plan.id),
+    ]);
+
+    return { plan, planItems, swapHistory, weekOf: plan.week_of };
   }
 
   // Story 3.13 — fetch current (non-archived) items for a plan, with household

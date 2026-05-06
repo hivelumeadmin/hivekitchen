@@ -1,7 +1,7 @@
-# Test Automation Summary — Epic 2 (Batches 1–4) + Story 2-6b + Epic 12 (Stories 12-1, 12-2, 12-6)
+# Test Automation Summary — Epic 2 (Batches 1–4) + Story 2-6b + Epic 12 (Stories 12-1, 12-2, 12-6) + Story 3-14 + Story 3-15 + Story 3-16
 
 Generated: 2026-04-29
-Last updated: 2026-05-01 (Story 12-6 — LumiOrb + LumiPanel E2E spec + component unit tests)
+Last updated: 2026-05-05 (Story 3-16 — School-policy update + propagation tests)
 
 ## Generated Tests
 
@@ -197,3 +197,99 @@ pnpm --filter @hivekitchen/web exec playwright test test/e2e/2-12-bag-compositio
 - Picker `Escape` only dismisses when focus is inside the picker subtree (handler is on the picker's `<div role="group">`, not document-level). Documented in the test name to make the contract explicit.
 
 Run: `pnpm --filter @hivekitchen/web build && pnpm --filter @hivekitchen/web exec playwright test test/e2e/3-12-per-slot-swap-pause.spec.ts`
+
+---
+
+## Story 3-14 — Following Week's Draft View (added 2026-05-05)
+
+**File:** `apps/web/test/e2e/3-14-following-weeks-draft-view.spec.ts` — 11 tests
+
+| # | Description | Covers |
+|---|---|---|
+| 1 | Both tabs render; "This week" selected by default | tab structure |
+| 2 | "Next week" disabled on Wednesday | AC #1 — gate closed |
+| 3 | "Next week" disabled on Friday before 16:00 UTC | AC #1 — boundary |
+| 4 | "Next week" enabled at Friday 16:00 UTC | AC #1 — boundary |
+| 5 | "Next week" enabled on Saturday | AC #1 — gate open |
+| 6 | 5 weekday tiles render when plan is available | happy path |
+| 7 | "Lumi is drafting this week's plan" when plan=null | current-week loading state |
+| 8 | Click "Next week" fires `GET /v1/plans?week=next` | request routing |
+| 9 | "Lumi is drafting next week" when plan=null + is_draft=true | AC #1 — draft pending |
+| 10 | 5 tiles + draft disclaimer when next-week plan ready (is_draft=true) | AC #1 — draft ready |
+| 11 | "Next week" tab gains aria-selected=true after click | tab activation |
+| 12 | Plan page renders when parental notice acknowledged | gate pass |
+| 13 | Gate blocks plan tabs when notice not acknowledged | Story 2-9 integration |
+
+**Not covered by E2E** (covered by unit tests):
+- FreshnessState failed variant — app has `retry:3`, 14s+ before error renders
+- Monday tab-reset (activeWeek resets when nextAvailable flips false)
+- `week_of` Zod schema validation
+- API auth: 401/403/400 paths
+
+Run: `pnpm --filter @hivekitchen/web build && pnpm --filter @hivekitchen/web exec playwright test test/e2e/3-14-following-weeks-draft-view.spec.ts`
+
+## Story 3-15 — Historical Plans + Outcomes View (added 2026-05-05)
+
+**File:** `apps/web/test/e2e/3-15-historical-plans-outcomes-view.spec.ts` — 14 tests
+
+| # | Description | Covers |
+|---|---|---|
+| 1 | Renders the week-of header for an existing past plan | AC #1 — header |
+| 2 | Renders 5 weekday tiles in the historical grid | AC #1 — grid |
+| 3 | Every weekday tile is non-interactive (tabIndex=-1, opacity-60, pointer-events-none) | AC #1 — past variant |
+| 4 | Popover trigger appears only for days that have swap entries | AC #2 — visibility |
+| 5 | Clicking the trigger opens the region and lists previous ingredients | AC #2 — happy path |
+| 6 | Escape closes the popover and restores focus to the trigger | AC #2 — accessibility |
+| 7 | Multi-child swap history groups entries with fallback "Child A"/"Child B" labels | AC #2 — child grouping |
+| 8 | Empty `previous_ingredients` renders "(none recorded)" | AC #2 — empty fallback |
+| 9 | 404 from history endpoint shows "No plan was generated for this week." | empty state — no plan |
+| 10 | Plan exists but no items shows "No items were recorded for this week." | empty state — no items |
+| 11 | "Back to this week" link points to /app/plan | navigation |
+| 12 | Navigating to /app/plan/<currentWeekId> redirects to /app/plan | code-review patch (current-week redirect) |
+| 13 | History page renders when parental notice acknowledged | gate pass |
+| 14 | Gate blocks history page when notice not acknowledged | Story 2-9 integration |
+
+**Not covered by E2E** (covered by unit tests):
+- `getMondayWeeksAgo` input validation (RangeError on non-positive)
+- `usePlanHistoryQuery` queryKey sentinel for empty `weekId`
+- `encodeURIComponent` on `weekId` in fetch path
+- `crypto.subtle.digest` `.catch` fallback when running on insecure context
+- Contract: `PlanItemSwapSummarySchema.child_id` UUID validation, `PlanHistoryResponseSchema.ratings` UUID/non-empty value validation
+- API: `getPlanHistory` throws `NotFoundError`, parallel repo dispatch via `Promise.all`
+
+Run: `pnpm --filter @hivekitchen/web build && pnpm --filter @hivekitchen/web exec playwright test test/e2e/3-15-historical-plans-outcomes-view.spec.ts`
+
+## Story 3-16 — School-policy update + propagation (added 2026-05-05)
+
+**Contract tests** — `packages/contracts/src/school-policy.test.ts` (21 cases)
+- `SlotScopeSchema`: accepts each enum value, rejects unknown
+- `SchoolPolicySchema`: round-trips full row, validates 500-char description bound, rejects unknown slot_scope
+- `UpdateSchoolPolicyInputSchema`: defaults `slot_scope` to `bag_wide`, rejects missing/empty/over-long policy_type, rejects unknown keys via `.strict()`, accepts explicit slot_scope
+- `UpdateSchoolPolicyResponseSchema`: round-trips triggered + no-op responses, rejects non-uuid plan ids
+- `GetSchoolPoliciesResponseSchema`, `SchoolPolicyChildIdParamSchema`: round-trip + uuid validation
+
+**Service tests** — `apps/api/src/modules/children/school-policies.service.test.ts` (9 cases)
+- ForbiddenError when child not in household
+- Deactivation does NOT enqueue regen
+- Activation with no future plans → `regeneration_triggered: false`
+- Activation with future plans enqueues 1 regen job per plan, audits the fanout
+- Per-plan enqueue failure does not block siblings
+- Upsert errors propagate (not swallowed)
+- Audit failure is fire-and-forget; service still returns the upserted policy
+- `getPoliciesForChild`: 403 when not a member, returns active list otherwise
+
+**Route tests** — `apps/api/src/modules/children/children.routes.test.ts` (12 new cases for school-policies)
+- Activation with no future plans → 200, no queue work
+- Activation with cleared future plans → enqueues 1 job per plan, returns affected ids
+- Deactivation never enqueues, even with future plans present
+- `.strict()` rejects unknown keys → 400 /errors/validation
+- Missing `policy_type` → 400
+- secondary_caregiver token → 403 on PATCH (primary_parent only)
+- Cross-household child id → 403
+- Unauthenticated → 401
+- Subsequent toggles upsert in place (same row id, mutated `is_active`)
+- GET returns the active list
+- secondary_caregiver may GET
+- Cross-household GET → 403
+
+Run: `pnpm --filter @hivekitchen/contracts test -- school-policy && pnpm --filter @hivekitchen/api test -- school-policies && pnpm --filter @hivekitchen/api test -- children.routes`

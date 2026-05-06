@@ -1,5 +1,11 @@
 import { BaseRepository } from '../../repository/base.repository.js';
-import type { CommitPlanInput, PlanRow, PlanItemRow } from '@hivekitchen/types';
+import type {
+  CommitPlanInput,
+  PlanRow,
+  PlanItemRow,
+  PlanItemSwapSummary,
+} from '@hivekitchen/types';
+import { getCurrentWeekMonday } from '../../lib/derive-week-id.js';
 
 const PLAN_COLUMNS =
   'id, household_id, week_id, week_of, revision, generated_at, guardrail_cleared_at, guardrail_version, prompt_version, created_at, updated_at';
@@ -30,6 +36,25 @@ export class PlansRepository extends BaseRepository {
     householdId: string;
   }): Promise<PlanRow | null> {
     const { data, error } = await this.client.from('plans').select(PLAN_COLUMNS).eq('id', opts.planId).eq('household_id', opts.householdId).maybeSingle(); // presentation-bypass: ops-audit
+    if (error) throw error;
+    return (data as PlanRow | null) ?? null;
+  }
+
+  // Story 3.14 — presentation read for a single (household, week) pair.
+  // Differs from findCurrentByHousehold in intent only: maybeSingle() relies on
+  // the (household_id, week_id) unique index to enforce a single row, so the
+  // call surfaces a constraint violation rather than silently picking a winner.
+  async findByHouseholdAndWeek(opts: {
+    householdId: string;
+    weekId: string;
+  }): Promise<PlanRow | null> {
+    const { data, error } = await this.client
+      .from('plans')
+      .select(PLAN_COLUMNS)
+      .eq('household_id', opts.householdId)
+      .eq('week_id', opts.weekId)
+      .not('guardrail_cleared_at', 'is', null)
+      .maybeSingle();
     if (error) throw error;
     return (data as PlanRow | null) ?? null;
   }
@@ -97,6 +122,28 @@ export class PlansRepository extends BaseRepository {
       .order('created_at', { ascending: true });
     if (error) throw error;
     return (data ?? []) as PlanItemRow[];
+  }
+
+  // Story 3.15 — derives swap-event summaries from the archived plan_items
+  // for a single plan. Each archived row (replaced_by_plan_id IS NOT NULL)
+  // represents a prior version of a slot before a slot-swap (Story 3.12) or
+  // day/week regeneration (Story 3.13) archived it. previous_ingredients is
+  // the archived row's own ingredient list, and replaced_at is its updated_at
+  // (the moment the swap landed). child_id is preserved so multi-child
+  // households can attribute each swap to the correct child in the UI.
+  // presentation-bypass: ops-history — intentional; only called by the
+  // history view, not by the live brief surface.
+  async findSwapHistory(planId: string): Promise<PlanItemSwapSummary[]> {
+    const allItems = await this.findAllItemsByPlanId(planId);
+    return allItems
+      .filter((item) => item.replaced_by_plan_id !== null)
+      .map((item) => ({
+        child_id: item.child_id,
+        day: item.day,
+        slot: item.slot,
+        previous_ingredients: item.ingredients,
+        replaced_at: item.updated_at,
+      }));
   }
 
   // Story 3.12 — fetch a single plan_item by id within a given plan.
@@ -187,6 +234,33 @@ export class PlansRepository extends BaseRepository {
       .is('replaced_by_plan_id', null); // exclude archived items from prior regenerations
     if (error) throw error;
     return count ?? 0;
+  }
+
+  // Story 3.16 — used by school-policy propagation to find which future plans
+  // need regeneration when a parent toggles a policy. Filters to cleared rows
+  // whose week starts on or after the current Monday (UTC). Returns the
+  // metadata fields the regeneration job requires (week_id, week_of, revision).
+  // presentation-bypass: ops-history — intentional; not for UI rendering.
+  async findActiveFuturePlanIds(
+    householdId: string,
+    nowMonday: string = getCurrentWeekMonday(),
+  ): Promise<Array<{ id: string; week_id: string; week_of: string; revision: number }>> {
+    const { data, error } = await this.client
+      .from('plans')
+      .select('id, week_id, week_of, revision')
+      .eq('household_id', householdId)
+      .gte('week_of', nowMonday)
+      .not('guardrail_cleared_at', 'is', null);
+    if (error) throw error;
+    type Row = { id: string; week_id: string; week_of: string | null; revision: number };
+    return ((data ?? []) as Row[])
+      .filter((row): row is Row & { week_of: string } => row.week_of !== null)
+      .map((row) => ({
+        id: row.id,
+        week_id: row.week_id,
+        week_of: row.week_of,
+        revision: row.revision,
+      }));
   }
 
   // Atomic write: plan row + plan_items + guardrail_cleared_at + guardrail_version
