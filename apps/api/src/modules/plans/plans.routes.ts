@@ -11,6 +11,10 @@ import {
   GetPlansResponseSchema,
   PlanWeekIdParamSchema,
   PlanHistoryResponseSchema,
+  SetDayOverrideInputSchema,
+  SetDayOverrideResponseSchema,
+  DayOverridePlanItemParamSchema,
+  DayOverrideRevertParamSchema,
 } from '@hivekitchen/contracts';
 import type {
   PausePlanDayInput,
@@ -18,6 +22,7 @@ import type {
   SwapPlanItemInput,
   RegeneratePlanQuery,
   GetPlansQuery,
+  SetDayOverrideInput,
 } from '@hivekitchen/types';
 import { ValidationError } from '../../common/errors.js';
 import { authorize } from '../../middleware/authorize.hook.js';
@@ -218,6 +223,78 @@ const plansRoutesPlugin: FastifyPluginAsync = async (fastify) => {
       return reply
         .status(202)
         .send({ job_id: jobId, rate_limit_remaining: rateLimitRemaining });
+    },
+  );
+
+  // POST /v1/plans/:planId/items/:itemId/override
+  // Story 3.19 — day-level context override (FR118, FR119). Composition-changing
+  // overrides enqueue a day-scope regen via REGEN_QUEUE; pausing overrides
+  // (bag_suspended, sick_day) flip the slot's paused_at and refresh the brief.
+  fastify.post(
+    '/v1/plans/:planId/items/:itemId/override',
+    {
+      preHandler: requireMember,
+      schema: {
+        params: DayOverridePlanItemParamSchema,
+        body: SetDayOverrideInputSchema,
+        response: { 201: SetDayOverrideResponseSchema },
+      },
+    },
+    async (request, reply) => {
+      const requestId = requireIdempotencyKey(
+        request.headers['idempotency-key'],
+      );
+      const { planId, itemId } = request.params as {
+        planId: string;
+        itemId: string;
+      };
+      const body = request.body as SetDayOverrideInput;
+
+      const { override, regenTriggered } =
+        await fastify.dayOverridesService.setOverride({
+          planId,
+          planItemId: itemId,
+          householdId: request.user.household_id,
+          input: body,
+          requestId,
+        });
+
+      return reply
+        .status(201)
+        .send({ override, regen_triggered: regenTriggered });
+    },
+  );
+
+  // DELETE /v1/plans/:planId/items/:itemId/override/:overrideId
+  // Story 3.19 — soft revert. Returns 204 on success; 404 if the override
+  // does not belong to this household or has already been reverted.
+  fastify.delete(
+    '/v1/plans/:planId/items/:itemId/override/:overrideId',
+    {
+      preHandler: requireMember,
+      schema: {
+        params: DayOverrideRevertParamSchema,
+      },
+    },
+    async (request, reply) => {
+      const requestId = requireIdempotencyKey(
+        request.headers['idempotency-key'],
+      );
+      const { planId, itemId, overrideId } = request.params as {
+        planId: string;
+        itemId: string;
+        overrideId: string;
+      };
+
+      await fastify.dayOverridesService.revertOverride({
+        planId,
+        planItemId: itemId,
+        overrideId,
+        householdId: request.user.household_id,
+        requestId,
+      });
+
+      return reply.status(204).send();
     },
   );
 };

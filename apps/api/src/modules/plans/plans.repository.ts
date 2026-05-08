@@ -11,7 +11,7 @@ const PLAN_COLUMNS =
   'id, household_id, week_id, week_of, revision, generated_at, guardrail_cleared_at, guardrail_version, prompt_version, created_at, updated_at';
 
 const PLAN_ITEM_COLUMNS =
-  'id, plan_id, child_id, day, slot, recipe_id, item_id, ingredients, paused_at, replaced_by_plan_id, created_at, updated_at';
+  'id, plan_id, child_id, day, slot, recipe_id, item_id, item_sku_id, ingredients, paused_at, replaced_by_plan_id, created_at, updated_at';
 
 export class PlansRepository extends BaseRepository {
   // Presentation-bind contract: only guardrail-cleared rows ever reach the UI.
@@ -217,6 +217,47 @@ export class PlansRepository extends BaseRepository {
       .select(PLAN_ITEM_COLUMNS);
     if (error) throw error;
     return (data ?? []) as PlanItemRow[];
+  }
+
+  // Story 3.19 — narrow per-slot pause used by day-level overrides
+  // (bag_suspended, sick_day). Unlike pauseDay() this flips a single
+  // plan_item row, leaving siblings on the same day untouched. Returns the
+  // updated row when paused, or null if the item was already paused or absent.
+  async pauseItemById(opts: {
+    itemId: string;
+    planId: string;
+    pausedAt: string;
+  }): Promise<PlanItemRow | null> {
+    const { data, error } = await this.client
+      .from('plan_items')
+      .update({ paused_at: opts.pausedAt, updated_at: new Date().toISOString() })
+      .eq('id', opts.itemId)
+      .eq('plan_id', opts.planId)
+      .is('paused_at', null)
+      .is('replaced_by_plan_id', null)
+      .select(PLAN_ITEM_COLUMNS)
+      .maybeSingle();
+    if (error) throw error;
+    return (data as PlanItemRow | null) ?? null;
+  }
+
+  // Story 3.19 — undo the per-slot pause set by a pausing override (bag_suspended,
+  // sick_day) when the parent reverts that override. Returns the updated row if
+  // the slot was paused, or null if it was already unpaused (idempotent).
+  async unpauseItemById(opts: {
+    itemId: string;
+    planId: string;
+  }): Promise<PlanItemRow | null> {
+    const { data, error } = await this.client
+      .from('plan_items')
+      .update({ paused_at: null, updated_at: new Date().toISOString() })
+      .eq('id', opts.itemId)
+      .eq('plan_id', opts.planId)
+      .not('paused_at', 'is', null)
+      .select(PLAN_ITEM_COLUMNS)
+      .maybeSingle();
+    if (error) throw error;
+    return (data as PlanItemRow | null) ?? null;
   }
 
   // Story 3.12 — count of CURRENT (non-archived) plan_items for a (plan, day) pair,

@@ -155,5 +155,39 @@ describe('buildCommitInput', () => {
 
     expect(result.items[0]).not.toHaveProperty('recipe_id');
     expect(result.items[0]).not.toHaveProperty('item_id');
+    expect(result.items[0]).not.toHaveProperty('item_sku_id');
+  });
+
+  // Story 3.20 — Snack-slot items reference the snack_skus catalog via
+  // item_sku_id; the propagation must survive the PlanComposeOutput →
+  // PlanItemWrite flatten so commit_plan() inserts the FK on the new row.
+  it('propagates item_sku_id from PlanComposeOutput into PlanItemWrite', () => {
+    const skuId = '88888888-8888-4888-8888-888888888888';
+    const compose: PlanComposeOutput = {
+      plan_id: PLAN_ID,
+      household_id: HOUSEHOLD_ID,
+      week_of: '2026-05-11',
+      days: [
+        {
+          day: 'monday',
+          items: [
+            {
+              child_id: CHILD_A,
+              slot: 'snack',
+              ingredients: ['Apple'],
+              item_sku_id: skuId,
+            },
+          ],
+        },
+      ],
+      prompt_version: 'v1.0.0',
+    };
+
+    const result = buildCommitInput(compose, deriveWeekId('2026-05-11'), REQUEST_ID);
+
+    expect(result.items[0]).toMatchObject({
+      slot: 'snack',
+      item_sku_id: skuId,
+    });
   });
 });

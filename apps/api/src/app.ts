@@ -31,6 +31,7 @@ import { bullmqPlugin } from './plugins/bullmq.plugin.js';
 import { auditPartitionRotationPlugin } from './jobs/audit-partition-rotation.job.js';
 import { planGenerationJobPlugin } from './jobs/plan-generation.job.js';
 import { planRegenerationJobPlugin } from './jobs/plan-regeneration.job.js';
+import { dayOverrideRevertJobPlugin } from './jobs/day-override-revert.job.js';
 import { healthRoutes } from './modules/internal/health.routes.js';
 import { eventsRoutes } from './routes/v1/events/events.routes.js';
 import { authRoutes } from './modules/auth/auth.routes.js';
@@ -99,6 +100,7 @@ export async function buildApp(opts: BuildAppOptions) {
   await app.register(auditPartitionRotationPlugin);
   await app.register(planGenerationJobPlugin);
   await app.register(planRegenerationJobPlugin);
+  await app.register(dayOverrideRevertJobPlugin);
 
   await app.register(cookie);
   await app.register(jwt, {

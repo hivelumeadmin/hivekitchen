@@ -4,6 +4,8 @@ import type {
   SwapPlanItemInput,
   PlanItemRow,
   RegeneratePlanResponse,
+  SetDayOverrideInput,
+  SetDayOverrideResponse,
 } from '@hivekitchen/types';
 
 // Browser crypto.randomUUID() is available in all modern browsers in secure contexts.
@@ -66,6 +68,56 @@ export function usePauseDayMutation() {
         body: reason !== undefined ? { reason } : {},
         headers: { 'Idempotency-Key': safeRandomUuid() },
       }),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['brief'] });
+    },
+  });
+}
+
+// POST /v1/plans/:planId/items/:itemId/override with Idempotency-Key.
+// Story 3.19 — day-level context override (FR118, FR119). On success: invalidates
+// ['brief'] so paused-state and any tile copy reflects immediately. The async
+// regen, when triggered, lands later via plan_revision bump.
+export function useSetDayOverrideMutation() {
+  const queryClient = useQueryClient();
+  return useMutation<
+    SetDayOverrideResponse,
+    Error,
+    { planId: string; itemId: string; input: SetDayOverrideInput }
+  >({
+    mutationFn: ({ planId, itemId, input }) =>
+      hkFetch<SetDayOverrideResponse>(
+        `/v1/plans/${planId}/items/${itemId}/override`,
+        {
+          method: 'POST',
+          body: input,
+          headers: { 'Idempotency-Key': safeRandomUuid() },
+        },
+      ),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['brief'] });
+    },
+  });
+}
+
+// DELETE /v1/plans/:planId/items/:itemId/override/:overrideId with Idempotency-Key.
+// Story 3.19 — soft revert. Brief is invalidated so the tile clears any
+// override copy / paused state on the next render.
+export function useRevertDayOverrideMutation() {
+  const queryClient = useQueryClient();
+  return useMutation<
+    void,
+    Error,
+    { planId: string; itemId: string; overrideId: string }
+  >({
+    mutationFn: ({ planId, itemId, overrideId }) =>
+      hkFetch(
+        `/v1/plans/${planId}/items/${itemId}/override/${overrideId}`,
+        {
+          method: 'DELETE',
+          headers: { 'Idempotency-Key': safeRandomUuid() },
+        },
+      ),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ['brief'] });
     },

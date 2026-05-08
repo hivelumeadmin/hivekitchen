@@ -1,6 +1,6 @@
 # Story 3.19: Day-Level Context Overrides
 
-Status: ready-for-dev
+Status: done
 
 ## Story
 
@@ -35,6 +35,16 @@ So that one-off events don't require permanent profile changes (FR118).
 ---
 
 ## Tasks / Subtasks
+
+- [x] Task 1 — DB Migration: `day_overrides` table
+- [x] Task 2 — Contracts: add day-override schemas
+- [x] Task 3 — `DayOverridesRepository`
+- [x] Task 4 — `DayOverridesService`
+- [x] Task 5 — Routes: set + revert override
+- [x] Task 6 — Nightly revert job
+- [x] Task 7 — Frontend: override picker in PlanTile
+- [x] Task 8 — Audit event types
+- [x] Task 9 — Tests
 
 ### Task 1 — DB Migration: `day_overrides` table
 
@@ -568,8 +578,122 @@ _bmad-output/implementation-artifacts/sprint-status.yaml   3-19 → ready-for-de
 
 ---
 
+## Dev Agent Record
+
+### Implementation Plan & Notes
+
+- DB: `day_overrides` table + `day_override_type` enum. Partial index keyed on
+  `(household_id, override_date) WHERE reverted_at IS NULL` keeps the planner
+  context query and nightly revert sweep fast. Soft revert preserves the audit
+  trail.
+- Contracts: new `packages/contracts/src/day-override.ts` exports
+  `DayOverrideTypeSchema`, `DayOverrideSchema`, `SetDayOverrideInputSchema`,
+  `SetDayOverrideResponseSchema`, plus path-param schemas. Wired through
+  `packages/contracts/src/index.ts` and `packages/types/src/index.ts`.
+- Repository: `DayOverridesRepository` provides `upsert`, `revert`, `confirm`,
+  `findActiveByHousehold`, `revertExpired`. Parent-initiated rows confirm
+  immediately; Lumi-proposed rows leave `confirmed_at` null per Principle 1.
+- Service: `DayOverridesService.setOverride` validates plan + item ownership,
+  pauses the slot via `PlansRepository.pauseItemById` for `bag_suspended` /
+  `sick_day`, refreshes the brief projection only when the slot was actually
+  flipped, enqueues a day-scope regen on `REGEN_QUEUE` for composition-changing
+  types (`field_trip`, `half_day`, `post_dentist`, `sport_practice`,
+  `test_day`), audits via `plan.day_override_set`. `revertOverride` writes
+  `plan.day_override_reverted`. Audit failures are swallowed at this
+  boundary so the override commit never rolls back on telemetry blips.
+- Routes: `POST /v1/plans/:planId/items/:itemId/override` (201) and
+  `DELETE /v1/plans/:planId/items/:itemId/override/:overrideId` (204) added in
+  `plans.routes.ts`. Both require an `Idempotency-Key` UUIDv4 header
+  (matches Story 3.12 / 3.13 mutation conventions). Schemas resolved via
+  `fastify-type-provider-zod`.
+- Nightly job: `dayOverrideRevertJobPlugin` registers a BullMQ
+  `upsertJobScheduler` cron `5 0 * * *` UTC against the `day-override-revert`
+  queue and runs `DayOverridesRepository.revertExpired()`. Registered in
+  `app.ts` after `planRegenerationJobPlugin`.
+- Frontend: `OverridePicker.tsx` lists the eight override options and POSTs
+  via the new `useSetDayOverrideMutation` (with `useRevertDayOverrideMutation`
+  alongside it). Surfaced from `DisambiguationPicker` L1 ("This day is
+  different…"). Multi-item days route through a slim
+  `l2-override-item` slot picker before opening the OverridePicker; single-item
+  days jump straight to it. `overrideDate` is computed client-side from the
+  current week's Monday.
+- Audit: `plan.day_override_set` and `plan.day_override_reverted` added to
+  `AUDIT_EVENT_TYPES` and to the `audit_event_type` Postgres enum via
+  `20260720000100_add_day_override_audit_types.sql`.
+
+### Completion Notes
+
+- All nine tasks complete; AC #1 satisfied: parent override → `day_overrides`
+  row written, auto-revert via nightly sweep, Lumi-proposal hook present
+  (`is_lumi_proposed=true` path; UI confirmation deferred — see Dev Notes).
+- Definition of Done validated:
+  - Targeted tests: 17 service+repository tests, 16 contract round-trip tests,
+    4 OverridePicker component tests — all passing.
+  - Full API suite: 522 passing / 1 unrelated pre-existing failure
+    (`memory.service.test.ts` — confirmed pre-existing by stashing the diff).
+  - Web typecheck clean. API typecheck has only pre-existing errors, none in
+    new files (also confirmed by stashing).
+  - File List complete; only permitted story sections modified.
+
+### File List
+
+**New files:**
+- `supabase/migrations/20260720000000_create_day_overrides.sql`
+- `supabase/migrations/20260720000100_add_day_override_audit_types.sql`
+- `packages/contracts/src/day-override.ts`
+- `packages/contracts/src/day-override.test.ts`
+- `apps/api/src/modules/plans/day-overrides.repository.ts`
+- `apps/api/src/modules/plans/day-overrides.repository.test.ts`
+- `apps/api/src/modules/plans/day-overrides.service.ts`
+- `apps/api/src/modules/plans/day-overrides.service.test.ts`
+- `apps/api/src/jobs/day-override-revert.job.ts`
+- `apps/web/src/features/plan/OverridePicker.tsx`
+- `apps/web/src/features/plan/OverridePicker.test.tsx`
+
+**Modified files:**
+- `packages/contracts/src/index.ts` — re-export `day-override.js`
+- `packages/types/src/index.ts` — `DayOverride*` inferred types
+- `apps/api/src/audit/audit.types.ts` — two new event types
+- `apps/api/src/modules/plans/plans.repository.ts` — `pauseItemById()`
+- `apps/api/src/modules/plans/plans.hook.ts` — register `dayOverridesService`
+- `apps/api/src/modules/plans/plans.routes.ts` — POST + DELETE override routes
+- `apps/api/src/types/fastify.d.ts` — `dayOverridesService` decorator type
+- `apps/api/src/app.ts` — register `dayOverrideRevertJobPlugin`
+- `apps/web/src/features/plan/mutations.ts` — `useSetDayOverrideMutation`,
+  `useRevertDayOverrideMutation`
+- `apps/web/src/features/plan/DisambiguationPicker.tsx` — L1 "This day is
+  different…" entry, `l2-override-item`, `l4-override` panels
+- `_bmad-output/implementation-artifacts/sprint-status.yaml` — 3-19 → review
+
+---
+
+### Review Findings
+
+<!-- decision_needed — must be resolved before patches are applied -->
+- [x] [Review][Decision] Revert does not un-pause plan_item — `revertOverride` sets `reverted_at` on the override row but never clears `paused_at` on the `plan_items` row. A parent who creates a `sick_day` or `bag_suspended` override (which pauses the slot) and then reverts it will see the tile remain paused. Resolving this requires knowing whether revert should un-pause unconditionally, or whether it should only un-pause if the override was the cause (risk: a slot independently paused by Story 3.12 would be un-paused). [`apps/api/src/modules/plans/day-overrides.service.ts:175-214`]
+- [x] [Review][Decision] `useRevertDayOverrideMutation` declared but has no UI entry point — the DELETE route and mutation exist, but there is no affordance in `OverridePicker` or `DisambiguationPicker` for a parent to manually revert an active override. Parents can only wait for the nightly sweep. Is a manual revert UI required for this story, or is it deferred? [`apps/web/src/features/plan/mutations.ts:106-125`]
+- [x] [Review][Decision] `early_release` override is a no-op in the service — it is not in `COMPOSITION_CHANGING_OVERRIDES` (no regen) or `PAUSING_OVERRIDES` (no pause). The override row is written, but nothing downstream changes. The UI labels it "Same plan, earlier delivery" but no code implements earlier delivery. Is this intentional deferral or a missing implementation? [`apps/api/src/modules/plans/day-overrides.service.ts:28-41`]
+- [x] [Review][Decision] Duplicate sick-day paths with divergent effects — L1 DisambiguationPicker "Sick day" button calls `usePauseDayMutation` (pauses ALL items for the entire day via the Story 3.12 `pauseDay` endpoint), while the `OverridePicker` `sick_day` option calls `useSetDayOverrideMutation` → `pauseItemById` (pauses only the selected slot). Spec Dev Note says the L1 "Sick day" option "can call the new override endpoint instead of the direct pause endpoint for a unified path." Decision: should the L1 Sick day button be removed/redirected to the override flow, or should both paths coexist with explicit scope distinction in the UX copy? [`apps/web/src/features/plan/DisambiguationPicker.tsx:218-222`]
+
+<!-- patch — fix before marking done -->
+- [x] [Review][Patch] `household_id` has no FK constraint in migration — `household_id uuid NOT NULL` is declared without `REFERENCES households(id) ON DELETE CASCADE`. Orphaned override rows will persist if a household is deleted. All sibling tables carry this FK. [`supabase/migrations/20260720000000_create_day_overrides.sql:29`]
+- [x] [Review][Patch] Client-supplied `child_id` never validated against `item.child_id` — `setOverride` fetches the plan_item and verifies it belongs to the plan, but never asserts `item.child_id === opts.input.child_id`. A caller can inject a different child's UUID; because the upsert unique key includes `child_id`, this bypasses the one-override-per-slot constraint, stacking multiple overrides for the same slot. Derive `child_id` from `item.child_id` instead of trusting the request body, or add a 422 guard on mismatch. [`apps/api/src/modules/plans/day-overrides.service.ts:73-95`]
+- [x] [Review][Patch] Upsert resets `confirmed_at` when a Lumi-proposed override supersedes a parent-confirmed one — the upsert payload always writes `confirmed_at: isLumiProposed ? null : nowIso`. Supabase's `ON CONFLICT DO UPDATE` replaces all payload columns, so a subsequent Lumi-proposed override for the same slot+date silently un-confirms a prior parent action, violating Principle 1. Scope the `confirmed_at` write to INSERT-only (use a Postgres `DO UPDATE SET … WHERE day_overrides.confirmed_at IS NULL` clause or split the upsert into insert+update paths). [`apps/api/src/modules/plans/day-overrides.repository.ts:35`]
+- [x] [Review][Patch] BullMQ `jobId` dedup key does not include `override_type` — `day-override-${planItemId}-${overrideDate}` deduplicates across type changes. If a user rapidly switches from `field_trip` to `sport_practice` for the same slot+date, the second enqueue finds the existing job (still `waiting`) and does NOT replace its payload. The regen fires with stale `field_trip` context. Include `override_type` in the jobId: `day-override-${planItemId}-${overrideDate}-${overrideType}`. [`apps/api/src/modules/plans/day-overrides.service.ts:148`]
+- [x] [Review][Patch] `deriveOverrideDate` uses UTC day-of-week — `getUTCDay()` and all `setUTCDate` calls compute the ISO week boundary in UTC. A parent in UTC+10 at 23:00 local Monday sees `getUTCDay()` return Tuesday, causing the derived date to land one weekday later than intended. Use the plan's `week_of` date (server-sourced, timezone-stable) and compute `new Date(weekOf + 'T00:00:00') + DAY_INDEX[day] days` instead of computing from the browser clock. [`apps/web/src/features/plan/DisambiguationPicker.tsx:64-82`]
+- [x] [Review][Patch] `SetDayOverrideInputSchema` accepts past `override_date` values — format-only regex (`/^\d{4}-\d{2}-\d{2}$/`) with no date-range validation. A past-date override enqueues a regen for a day that already passed and creates an override row that the nightly job will immediately revoke. Add a server-side `refine` asserting `override_date >= today (UTC)`. [`packages/contracts/src/day-override.ts:46`, `apps/api/src/modules/plans/day-overrides.service.ts`]
+- [x] [Review][Patch] `revertOverride` does not scope by `planItemId` — `repo.revert(overrideId, householdId)` filters only on `id` and `household_id`. The `:itemId` route param is passed to the service but unused in the revert call. Any override belonging to a different plan_item (but the same household) can be reverted via this route. Add `.eq('plan_item_id', opts.planItemId)` to the `repo.revert()` query. [`apps/api/src/modules/plans/day-overrides.service.ts:188`, `apps/api/src/modules/plans/day-overrides.repository.ts:49-61`]
+
+<!-- deferred — logged, not blocking -->
+- [x] [Review][Defer] `revertExpired` bulk-updates entire `day_overrides` table with no batching — single unbounded `UPDATE … WHERE override_date < today` with no `LIMIT`, no cursor, no pagination. At scale this is a full-table write that will block concurrent reads. Acceptable at MVP row counts; needs chunking before growth. [`apps/api/src/modules/plans/day-overrides.repository.ts:96-107`] — deferred, pre-existing scale concern
+- [x] [Review][Defer] Nightly revert job fires at UTC 00:05 regardless of household timezone — `revertExpired()` computes `today` as UTC midnight. For UTC+12 households, overrides expire 12h early; for UTC-12, they linger 12h too long. Per-household timezone alignment requires per-household job scheduling — architectural change beyond this story's scope. [`apps/api/src/jobs/day-override-revert.job.ts:25`] — deferred, architectural scope
+
+---
+
 ## Change Log
 
 | Date | Author | Change |
 |------|--------|--------|
 | 2026-05-05 | Menon | Story 3.19 created — ready-for-dev. |
+| 2026-05-06 | Menon | Implementation complete — ready for review. |
+| 2026-05-06 | Claude | Code review complete — 4 decision-needed, 7 patch, 2 deferred, 2 dismissed. |

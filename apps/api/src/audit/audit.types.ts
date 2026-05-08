@@ -4,10 +4,13 @@ export const AUDIT_EVENT_TYPES = [
   'plan.regenerated',
   'plan.regeneration_requested',
   'plan.policy_regeneration_triggered',
+  'plan.adjustment_triggered',
   'plan.hard_fail',
   'plan.generation.failed',
   'plan.item_swapped',
   'plan.day_paused',
+  'plan.day_override_set',
+  'plan.day_override_reverted',
   'brief.projection.failure',
   // memory
   'memory.forgotten',
@@ -68,6 +71,10 @@ export const AUDIT_EVENT_TYPES = [
   // children
   'child.add',
   'child.bag_updated',
+  'child.extra_rules_updated',
+  // households
+  'household.extra_library_item_created',
+  'household.extra_library_item_archived',
   // school policies
   'school_policy.updated',
   // cultural

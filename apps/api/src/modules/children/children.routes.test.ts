@@ -8,6 +8,8 @@ import type { AuditWriteInput } from '../../audit/audit.types.js';
 import { authenticateHook } from '../../middleware/authenticate.hook.js';
 import { isDomainError } from '../../common/errors.js';
 import { childrenRoutes } from './children.routes.js';
+import { PlansRepository } from '../plans/plans.repository.js';
+import { PlanAdjustmentService } from '../plans/plan-adjustment.service.js';
 
 const SAMPLE_USER_ID = '11111111-1111-4111-8111-111111111111';
 const SAMPLE_HOUSEHOLD_ID = '22222222-2222-4222-8222-222222222222';
@@ -25,7 +27,9 @@ interface ChildRowDb {
   dietary_preferences: string | null;
   allergen_rule_version: string;
   bag_composition: { main: true; snack: boolean; extra: boolean };
+  extra_rules: { pins: string[]; bans: string[] };
   created_at: string;
+  updated_at: string;
 }
 
 // Story 3.16 — school_policies + plans rows for the policy-update routes.
@@ -208,7 +212,9 @@ function childrenTable(state: MockDbState) {
                 // DB default for bag_composition — main always true,
                 // snack/extra default to true.
                 bag_composition: { main: true, snack: true, extra: true },
+                extra_rules: { pins: [], bans: [] },
                 created_at: '2026-04-28T10:00:00.000Z',
+                updated_at: '2026-04-28T10:00:00.000Z',
               };
               state.children.push(stored);
               state.insertSpy?.(stored);
@@ -351,6 +357,25 @@ async function buildTestApp(opts: BuildAppOpts): Promise<FastifyInstance> {
   app.decorate('auditService', {
     write: auditWrite,
   } as unknown as FastifyInstance['auditService']);
+
+  // Story 3.17 — childrenRoutes consumes planAdjustmentService via the
+  // decorator (instead of constructing its own plans plumbing). Use the real
+  // service so the integration test exercises the dispatcher end-to-end and
+  // queueAddSpy still observes the regen fanout.
+  const planAdjustmentDeps = {
+    plansRepository: new PlansRepository(
+      buildMockSupabase(opts.state) as unknown as FastifyInstance['supabase'],
+    ),
+    regenQueue: { add: queueAdd } as unknown as ConstructorParameters<
+      typeof PlanAdjustmentService
+    >[0]['regenQueue'],
+    auditService: { write: auditWrite } as unknown as FastifyInstance['auditService'],
+    logger: app.log,
+  };
+  app.decorate(
+    'planAdjustmentService',
+    new PlanAdjustmentService(planAdjustmentDeps) as unknown as FastifyInstance['planAdjustmentService'],
+  );
 
   await app.register(jwt, { secret: JWT_SECRET, sign: { expiresIn: '15m' } });
   await app.register(authenticateHook);
@@ -994,8 +1019,16 @@ describe('PATCH /v1/children/:id/school-policies', () => {
     expect(body.policy.slot_scope).toBe('main');
 
     expect(queueAdd).toHaveBeenCalledTimes(2);
+    // Story 3.17 — fanout audit moved to PlanAdjustmentService and renamed
+    // 'plan.adjustment_triggered'; trigger_type='school_policy_changed'
+    // distinguishes the cause.
     expect(auditWrite).toHaveBeenCalledWith(
-      expect.objectContaining({ event_type: 'plan.policy_regeneration_triggered' }),
+      expect.objectContaining({
+        event_type: 'plan.adjustment_triggered',
+        metadata: expect.objectContaining({
+          trigger_type: 'school_policy_changed',
+        }),
+      }),
     );
   });
 
@@ -1228,5 +1261,249 @@ describe('GET /v1/children/:id/school-policies', () => {
       headers: { authorization: `Bearer ${tokenB}` },
     });
     expect(res.statusCode).toBe(403);
+  });
+
+  it('unauthenticated → 401', async () => {
+    const state = emptyState();
+    app = await buildTestApp({ state });
+
+    const res = await app.inject({
+      method: 'GET',
+      url: `/v1/children/${randomUUID()}/school-policies`,
+    });
+
+    expect(res.statusCode).toBe(401);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Story 3.21 — extra-rules routes
+
+describe('PATCH /v1/children/:id/extra-rules', () => {
+  let app: FastifyInstance;
+
+  afterEach(async () => {
+    if (app) await app.close();
+  });
+
+  async function createChild(token: string): Promise<string> {
+    const res = await app.inject({
+      method: 'POST',
+      url: `/v1/households/${SAMPLE_HOUSEHOLD_ID}/children`,
+      headers: { authorization: `Bearer ${token}` },
+      payload: VALID_BODY,
+    });
+    expect(res.statusCode).toBe(201);
+    return (JSON.parse(res.body) as { child: { id: string } }).child.id;
+  }
+
+  it('happy path → 200 with updated rules and PII-free audit context', async () => {
+    const state = emptyState({ acked: [SAMPLE_USER_ID] });
+    const captured: { value: AuditWriteInput | undefined } = { value: undefined };
+    app = await buildTestApp({ state, capturedAudit: captured });
+    const token = signPrimaryParentToken(app);
+    const childId = await createChild(token);
+
+    const res = await app.inject({
+      method: 'PATCH',
+      url: `/v1/children/${childId}/extra-rules`,
+      headers: { authorization: `Bearer ${token}` },
+      payload: { pins: ['fruit', 'veggie'], bans: ['sweet treat'] },
+    });
+
+    expect(res.statusCode).toBe(200);
+    const body = JSON.parse(res.body) as {
+      child_id: string;
+      extra_rules: { pins: string[]; bans: string[] };
+      updated_at: string;
+    };
+    expect(body.child_id).toBe(childId);
+    expect(body.extra_rules.pins).toEqual(['fruit', 'veggie']);
+    expect(body.extra_rules.bans).toEqual(['sweet treat']);
+
+    expect(captured.value?.event_type).toBe('child.extra_rules_updated');
+    expect(captured.value?.household_id).toBe(SAMPLE_HOUSEHOLD_ID);
+    const meta = captured.value?.metadata ?? {};
+    // Counts not raw arrays — no component type strings in audit row
+    expect(meta).toMatchObject({ child_id: childId, pin_count: 2, ban_count: 1 });
+    expect(JSON.stringify(meta)).not.toContain('fruit');
+    expect(JSON.stringify(meta)).not.toContain('sweet treat');
+  });
+
+  it('secondary_caregiver token → 403 (primary_parent only)', async () => {
+    const state = emptyState({ acked: [SAMPLE_USER_ID] });
+    app = await buildTestApp({ state });
+    const primaryToken = signPrimaryParentToken(app);
+    const childId = await createChild(primaryToken);
+
+    const secondaryToken = signSecondaryCaregiverToken(app);
+    const res = await app.inject({
+      method: 'PATCH',
+      url: `/v1/children/${childId}/extra-rules`,
+      headers: { authorization: `Bearer ${secondaryToken}` },
+      payload: { pins: [], bans: [] },
+    });
+
+    expect(res.statusCode).toBe(403);
+  });
+
+  it('cross-household child id → 404 (no existence leak across households)', async () => {
+    const state = emptyState({ acked: [SAMPLE_USER_ID] });
+    app = await buildTestApp({ state });
+    const tokenA = signPrimaryParentToken(app, SAMPLE_HOUSEHOLD_ID);
+    const childId = await createChild(tokenA);
+
+    const tokenB = signPrimaryParentToken(app, OTHER_HOUSEHOLD_ID);
+    const res = await app.inject({
+      method: 'PATCH',
+      url: `/v1/children/${childId}/extra-rules`,
+      headers: { authorization: `Bearer ${tokenB}` },
+      payload: { pins: [], bans: [] },
+    });
+
+    expect(res.statusCode).toBe(404);
+    expect((JSON.parse(res.body) as { type: string }).type).toBe('/errors/not-found');
+  });
+
+  it('unauthenticated → 401', async () => {
+    const state = emptyState();
+    app = await buildTestApp({ state });
+
+    const res = await app.inject({
+      method: 'PATCH',
+      url: `/v1/children/${randomUUID()}/extra-rules`,
+      payload: { pins: [], bans: [] },
+    });
+
+    expect(res.statusCode).toBe(401);
+  });
+
+  it('pins and bans overlap → 400 (cross-field uniqueness refine)', async () => {
+    const state = emptyState({ acked: [SAMPLE_USER_ID] });
+    app = await buildTestApp({ state });
+    const token = signPrimaryParentToken(app);
+    const childId = await createChild(token);
+
+    const res = await app.inject({
+      method: 'PATCH',
+      url: `/v1/children/${childId}/extra-rules`,
+      headers: { authorization: `Bearer ${token}` },
+      payload: { pins: ['fruit'], bans: ['fruit'] },
+    });
+
+    expect(res.statusCode).toBe(400);
+    expect((JSON.parse(res.body) as { type: string }).type).toBe('/errors/validation');
+  });
+});
+
+describe('GET /v1/children/:id/extra-rules', () => {
+  let app: FastifyInstance;
+
+  afterEach(async () => {
+    if (app) await app.close();
+  });
+
+  async function createChild(token: string): Promise<string> {
+    const res = await app.inject({
+      method: 'POST',
+      url: `/v1/households/${SAMPLE_HOUSEHOLD_ID}/children`,
+      headers: { authorization: `Bearer ${token}` },
+      payload: VALID_BODY,
+    });
+    expect(res.statusCode).toBe(201);
+    return (JSON.parse(res.body) as { child: { id: string } }).child.id;
+  }
+
+  it('returns default empty rules for a fresh child', async () => {
+    const state = emptyState({ acked: [SAMPLE_USER_ID] });
+    app = await buildTestApp({ state });
+    const token = signPrimaryParentToken(app);
+    const childId = await createChild(token);
+
+    const res = await app.inject({
+      method: 'GET',
+      url: `/v1/children/${childId}/extra-rules`,
+      headers: { authorization: `Bearer ${token}` },
+    });
+
+    expect(res.statusCode).toBe(200);
+    const body = JSON.parse(res.body) as {
+      child_id: string;
+      extra_rules: { pins: string[]; bans: string[] };
+    };
+    expect(body.child_id).toBe(childId);
+    expect(body.extra_rules).toEqual({ pins: [], bans: [] });
+  });
+
+  it('reflects rules saved via PATCH', async () => {
+    const state = emptyState({ acked: [SAMPLE_USER_ID] });
+    app = await buildTestApp({ state });
+    const token = signPrimaryParentToken(app);
+    const childId = await createChild(token);
+
+    await app.inject({
+      method: 'PATCH',
+      url: `/v1/children/${childId}/extra-rules`,
+      headers: { authorization: `Bearer ${token}` },
+      payload: { pins: ['grain'], bans: ['sweet treat'] },
+    });
+
+    const res = await app.inject({
+      method: 'GET',
+      url: `/v1/children/${childId}/extra-rules`,
+      headers: { authorization: `Bearer ${token}` },
+    });
+
+    expect(res.statusCode).toBe(200);
+    const body = JSON.parse(res.body) as {
+      extra_rules: { pins: string[]; bans: string[] };
+    };
+    expect(body.extra_rules.pins).toEqual(['grain']);
+    expect(body.extra_rules.bans).toEqual(['sweet treat']);
+  });
+
+  it('secondary_caregiver may read (requireMember)', async () => {
+    const state = emptyState({ acked: [SAMPLE_USER_ID] });
+    app = await buildTestApp({ state });
+    const primary = signPrimaryParentToken(app);
+    const childId = await createChild(primary);
+
+    const secondary = signSecondaryCaregiverToken(app);
+    const res = await app.inject({
+      method: 'GET',
+      url: `/v1/children/${childId}/extra-rules`,
+      headers: { authorization: `Bearer ${secondary}` },
+    });
+
+    expect(res.statusCode).toBe(200);
+  });
+
+  it('cross-household → 404', async () => {
+    const state = emptyState({ acked: [SAMPLE_USER_ID] });
+    app = await buildTestApp({ state });
+    const tokenA = signPrimaryParentToken(app, SAMPLE_HOUSEHOLD_ID);
+    const childId = await createChild(tokenA);
+
+    const tokenB = signPrimaryParentToken(app, OTHER_HOUSEHOLD_ID);
+    const res = await app.inject({
+      method: 'GET',
+      url: `/v1/children/${childId}/extra-rules`,
+      headers: { authorization: `Bearer ${tokenB}` },
+    });
+
+    expect(res.statusCode).toBe(404);
+    expect((JSON.parse(res.body) as { type: string }).type).toBe('/errors/not-found');
+  });
+
+  it('unauthenticated → 401', async () => {
+    const state = emptyState();
+    app = await buildTestApp({ state });
+
+    const res = await app.inject({
+      method: 'GET',
+      url: `/v1/children/${randomUUID()}/extra-rules`,
+    });
+
+    expect(res.statusCode).toBe(401);
   });
 });

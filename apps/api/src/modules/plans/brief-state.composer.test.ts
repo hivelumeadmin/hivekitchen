@@ -71,6 +71,7 @@ function makeItem(overrides: Partial<PlanItemRow> = {}): PlanItemRow {
     slot: 'main',
     recipe_id: null,
     item_id: null,
+    item_sku_id: null,
     ingredients: ['rice', 'lentils'],
     paused_at: null,
     replaced_by_plan_id: null,

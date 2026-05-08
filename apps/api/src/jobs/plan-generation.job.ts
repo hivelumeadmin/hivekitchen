@@ -9,7 +9,19 @@ import type {
   PlanItemWrite,
 } from '@hivekitchen/types';
 import { HouseholdsRepository } from '../modules/households/households.repository.js';
+import { ChildrenRepository } from '../modules/children/children.repository.js';
+import { CulturalPriorRepository } from '../modules/cultural-priors/cultural-prior.repository.js';
+import { CulturalCalendarService } from '../services/cultural-calendar.service.js';
+import { MemoryContextService } from '../services/memory-context.service.js';
+import { ExtraRulesRepository } from '../modules/children/extra-rules.repository.js';
+import { ExtraLibraryRepository } from '../modules/households/extra-library.repository.js';
 import { deriveWeekId } from '../lib/derive-week-id.js';
+import {
+  loadBagCompositionsForHousehold,
+  loadCulturalContextForHousehold,
+  loadExtraLibraryForHousehold,
+  loadExtraRulesForChildren,
+} from './planner-context.loader.js';
 
 export { deriveWeekId };
 
@@ -84,6 +96,7 @@ export function buildCommitInput(
       ingredients: item.ingredients,
       ...(item.recipe_id !== undefined ? { recipe_id: item.recipe_id } : {}),
       ...(item.item_id !== undefined ? { item_id: item.item_id } : {}),
+      ...(item.item_sku_id !== undefined ? { item_sku_id: item.item_sku_id } : {}),
     })),
   );
 
@@ -123,6 +136,20 @@ const planGenerationPlugin: FastifyPluginAsync = async (fastify) => {
 
   const scheduleQueue = fastify.bullmq.getQueue(SCHEDULE_QUEUE);
   const generateQueue = fastify.bullmq.getQueue(GENERATE_QUEUE);
+
+  // Story 3.18 — services that hydrate cultural context for the planner. The
+  // CulturalPriorRepository sources the household's ratified template keys;
+  // CulturalCalendarService maps those keys to upcoming observances; the
+  // MemoryContextService surfaces L0 preferences + L1 method priors.
+  const culturalPriorRepository = new CulturalPriorRepository(fastify.supabase);
+  const culturalCalendarService = new CulturalCalendarService(fastify.supabase);
+  const memoryContextService = new MemoryContextService(fastify.supabase);
+  // Story 3.20 — bag composition lookup for the planner. kek=null is fine:
+  // findBagCompositionsByHousehold() does not touch encrypted columns.
+  const childrenRepository = new ChildrenRepository(fastify.supabase, null, fastify.log);
+  // Story 3.21 — Extra slot pin/ban rules + household custom Extra library.
+  const extraRulesRepository = new ExtraRulesRepository(fastify.supabase);
+  const extraLibraryRepository = new ExtraLibraryRepository(fastify.supabase);
 
   // Fan-out scheduler — Friday 10:00 UTC (= 06:00 ET / 03:00 PT). For each
   // active household, enqueues a delayed per-household job that fires at
@@ -222,7 +249,26 @@ const planGenerationPlugin: FastifyPluginAsync = async (fastify) => {
         'plan-generation job started',
       );
 
-      const composeOutput = await fastify.orchestrator.planWeek(household_id, week_of, request_id);
+      const [culturalContext, bagCompositions, extraLibraryItems] = await Promise.all([
+        loadCulturalContextForHousehold(household_id, week_of, culturalPriorRepository, culturalCalendarService, memoryContextService),
+        loadBagCompositionsForHousehold(household_id, childrenRepository),
+        loadExtraLibraryForHousehold(household_id, extraLibraryRepository),
+      ]);
+      // extra_rules read fans out per-child; depends on bagCompositions for
+      // {child_id, child_name} pairs, so it's sequenced after the parallel batch.
+      const extraRules = await loadExtraRulesForChildren(bagCompositions, extraRulesRepository);
+
+      const composeOutput = await fastify.orchestrator.planWeek(
+        household_id,
+        week_of,
+        request_id,
+        undefined,
+        undefined,
+        culturalContext,
+        bagCompositions,
+        extraRules,
+        extraLibraryItems,
+      );
       const commitInput = buildCommitInput(composeOutput, weekId, request_id);
 
       // Allergy guardrail + brief_state refresh are wired inside
@@ -242,6 +288,11 @@ const planGenerationPlugin: FastifyPluginAsync = async (fastify) => {
             week_of,
             request_id,
             rejectionContext,
+            undefined,
+            culturalContext,
+            bagCompositions,
+            extraRules,
+            extraLibraryItems,
           );
           return buildCommitInput(retryOutput, weekId, request_id);
         },

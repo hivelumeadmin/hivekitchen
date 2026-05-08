@@ -94,6 +94,12 @@ import {
   UpdateSchoolPolicyResponseSchema,
   GetSchoolPoliciesResponseSchema,
   SchoolPolicyChildIdParamSchema,
+  DayOverrideTypeSchema,
+  DayOverrideSchema,
+  SetDayOverrideInputSchema,
+  SetDayOverrideResponseSchema,
+  DayOverridePlanItemParamSchema,
+  DayOverrideRevertParamSchema,
   CulturalKeySchema,
   TierSchema,
   TemplateStateSchema,
@@ -129,6 +135,7 @@ import {
   CommitPlanInputSchema,
   PlanRowSchema,
   PlanItemRowSchema,
+  SnackSkuSchema,
   PlanTileSummarySchema,
   ClearedAllergyEntrySchema,
   ScaffoldingDiffSchema,
@@ -144,6 +151,15 @@ import {
   PlanItemSwapSummarySchema,
   PlanWeekIdParamSchema,
   PlanHistoryResponseSchema,
+  ExtraRulesSchema,
+  UpdateExtraRulesInputSchema,
+  UpdateExtraRulesResponseSchema,
+  ExtraRulesChildIdParamSchema,
+  GetExtraRulesResponseSchema,
+  CreateExtraLibraryItemInputSchema,
+  ExtraLibraryItemSchema,
+  ListExtraLibraryResponseSchema,
+  ExtraLibraryHouseholdIdParamSchema,
 } from '@hivekitchen/contracts';
 
 // Auth
@@ -287,6 +303,14 @@ export type UpdateSchoolPolicyResponse = z.infer<typeof UpdateSchoolPolicyRespon
 export type GetSchoolPoliciesResponse = z.infer<typeof GetSchoolPoliciesResponseSchema>;
 export type SchoolPolicyChildIdParam = z.infer<typeof SchoolPolicyChildIdParamSchema>;
 
+// Day-level context overrides (Story 3.19 — FR118, FR119)
+export type DayOverrideType = z.infer<typeof DayOverrideTypeSchema>;
+export type DayOverride = z.infer<typeof DayOverrideSchema>;
+export type SetDayOverrideInput = z.infer<typeof SetDayOverrideInputSchema>;
+export type SetDayOverrideResponse = z.infer<typeof SetDayOverrideResponseSchema>;
+export type DayOverridePlanItemParam = z.infer<typeof DayOverridePlanItemParamSchema>;
+export type DayOverrideRevertParam = z.infer<typeof DayOverrideRevertParamSchema>;
+
 // Cultural priors (Story 2.11)
 export type CulturalKey = z.infer<typeof CulturalKeySchema>;
 export type Tier = z.infer<typeof TierSchema>;
@@ -335,6 +359,9 @@ export type PlanRow = z.infer<typeof PlanRowSchema>;
 
 // brief_state projection (Story 3.6)
 export type PlanItemRow = z.infer<typeof PlanItemRowSchema>;
+
+// Snack SKU catalog (Story 3.20)
+export type SnackSku = z.infer<typeof SnackSkuSchema>;
 export type PlanTileSummary = z.infer<typeof PlanTileSummarySchema>;
 export type BriefStateRow = z.infer<typeof BriefStateRowSchema>;
 export type BriefResponse = z.infer<typeof BriefResponseSchema>;
@@ -362,3 +389,14 @@ export type GetPlansResponse = z.infer<typeof GetPlansResponseSchema>;
 export type PlanItemSwapSummary = z.infer<typeof PlanItemSwapSummarySchema>;
 export type PlanWeekIdParam = z.infer<typeof PlanWeekIdParamSchema>;
 export type PlanHistoryResponse = z.infer<typeof PlanHistoryResponseSchema>;
+
+// Story 3.21 — Extra slot pin/ban rules + household Extra library
+export type ExtraRules = z.infer<typeof ExtraRulesSchema>;
+export type UpdateExtraRulesInput = z.infer<typeof UpdateExtraRulesInputSchema>;
+export type UpdateExtraRulesResponse = z.infer<typeof UpdateExtraRulesResponseSchema>;
+export type ExtraRulesChildIdParam = z.infer<typeof ExtraRulesChildIdParamSchema>;
+export type GetExtraRulesResponse = z.infer<typeof GetExtraRulesResponseSchema>;
+export type CreateExtraLibraryItemInput = z.infer<typeof CreateExtraLibraryItemInputSchema>;
+export type ExtraLibraryItem = z.infer<typeof ExtraLibraryItemSchema>;
+export type ListExtraLibraryResponse = z.infer<typeof ListExtraLibraryResponseSchema>;
+export type ExtraLibraryHouseholdIdParam = z.infer<typeof ExtraLibraryHouseholdIdParamSchema>;

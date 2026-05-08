@@ -1,10 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { FastifyBaseLogger } from 'fastify';
-import type { Queue } from 'bullmq';
 import type { SchoolPolicy, UpdateSchoolPolicyInput } from '@hivekitchen/types';
 import type { AuditService } from '../../audit/audit.service.js';
 import type { ChildrenRepository, DecryptedChildRow } from './children.repository.js';
-import type { PlansRepository } from '../plans/plans.repository.js';
+import type { PlanAdjustmentService } from '../plans/plan-adjustment.service.js';
 import type { SchoolPoliciesRepository } from './school-policies.repository.js';
 import { ForbiddenError } from '../../common/errors.js';
 import { SchoolPoliciesService } from './school-policies.service.js';
@@ -60,8 +59,7 @@ interface Mocks {
     upsertPolicy: ReturnType<typeof vi.fn>;
     findActiveByChildId: ReturnType<typeof vi.fn>;
   };
-  plansRepo: PlansRepository & { findActiveFuturePlanIds: ReturnType<typeof vi.fn> };
-  regenQueue: Queue & { add: ReturnType<typeof vi.fn> };
+  planAdjustment: PlanAdjustmentService & { triggerAdjustment: ReturnType<typeof vi.fn> };
   auditService: AuditService & { write: ReturnType<typeof vi.fn> };
 }
 
@@ -72,10 +70,11 @@ function buildMocks(): Mocks {
       upsertPolicy: vi.fn(),
       findActiveByChildId: vi.fn(),
     } as unknown as Mocks['policiesRepo'],
-    plansRepo: {
-      findActiveFuturePlanIds: vi.fn(),
-    } as unknown as Mocks['plansRepo'],
-    regenQueue: { add: vi.fn().mockResolvedValue({ id: 'job' }) } as unknown as Mocks['regenQueue'],
+    planAdjustment: {
+      triggerAdjustment: vi
+        .fn()
+        .mockResolvedValue({ plansQueued: 0, enqueuedPlanIds: [], failedPlanIds: [] }),
+    } as unknown as Mocks['planAdjustment'],
     auditService: { write: vi.fn().mockResolvedValue(undefined) } as unknown as Mocks['auditService'],
   };
 }
@@ -84,8 +83,7 @@ function buildService(mocks: Mocks): SchoolPoliciesService {
   return new SchoolPoliciesService({
     repository: mocks.policiesRepo,
     childrenRepository: mocks.childrenRepo,
-    plansRepository: mocks.plansRepo,
-    regenQueue: mocks.regenQueue,
+    planAdjustmentService: mocks.planAdjustment,
     auditService: mocks.auditService,
     logger: buildLogger(),
   });
@@ -119,10 +117,10 @@ describe('SchoolPoliciesService.updatePolicy', () => {
     ).rejects.toBeInstanceOf(ForbiddenError);
 
     expect(mocks.policiesRepo.upsertPolicy).not.toHaveBeenCalled();
-    expect(mocks.regenQueue.add).not.toHaveBeenCalled();
+    expect(mocks.planAdjustment.triggerAdjustment).not.toHaveBeenCalled();
   });
 
-  it('deactivation does NOT enqueue regeneration jobs', async () => {
+  it('deactivation does NOT call planAdjustmentService', async () => {
     mocks.childrenRepo.findById.mockResolvedValueOnce(buildChild());
     mocks.policiesRepo.upsertPolicy.mockResolvedValueOnce(
       buildPolicy({ is_active: false }),
@@ -137,8 +135,7 @@ describe('SchoolPoliciesService.updatePolicy', () => {
 
     expect(result.regenerationTriggered).toBe(false);
     expect(result.affectedPlanIds).toEqual([]);
-    expect(mocks.plansRepo.findActiveFuturePlanIds).not.toHaveBeenCalled();
-    expect(mocks.regenQueue.add).not.toHaveBeenCalled();
+    expect(mocks.planAdjustment.triggerAdjustment).not.toHaveBeenCalled();
 
     // The policy update itself is still audited.
     expect(mocks.auditService.write).toHaveBeenCalledWith(
@@ -146,10 +143,14 @@ describe('SchoolPoliciesService.updatePolicy', () => {
     );
   });
 
-  it('activation with no future plans returns regeneration_triggered=false', async () => {
+  it('activation with no plans queued returns regeneration_triggered=false', async () => {
     mocks.childrenRepo.findById.mockResolvedValueOnce(buildChild());
     mocks.policiesRepo.upsertPolicy.mockResolvedValueOnce(buildPolicy());
-    mocks.plansRepo.findActiveFuturePlanIds.mockResolvedValueOnce([]);
+    mocks.planAdjustment.triggerAdjustment.mockResolvedValueOnce({
+      plansQueued: 0,
+      enqueuedPlanIds: [],
+      failedPlanIds: [],
+    });
 
     const result = await service.updatePolicy({
       childId: CHILD_ID,
@@ -160,75 +161,40 @@ describe('SchoolPoliciesService.updatePolicy', () => {
 
     expect(result.regenerationTriggered).toBe(false);
     expect(result.affectedPlanIds).toEqual([]);
-    expect(mocks.regenQueue.add).not.toHaveBeenCalled();
+    expect(mocks.planAdjustment.triggerAdjustment).toHaveBeenCalledTimes(1);
   });
 
-  it('activation with future plans enqueues a week-scope regen per plan and audits the fanout', async () => {
+  it('activation hands off to planAdjustmentService with school_policy_changed trigger', async () => {
     mocks.childrenRepo.findById.mockResolvedValueOnce(buildChild());
-    mocks.policiesRepo.upsertPolicy.mockResolvedValueOnce(buildPolicy());
-    mocks.plansRepo.findActiveFuturePlanIds.mockResolvedValueOnce([
-      { id: PLAN_A, week_id: 'week-a', week_of: '2026-05-04', revision: 2 },
-      { id: PLAN_B, week_id: 'week-b', week_of: '2026-05-11', revision: 1 },
-    ]);
+    mocks.policiesRepo.upsertPolicy.mockResolvedValueOnce(buildPolicy({ slot_scope: 'main' }));
+    mocks.planAdjustment.triggerAdjustment.mockResolvedValueOnce({
+      plansQueued: 2,
+      enqueuedPlanIds: [PLAN_A, PLAN_B],
+      failedPlanIds: [],
+    });
 
     const result = await service.updatePolicy({
       childId: CHILD_ID,
       householdId: HOUSEHOLD_ID,
-      input: VALID_INPUT,
+      input: { ...VALID_INPUT, slot_scope: 'main' },
       requestId: REQUEST_ID,
     });
 
     expect(result.regenerationTriggered).toBe(true);
     expect(result.affectedPlanIds).toEqual([PLAN_A, PLAN_B]);
-    expect(mocks.regenQueue.add).toHaveBeenCalledTimes(2);
 
-    // First job carries the right shape: scope=week, current_revision passed through.
-    const [, jobData] = mocks.regenQueue.add.mock.calls[0]!;
-    expect(jobData).toMatchObject({
-      plan_id: PLAN_A,
-      household_id: HOUSEHOLD_ID,
-      week_of: '2026-05-04',
-      week_id: 'week-a',
-      current_revision: 2,
-      scope: 'week',
-      request_id: REQUEST_ID,
-    });
-    expect(jobData).not.toHaveProperty('day');
-
-    // Two audit writes: one for the policy update, one for the propagation fanout.
-    expect(mocks.auditService.write).toHaveBeenCalledWith(
-      expect.objectContaining({ event_type: 'school_policy.updated' }),
-    );
-    expect(mocks.auditService.write).toHaveBeenCalledWith(
-      expect.objectContaining({
-        event_type: 'plan.policy_regeneration_triggered',
-        metadata: expect.objectContaining({
-          affected_plan_ids: [PLAN_A, PLAN_B],
-        }),
-      }),
-    );
-  });
-
-  it('one failed enqueue does not block the others', async () => {
-    mocks.childrenRepo.findById.mockResolvedValueOnce(buildChild());
-    mocks.policiesRepo.upsertPolicy.mockResolvedValueOnce(buildPolicy());
-    mocks.plansRepo.findActiveFuturePlanIds.mockResolvedValueOnce([
-      { id: PLAN_A, week_id: 'week-a', week_of: '2026-05-04', revision: 1 },
-      { id: PLAN_B, week_id: 'week-b', week_of: '2026-05-11', revision: 1 },
-    ]);
-    mocks.regenQueue.add
-      .mockRejectedValueOnce(new Error('redis-flake'))
-      .mockResolvedValueOnce({ id: 'job-b' });
-
-    const result = await service.updatePolicy({
-      childId: CHILD_ID,
+    expect(mocks.planAdjustment.triggerAdjustment).toHaveBeenCalledWith({
+      type: 'school_policy_changed',
       householdId: HOUSEHOLD_ID,
-      input: VALID_INPUT,
+      slotScope: 'main',
+      dayScope: null,
       requestId: REQUEST_ID,
+      metadata: {
+        child_id: CHILD_ID,
+        policy_id: POLICY_ID,
+        policy_type: 'nut_free',
+      },
     });
-
-    expect(result.regenerationTriggered).toBe(true);
-    expect(result.affectedPlanIds).toEqual([PLAN_B]);
   });
 
   it('does NOT swallow upsert errors — caller sees them', async () => {
@@ -248,7 +214,11 @@ describe('SchoolPoliciesService.updatePolicy', () => {
   it('completes when audit write fails — fire-and-forget at this boundary', async () => {
     mocks.childrenRepo.findById.mockResolvedValueOnce(buildChild());
     mocks.policiesRepo.upsertPolicy.mockResolvedValueOnce(buildPolicy());
-    mocks.plansRepo.findActiveFuturePlanIds.mockResolvedValueOnce([]);
+    mocks.planAdjustment.triggerAdjustment.mockResolvedValueOnce({
+      plansQueued: 0,
+      enqueuedPlanIds: [],
+      failedPlanIds: [],
+    });
     mocks.auditService.write.mockRejectedValueOnce(new Error('audit-down'));
 
     const result = await service.updatePolicy({

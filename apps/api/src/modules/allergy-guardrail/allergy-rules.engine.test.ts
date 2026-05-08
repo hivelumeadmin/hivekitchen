@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { evaluate, type AllergyRule } from './allergy-rules.engine.js';
-import type { PlanItemForGuardrail } from '@hivekitchen/types';
+import { evaluate, evaluateSnackSku, type AllergyRule } from './allergy-rules.engine.js';
+import type { PlanItemForGuardrail, SnackSku } from '@hivekitchen/types';
 
 const HOUSEHOLD_ID = '11111111-1111-4111-8111-111111111111';
 const CHILD_A = '22222222-2222-4222-8222-222222222222';
@@ -298,5 +298,81 @@ describe('allergy-rules.engine.evaluate', () => {
     const items = [item({ ingredients: ['ピーナッツバター'] })];
     const result = evaluate(items, rules);
     expect(result.verdict).toBe('blocked');
+  });
+});
+
+// Story 3.20 — structured-flag SKU evaluation. Pure function: caller resolves
+// the SKU and the child's declared allergens; helper returns a verdict +
+// matched canonical names. Aliases (milk→dairy, gluten→wheat) collapse to the
+// same flag column on snack_skus.
+function sku(overrides: Partial<SnackSku> = {}): SnackSku {
+  return {
+    id: '88888888-8888-4888-8888-888888888888',
+    name: 'Test Snack',
+    brand: null,
+    category: 'grain',
+    contains_peanut: false,
+    contains_tree_nut: false,
+    contains_dairy: false,
+    contains_egg: false,
+    contains_wheat: false,
+    contains_soy: false,
+    contains_fish: false,
+    contains_shellfish: false,
+    contains_sesame: false,
+    is_halal: true,
+    is_kosher: true,
+    is_vegetarian: true,
+    is_vegan: true,
+    is_active: true,
+    ...overrides,
+  };
+}
+
+describe('evaluateSnackSku (Story 3.20)', () => {
+  it('clears a SKU with no declared allergens', () => {
+    expect(evaluateSnackSku(sku({ contains_dairy: true }), [])).toEqual({
+      verdict: 'cleared',
+      matched: [],
+    });
+  });
+
+  it('clears when declared allergens do not match any contains_* flag', () => {
+    expect(
+      evaluateSnackSku(sku({ contains_dairy: true }), ['peanut', 'soy']),
+    ).toEqual({ verdict: 'cleared', matched: [] });
+  });
+
+  it('blocks when a declared allergen matches its FALCPA flag', () => {
+    expect(
+      evaluateSnackSku(sku({ contains_peanut: true }), ['peanut']),
+    ).toEqual({ verdict: 'blocked', matched: ['peanut'] });
+  });
+
+  it('blocks via the milk → contains_dairy alias', () => {
+    expect(
+      evaluateSnackSku(sku({ contains_dairy: true }), ['milk']),
+    ).toEqual({ verdict: 'blocked', matched: ['milk'] });
+  });
+
+  it('blocks via the gluten → contains_wheat alias', () => {
+    expect(
+      evaluateSnackSku(sku({ contains_wheat: true }), ['gluten']),
+    ).toEqual({ verdict: 'blocked', matched: ['gluten'] });
+  });
+
+  it('returns every matched declared allergen, preserving caller casing', () => {
+    const result = evaluateSnackSku(
+      sku({ contains_peanut: true, contains_dairy: true }),
+      ['Peanut', 'milk', 'soy'],
+    );
+    expect(result.verdict).toBe('blocked');
+    expect(result.matched).toEqual(['Peanut', 'milk']);
+  });
+
+  it('ignores unknown allergen names that do not map to a FALCPA flag', () => {
+    expect(
+      evaluateSnackSku(sku({ contains_peanut: true }), ['mango']),
+    ).toEqual({ verdict: 'cleared', matched: [] });
   });
 });

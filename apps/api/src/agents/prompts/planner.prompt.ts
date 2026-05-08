@@ -53,8 +53,19 @@ If the constraints cannot be satisfied (a slot has no safe option, or every cult
 fit fails allergy.check), surface that as a degraded result with a clear reason.
 Do not silently relax a constraint to make a plan fit.`;
 
+// v1.1.0 (Story 3.18) — orchestrator now injects cultural context lines
+// (templates, upcoming observances, L0 preferences, L1 method priors) into
+// the user message. Stamped on every plan row as prompt_version so audit
+// reconstruction can tell pre/post-3.18 generations apart.
+// v1.2.0 (Story 3.20) — orchestrator additionally injects per-child bag
+// composition (snack/extra slot toggles) so the planner skips inactive
+// slots instead of producing empty entries.
+// v1.3.0 (Story 3.21) — orchestrator additionally injects per-child Extra
+// pin/ban rules and the household's custom Extra library so the planner
+// always honours pinned component types, never proposes banned ones, and
+// prefers parent-authored library items when they fit.
 export const PLANNER_PROMPT: PlannerPromptSpec = {
-  version: 'v1.0.0',
+  version: 'v1.3.0',
   text: PLANNING_CORE,
   toolsAllowed: [
     'recipe.search',

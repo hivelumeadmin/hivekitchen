@@ -11,22 +11,26 @@ import {
   UpdateSchoolPolicyResponseSchema,
   GetSchoolPoliciesResponseSchema,
   SchoolPolicyChildIdParamSchema,
+  UpdateExtraRulesInputSchema,
+  UpdateExtraRulesResponseSchema,
+  GetExtraRulesResponseSchema,
+  ExtraRulesChildIdParamSchema,
 } from '@hivekitchen/contracts';
 import type {
   AddChildBody,
   SetBagCompositionBody,
   UpdateSchoolPolicyInput,
+  UpdateExtraRulesInput,
 } from '@hivekitchen/types';
 import { authorize } from '../../middleware/authorize.hook.js';
-import { ForbiddenError } from '../../common/errors.js';
+import { ForbiddenError, NotFoundError } from '../../common/errors.js';
 import { ComplianceRepository } from '../compliance/compliance.repository.js';
 import { ComplianceService } from '../compliance/compliance.service.js';
 import { ChildrenRepository } from './children.repository.js';
 import { ChildrenService } from './children.service.js';
 import { SchoolPoliciesRepository } from './school-policies.repository.js';
 import { SchoolPoliciesService } from './school-policies.service.js';
-import { PlansRepository } from '../plans/plans.repository.js';
-import { REGEN_QUEUE } from '../../jobs/plan-regeneration.job.js';
+import { ExtraRulesRepository } from './extra-rules.repository.js';
 
 const childrenRoutesPlugin: FastifyPluginAsync = async (fastify) => {
   const kekHex = fastify.env.ENVELOPE_ENCRYPTION_MASTER_KEY;
@@ -42,17 +46,24 @@ const childrenRoutesPlugin: FastifyPluginAsync = async (fastify) => {
     fastify.log,
   );
 
-  // Story 3.16 — school policy service. Reuses the existing children + plans
-  // repositories so household ownership and future-plan discovery share the
-  // same query patterns; plumbs the BullMQ regen queue (also used by 3.13).
+  // Story 3.16 — school policy service. Story 3.17 moved the regen fanout
+  // into PlanAdjustmentService (decorated by plansHook); this route consumes
+  // it via the decorator instead of re-instantiating plans plumbing here.
+  if (!fastify.planAdjustmentService) {
+    throw new Error(
+      'childrenRoutes requires planAdjustmentService decorator — register plansHook first',
+    );
+  }
   const schoolPoliciesService = new SchoolPoliciesService({
     repository: new SchoolPoliciesRepository(fastify.supabase),
     childrenRepository,
-    plansRepository: new PlansRepository(fastify.supabase),
-    regenQueue: fastify.bullmq.getQueue(REGEN_QUEUE),
+    planAdjustmentService: fastify.planAdjustmentService,
     auditService: fastify.auditService,
     logger: fastify.log,
   });
+
+  // Story 3.21 — extra-rules repository. PII-free; no encryption needed.
+  const extraRulesRepository = new ExtraRulesRepository(fastify.supabase);
 
   const requirePrimaryParent = authorize(['primary_parent']);
   const requireMember = authorize(['primary_parent', 'secondary_caregiver']);
@@ -206,6 +217,80 @@ const childrenRoutesPlugin: FastifyPluginAsync = async (fastify) => {
       });
 
       return reply.status(200).send({ policies });
+    },
+  );
+
+  // Story 3.21 — PATCH /v1/children/:id/extra-rules. Replaces the full
+  // pin/ban set for the Extra slot. Primary Parent only — Extra rules are
+  // household-level decisions and affect every plan generated for the child.
+  fastify.patch(
+    '/v1/children/:id/extra-rules',
+    {
+      preHandler: requirePrimaryParent,
+      schema: {
+        params: ExtraRulesChildIdParamSchema,
+        body: UpdateExtraRulesInputSchema,
+        response: { 200: UpdateExtraRulesResponseSchema },
+      },
+    },
+    async (request, reply) => {
+      const { id: childId } = request.params as { id: string };
+      const householdId = request.user.household_id;
+      const body = request.body as UpdateExtraRulesInput;
+
+      const result = await extraRulesRepository.updateExtraRules({
+        childId,
+        householdId,
+        pins: body.pins,
+        bans: body.bans,
+      });
+      // Update returns null when 0 rows match — either the child does not
+      // exist or it belongs to a different household. We surface 404 in both
+      // cases so we don't leak existence across households.
+      if (result === null) {
+        throw new NotFoundError(`child not found: ${childId}`);
+      }
+
+      // Audit metadata is PII-free — only ids and rule counts. Rule strings
+      // are generic component types, not child names or allergens.
+      request.auditContext = {
+        event_type: 'child.extra_rules_updated',
+        user_id: request.user.id,
+        household_id: householdId,
+        correlation_id: request.id,
+        request_id: request.id,
+        metadata: {
+          child_id: childId,
+          pin_count: body.pins.length,
+          ban_count: body.bans.length,
+        },
+      };
+
+      return reply.status(200).send(result);
+    },
+  );
+
+  // Story 3.21 — GET /v1/children/:id/extra-rules. Either caregiver may read;
+  // household ownership is enforced via the household_id filter in the query.
+  fastify.get(
+    '/v1/children/:id/extra-rules',
+    {
+      preHandler: requireMember,
+      schema: {
+        params: ExtraRulesChildIdParamSchema,
+        response: { 200: GetExtraRulesResponseSchema },
+      },
+    },
+    async (request, reply) => {
+      const { id: childId } = request.params as { id: string };
+      const householdId = request.user.household_id;
+
+      const extra_rules = await extraRulesRepository.findExtraRulesForChild(childId, householdId);
+      if (extra_rules === null) {
+        throw new NotFoundError(`child not found: ${childId}`);
+      }
+
+      return reply.status(200).send({ child_id: childId, extra_rules });
     },
   );
 };

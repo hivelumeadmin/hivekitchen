@@ -1,4 +1,3 @@
-import type { Queue } from 'bullmq';
 import type { FastifyBaseLogger } from 'fastify';
 import type {
   SchoolPolicy,
@@ -6,16 +5,14 @@ import type {
 } from '@hivekitchen/types';
 import { ForbiddenError } from '../../common/errors.js';
 import type { AuditService } from '../../audit/audit.service.js';
-import type { PlansRepository } from '../plans/plans.repository.js';
-import type { PlanRegenerationJobData } from '../../jobs/plan-regeneration.job.js';
+import type { PlanAdjustmentService } from '../plans/plan-adjustment.service.js';
 import type { ChildrenRepository } from './children.repository.js';
 import type { SchoolPoliciesRepository } from './school-policies.repository.js';
 
 export interface SchoolPoliciesServiceDeps {
   repository: SchoolPoliciesRepository;
   childrenRepository: ChildrenRepository;
-  plansRepository: PlansRepository;
-  regenQueue: Queue;
+  planAdjustmentService: PlanAdjustmentService;
   auditService: AuditService;
   logger: FastifyBaseLogger;
 }
@@ -34,24 +31,25 @@ export interface UpdatePolicyResult {
 }
 
 // Story 3.16 — School policy update + propagation (FR22, FR112).
-// Activating a policy triggers regeneration of all cleared future plans for
-// the household via REGEN_QUEUE (the queue itself is shared with Story 3.13's
-// user-initiated regen — same job shape, different cause).
+// Story 3.17 — Regeneration fanout is now delegated to PlanAdjustmentService;
+// this service only owns the policy upsert + ownership check + policy-update
+// audit. The fanout-level audit (`plan.adjustment_triggered`, with
+// trigger_type='school_policy_changed') is written by PlanAdjustmentService.
+//
 // Deactivation is non-propagating: removing a constraint is always safe for
-// existing plans.
+// existing plans and the next plan-generation cycle picks up the relaxed
+// rule set automatically.
 export class SchoolPoliciesService {
   private readonly repo: SchoolPoliciesRepository;
   private readonly childrenRepo: ChildrenRepository;
-  private readonly plansRepo: PlansRepository;
-  private readonly regenQueue: Queue;
+  private readonly planAdjustment: PlanAdjustmentService;
   private readonly auditService: AuditService;
   private readonly logger: FastifyBaseLogger;
 
   constructor(deps: SchoolPoliciesServiceDeps) {
     this.repo = deps.repository;
     this.childrenRepo = deps.childrenRepository;
-    this.plansRepo = deps.plansRepository;
-    this.regenQueue = deps.regenQueue;
+    this.planAdjustment = deps.planAdjustmentService;
     this.auditService = deps.auditService;
     this.logger = deps.logger;
   }
@@ -94,82 +92,32 @@ export class SchoolPoliciesService {
       );
     }
 
-    // 4. Deactivation never triggers regeneration. Removing a constraint is
-    //    safe for existing plans; the next plan-generation cycle picks up the
-    //    relaxed rule set automatically.
+    // 4. Deactivation never triggers regeneration.
     if (!policy.is_active) {
       return { policy, regenerationTriggered: false, affectedPlanIds: [] };
     }
 
-    // 5. Activation: enqueue week-scope regeneration for every cleared future
-    //    plan. Slot-level partial regen is deferred (see Dev Notes); week-scope
-    //    is a superset and the planner prompt receives slot_scope as context.
-    const futurePlans = await this.plansRepo.findActiveFuturePlanIds(opts.householdId);
-    if (futurePlans.length === 0) {
-      return { policy, regenerationTriggered: false, affectedPlanIds: [] };
-    }
-
-    const enqueuedPlanIds: string[] = [];
-    for (const plan of futurePlans) {
-      const jobData: PlanRegenerationJobData = {
-        plan_id: plan.id,
-        household_id: opts.householdId,
-        week_of: plan.week_of,
-        week_id: plan.week_id,
-        current_revision: plan.revision,
-        scope: 'week',
-        request_id: opts.requestId,
-      };
-      try {
-        // Job ID dedupes concurrent retries from the same request: a client
-        // double-tap on the toggle for the same policy will land in BullMQ as
-        // one job rather than N. policy_type is included so toggling two
-        // different policies in the same request still produces distinct jobs.
-        const jobId = `policy-regen-${opts.householdId}-${plan.week_id}-${policy.policy_type}-${opts.requestId}`;
-        await this.regenQueue.add('regenerate-plan-policy', jobData, {
-          attempts: 2,
-          backoff: { type: 'exponential', delay: 60_000 },
-          removeOnComplete: { count: 100 },
-          removeOnFail: { count: 50 },
-          jobId,
-        });
-        enqueuedPlanIds.push(plan.id);
-      } catch (err) {
-        // One failed enqueue does not block the others — best-effort propagation.
-        // The audit trail below records the per-policy fanout, so ops can
-        // detect partial failures.
-        this.logger.error(
-          { err, plan_id: plan.id, policy_id: policy.id },
-          'failed to enqueue policy-triggered regen for plan — continuing',
-        );
-      }
-    }
-
-    if (enqueuedPlanIds.length > 0) {
-      try {
-        await this.auditService.write({
-          event_type: 'plan.policy_regeneration_triggered',
-          household_id: opts.householdId,
-          request_id: opts.requestId,
-          metadata: {
-            policy_id: policy.id,
-            policy_type: policy.policy_type,
-            slot_scope: policy.slot_scope,
-            affected_plan_ids: enqueuedPlanIds,
-          },
-        });
-      } catch (err) {
-        this.logger.error(
-          { err, policy_id: policy.id },
-          'audit write failed for plan.policy_regeneration_triggered — jobs enqueued',
-        );
-      }
-    }
+    // 5. Activation: hand off to PlanAdjustmentService. Slot-level partial
+    //    regen is still deferred (see deferred-work.md from 3.16) — the
+    //    dispatcher converts a non-bag-wide slot_scope into a full week-scope
+    //    regen and surfaces the original slot_scope in the audit metadata.
+    const result = await this.planAdjustment.triggerAdjustment({
+      type: 'school_policy_changed',
+      householdId: opts.householdId,
+      slotScope: policy.slot_scope,
+      dayScope: null,
+      requestId: opts.requestId,
+      metadata: {
+        child_id: opts.childId,
+        policy_id: policy.id,
+        policy_type: policy.policy_type,
+      },
+    });
 
     return {
       policy,
-      regenerationTriggered: enqueuedPlanIds.length > 0,
-      affectedPlanIds: enqueuedPlanIds,
+      regenerationTriggered: result.plansQueued > 0,
+      affectedPlanIds: result.enqueuedPlanIds,
     };
   }
 

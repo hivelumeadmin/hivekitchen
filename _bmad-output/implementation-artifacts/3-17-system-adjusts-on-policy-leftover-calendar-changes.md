@@ -1,6 +1,6 @@
 # Story 3.17: System Adjusts on Policy/Leftover/Calendar Changes
 
-Status: ready-for-dev
+Status: done
 
 ## Story
 
@@ -37,6 +37,18 @@ So that I don't have to re-plan when the world shifts under me (FR19).
 ---
 
 ## Tasks / Subtasks
+
+- [x] Task 1 — Define `PlanAdjustmentTrigger` event type
+- [x] Task 2 — `PlanAdjustmentService`: centralized adjustment dispatcher
+- [x] Task 3 — Update `SchoolPoliciesService` to use `PlanAdjustmentService`
+- [x] Task 4 — Audit event types (`plan.adjustment_triggered` added; Postgres enum migration added)
+- [x] Task 5 — Register `PlanAdjustmentService` as a Fastify decorator (in `plansHook`)
+- [x] Task 6 — `<QuietDiff>` integration verified — `BriefStateComposer.refresh()` already populates `scaffolding_diff` (the project's actual contract field, story 3.11)
+- [x] Task 7 — Deferred trigger stubs documented in `plan-adjustment.types.ts`
+- [x] Task 8 — Service tests (5 tests covering the spec scenarios)
+- [x] Task 9 — Typecheck (no new errors introduced) + targeted vitest (46 tests pass across the 3 affected files)
+
+---
 
 ### Task 1 — Define `PlanAdjustmentTrigger` event type
 
@@ -309,8 +321,66 @@ apps/api/src/modules/plans/plans.service.ts (no changes — guardrail runs in co
 
 ---
 
+## Dev Agent Record
+
+### Implementation Plan
+
+- **Pipeline shape:** new `PlanAdjustmentService` owns the regen fanout end-to-end (find future plans → enqueue per-plan jobs with dedupe → audit). Trigger sources stay stateless about regen plumbing — they pass a typed `PlanAdjustmentTrigger` and read back `{ plansQueued, enqueuedPlanIds, failedPlanIds }`.
+- **Refactor of 3.16:** `SchoolPoliciesService` no longer holds `plansRepository` or `regenQueue`; it depends on `PlanAdjustmentService` only. The fanout-level audit (`plan.policy_regeneration_triggered`) was replaced by the new `plan.adjustment_triggered` event with `metadata.trigger_type='school_policy_changed'` so future causes (leftovers, calendar) reuse the same event family.
+- **Wiring:** `plansHook` constructs and decorates `planAdjustmentService` (uses the `PlansRepository` already created there, plus the shared `REGEN_QUEUE`). `childrenRoutes` now requires the decorator and consumes it directly instead of re-instantiating plans plumbing.
+- **Job dedupe:** BullMQ `jobId` is `adjust-<type>-<household>-<weekId>-<dayScope|'week'>` so a duplicate webhook or retried PATCH collapses to one job per affected plan; `request_id` is intentionally excluded from the key (otherwise retries would defeat dedup).
+- **Day-scope path:** `dayScope!=null` → `scope='day'`, `day=<weekday>` in the job; otherwise `scope='week'`. Slot-scope partial regen is still deferred (carried over from 3.16's deferred-work).
+
+### Completion Notes
+
+- ✅ All ACs satisfied: trigger fires regen for impacted future plans, jobs reuse the existing `REGEN_QUEUE` worker (which routes the commit through the guardrail in `PlansService.commit()`), and `<QuietDiff>` already picks up the resulting scaffolding mutation via `brief_state.scaffolding_diff` populated inside `BriefStateComposer.refresh()`.
+- ✅ Two of the three deferred triggers (`pantry_leftover_changed`, `cultural_calendar_event`) are pre-wired in the type union — Epic 6 / Story 3.18 just inject `planAdjustmentService` and call `triggerAdjustment()`.
+- ⚠️ The story spec mentions a `mutation_summary` field; the actual contract field is `scaffolding_diff` (added in Story 3.11). No code change was needed for "Task 6" — verified the existing path.
+- ⚠️ Sprint-wide pre-existing typecheck errors in unrelated test files (`plan-regeneration.job.test.ts`, `households.routes.test.ts`, `brief-state.composer.test.ts`, `plans.service.test.ts`, `voice.service.test.ts`) and one pre-existing failing test (`memory.service.test.ts`) are present on `main` before this story — confirmed via `git stash` baseline. None are introduced by this story.
+- SSE `plan.updated` emission for adjustment-triggered regen remains deferred to Story 5.2 (same constraint as 3.13/3.16); clients see updates via TanStack Query polling.
+
+### File List
+
+**New files:**
+- `apps/api/src/modules/plans/plan-adjustment.types.ts`
+- `apps/api/src/modules/plans/plan-adjustment.service.ts`
+- `apps/api/src/modules/plans/plan-adjustment.service.test.ts`
+- `supabase/migrations/20260700000200_add_plan_adjustment_audit_type.sql`
+
+**Modified files:**
+- `apps/api/src/audit/audit.types.ts` — added `'plan.adjustment_triggered'`
+- `apps/api/src/types/fastify.d.ts` — added `planAdjustmentService` decorator type
+- `apps/api/src/modules/plans/plans.hook.ts` — constructs + decorates `planAdjustmentService`
+- `apps/api/src/modules/children/school-policies.service.ts` — refactored to depend on `PlanAdjustmentService`
+- `apps/api/src/modules/children/school-policies.service.test.ts` — updated mocks/assertions for new dependency
+- `apps/api/src/modules/children/children.routes.ts` — consumes `fastify.planAdjustmentService` decorator
+- `apps/api/src/modules/children/children.routes.test.ts` — registers a real `PlanAdjustmentService` against the mocked supabase + bullmq + audit; updated audit assertion to `plan.adjustment_triggered`
+- `_bmad-output/implementation-artifacts/sprint-status.yaml` — story 3-17 → `review`
+- `_bmad-output/implementation-artifacts/deferred-work.md` — appended 3-17 deferred items
+
+---
+
+## Review Findings (2026-05-05)
+
+- [x] [Review][Patch] `trigger.metadata` spread after named audit fields — a caller passing `trigger_type`, `slot_scope`, `day_scope`, `enqueued_plan_ids`, or `failed_plan_ids` in metadata silently overwrites the first-class audit keys [`plan-adjustment.service.ts:103-111`]
+- [x] [Review][Patch] `findActiveFuturePlanIds` rejection propagates uncaught out of `triggerAdjustment` — a DB error after the policy upsert returns 500 to the HTTP caller with the policy committed but no regen queued [`plan-adjustment.service.ts:41`]
+- [x] [Review][Patch] Missing `hasDecorator('planAdjustmentService')` guard in `plansHook` before decorating — double-registration produces a cryptic Fastify error instead of the clear guard message used for `briefStateComposer` [`plans.hook.ts:60`]
+- [x] [Review][Patch] Missing test: all enqueues fail → audit still fires with correct `failedPlanIds` — the "0 plans queued, all failed" branch is untested; distinct from the "no future plans" early-return branch that skips audit [`plan-adjustment.service.test.ts`]
+- [x] [Review][Defer] `slotScope` not forwarded to job data — intentional, slot-level partial regen is deferred; already in deferred-work.md from 3.16 [`plan-adjustment.service.ts:58`, `plan-adjustment.types.ts`]
+- [x] [Review][Defer] Sunday UTC boundary includes current week in `findActiveFuturePlanIds` — pre-existing UTC math issue, already in deferred-work.md [`plans.repository.ts:findActiveFuturePlanIds`]
+- [x] [Review][Defer] `dayScope` is untyped `string` with no validation — arbitrary strings forwarded to the regen worker fail silently; deferred until Story 3.18 wires day-scoped triggers [`plan-adjustment.types.ts:dayScope`]
+- [x] [Review][Defer] TOCTOU: `current_revision` captured at enqueue time may be superseded — pre-existing revision race, already in deferred-work.md [`plan-adjustment.service.ts:69`]
+- [x] [Review][Defer] `plan.policy_regeneration_triggered` is a dead audit event type with no surviving callsite — cleanup deferred per deferred-work.md note [`audit.types.ts:6`]
+- [x] [Review][Defer] Partial enqueue failures not surfaced to the HTTP caller — `regeneration_triggered: true` returned even when some plans failed to queue; full failure breakdown is audited [`plan-adjustment.service.ts`, `children.routes.ts`]
+- [x] [Review][Defer] `scaffolding_diff` post-adjustment-regen population not integration-tested — AC6 verified by prose only; no test asserts `brief_state.scaffolding_diff` is non-null after a policy-triggered regen [`plan-adjustment.service.ts`]
+- [x] [Review][Defer] Partial-failure test's `failedPlanIds` assertion assumes stable `findActiveFuturePlanIds` iteration order — pre-existing no-ORDER-BY issue already in deferred-work.md [`plan-adjustment.service.test.ts:146-168`]
+
+---
+
 ## Change Log
 
 | Date | Author | Change |
 |------|--------|--------|
 | 2026-05-05 | Menon | Story 3.17 created — ready-for-dev. |
+| 2026-05-05 | Amelia (dev) | Implemented PlanAdjustmentService pipeline; refactored 3.16 to use it; status → review. |
+| 2026-05-05 | Claude (review) | Code review (4 patches applied — metadata spread ordering, repo-query error handling, hasDecorator guard, missing all-fail test + repo-throw test). Status → done. |

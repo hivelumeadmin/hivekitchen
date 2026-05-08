@@ -1,6 +1,6 @@
 # Story 3.16: School-Policy Update + Propagation
 
-Status: review
+Status: done
 
 ## Story
 
@@ -629,9 +629,25 @@ claude-opus-4-7 (1M context)
 - `_bmad-output/implementation-artifacts/deferred-work.md` — Story 3.16 deferred entries (slot-level partial regen, SSE, policy_description UI, regen rate-limit reuse, UTC week math).
 - `_bmad-output/implementation-artifacts/tests/test-summary.md` — Story 3.16 contract / service / route test inventory.
 
+## Review Findings (2026-05-05)
+
+- [x] [Review][Patch] `jobId` includes `requestId` — dedup ineffective on retry / re-submit; same policy activated twice from different requests enqueues duplicate regen jobs [`school-policies.service.ts:128`]
+- [x] [Review][Patch] `plan.policy_regeneration_triggered` audit not written when all enqueue calls fail — operator cannot distinguish "no future plans" from "all enqueue attempts failed" [`school-policies.service.ts:148`]
+- [x] [Review][Patch] `useSchoolPolicies` does not reset `policies` state when `childId` prop changes — stale child A policies briefly visible under child B [`useSchoolPolicies.ts:34`]
+- [x] [Review][Patch] Missing `401` test for `GET /v1/children/:id/school-policies` (PATCH block has one; GET block does not) [`children.routes.test.ts`]
+- [x] [Review][Patch] `<label>` does not wrap or reference `<input type="checkbox">` — clicking label text does not toggle checkbox; functional bug [`SchoolPoliciesForm.tsx:89–99`]
+- [x] [Review][Defer] `policy_description` omission silently erases existing value on upsert [`school-policies.service.ts:82`] — deferred, tied to deferred policy_description UI (already in deferred-work.md)
+- [x] [Review][Defer] Concurrent activation of two different policy types triggers independent full-week regens; last commit wins and may drop the other policy's constraints — deferred, pre-existing regen architecture limitation
+- [x] [Review][Defer] `findActiveFuturePlanIds` uses UTC week floor; plans are per-timezone (edge case for extreme UTC offsets) — deferred, pre-existing (already in deferred-work.md)
+- [x] [Review][Defer] `current_revision` snapshot in job data may be stale if a prior regen completes before the policy-regen job runs — deferred, pre-existing revision race in regen infrastructure
+- [x] [Review][Defer] `togglePolicy` hardcodes `slot_scope: 'bag_wide'`; existing policies saved with a narrower scope are silently reset on next toggle — deferred, slot UI deferred
+- [x] [Review][Defer] AC1/FR112 per-slot scoping deviation: MVP always enqueues `scope='week'` — deferred, documented in Dev Notes + Completion Notes + deferred-work.md
+- [x] [Review][Defer] AC2 `plan.updated` SSE not fired — deferred to Story 5.2, documented in Dev Notes + deferred-work.md
+
 ## Change Log
 
 | Date | Author | Change |
 |------|--------|--------|
 | 2026-05-05 | Menon | Story 3.16 created — ready-for-dev. |
 | 2026-05-05 | Amelia | Implemented Story 3.16 end-to-end. New `school_policies` table (table did not previously exist — deferred from Story 2.10). Contracts, repository, service with regen-fanout, PATCH + GET routes, web form, audit events. 21 contract tests, 9 service tests, 12 new route tests — all green. Status → review. |
+| 2026-05-05 | Amelia | Code review (5 patches applied — job dedup key, audit fanout shape, stale policy state reset, missing 401 test, label/input association). E2E spec added: `3-16-school-policy-update-propagation.spec.ts` (8 tests, all green). `SchoolPoliciesForm` wired to `/app/children/:childId/school-policies` route. Status → done. |

@@ -95,6 +95,21 @@ export class CulturalPriorRepository extends BaseRepository {
     return (data as CulturalPriorRow[] | null) ?? [];
   }
 
+  // Story 3.18 — returns the prior keys a household has explicitly opted into.
+  // Used by the plan-generation job to decide which cultural calendar
+  // observances apply. Empty result → silence-mode household → no cultural
+  // context injected into the planner prompt.
+  async findOptInTemplateKeys(householdId: string): Promise<CulturalPriorRow['key'][]> {
+    const { data, error } = await this.client
+      .from('cultural_priors')
+      .select('key')
+      .eq('household_id', householdId)
+      .eq('state', 'opt_in_confirmed');
+    if (error) throw error;
+    const rows = (data as Array<{ key: CulturalPriorRow['key'] }> | null) ?? [];
+    return rows.map((r) => r.key);
+  }
+
   async findByIdForHousehold(
     householdId: string,
     priorId: string,

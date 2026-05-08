@@ -1,4 +1,5 @@
 import { useId, useMemo, useState } from 'react';
+import { Link } from 'react-router-dom';
 import type { SlotScope } from '@hivekitchen/types';
 import { useSchoolPolicies } from '@/hooks/useSchoolPolicies.js';
 
@@ -86,17 +87,17 @@ export function SchoolPoliciesForm({ childId, childName }: SchoolPoliciesFormPro
                 key={type}
                 className="flex items-center justify-between px-4 py-3 rounded-2xl bg-white border border-stone-200"
               >
-                <label className="flex flex-col cursor-pointer gap-0.5">
+                <label htmlFor={`policy-${type}`} className="flex flex-col cursor-pointer gap-0.5">
                   <span className="text-base text-stone-800">{label}</span>
                   <span className="text-xs text-stone-500">{helper}</span>
                 </label>
                 <input
+                  id={`policy-${type}`}
                   type="checkbox"
                   checked={isActive}
                   disabled={pending}
                   onChange={(e) => void togglePolicy(type, e.target.checked)}
                   className="h-5 w-5 accent-amber-600 disabled:opacity-50"
-                  aria-label={label}
                 />
               </li>
             );
@@ -109,6 +110,15 @@ export function SchoolPoliciesForm({ childId, childName }: SchoolPoliciesFormPro
           {statusMessage}
         </p>
       )}
+
+      <div className="pt-2 border-t border-stone-100">
+        <Link
+          to={`/app/children/${childId}/bag-composition`}
+          className="text-sm text-stone-500 hover:text-stone-700 underline underline-offset-2"
+        >
+          Edit {childName}&apos;s bag composition
+        </Link>
+      </div>
     </section>
   );
 }

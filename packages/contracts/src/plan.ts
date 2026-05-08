@@ -65,12 +65,22 @@ const INGREDIENTS_MAX = 20;
 // recipe_id / item_id are optional at compose time; resolver fills them in
 // later stories. Schemas are tool-internal — only the inferred types are
 // re-exported for consumers (planner agent + BullMQ worker).
+// Story 3.20: item_sku_id is the canonical reference for Snack-slot items;
+// the planner sets it for the snack_skus catalog row chosen for that slot.
 const PlanComposeItemSchema = z.object({
   child_id: z.string().uuid(),
   slot: z.string().min(1).max(SLOT_MAX),
   ingredients: z.array(z.string().min(1).max(INGREDIENT_MAX)).min(1),
   recipe_id: z.string().uuid().optional(),
   item_id: z.string().uuid().optional(),
+  item_sku_id: z.string().uuid().optional(),
+}).superRefine((val, ctx) => {
+  if (val.slot === 'main' && val.item_sku_id !== undefined) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'item_sku_id is only valid for snack/extra slots', path: ['item_sku_id'] });
+  }
+  if ((val.slot === 'snack' || val.slot === 'extra') && val.recipe_id !== undefined) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'recipe_id is not valid for snack/extra slots', path: ['recipe_id'] });
+  }
 });
 export type PlanComposeItem = z.infer<typeof PlanComposeItemSchema>;
 
@@ -149,7 +159,15 @@ export const PlanItemWriteSchema = z.object({
   slot: z.string().min(1).max(SLOT_MAX),
   recipe_id: z.string().uuid().optional(),
   item_id: z.string().uuid().optional(),
+  item_sku_id: z.string().uuid().optional(),  // Story 3.20 — Snack SKU reference
   ingredients: z.array(z.string().min(1).max(INGREDIENT_MAX)).min(1),
+}).superRefine((val, ctx) => {
+  if (val.slot === 'main' && val.item_sku_id !== undefined) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'item_sku_id is only valid for snack/extra slots', path: ['item_sku_id'] });
+  }
+  if ((val.slot === 'snack' || val.slot === 'extra') && val.recipe_id !== undefined) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'recipe_id is not valid for snack/extra slots', path: ['recipe_id'] });
+  }
 });
 
 export const CommitPlanInputSchema = z.object({
@@ -189,11 +207,39 @@ export const PlanItemRowSchema = z.object({
   slot: z.string().min(1).max(SLOT_MAX),
   recipe_id: z.string().uuid().nullable(),
   item_id: z.string().uuid().nullable(),
+  item_sku_id: z.string().uuid().nullable().default(null),  // Story 3.20 — Snack SKU reference
   ingredients: z.array(z.string().min(1)),
   paused_at: z.string().datetime().nullable().default(null),  // Story 3.12
   replaced_by_plan_id: z.string().uuid().nullable().default(null),  // Story 3.13 — null = current
   created_at: z.string().datetime(),
   updated_at: z.string().datetime(),
+});
+
+// --- Story 3.20 — Snack SKU catalog ---
+// Snack items are modeled as unit-level SKUs (Apple, String Cheese, Granola
+// Bar). The contains_* flags are the FALCPA top-9 allergen presence markers
+// the guardrail consults instead of ingredient text matching. is_halal /
+// is_kosher / is_vegetarian / is_vegan are the cultural template
+// compatibility flags the planner filters against.
+export const SnackSkuSchema = z.object({
+  id: z.string().uuid(),
+  name: z.string().min(1).max(200),
+  brand: z.string().max(200).nullable(),
+  category: z.string().min(1).max(64),
+  contains_peanut: z.boolean(),
+  contains_tree_nut: z.boolean(),
+  contains_dairy: z.boolean(),
+  contains_egg: z.boolean(),
+  contains_wheat: z.boolean(),
+  contains_soy: z.boolean(),
+  contains_fish: z.boolean(),
+  contains_shellfish: z.boolean(),
+  contains_sesame: z.boolean(),
+  is_halal: z.boolean(),
+  is_kosher: z.boolean(),
+  is_vegetarian: z.boolean(),
+  is_vegan: z.boolean(),
+  is_active: z.boolean(),
 });
 
 // Story 3.13 — POST /v1/plans/:planId/regenerate?scope=week|day&day=monday query params.

@@ -2,9 +2,15 @@ import { useState, useRef, useEffect, useId } from 'react';
 import type { KeyboardEvent as ReactKeyboardEvent } from 'react';
 import type { PlanTileSummary, ClearedAllergyEntry } from '@hivekitchen/types';
 import { HkApiError } from '@/lib/fetch.js';
-import { useSwapPlanItemMutation, usePauseDayMutation } from './mutations.js';
+import { useSwapPlanItemMutation } from './mutations.js';
+import { OverridePicker } from './OverridePicker.js';
 
-type PickerLevel = 'l1' | 'l2-select-item' | 'l3-ingredients';
+type PickerLevel =
+  | 'l1'
+  | 'l2-select-item'
+  | 'l3-ingredients'
+  | 'l2-override-item'
+  | 'l4-override';
 
 interface DisambiguationPickerProps {
   planId: string;
@@ -47,6 +53,36 @@ const DAY_LABEL: Record<PlanTileSummary['day'], string> = {
   saturday: 'Saturday',
 };
 
+const DAY_INDEX: Record<PlanTileSummary['day'], number> = {
+  monday: 0,
+  tuesday: 1,
+  wednesday: 2,
+  thursday: 3,
+  friday: 4,
+  saturday: 5,
+};
+
+// Story 3.19 — derive the calendar date for a tile's weekday in the current
+// week using LOCAL time so the result matches the parent's wall-clock date
+// regardless of UTC offset (a UTC+10 parent at 11 PM Monday sees Monday, not
+// Tuesday). The API's past-date validation also uses the server clock (UTC),
+// so there is a narrow edge case at the end of the day for UTC- households,
+// but the API will surface a clear validation error rather than silently
+// storing the wrong date.
+function deriveOverrideDate(day: PlanTileSummary['day']): string {
+  const today = new Date();
+  const todayDow = today.getDay(); // local day-of-week: 0=Sun, 1=Mon … 6=Sat
+  const daysSinceMonday = todayDow === 0 ? -1 : todayDow - 1;
+  const monday = new Date(today);
+  monday.setDate(today.getDate() - daysSinceMonday);
+  const target = new Date(monday);
+  target.setDate(monday.getDate() + DAY_INDEX[day]);
+  const y = target.getFullYear();
+  const m = String(target.getMonth() + 1).padStart(2, '0');
+  const d = String(target.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+}
+
 export function DisambiguationPicker({
   planId,
   day,
@@ -66,9 +102,8 @@ export function DisambiguationPicker({
   const pickerId = useId();
 
   const swapMutation = useSwapPlanItemMutation();
-  const pauseMutation = usePauseDayMutation();
 
-  const isPending = swapMutation.isPending || pauseMutation.isPending;
+  const isPending = swapMutation.isPending;
 
   // Focus the ingredient input when entering L3.
   useEffect(() => {
@@ -83,24 +118,21 @@ export function DisambiguationPicker({
     }
   }
 
-  async function handleSickDay() {
-    setError(null);
-    try {
-      await pauseMutation.mutateAsync({ planId, day, reason: 'sick' });
-      onSwapSettled();
-      onDismiss();
-    } catch {
-      setError('Could not pause this day. Please try again.');
-      onSwapSettled();
-    }
-  }
-
   function handleChangeItem() {
     if (items.length === 1) {
       setSelectedItem(items[0]!);
       setLevel('l3-ingredients');
     } else {
       setLevel('l2-select-item');
+    }
+  }
+
+  function handleOverrideIntent() {
+    if (items.length === 1) {
+      setSelectedItem(items[0]!);
+      setLevel('l4-override');
+    } else {
+      setLevel('l2-override-item');
     }
   }
 
@@ -172,19 +204,19 @@ export function DisambiguationPicker({
           <div className="flex flex-wrap gap-2">
             <button
               type="button"
-              onClick={() => { void handleSickDay(); }}
-              disabled={isPending}
-              className="rounded-full border border-stone-300 px-3 py-1.5 text-[13px] text-stone-700 hover:bg-stone-50 transition-colors motion-reduce:transition-none disabled:opacity-50 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-stone-400"
-            >
-              Sick day — pause, keep the plan
-            </button>
-            <button
-              type="button"
               onClick={handleChangeItem}
               disabled={isPending}
               className="rounded-full border border-stone-300 px-3 py-1.5 text-[13px] text-stone-700 hover:bg-stone-50 transition-colors motion-reduce:transition-none disabled:opacity-50 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-stone-400"
             >
               Change an item
+            </button>
+            <button
+              type="button"
+              onClick={handleOverrideIntent}
+              disabled={isPending}
+              className="rounded-full border border-stone-300 px-3 py-1.5 text-[13px] text-stone-700 hover:bg-stone-50 transition-colors motion-reduce:transition-none disabled:opacity-50 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-stone-400"
+            >
+              This day is different…
             </button>
             {onRegenDay !== undefined && (
               <button
@@ -234,6 +266,49 @@ export function DisambiguationPicker({
             Back
           </button>
         </>
+      )}
+
+      {level === 'l2-override-item' && (
+        <>
+          <p className="text-stone-500 text-[13px]">Which slot is different today?</p>
+          <div className="flex flex-col gap-1.5">
+            {items.map((item) => (
+              <button
+                key={`override-${item.child_id}-${item.slot}`}
+                type="button"
+                onClick={() => {
+                  setSelectedItem(item);
+                  setLevel('l4-override');
+                }}
+                className="rounded-md border border-stone-200 px-3 py-2 text-start text-[13px] text-stone-700 hover:bg-stone-50 transition-colors motion-reduce:transition-none focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-stone-400"
+              >
+                {item.slot} — {item.ingredients.slice(0, 2).join(', ')}
+                {item.ingredients.length > 2 ? ` +${item.ingredients.length - 2}` : ''}
+              </button>
+            ))}
+          </div>
+          <button
+            type="button"
+            onClick={() => setLevel('l1')}
+            className="self-start text-[12px] text-stone-400 hover:text-stone-600 underline underline-offset-2 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-stone-300"
+          >
+            Back
+          </button>
+        </>
+      )}
+
+      {level === 'l4-override' && selectedItem !== null && selectedItem.plan_item_id !== undefined && selectedItem.plan_item_id !== null && (
+        <OverridePicker
+          planId={planId}
+          planItemId={selectedItem.plan_item_id}
+          childId={selectedItem.child_id}
+          overrideDate={deriveOverrideDate(day)}
+          onConfirm={() => {
+            onSwapSettled();
+            onDismiss();
+          }}
+          onCancel={() => setLevel(items.length > 1 ? 'l2-override-item' : 'l1')}
+        />
       )}
 
       {level === 'l3-ingredients' && (

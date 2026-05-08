@@ -1,7 +1,7 @@
-# Test Automation Summary — Epic 2 (Batches 1–4) + Story 2-6b + Epic 12 (Stories 12-1, 12-2, 12-6) + Story 3-14 + Story 3-15 + Story 3-16
+# Test Automation Summary — Epic 2 (Batches 1–4) + Story 2-6b + Epic 12 (Stories 12-1, 12-2, 12-6) + Story 3-14 + Story 3-15 + Story 3-16 + Story 3-19 + Story 3-20
 
 Generated: 2026-04-29
-Last updated: 2026-05-05 (Story 3-16 — School-policy update + propagation tests)
+Last updated: 2026-05-07 (Story 3-20 — Bag composition settings page E2E)
 
 ## Generated Tests
 
@@ -176,10 +176,16 @@ pnpm --filter @hivekitchen/web exec playwright test test/e2e/2-12-bag-compositio
 
 ---
 
-## Story 3-12 — Per-slot swap, day-swap, skip/sick (added 2026-05-04)
+## Story 3-12 — Per-slot swap, day-swap, skip/sick (added 2026-05-04, retrofit 2026-05-06)
 
 **E2E tests (Playwright)**
-- [x] `apps/web/test/e2e/3-12-per-slot-swap-pause.spec.ts` — 13 cases — all passing
+- [x] `apps/web/test/e2e/3-12-per-slot-swap-pause.spec.ts` — 13 cases — all passing (8.7s)
+
+**Retrofit 2026-05-06:**
+- Added `page.clock.install({ time: '2026-05-04T08:00:00Z' })` in `navigateToApp()` to remove the day-of-week flake (Mon/Tue tile clicks rendered as `past` outside Mon/Tue).
+- Sick-day flow rewritten under Story 3-19's unified path: L1 "This day is different…" → OverridePicker → "Sick day" → POST `/v1/plans/:planId/items/:itemId/override` (was: PATCH `/v1/plans/:planId/days/:day/pause`). The legacy pause endpoint is no longer reachable from the UI for the sick-day intent.
+- L1-options test updated: now asserts `Change an item`, `This day is different…`, `Cancel`. The pre-3-19 `Sick day` button no longer exists at L1.
+- Failure-path test now asserts the OverridePicker's inline `role="alert"` (3-19 added this; pre-3-19 the L1 picker had no error region).
 
 | Group | Cases | Coverage |
 |-------|-------|----------|
@@ -293,3 +299,55 @@ Run: `pnpm --filter @hivekitchen/web build && pnpm --filter @hivekitchen/web exe
 - Cross-household GET → 403
 
 Run: `pnpm --filter @hivekitchen/contracts test -- school-policy && pnpm --filter @hivekitchen/api test -- school-policies && pnpm --filter @hivekitchen/api test -- children.routes`
+
+## Story 3-19 — Day-level context overrides (added 2026-05-06)
+
+**File:** `apps/web/test/e2e/3-19-day-level-context-overrides.spec.ts` — 8 tests, all passing (9.0s)
+
+| Group | # | Description | Covers |
+|-------|---|---|---|
+| OverridePicker entry | 1 | L1 "This day is different…" opens OverridePicker directly on single-item days; all 8 override options visible | AC #1 — entry + option set |
+| OverridePicker entry | 2 | Multi-item day routes through "Which slot is different today?" before the picker | AC #1 — multi-slot path |
+| POST override | 3 | Selecting `sport_practice` POSTs to `/v1/plans/:planId/items/:itemId/override` with method=POST, valid Idempotency-Key UUID, body matching `{override_type, child_id, is_lumi_proposed:false}`, ISO `override_date` | AC #1 — writes day_overrides row |
+| POST override | 4 | `bag_suspended` (non-composition) still posts and dismisses picker | AC #1 — non-composition path |
+| POST override | 5 | Multi-item day posts the override against the slot picked in L2 | AC #1 — slot-scoped POST |
+| Error handling | 6 | 500 from override endpoint shows "Could not save that override…" alert and keeps picker open | error UX |
+| Dismiss flows | 7 | Cancel inside the OverridePicker returns to L1 on a single-item day | navigation |
+| Dismiss flows | 8 | Cancel inside the OverridePicker returns to L2 on a multi-item day | navigation |
+
+**Mocked endpoints:** `GET /v1/users/me`, `GET /v1/households/:id/brief`, `POST /v1/plans/:planId/items/*/override`.
+
+**Not covered by E2E** (already covered elsewhere):
+- 4 OverridePicker component tests (`OverridePicker.test.tsx`) — option list, mutation invocation, error alert, Cancel callback
+- Lumi-proposed (`is_lumi_proposed=true`) confirmation flow — UI not yet wired (deferred)
+- Manual revert affordance — `useRevertDayOverrideMutation` exists but has no UI entry point (logged as decision-needed in story review)
+- Service-side regen-trigger logic, audit writes, allergen-affecting paths — covered by `day-overrides.service.test.ts`
+- Contract round-trips — covered by `packages/contracts/src/day-override.test.ts`
+
+**Findings during E2E generation:**
+- `PlanTile.deriveVariant()` reads the real wall-clock `Date.getDay()` — without `page.clock.install({ time: <a Monday> })`, weekday tiles earlier than the test machine's day-of-week render as `past` (`pointer-events-none`) and are unclickable. The pinned clock is now applied in `navigateToApp()`. The same hazard latently affects `3-12-per-slot-swap-pause.spec.ts` (Mon/Tue tile clicks) — flag for retrofit.
+- The Playwright `webServer` is `pnpm preview` against `dist/` — it does not auto-rebuild. A stale `dist/` will mask source changes; always run `pnpm --filter @hivekitchen/web build` before `playwright test`.
+
+Run: `pnpm --filter @hivekitchen/web build && pnpm --filter @hivekitchen/web exec playwright test test/e2e/3-19-day-level-context-overrides.spec.ts`
+
+---
+
+## Story 3-20 — Bag Composition Settings Page (added 2026-05-07)
+
+**File:** `apps/web/test/e2e/3-20-bag-composition-settings.spec.ts` — 6 tests, all passing (8.4s)
+
+| # | Description | Covers |
+|---|---|---|
+| 1 | Pre-populates Snack/Extra from child GET; Main always locked | AC — initial state from `GET /v1/households/:hh/children/:childId` |
+| 2 | Toggling Snack on + saving PATCHes `{ snack: true, extra: true }`, shows confirmation | AC — PATCH body shape, success toast |
+| 3 | Save shows "Saving…" and is disabled while PATCH is in-flight | AC — loading guard |
+| 4 | 5xx PATCH renders error alert; composition controls stay visible for retry | AC — error recovery |
+| 5 | Child GET failure surfaces error alert; no composition form controls rendered | AC — load error state |
+| 6 | School policies page shows cross-link to bag composition settings (DN6) | DN6 — `SchoolPoliciesForm` link |
+
+**Mocked endpoints:** `GET /v1/users/me`, `GET /v1/households/:id/brief`, `GET /v1/households/:hh/children/:childId`, `PATCH /v1/children/:id/bag-composition`, `GET /v1/children/:id/school-policies`.
+
+**Findings during E2E generation:**
+- Tests failed initially with React Router "404 Not Found" because `app.tsx` was modified after the last `vite build`. The `pnpm preview` webServer serves `dist/` — always rebuild before running E2E for routes added in the current story. Fixed by running `pnpm --filter @hivekitchen/web build` before the test run.
+
+Run: `pnpm --filter @hivekitchen/web build && pnpm --filter @hivekitchen/web exec playwright test test/e2e/3-20-bag-composition-settings.spec.ts`

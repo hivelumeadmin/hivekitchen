@@ -1,7 +1,18 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { FastifyBaseLogger } from 'fastify';
 import type { Redis } from 'ioredis';
-import { DomainOrchestrator } from './orchestrator.js';
+import {
+  DomainOrchestrator,
+  buildBagCompositionLines,
+  buildCulturalContextLines,
+  buildExtraRulesLines,
+} from './orchestrator.js';
+import type {
+  PlannerBagComposition,
+  PlannerCulturalContext,
+  PlannerExtraLibraryItem,
+  PlannerExtraRules,
+} from './orchestrator.js';
 import { TOOL_MANIFEST } from './tools.manifest.js';
 import type { ToolSpec } from './tools.manifest.js';
 import type { LLMProvider, LLMResponse } from './providers/llm-provider.interface.js';
@@ -405,6 +416,361 @@ describe('DomainOrchestrator', () => {
       expect(orchestrator.getActiveProvider().name).toBe('primary');
       expect(audit.write).not.toHaveBeenCalled();
       expect(secondary.complete).not.toHaveBeenCalled();
+    });
+  });
+
+  // Story 3.18 — cultural context is rendered into the planner prompt as
+  // natural-language lines. The buildCulturalContextLines helper is the
+  // single source of truth; planWeek() consumes its output.
+  describe('buildCulturalContextLines', () => {
+    it('returns empty array for undefined cultural context (silence mode)', () => {
+      expect(buildCulturalContextLines(undefined)).toEqual([]);
+    });
+
+    it('returns empty array when all fields are empty', () => {
+      const ctx: PlannerCulturalContext = {
+        observances: [],
+        l0Preferences: [],
+        l1MethodPriors: [],
+        culturalObligations: [],
+        culturalTemplates: [],
+      };
+      expect(buildCulturalContextLines(ctx)).toEqual([]);
+    });
+
+    it('renders templates as display names, observances, L0 preferences, cultural obligations, and L1 priors', () => {
+      const ctx: PlannerCulturalContext = {
+        observances: [
+          {
+            observance_name: 'Diwali',
+            cultural_template: 'hindu_vegetarian',
+            start_date: '2026-11-08',
+            end_date: '2026-11-08',
+            dietary_notes: 'Sweets, fried foods.',
+          },
+        ],
+        l0Preferences: ['Maya refuses bell peppers.'],
+        l1MethodPriors: ['Ayaan prefers sandwiches over wraps.'],
+        culturalObligations: ['No meat and dairy together.'],
+        culturalTemplates: ['hindu_vegetarian'],
+      };
+
+      const lines = buildCulturalContextLines(ctx);
+
+      // Template slug rendered as display name
+      expect(lines).toContain(
+        'Cultural templates ratified by this household: Hindu vegetarian.',
+      );
+      expect(lines).toContain('Upcoming cultural observances during this plan week:');
+      // Observance uses display name, not slug
+      expect(lines.some((l) => l.includes('Diwali (Hindu vegetarian)'))).toBe(true);
+      expect(lines.some((l) => l.includes('Sweets, fried foods.'))).toBe(true);
+      expect(lines).toContain(
+        'Household food preferences (apply silently — no confirmation needed):',
+      );
+      expect(lines).toContain('- Maya refuses bell peppers.');
+      expect(lines).toContain('Cultural obligations (required — do not override):');
+      expect(lines).toContain('- No meat and dairy together.');
+      expect(lines).toContain(
+        'Preparation priors (soft signals — prefer but not required):',
+      );
+      expect(lines).toContain('- Ayaan prefers sandwiches over wraps.');
+    });
+
+    it('renders a single-day observance with one date and skips empty dietary notes', () => {
+      const ctx: PlannerCulturalContext = {
+        observances: [
+          {
+            observance_name: 'Eid al-Fitr',
+            cultural_template: 'halal',
+            start_date: '2026-03-20',
+            end_date: '2026-03-20',
+            dietary_notes: null,
+          },
+        ],
+        l0Preferences: [],
+        l1MethodPriors: [],
+        culturalObligations: [],
+        culturalTemplates: ['halal'],
+      };
+
+      const lines = buildCulturalContextLines(ctx);
+      const observanceLine = lines.find((l) => l.includes('Eid al-Fitr'));
+
+      expect(observanceLine).toBeDefined();
+      expect(observanceLine).toContain('2026-03-20.');
+      expect(observanceLine).not.toContain(' – ');
+    });
+
+    it('appends "recurs weekly" to the Shabbat observance line', () => {
+      const ctx: PlannerCulturalContext = {
+        observances: [
+          {
+            observance_name: 'Shabbat',
+            cultural_template: 'kosher',
+            start_date: '2026-11-06',
+            end_date: '2026-11-06',
+            dietary_notes: 'Friday dinner: challah, fish, chicken.',
+          },
+        ],
+        l0Preferences: [],
+        l1MethodPriors: [],
+        culturalObligations: [],
+        culturalTemplates: ['kosher'],
+      };
+
+      const lines = buildCulturalContextLines(ctx);
+      const shabbatLine = lines.find((l) => l.includes('Shabbat'));
+
+      expect(shabbatLine).toBeDefined();
+      expect(shabbatLine).toContain('recurs weekly');
+      expect(shabbatLine).toContain('Kosher');
+    });
+  });
+
+  // Story 3.20 — bag composition lines instruct the planner to skip
+  // inactive Snack/Extra slots. Pure helper, single source of truth.
+  describe('buildBagCompositionLines', () => {
+    it('returns empty array when undefined', () => {
+      expect(buildBagCompositionLines(undefined)).toEqual([]);
+    });
+
+    it('returns empty array when no children are supplied', () => {
+      expect(buildBagCompositionLines([])).toEqual([]);
+    });
+
+    it('renders one line per child with ON/OFF flags and an enforcement instruction', () => {
+      const compositions: PlannerBagComposition[] = [
+        { child_id: CHILD_ID, child_name: 'Asha', snack: true, extra: false },
+        {
+          child_id: '33333333-3333-4333-8333-333333333333',
+          child_name: 'Kai',
+          snack: false,
+          extra: true,
+        },
+      ];
+
+      const lines = buildBagCompositionLines(compositions);
+
+      expect(lines[0]).toContain('Per-child bag composition');
+      expect(lines[0]).toContain('Main is always active');
+      expect(lines.some((l) => l.includes('Asha') && l.includes('Snack ON') && l.includes('Extra OFF'))).toBe(true);
+      expect(lines.some((l) => l.includes('Kai') && l.includes('Snack OFF') && l.includes('Extra ON'))).toBe(true);
+      expect(lines.at(-1)).toContain('Generate plan_items only for active slots');
+    });
+  });
+
+  // Story 3.21 — Extra rules pin/ban + library lines feed forward-only
+  // signals into the planner user message. Empty inputs collapse silently
+  // so the prompt stays neutral when no preferences exist.
+  describe('buildExtraRulesLines', () => {
+    it('returns empty when no rules and no library', () => {
+      expect(buildExtraRulesLines(undefined, undefined)).toEqual([]);
+      expect(buildExtraRulesLines([], [])).toEqual([]);
+    });
+
+    it('returns empty when every child has zero pins and zero bans', () => {
+      const rules: PlannerExtraRules[] = [
+        { child_id: CHILD_ID, child_name: 'Asha', pins: [], bans: [] },
+      ];
+      expect(buildExtraRulesLines(rules, undefined)).toEqual([]);
+    });
+
+    it('renders pins and bans per child plus the library summary', () => {
+      const rules: PlannerExtraRules[] = [
+        { child_id: CHILD_ID, child_name: 'Asha', pins: ['fruit'], bans: ['sweet treat'] },
+        {
+          child_id: '33333333-3333-4333-8333-333333333333',
+          child_name: 'Kai',
+          pins: [],
+          bans: [],
+        },
+      ];
+      const library: PlannerExtraLibraryItem[] = [
+        {
+          id: '44444444-4444-4444-8444-444444444444',
+          name: 'Homemade oat bar',
+          component_type: 'grain',
+          is_allergen_free: true,
+        },
+      ];
+
+      const lines = buildExtraRulesLines(rules, library);
+
+      expect(lines[0]).toContain('Per-child Extra slot pin/ban rules');
+      expect(lines.some((l) => l.includes('Asha') && l.includes('always include one of [fruit]'))).toBe(true);
+      expect(lines.some((l) => l.includes('Asha') && l.includes('never propose [sweet treat]'))).toBe(true);
+      // Kai had no pins or bans — no per-child line for them.
+      expect(lines.some((l) => l.includes('Kai'))).toBe(false);
+      expect(lines.some((l) => l.includes('Homemade oat bar (grain)'))).toBe(true);
+    });
+
+    it('renders the library section even when no pins or bans are set', () => {
+      const library: PlannerExtraLibraryItem[] = [
+        {
+          id: '44444444-4444-4444-8444-444444444444',
+          name: 'Fruit cup',
+          component_type: 'fruit',
+          is_allergen_free: true,
+        },
+      ];
+      const lines = buildExtraRulesLines([], library);
+      expect(lines.some((l) => l.includes('Household custom Extra items available'))).toBe(true);
+    });
+  });
+
+  describe('planWeek cultural context injection', () => {
+    let savedComposeSpec: ToolSpec;
+
+    beforeEach(() => {
+      savedComposeSpec = TOOL_MANIFEST.get('plan.compose')!;
+    });
+
+    afterEach(() => {
+      TOOL_MANIFEST.set('plan.compose', savedComposeSpec);
+    });
+
+    const MINIMAL_PLAN_OUTPUT = {
+      plan_id: '99999999-9999-4999-8999-999999999999',
+      household_id: HOUSEHOLD_ID,
+      week_of: '2026-11-02',
+      prompt_version: 'v1.1.0',
+      days: [
+        {
+          day: 'monday',
+          items: [{ child_id: CHILD_ID, slot: 'main', ingredients: ['rice'] }],
+        },
+      ],
+    };
+
+    it('injects cultural context lines into the planner user message', async () => {
+      let capturedUserContent: string | undefined;
+
+      const provider = buildProvider('primary', {
+        completeWithMessages: vi.fn().mockImplementation(
+          (messages: Array<{ role: string; content: unknown }>) => {
+            const userMsg = messages.find((m) => m.role === 'user');
+            capturedUserContent = userMsg?.content as string | undefined;
+            return Promise.resolve({
+              content: null,
+              toolCalls: [{ id: 'tc1', name: 'plan.compose', arguments: MINIMAL_PLAN_OUTPUT }],
+              finishReason: 'tool_calls',
+              usage: { promptTokens: 1, completionTokens: 1 },
+            });
+          },
+        ),
+      });
+
+      const { orchestrator } = buildOrchestrator([provider]);
+      const composeSpec = TOOL_MANIFEST.get('plan.compose')!;
+      TOOL_MANIFEST.set('plan.compose', {
+        ...composeSpec,
+        fn: vi.fn().mockResolvedValue(MINIMAL_PLAN_OUTPUT),
+      });
+
+      const ctx: PlannerCulturalContext = {
+        observances: [{
+          observance_name: 'Diwali',
+          cultural_template: 'hindu_vegetarian',
+          start_date: '2026-11-08',
+          end_date: '2026-11-08',
+          dietary_notes: null,
+        }],
+        l0Preferences: ['Maya refuses bell peppers.'],
+        l1MethodPriors: [],
+        culturalObligations: ['No onion or garlic during Navaratri.'],
+        culturalTemplates: ['hindu_vegetarian'],
+      };
+
+      await orchestrator.planWeek(HOUSEHOLD_ID, '2026-11-02', 'req-1', undefined, undefined, ctx);
+
+      expect(capturedUserContent).toContain('Hindu vegetarian');
+      expect(capturedUserContent).toContain('Diwali');
+      expect(capturedUserContent).toContain('Maya refuses bell peppers.');
+      expect(capturedUserContent).toContain('Cultural obligations (required — do not override):');
+      expect(capturedUserContent).toContain('No onion or garlic during Navaratri.');
+    });
+
+    it('injects bag composition lines into the planner user message', async () => {
+      let capturedUserContent: string | undefined;
+
+      const provider = buildProvider('primary', {
+        completeWithMessages: vi.fn().mockImplementation(
+          (messages: Array<{ role: string; content: unknown }>) => {
+            const userMsg = messages.find((m) => m.role === 'user');
+            capturedUserContent = userMsg?.content as string | undefined;
+            return Promise.resolve({
+              content: null,
+              toolCalls: [{ id: 'tc-bag', name: 'plan.compose', arguments: MINIMAL_PLAN_OUTPUT }],
+              finishReason: 'tool_calls',
+              usage: { promptTokens: 1, completionTokens: 1 },
+            });
+          },
+        ),
+      });
+
+      const { orchestrator } = buildOrchestrator([provider]);
+      const composeSpec = TOOL_MANIFEST.get('plan.compose')!;
+      TOOL_MANIFEST.set('plan.compose', {
+        ...composeSpec,
+        fn: vi.fn().mockResolvedValue(MINIMAL_PLAN_OUTPUT),
+      });
+
+      const bagCompositions: PlannerBagComposition[] = [
+        { child_id: CHILD_ID, child_name: 'Asha', snack: false, extra: true },
+      ];
+
+      await orchestrator.planWeek(
+        HOUSEHOLD_ID,
+        '2026-11-02',
+        'req-bag',
+        undefined,
+        undefined,
+        undefined,
+        bagCompositions,
+      );
+
+      expect(capturedUserContent).toContain('Per-child bag composition');
+      expect(capturedUserContent).toContain('Asha');
+      expect(capturedUserContent).toContain('Snack OFF');
+      expect(capturedUserContent).toContain('Extra ON');
+      expect(capturedUserContent).toContain(
+        'Generate plan_items only for active slots',
+      );
+    });
+
+    it('omits all cultural lines from the planner user message when culturalContext is undefined', async () => {
+      let capturedUserContent: string | undefined;
+
+      const provider = buildProvider('primary', {
+        completeWithMessages: vi.fn().mockImplementation(
+          (messages: Array<{ role: string; content: unknown }>) => {
+            const userMsg = messages.find((m) => m.role === 'user');
+            capturedUserContent = userMsg?.content as string | undefined;
+            return Promise.resolve({
+              content: null,
+              toolCalls: [{ id: 'tc2', name: 'plan.compose', arguments: MINIMAL_PLAN_OUTPUT }],
+              finishReason: 'tool_calls',
+              usage: { promptTokens: 1, completionTokens: 1 },
+            });
+          },
+        ),
+      });
+
+      const { orchestrator } = buildOrchestrator([provider]);
+      const composeSpec = TOOL_MANIFEST.get('plan.compose')!;
+      TOOL_MANIFEST.set('plan.compose', {
+        ...composeSpec,
+        fn: vi.fn().mockResolvedValue(MINIMAL_PLAN_OUTPUT),
+      });
+
+      await orchestrator.planWeek(HOUSEHOLD_ID, '2026-11-02', 'req-2');
+
+      expect(capturedUserContent).not.toContain('Cultural templates');
+      expect(capturedUserContent).not.toContain('Upcoming cultural observances');
+      expect(capturedUserContent).not.toContain('Household food preferences');
+      expect(capturedUserContent).not.toContain('Cultural obligations');
+      expect(capturedUserContent).not.toContain('Preparation priors');
     });
   });
 });

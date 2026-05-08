@@ -13,6 +13,9 @@ import type { MemoryService } from '../modules/memory/memory.service.js';
 import type { AllergyGuardrailService } from '../modules/allergy-guardrail/allergy-guardrail.service.js';
 import type { PlansService } from '../modules/plans/plans.service.js';
 import type { BriefStateComposer } from '../modules/plans/brief-state.composer.js';
+import type { PlanAdjustmentService } from '../modules/plans/plan-adjustment.service.js';
+import type { DayOverridesService } from '../modules/plans/day-overrides.service.js';
+import type { SnackSkusRepository } from '../modules/plans/snack-skus.repository.js';
 import type { DomainOrchestrator } from '../agents/orchestrator.js';
 
 interface BullMQFacade {
@@ -36,6 +39,9 @@ declare module 'fastify' {
     allergyGuardrailService: AllergyGuardrailService;
     plansService: PlansService;
     briefStateComposer: BriefStateComposer;
+    planAdjustmentService: PlanAdjustmentService;
+    dayOverridesService: DayOverridesService;
+    snackSkusRepository: SnackSkusRepository;
     orchestrator: DomainOrchestrator;
   }
 

@@ -136,6 +136,26 @@ export class ChildrenRepository extends BaseRepository {
     }, []);
   }
 
+  // Story 3.20 — lightweight read used by the plan-generation worker.
+  // Skips envelope decryption because the planner only needs each child's
+  // name + bag composition; allergens / cultural identifiers travel through
+  // the allergy guardrail and cultural-prior services on a separate path.
+  async findBagCompositionsByHousehold(
+    householdId: string,
+  ): Promise<Array<{ child_id: string; name: string; bag_composition: BagComposition }>> {
+    const { data, error } = await this.client
+      .from('children')
+      .select('id, name, bag_composition')
+      .eq('household_id', householdId);
+    if (error) throw error;
+    type Row = { id: string; name: string; bag_composition: RawBagComposition };
+    return ((data as Row[] | null) ?? []).map((row) => ({
+      child_id: row.id,
+      name: row.name,
+      bag_composition: parseBagComposition(row.bag_composition),
+    }));
+  }
+
   async updateBagComposition(
     id: string,
     householdId: string,

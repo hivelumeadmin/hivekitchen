@@ -12,6 +12,9 @@ import OnboardingPage from './routes/(app)/onboarding.js';
 import AccountPage from './routes/(app)/account.js';
 import PlanRoute from './routes/(app)/plan.js';
 import PlanHistoryRoute from './routes/(app)/plan-history.js';
+import ChildSchoolPoliciesPage from './routes/(app)/child-school-policies.js';
+import ChildBagCompositionPage from './routes/(app)/child-bag-composition.js';
+import ChildExtraRulesPage from './routes/(app)/child-extra-rules.js';
 
 function RootRedirect() {
   const hash = typeof window !== 'undefined' ? window.location.hash : '';
@@ -39,6 +42,9 @@ const router = createBrowserRouter([
       { path: '/app', element: <AppHomePage /> },
       { path: '/app/plan', element: <PlanRoute /> },
       { path: '/app/plan/:weekId', element: <PlanHistoryRoute /> },
+      { path: '/app/children/:childId/school-policies', element: <ChildSchoolPoliciesPage /> },
+      { path: '/app/children/:childId/bag-composition', element: <ChildBagCompositionPage /> },
+      { path: '/app/children/:childId/extra-rules', element: <ChildExtraRulesPage /> },
       { path: '/account', element: <AccountPage /> },
     ],
   },

@@ -27,6 +27,49 @@ import type {
   LLMResponse,
 } from './providers/llm-provider.interface.js';
 import type { ToolSpec } from './tools.manifest.js';
+import type {
+  CulturalObservance,
+  CulturalTemplateKey,
+} from '../services/cultural-calendar.service.js';
+
+// Story 3.18 — cultural context the planner agent receives alongside household
+// + week metadata. Empty arrays = silence-mode household → no cultural lines
+// injected → planner uses neutral defaults.
+export interface PlannerCulturalContext {
+  observances: readonly CulturalObservance[];
+  l0Preferences: readonly string[];
+  l1MethodPriors: readonly string[];
+  culturalObligations: readonly string[];
+  culturalTemplates: readonly CulturalTemplateKey[];
+}
+
+// Story 3.20 — per-child bag-slot configuration (snack/extra on/off). Main is
+// always on, so it's not part of the shape. The planner uses this to decide
+// which slots to fill for each child; an inactive slot must produce no
+// plan_items entry, not an entry with empty ingredients.
+export interface PlannerBagComposition {
+  child_id: string;
+  child_name: string;
+  snack: boolean;
+  extra: boolean;
+}
+
+// Story 3.21 — per-child Extra slot pin/ban rules + the household's
+// custom Extra library. Empty arrays = no preference; the planner falls
+// back to its general "interesting Extra" composition logic.
+export interface PlannerExtraRules {
+  child_id: string;
+  child_name: string;
+  pins: readonly string[];
+  bans: readonly string[];
+}
+
+export interface PlannerExtraLibraryItem {
+  id: string;
+  name: string;
+  component_type: string;
+  is_allergen_free: boolean;
+}
 
 export interface OrchestratorServices {
   memory: MemoryService;
@@ -169,14 +212,25 @@ export class DomainOrchestrator {
     requestId: string,
     rejectionContext?: string,
     dayScope?: string,  // Story 3.13 — ISO day name ('tuesday') for day-scoped regen
+    culturalContext?: PlannerCulturalContext,  // Story 3.18 — observances + L0/L1 priors
+    bagCompositions?: readonly PlannerBagComposition[],  // Story 3.20 — per-child snack/extra slots
+    extraRules?: readonly PlannerExtraRules[],  // Story 3.21 — per-child Extra pins/bans
+    extraLibraryItems?: readonly PlannerExtraLibraryItem[],  // Story 3.21 — household custom Extras
   ): Promise<PlanComposeOutput> {
     const MAX_PLAN_ITERATIONS = 20;
     const tools = Array.from(TOOL_MANIFEST.values());
+
+    const culturalLines = buildCulturalContextLines(culturalContext);
+    const bagCompositionLines = buildBagCompositionLines(bagCompositions);
+    const extraRulesLines = buildExtraRulesLines(extraRules, extraLibraryItems);
 
     const contextLines = [
       `Household ID: ${householdId}`,
       `Planning week starting: ${weekOf} (Monday)`,
       `Request ID: ${requestId}`,
+      ...culturalLines,
+      ...bagCompositionLines,
+      ...extraRulesLines,
       dayScope !== undefined
         ? `Regeneration scope: DAY ONLY. Only generate a new plan for ${dayScope.toUpperCase()}. Keep all other days exactly as previously composed. Only call plan.compose with items for ${dayScope} — do not include other days.`
         : undefined,
@@ -319,3 +373,134 @@ export class DomainOrchestrator {
     });
   }
 }
+
+const CULTURAL_TEMPLATE_DISPLAY_NAMES: Record<CulturalTemplateKey, string> = {
+  halal: 'Halal',
+  kosher: 'Kosher',
+  hindu_vegetarian: 'Hindu vegetarian',
+  south_asian: 'South Asian',
+  east_african: 'East African',
+  caribbean: 'Caribbean',
+};
+
+// Story 3.18 — translates the structured cultural context into the
+// natural-language lines the planner agent receives in its user message.
+// Returns an empty list for silence-mode households so the prompt stays
+// neutral.
+export function buildCulturalContextLines(
+  context: PlannerCulturalContext | undefined,
+): string[] {
+  if (context === undefined) return [];
+
+  const lines: string[] = [];
+
+  if (context.culturalTemplates.length > 0) {
+    const displayNames = context.culturalTemplates.map(
+      (k) => CULTURAL_TEMPLATE_DISPLAY_NAMES[k] ?? k,
+    );
+    lines.push(
+      `Cultural templates ratified by this household: ${displayNames.join(', ')}.`,
+    );
+  }
+
+  if (context.observances.length > 0) {
+    lines.push('Upcoming cultural observances during this plan week:');
+    for (const o of context.observances) {
+      const range = o.start_date === o.end_date
+        ? o.start_date
+        : `${o.start_date} – ${o.end_date}`;
+      const notes = o.dietary_notes !== null && o.dietary_notes.length > 0
+        ? ` ${o.dietary_notes}`
+        : '';
+      const templateName = CULTURAL_TEMPLATE_DISPLAY_NAMES[o.cultural_template] ?? o.cultural_template;
+      const recurrenceSuffix = o.observance_name === 'Shabbat' ? ', recurs weekly' : '';
+      lines.push(`- ${o.observance_name} (${templateName}${recurrenceSuffix}): ${range}.${notes}`);
+    }
+  }
+
+  if (context.l0Preferences.length > 0) {
+    lines.push('Household food preferences (apply silently — no confirmation needed):');
+    for (const p of context.l0Preferences) {
+      lines.push(`- ${p}`);
+    }
+  }
+
+  if (context.culturalObligations.length > 0) {
+    lines.push('Cultural obligations (required — do not override):');
+    for (const p of context.culturalObligations) {
+      lines.push(`- ${p}`);
+    }
+  }
+
+  if (context.l1MethodPriors.length > 0) {
+    lines.push('Preparation priors (soft signals — prefer but not required):');
+    for (const p of context.l1MethodPriors) {
+      lines.push(`- ${p}`);
+    }
+  }
+
+  return lines;
+}
+
+// Story 3.20 — formats per-child bag composition as planner context lines.
+// The planner must omit plan_items for inactive slots; emitting items with
+// empty ingredients would break the guardrail's `min(1)` invariant and feel
+// to the parent like the slot is still "live but blank".
+export function buildBagCompositionLines(
+  compositions: readonly PlannerBagComposition[] | undefined,
+): string[] {
+  if (compositions === undefined || compositions.length === 0) return [];
+  const lines: string[] = ['Per-child bag composition (Main is always active — never skip Main):'];
+  for (const c of compositions) {
+    const snack = c.snack ? 'ON' : 'OFF';
+    const extra = c.extra ? 'ON' : 'OFF';
+    lines.push(`- ${c.child_name} (${c.child_id}): Snack ${snack}, Extra ${extra}`);
+  }
+  lines.push(
+    'Generate plan_items only for active slots. Do not produce a Snack item when Snack is OFF, and do not produce an Extra item when Extra is OFF.',
+  );
+  return lines;
+}
+
+// Story 3.21 — formats per-child Extra pin/ban rules + the household's
+// custom Extra library as planner context lines. Pins are forward-looking
+// preferences ("always include a fruit"), bans are hard prohibitions
+// ("never propose a sweet treat"). Library items are parent-authored named
+// options the planner should prefer when they fulfil a pinned type.
+export function buildExtraRulesLines(
+  rules: readonly PlannerExtraRules[] | undefined,
+  libraryItems: readonly PlannerExtraLibraryItem[] | undefined,
+): string[] {
+  const hasRules = rules !== undefined && rules.some((r) => r.pins.length > 0 || r.bans.length > 0);
+  const hasLibrary = libraryItems !== undefined && libraryItems.length > 0;
+  if (!hasRules && !hasLibrary) return [];
+
+  const lines: string[] = [];
+
+  if (hasRules && rules !== undefined) {
+    lines.push('Per-child Extra slot pin/ban rules:');
+    for (const r of rules) {
+      if (r.pins.length === 0 && r.bans.length === 0) continue;
+      const parts: string[] = [];
+      if (r.pins.length > 0) {
+        parts.push(`always include one of [${r.pins.join(', ')}]`);
+      }
+      if (r.bans.length > 0) {
+        parts.push(`never propose [${r.bans.join(', ')}]`);
+      }
+      lines.push(`- ${r.child_name} (${r.child_id}): ${parts.join('; ')}.`);
+    }
+  }
+
+  if (hasLibrary && libraryItems !== undefined) {
+    const summary = libraryItems
+      .map((i) => `${i.name} (${i.component_type})`)
+      .join(', ');
+    lines.push(
+      `Household custom Extra items available (prefer these when they match a pinned component type): ${summary}.`,
+    );
+  }
+
+  return lines;
+}
+

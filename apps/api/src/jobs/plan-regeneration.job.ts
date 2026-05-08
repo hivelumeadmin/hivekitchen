@@ -7,6 +7,18 @@ import type {
   PlanItemWrite,
 } from '@hivekitchen/types';
 import { buildCommitInput } from './plan-generation.job.js';
+import { ChildrenRepository } from '../modules/children/children.repository.js';
+import { CulturalPriorRepository } from '../modules/cultural-priors/cultural-prior.repository.js';
+import { CulturalCalendarService } from '../services/cultural-calendar.service.js';
+import { MemoryContextService } from '../services/memory-context.service.js';
+import { ExtraRulesRepository } from '../modules/children/extra-rules.repository.js';
+import { ExtraLibraryRepository } from '../modules/households/extra-library.repository.js';
+import {
+  loadBagCompositionsForHousehold,
+  loadCulturalContextForHousehold,
+  loadExtraLibraryForHousehold,
+  loadExtraRulesForChildren,
+} from './planner-context.loader.js';
 
 export const REGEN_QUEUE = 'plan-regeneration';
 
@@ -46,7 +58,24 @@ const planRegenerationPlugin: FastifyPluginAsync = async (fastify) => {
       'planRegenerationPlugin requires auditService decorator — register auditHook first',
     );
   }
+  if (!fastify.supabase) {
+    throw new Error(
+      'planRegenerationPlugin requires supabase decorator — register supabasePlugin first',
+    );
+  }
 
+  // Story 3.18 — cultural context loaders shared with the generation job.
+  // Day-scope and rejection-retry paths both reuse the snapshot captured at
+  // job start so the planner sees a consistent view even if cultural priors
+  // change mid-flight.
+  const culturalPriorRepository = new CulturalPriorRepository(fastify.supabase);
+  const culturalCalendarService = new CulturalCalendarService(fastify.supabase);
+  const memoryContextService = new MemoryContextService(fastify.supabase);
+  // Story 3.20 — kek=null is fine: findBagCompositionsByHousehold() does not
+  // touch encrypted columns.
+  const childrenRepository = new ChildrenRepository(fastify.supabase, null, fastify.log);
+  const extraRulesRepository = new ExtraRulesRepository(fastify.supabase);
+  const extraLibraryRepository = new ExtraLibraryRepository(fastify.supabase);
   const regenWorker = fastify.bullmq.getWorker(
     REGEN_QUEUE,
     async (job: Job<PlanRegenerationJobData>) => {
@@ -65,6 +94,13 @@ const planRegenerationPlugin: FastifyPluginAsync = async (fastify) => {
         'plan-regeneration job started',
       );
 
+      const [culturalContext, bagCompositions, extraLibraryItems] = await Promise.all([
+        loadCulturalContextForHousehold(household_id, week_of, culturalPriorRepository, culturalCalendarService, memoryContextService),
+        loadBagCompositionsForHousehold(household_id, childrenRepository),
+        loadExtraLibraryForHousehold(household_id, extraLibraryRepository),
+      ]);
+      const extraRules = await loadExtraRulesForChildren(bagCompositions, extraRulesRepository);
+
       // Run the planner. For scope='day', pass dayScope so the prompt instructs
       // the agent to only plan for that day. The compose output may include only
       // that day's items (agent-guided) or the full week (if the LLM doesn't
@@ -75,6 +111,10 @@ const planRegenerationPlugin: FastifyPluginAsync = async (fastify) => {
         request_id,
         undefined,
         scope === 'day' ? day : undefined,
+        culturalContext,
+        bagCompositions,
+        extraRules,
+        extraLibraryItems,
       );
 
       // For day-scope: filter the output to only include items for the target day.
@@ -116,6 +156,7 @@ const planRegenerationPlugin: FastifyPluginAsync = async (fastify) => {
             ingredients: item.ingredients,
             ...(item.recipe_id != null ? { recipe_id: item.recipe_id } : {}),
             ...(item.item_id != null ? { item_id: item.item_id } : {}),
+            ...(item.item_sku_id != null ? { item_sku_id: item.item_sku_id } : {}),
           }));
         commitInput.items = [...otherDayItems, ...commitInput.items];
       }
@@ -139,6 +180,10 @@ const planRegenerationPlugin: FastifyPluginAsync = async (fastify) => {
             request_id,
             rejectionContext,
             scope === 'day' ? day : undefined,
+            culturalContext,
+            bagCompositions,
+            extraRules,
+            extraLibraryItems,
           );
 
           const filteredRetry =

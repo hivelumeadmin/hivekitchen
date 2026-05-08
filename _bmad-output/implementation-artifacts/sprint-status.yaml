@@ -1,5 +1,5 @@
 # generated: 2026-04-23
-# last_updated: 2026-05-05 (Story 3-15 → done)
+# last_updated: 2026-05-07 (Story 3-21 → done after review patches applied)
 # project: hivekitchen
 # project_key: NOKEY
 # tracking_system: file-system
@@ -35,7 +35,7 @@
 # - Dev moves story to 'review', then runs code-review (fresh context, different LLM recommended)
 
 generated: 2026-04-23
-last_updated: 2026-05-05 (Story 3-16 → review)
+last_updated: 2026-05-07 (Story 3-21 → done after review patches applied)
 project: hivekitchen
 project_key: NOKEY
 tracking_system: file-system
@@ -99,12 +99,12 @@ development_status:
   3-13-plan-regeneration-request: done
   3-14-following-weeks-draft-view: done
   3-15-historical-plans-outcomes-view: done
-  3-16-school-policy-update-propagation: review
-  3-17-system-adjusts-on-policy-leftover-calendar-changes: ready-for-dev
-  3-18-cultural-calendar-awareness-l0-l1-priors: ready-for-dev
-  3-19-day-level-context-overrides: ready-for-dev
-  3-20-lunch-bag-composition-modification-snack-vs-main-modeling: ready-for-dev
-  3-21-pin-ban-extra-component-types-reusable-extra-library: ready-for-dev
+  3-16-school-policy-update-propagation: done
+  3-17-system-adjusts-on-policy-leftover-calendar-changes: done
+  3-18-cultural-calendar-awareness-l0-l1-priors: done
+  3-19-day-level-context-overrides: done
+  3-20-lunch-bag-composition-modification-snack-vs-main-modeling: done
+  3-21-pin-ban-extra-component-types-reusable-extra-library: done
   3-22-passive-bias-from-extra-removals-high-activity-extra-proposal: ready-for-dev
   3-23-per-slot-policy-scoping-bag-wide-allergy-rule: ready-for-dev
   3-24-allergy-uncertainty-flagging-safe-substitution: ready-for-dev
