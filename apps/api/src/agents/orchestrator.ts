@@ -71,6 +71,17 @@ export interface PlannerExtraLibraryItem {
   is_allergen_free: boolean;
 }
 
+// Story 3.22 — children whose Extra slot is OFF but who have a high-activity
+// day_override (sport_practice / field_trip) on the upcoming week. The planner
+// is instructed to propose one Extra item for those specific days; full parent-
+// confirmation UX is deferred to a follow-up story.
+export interface PlannerExtraProposal {
+  child_id: string;
+  child_name: string;
+  override_date: string;
+  override_type: 'sport_practice' | 'field_trip';
+}
+
 export interface OrchestratorServices {
   memory: MemoryService;
   allergyGuardrail: AllergyGuardrailService;
@@ -216,6 +227,7 @@ export class DomainOrchestrator {
     bagCompositions?: readonly PlannerBagComposition[],  // Story 3.20 — per-child snack/extra slots
     extraRules?: readonly PlannerExtraRules[],  // Story 3.21 — per-child Extra pins/bans
     extraLibraryItems?: readonly PlannerExtraLibraryItem[],  // Story 3.21 — household custom Extras
+    extraProposals?: readonly PlannerExtraProposal[],  // Story 3.22 — high-activity Extra proposals (FR119)
   ): Promise<PlanComposeOutput> {
     const MAX_PLAN_ITERATIONS = 20;
     const tools = Array.from(TOOL_MANIFEST.values());
@@ -223,6 +235,7 @@ export class DomainOrchestrator {
     const culturalLines = buildCulturalContextLines(culturalContext);
     const bagCompositionLines = buildBagCompositionLines(bagCompositions);
     const extraRulesLines = buildExtraRulesLines(extraRules, extraLibraryItems);
+    const extraProposalLines = buildExtraProposalLines(extraProposals);
 
     const contextLines = [
       `Household ID: ${householdId}`,
@@ -231,6 +244,7 @@ export class DomainOrchestrator {
       ...culturalLines,
       ...bagCompositionLines,
       ...extraRulesLines,
+      ...extraProposalLines,
       dayScope !== undefined
         ? `Regeneration scope: DAY ONLY. Only generate a new plan for ${dayScope.toUpperCase()}. Keep all other days exactly as previously composed. Only call plan.compose with items for ${dayScope} — do not include other days.`
         : undefined,
@@ -501,6 +515,27 @@ export function buildExtraRulesLines(
     );
   }
 
+  return lines;
+}
+
+// Story 3.22 — translates high-activity Extra proposals into prompt context.
+// The planner is told to propose ONE Extra item only on the named day for
+// children whose Extra slot is normally OFF, overriding the bag-composition
+// suppression rule for that single day. Parent confirmation UX for the
+// proposed item is deferred — the MVP commits the planner's proposal and
+// relies on the swap path for opt-out.
+export function buildExtraProposalLines(
+  proposals: readonly PlannerExtraProposal[] | undefined,
+): string[] {
+  if (proposals === undefined || proposals.length === 0) return [];
+  const lines: string[] = [
+    'High-activity day Extra proposals (Lumi-suggested — propose Extra ONLY on the named day, even when Extra is OFF for that child):',
+  ];
+  for (const p of proposals) {
+    lines.push(
+      `- On ${p.override_date}, ${p.child_name} (${p.child_id}) has a ${p.override_type}. Add one Extra item for that day only; do not add Extra on other days for this child.`,
+    );
+  }
   return lines;
 }
 

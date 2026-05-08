@@ -15,12 +15,14 @@ import { CulturalCalendarService } from '../services/cultural-calendar.service.j
 import { MemoryContextService } from '../services/memory-context.service.js';
 import { ExtraRulesRepository } from '../modules/children/extra-rules.repository.js';
 import { ExtraLibraryRepository } from '../modules/households/extra-library.repository.js';
+import { DayOverridesRepository } from '../modules/plans/day-overrides.repository.js';
 import { deriveWeekId } from '../lib/derive-week-id.js';
 import {
   loadBagCompositionsForHousehold,
   loadCulturalContextForHousehold,
   loadExtraLibraryForHousehold,
   loadExtraRulesForChildren,
+  loadHighActivityExtraProposalsForHousehold,
 } from './planner-context.loader.js';
 
 export { deriveWeekId };
@@ -150,6 +152,10 @@ const planGenerationPlugin: FastifyPluginAsync = async (fastify) => {
   // Story 3.21 — Extra slot pin/ban rules + household custom Extra library.
   const extraRulesRepository = new ExtraRulesRepository(fastify.supabase);
   const extraLibraryRepository = new ExtraLibraryRepository(fastify.supabase);
+  // Story 3.22 — high-activity Extra proposals (FR119) read active day_overrides
+  // and pair them with bag-composition data to surface sport_practice/field_trip
+  // days for children whose Extra slot is OFF.
+  const dayOverridesRepository = new DayOverridesRepository(fastify.supabase);
 
   // Fan-out scheduler — Friday 10:00 UTC (= 06:00 ET / 03:00 PT). For each
   // active household, enqueues a delayed per-household job that fires at
@@ -256,7 +262,44 @@ const planGenerationPlugin: FastifyPluginAsync = async (fastify) => {
       ]);
       // extra_rules read fans out per-child; depends on bagCompositions for
       // {child_id, child_name} pairs, so it's sequenced after the parallel batch.
-      const extraRules = await loadExtraRulesForChildren(bagCompositions, extraRulesRepository);
+      // Story 3.22 — high-activity proposals also depend on bagCompositions
+      // to identify children with Extra=OFF.
+      const [extraRules, extraProposals] = await Promise.all([
+        loadExtraRulesForChildren(bagCompositions, extraRulesRepository),
+        loadHighActivityExtraProposalsForHousehold(
+          household_id,
+          week_of,
+          bagCompositions,
+          dayOverridesRepository,
+        ),
+      ]);
+
+      // Story 3.22 — write a single audit row per planning batch summarising
+      // the proposals injected. Ops can correlate with plan.generated to see
+      // which weeks suggested override-driven Extras.
+      if (extraProposals.length > 0) {
+        try {
+          await fastify.auditService.write({
+            event_type: 'plan.extra_proposal_created',
+            household_id,
+            request_id,
+            metadata: {
+              week_of,
+              proposal_count: extraProposals.length,
+              proposals: extraProposals.map((p) => ({
+                child_id: p.child_id,
+                override_date: p.override_date,
+                override_type: p.override_type,
+              })),
+            },
+          });
+        } catch (err) {
+          fastify.log.error(
+            { err, household_id, week_of },
+            'audit write failed for plan.extra_proposal_created — continuing',
+          );
+        }
+      }
 
       const composeOutput = await fastify.orchestrator.planWeek(
         household_id,
@@ -268,6 +311,7 @@ const planGenerationPlugin: FastifyPluginAsync = async (fastify) => {
         bagCompositions,
         extraRules,
         extraLibraryItems,
+        extraProposals,
       );
       const commitInput = buildCommitInput(composeOutput, weekId, request_id);
 
@@ -293,6 +337,7 @@ const planGenerationPlugin: FastifyPluginAsync = async (fastify) => {
             bagCompositions,
             extraRules,
             extraLibraryItems,
+            extraProposals,
           );
           return buildCommitInput(retryOutput, weekId, request_id);
         },

@@ -1,6 +1,6 @@
 # Story 3.22: Passive Bias from Extra Removals + High-Activity Extra Proposal
 
-Status: ready-for-dev
+Status: review
 
 ## Story
 
@@ -35,6 +35,15 @@ So that Lumi learns from my actions without making me explain (FR116, FR119).
 ---
 
 ## Tasks / Subtasks
+
+- [x] Task 1 — DB Migration: `extra_removal_signals` table
+- [x] Task 2 — `ExtraRemovalSignalService`: record and evaluate signals
+- [x] Task 3 — Hook into swap endpoint (Story 3.12) to record Extra removals
+- [x] Task 4 — High-activity Extra proposal (FR119)
+- [x] Task 5 — Audit event types
+- [x] Task 6 — Tests
+
+---
 
 ### Task 1 — DB Migration: `extra_removal_signals` table
 
@@ -320,8 +329,86 @@ _bmad-output/implementation-artifacts/deferred-work.md     + component_type colu
 
 ---
 
+## Dev Agent Record
+
+### Implementation Plan
+1. DB migration adds `extra_removal_signals` table with the (child, type) partial index, RLS enabled, and the two new audit-enum values.
+2. `ExtraRemovalSignalService` is a fire-and-forget service: insert signal → count window → if threshold met, extend `extra_rules.bans` (idempotent, household-scoped) and flip signals via a single bulk update. All errors are logged, never thrown — bias is a soft signal.
+3. `PlansService.swapItem()` calls the service after a successful Extra-slot swap; component_type comes from `snack_skus.category` (when item_sku_id is set) or falls back to `ingredients[0]`. Coarse inference is captured as deferred work.
+4. FR119 high-activity proposals: a new `loadHighActivityExtraProposalsForHousehold()` joins `findActiveByHousehold()` overrides with bag-composition data, filters to sport_practice/field_trip on the upcoming Mon..Sat window for children with Extra=OFF, and feeds a new `extraProposals` planner-context list into `planWeek()`. The plan-generation job writes a `plan.extra_proposal_created` audit row when proposals are generated. Full parent-confirmation UX is deferred.
+
+### Completion Notes
+- All 6 tasks complete; story-specific test suite (`extra-removal-signal.service.test.ts`, 12 tests) passes 100%; modified `orchestrator.test.ts` + `plans.service.test.ts` still pass (70 tests). Pre-existing failures in `day-overrides.service.test.ts`, `plan-adjustment.service.test.ts`, `day-overrides.repository.test.ts`, `extra-library.repository.test.ts`, and `memory.service.test.ts` were verified to fail on clean `main` before my changes — not regressions.
+- Code-review patch (concurrent applyBias race) addressed via `append_extra_ban` Postgres RPC — see new migration and `ExtraRulesRepository.appendBanAtomic()`. All 27 tests in the two changed files pass.
+- `recordRemoval` is fire-and-forget on the swap path: the swap response is never blocked or failed by signal-recording errors. Audit failures inside the bias-apply path are logged but do not unwind the bias.
+- New `ExtraRemovalSignalService` and `SnackSkusRepository` are passed to `PlansService` as **optional** deps so existing tests construct the service without wiring them.
+- FR119: planner prompt instruction is the MVP. `requires_confirmation` per item, the pending-input PlanTile state, and the confirm/decline mutation are deferred (`deferred-work.md`).
+- Component-type inference uses `snack_skus.category` or `ingredients[0]` — coarse but acceptable at MVP. A `plan_items.component_type` column is captured as deferred work.
+- Plan-regeneration path does NOT yet inject high-activity proposals (only initial plan generation does). Captured as deferred work.
+
+### File List
+**New**
+- `supabase/migrations/20260810000000_create_extra_removal_signals.sql`
+- `supabase/migrations/20260811000000_add_append_extra_ban_fn.sql` — atomic `append_extra_ban` RPC for race-free passive-bias writes (review patch)
+- `apps/api/src/modules/plans/extra-removal-signal.service.ts`
+- `apps/api/src/modules/plans/extra-removal-signal.service.test.ts`
+
+**Modified**
+- `apps/api/src/audit/audit.types.ts` — added `plan.extra_bias_applied`, `plan.extra_proposal_created`
+- `apps/api/src/modules/children/extra-rules.repository.ts` — added `appendBanAtomic()` (wraps `append_extra_ban` RPC) for race-free passive-bias writes (review patch)
+- `apps/api/src/modules/children/extra-rules.repository.test.ts` — 5 new tests for `appendBanAtomic` (appended / already_banned / not_found / empty / RPC error) (review patch)
+- `apps/api/src/agents/orchestrator.ts` — `PlannerExtraProposal` type, `extraProposals` parameter on `planWeek()`, `buildExtraProposalLines()` exported helper
+- `apps/api/src/agents/orchestrator.test.ts` — tests for `buildExtraProposalLines`
+- `apps/api/src/jobs/planner-context.loader.ts` — `loadHighActivityExtraProposalsForHousehold()` + helper
+- `apps/api/src/jobs/plan-generation.job.ts` — wires the proposal loader, audits `plan.extra_proposal_created`, threads `extraProposals` through both initial and retry `planWeek()` calls
+- `apps/api/src/modules/plans/plans.service.ts` — optional `extraRemovalSignalService` and `snackSkusRepository` deps; `recordExtraRemovalSignal()` private helper invoked after a successful Extra-slot swap
+- `apps/api/src/modules/plans/plans.hook.ts` — instantiates `ExtraRemovalSignalService` + `SnackSkusRepository`, injects into `PlansService`
+- `_bmad-output/implementation-artifacts/sprint-status.yaml` — 3-22 → review (after dev), last_updated
+- `_bmad-output/implementation-artifacts/deferred-work.md` — Story 3.22 deferred items
+
 ## Change Log
 
 | Date | Author | Change |
 |------|--------|--------|
 | 2026-05-05 | Menon | Story 3.22 created — ready-for-dev. |
+| 2026-05-07 | Amelia | Story 3.22 implemented — Tasks 1-6 complete; status → review. |
+| 2026-05-07 | Claude | Code review complete — 1 decision-needed, 5 patches, 6 deferred, 3 dismissed. |
+| 2026-05-07 | Amelia | Addressed remaining review patch (concurrent applyBias race) via atomic `append_extra_ban` RPC; status → review. |
+| 2026-05-07 | Claude | Code review Pass 2 complete — 1 decision-needed, 4 patches, 2 deferred, 11 dismissed. |
+
+---
+
+### Review Findings
+
+**Decision-Needed**
+- [x] [Review][Decision] AC2 confirmation gate vs MVP scope — AC2 is correct as written ("Lumi proposes, parents decide"). The current implementation commits without confirmation; full confirmation UX (requires_confirmation flag, pending-input PlanTile, confirm/decline mutation) is tracked as deferred. Story cannot be marked done until the confirmation gate is wired. — deferred, tracked under FR119 in deferred-work.md
+
+**Patches**
+- [x] [Review][Patch] weekEnd Saturday off-by-one — fixed: `addDaysIso(weekOf, 5)` → `addDaysIso(weekOf, 4)`; comment updated to Mon..Fri. [`apps/api/src/jobs/planner-context.loader.ts`]
+- [x] [Review][Patch] `markSignalsApplied` missing household_id predicate — fixed: added `.eq('household_id', opts.householdId)` to the UPDATE; opts type updated; test assertion updated. [`apps/api/src/modules/plans/extra-removal-signal.service.ts`]
+- [x] [Review][Patch] `if (!bc.extra)` falsy conflates null and false — fixed: changed to `if (bc.extra === false)`. [`apps/api/src/jobs/planner-context.loader.ts`]
+- [x] [Review][Patch] Missing unit test for `loadHighActivityExtraProposalsForHousehold` — fixed: created `apps/api/src/jobs/planner-context.loader.test.ts` with 10 tests covering date boundaries, type filtering, and Extra-OFF semantics.
+- [x] [Review][Patch] Concurrent different-type `applyBias` calls can overwrite each other — fixed: added `append_extra_ban` Postgres RPC (`supabase/migrations/20260811000000_add_append_extra_ban_fn.sql`) that performs the containment check + array append in a single UPDATE; new `ExtraRulesRepository.appendBanAtomic()` wraps the RPC; `applyBias()` now uses the atomic path instead of read-then-write. Returns `appended` / `already_banned` / `not_found` so the service preserves the prior signal-flip and audit semantics. Tests: 5 new repository tests + service test for the already-banned path now driven by RPC status; 11 → 12 service tests after adding RPC-throw coverage.
+
+**Deferred**
+- [x] [Review][Defer] `componentType` fallback to `ingredients[0]` is semantically coarse [`apps/api/src/modules/plans/plans.service.ts:recordExtraRemovalSignal`] — deferred, explicitly acknowledged in spec dev notes
+- [x] [Review][Defer] `findActiveByHousehold` loads all active overrides without date bounding [`apps/api/src/jobs/planner-context.loader.ts`] — deferred, pre-existing repository interface
+- [x] [Review][Defer] `ALTER TYPE … ADD VALUE IF NOT EXISTS` is non-transactional in Postgres [`supabase/migrations/20260810000000_create_extra_removal_signals.sql`] — deferred, pre-existing migration pattern
+- [x] [Review][Defer] `child_name` embedded verbatim in LLM prompt without sanitization [`apps/api/src/agents/orchestrator.ts:buildExtraProposalLines`] — deferred, pre-existing pattern across orchestrator
+- [x] [Review][Defer] Fire-and-forget signal recording has no retry on transient DB failure [`apps/api/src/modules/plans/plans.service.ts`] — deferred, architectural choice documented in spec
+- [x] [Review][Defer] `applyBias` self-healing loop under persistent `markSignalsApplied` failure [`apps/api/src/modules/plans/extra-removal-signal.service.ts`] — deferred, degrades gracefully with log noise; no correctness harm
+
+### Review Findings (Pass 2 — 2026-05-07)
+
+**Decision-Needed**
+- [x] [Review][Decision] AC1 inference practically non-functional for non-SKU Extra items — deferred. AC1 works reliably for SKU-backed Extras; for agent-composed Extras (no `item_sku_id`), `ingredients[0]` naming is inconsistent so the 30-day threshold rarely accumulates. Accepted as a known AC1 gap; full fix requires `plan_items.component_type` column (tracked in deferred-work.md). Story can proceed to done. [`apps/api/src/modules/plans/plans.service.ts:recordExtraRemovalSignal`]
+
+**Patches**
+- [x] [Review][Patch] Count query in `recordRemoval` missing `household_id` predicate — fixed: added `.eq('household_id', input.householdId)` as first predicate on the count SELECT; test updated to assert the predicate is present. [`apps/api/src/modules/plans/extra-removal-signal.service.ts:76-82`]
+- [x] [Review][Patch] `loadHighActivityExtraProposalsForHousehold` emits duplicate proposals for same `(child_id, override_date)` — fixed: added `seen: Set<string>` keyed on `child_id:override_date`; first matching override type wins. New test added. [`apps/api/src/jobs/planner-context.loader.ts:77-90`]
+- [x] [Review][Patch] `append_extra_ban` containment check was case-sensitive — fixed: `componentType` now normalised to `.toLowerCase()` in `recordRemoval()` before insert and count; SQL function uses `v_type := lower(p_component_type)` and `lower(ban) = v_type` EXISTS subquery for case-blind containment, appending the lowercase form. New test for mixed-case input added. [`apps/api/src/modules/plans/extra-removal-signal.service.ts:56`, `supabase/migrations/20260811000000_add_append_extra_ban_fn.sql`]
+- [x] [Review][Patch] `append_extra_ban` SQL null-`extra_rules` disambiguation — fixed: `IF v_current IS NULL` replaced with `IF NOT FOUND` (PL/pgSQL FOUND variable set by SELECT INTO); `ELSE` branch now returns `coalesce(v_current, '{"pins":[],"bans":[]}'::jsonb)` so a row with null `extra_rules` returns `'already_banned'` rather than `'not_found'`. [`supabase/migrations/20260811000000_add_append_extra_ban_fn.sql:56-61`]
+
+**Deferred**
+- [x] [Review][Defer] `markSignalsApplied` time-floor flush can consume a concurrently-inserted signal (inserted after `windowStartIso` was computed but before the UPDATE runs), silently reducing the future rolling count by one removal. Degrades gracefully — no correctness harm, only a minor count-reset side-effect. [`apps/api/src/modules/plans/extra-removal-signal.service.ts:178-198`] — deferred, design choice, low probability
+- [x] [Review][Defer] No `plan_item_id` uniqueness guard — rapid back-and-forth swaps of the same plan item inflate the rolling 30-day count faster than intended. A DB `ON CONFLICT` or application-layer dedup would prevent this. [`supabase/migrations/20260810000000_create_extra_removal_signals.sql`, `apps/api/src/modules/plans/extra-removal-signal.service.ts:59-66`] — deferred, acceptable at MVP scale

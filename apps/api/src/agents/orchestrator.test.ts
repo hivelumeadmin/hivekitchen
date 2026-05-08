@@ -5,12 +5,14 @@ import {
   DomainOrchestrator,
   buildBagCompositionLines,
   buildCulturalContextLines,
+  buildExtraProposalLines,
   buildExtraRulesLines,
 } from './orchestrator.js';
 import type {
   PlannerBagComposition,
   PlannerCulturalContext,
   PlannerExtraLibraryItem,
+  PlannerExtraProposal,
   PlannerExtraRules,
 } from './orchestrator.js';
 import { TOOL_MANIFEST } from './tools.manifest.js';
@@ -616,6 +618,36 @@ describe('DomainOrchestrator', () => {
       ];
       const lines = buildExtraRulesLines([], library);
       expect(lines.some((l) => l.includes('Household custom Extra items available'))).toBe(true);
+    });
+  });
+
+  // Story 3.22 — high-activity Extra proposals (FR119). Lines are emitted
+  // only when a proposal exists; empty inputs collapse silently.
+  describe('buildExtraProposalLines', () => {
+    it('returns empty for undefined or empty input', () => {
+      expect(buildExtraProposalLines(undefined)).toEqual([]);
+      expect(buildExtraProposalLines([])).toEqual([]);
+    });
+
+    it('renders one line per proposal under a clear heading', () => {
+      const proposals: PlannerExtraProposal[] = [
+        {
+          child_id: CHILD_ID,
+          child_name: 'Asha',
+          override_date: '2026-11-04',
+          override_type: 'sport_practice',
+        },
+        {
+          child_id: '33333333-3333-4333-8333-333333333333',
+          child_name: 'Kai',
+          override_date: '2026-11-06',
+          override_type: 'field_trip',
+        },
+      ];
+      const lines = buildExtraProposalLines(proposals);
+      expect(lines[0]).toContain('High-activity day Extra proposals');
+      expect(lines.some((l) => l.includes('Asha') && l.includes('2026-11-04') && l.includes('sport_practice'))).toBe(true);
+      expect(lines.some((l) => l.includes('Kai') && l.includes('2026-11-06') && l.includes('field_trip'))).toBe(true);
     });
   });
 

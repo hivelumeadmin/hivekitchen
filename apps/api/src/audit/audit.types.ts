@@ -11,6 +11,8 @@ export const AUDIT_EVENT_TYPES = [
   'plan.day_paused',
   'plan.day_override_set',
   'plan.day_override_reverted',
+  'plan.extra_bias_applied',
+  'plan.extra_proposal_created',
   'brief.projection.failure',
   // memory
   'memory.forgotten',

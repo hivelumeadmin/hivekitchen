@@ -11,6 +11,8 @@ import { REGEN_QUEUE } from '../../jobs/plan-regeneration.job.js';
 import { DayOverridesRepository } from './day-overrides.repository.js';
 import { DayOverridesService } from './day-overrides.service.js';
 import { SnackSkusRepository } from './snack-skus.repository.js';
+import { ExtraRulesRepository } from '../children/extra-rules.repository.js';
+import { ExtraRemovalSignalService } from './extra-removal-signal.service.js';
 
 const plansHookPlugin: FastifyPluginAsync = async (fastify) => {
   if (!fastify.supabase) {
@@ -47,6 +49,18 @@ const plansHookPlugin: FastifyPluginAsync = async (fastify) => {
     auditService: fastify.auditService,
     logger: fastify.log,
   });
+  // Story 3.22 — passive Extra-removal bias service. Lives next to PlansService
+  // because the swap path is the only signal source today; co-locating avoids
+  // a separate plugin for a single fire-and-forget hook.
+  const extraRulesRepositoryForBias = new ExtraRulesRepository(fastify.supabase);
+  const snackSkusRepository = new SnackSkusRepository(fastify.supabase);
+  const extraRemovalSignalService = new ExtraRemovalSignalService({
+    client: fastify.supabase,
+    extraRulesRepo: extraRulesRepositoryForBias,
+    auditService: fastify.auditService,
+    logger: fastify.log,
+  });
+
   const plansService = new PlansService({
     repository,
     briefStateRepository,
@@ -56,6 +70,8 @@ const plansHookPlugin: FastifyPluginAsync = async (fastify) => {
     logger: fastify.log,
     redis: fastify.redis,                              // Story 3.13
     regenQueue: fastify.bullmq.getQueue(REGEN_QUEUE),  // Story 3.13
+    extraRemovalSignalService,                         // Story 3.22
+    snackSkusRepository,                               // Story 3.22
   });
   if (fastify.hasDecorator('planAdjustmentService')) {
     throw new Error(
@@ -89,8 +105,6 @@ const plansHookPlugin: FastifyPluginAsync = async (fastify) => {
     auditService: fastify.auditService,
     logger: fastify.log,
   });
-
-  const snackSkusRepository = new SnackSkusRepository(fastify.supabase);
 
   fastify.decorate('plansService', plansService);
   fastify.decorate('briefStateComposer', briefStateComposer);

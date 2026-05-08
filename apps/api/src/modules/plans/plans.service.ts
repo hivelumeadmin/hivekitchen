@@ -16,6 +16,8 @@ import type { AuditService } from '../../audit/audit.service.js';
 import type { PlansRepository } from './plans.repository.js';
 import type { BriefStateRepository } from './brief-state.repository.js';
 import type { BriefStateComposer } from './brief-state.composer.js';
+import type { ExtraRemovalSignalService } from './extra-removal-signal.service.js';
+import type { SnackSkusRepository } from './snack-skus.repository.js';
 import type { PlanRegenerationJobData } from '../../jobs/plan-regeneration.job.js';
 import type {
   BriefStateRow,
@@ -41,6 +43,11 @@ export interface PlansServiceDeps {
   logger: FastifyBaseLogger;
   redis: Redis;                     // Story 3.13 — for rate limiting
   regenQueue: Queue;                // Story 3.13 — BullMQ plan-regeneration queue
+  // Story 3.22 — passive bias from repeated Extra removals. Optional so existing
+  // tests that pre-date the dep can construct PlansService without wiring it.
+  // The swapItem hook is a no-op when the service is not provided.
+  extraRemovalSignalService?: ExtraRemovalSignalService;
+  snackSkusRepository?: SnackSkusRepository;
 }
 
 // Story 3.13 — regeneration rate limit (architecture §3.6).
@@ -60,6 +67,8 @@ export class PlansService {
   private readonly logger: FastifyBaseLogger;
   private readonly redis: Redis;
   private readonly regenQueue: Queue;
+  private readonly extraRemovalSignalService: ExtraRemovalSignalService | null;
+  private readonly snackSkusRepository: SnackSkusRepository | null;
 
   constructor(deps: PlansServiceDeps) {
     this.repo = deps.repository;
@@ -70,6 +79,8 @@ export class PlansService {
     this.logger = deps.logger;
     this.redis = deps.redis;
     this.regenQueue = deps.regenQueue;
+    this.extraRemovalSignalService = deps.extraRemovalSignalService ?? null;
+    this.snackSkusRepository = deps.snackSkusRepository ?? null;
   }
 
   // Single-row read from brief_state. Never composes at request time
@@ -359,7 +370,47 @@ export class PlansService {
       );
     }
 
+    // Story 3.22 — passive bias from repeated Extra removals (FR116). Fire-and-
+    // forget so a slow/failing signal write never blocks the swap response.
+    if (existingItem.slot === 'extra' && this.extraRemovalSignalService !== null) {
+      void this.recordExtraRemovalSignal(existingItem, opts).catch((err: unknown) => {
+        this.logger.error(
+          { err, plan_id: opts.planId, item_id: opts.itemId },
+          'extra removal signal failed — swap is committed',
+        );
+      });
+    }
+
     return updatedItem;
+  }
+
+  // Coarse component-type inference for the bias signal — snack_skus.category
+  // when the swapped-out item referenced a SKU, otherwise the first ingredient
+  // (best effort). A precise per-item component_type column on plan_items is
+  // captured as deferred work; until then the planner sees "sweet treat" or
+  // "granola bar" depending on whether the item came from the SKU catalog.
+  private async recordExtraRemovalSignal(
+    oldItem: PlanItemRow,
+    opts: { householdId: string; requestId: string },
+  ): Promise<void> {
+    if (this.extraRemovalSignalService === null) return;
+    let componentType: string | null = null;
+    if (oldItem.item_sku_id !== null && this.snackSkusRepository !== null) {
+      const sku = await this.snackSkusRepository.findById(oldItem.item_sku_id);
+      componentType = sku?.category ?? null;
+    }
+    if (componentType === null) {
+      componentType = oldItem.ingredients[0] ?? null;
+    }
+    if (componentType === null) return;
+
+    await this.extraRemovalSignalService.recordRemoval({
+      householdId: opts.householdId,
+      childId: oldItem.child_id,
+      componentType,
+      planItemId: oldItem.id,
+      requestId: opts.requestId,
+    });
   }
 
   // Story 3.12 — sick-day pause: marks paused_at on all plan_items for the day.

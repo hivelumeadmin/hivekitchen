@@ -131,6 +131,113 @@ describe('ExtraRulesRepository.findExtraRules', () => {
   });
 });
 
+describe('ExtraRulesRepository.appendBanAtomic', () => {
+  function buildRpcClient(rpcResult: { data: unknown; error: unknown }): {
+    client: SupabaseClient;
+    rpcCalls: Array<{ fn: string; args: unknown }>;
+  } {
+    const rpcCalls: Array<{ fn: string; args: unknown }> = [];
+    const rpc = vi.fn().mockImplementation((fn: string, args: unknown) => {
+      rpcCalls.push({ fn, args });
+      return Promise.resolve(rpcResult);
+    });
+    return {
+      client: { rpc } as unknown as SupabaseClient,
+      rpcCalls,
+    };
+  }
+
+  it('returns parsed rules + appended status when the RPC reports an append', async () => {
+    const { client, rpcCalls } = buildRpcClient({
+      data: [
+        { extra_rules: { pins: ['fruit'], bans: ['sweet treat'] }, status: 'appended' },
+      ],
+      error: null,
+    });
+    const repo = new ExtraRulesRepository(client);
+
+    const result = await repo.appendBanAtomic({
+      childId: CHILD_ID,
+      householdId: HOUSEHOLD_ID,
+      componentType: 'sweet treat',
+    });
+
+    expect(result).toEqual({
+      extra_rules: { pins: ['fruit'], bans: ['sweet treat'] },
+      status: 'appended',
+    });
+    expect(rpcCalls[0]?.fn).toBe('append_extra_ban');
+    expect(rpcCalls[0]?.args).toEqual({
+      p_child_id: CHILD_ID,
+      p_household_id: HOUSEHOLD_ID,
+      p_component_type: 'sweet treat',
+    });
+  });
+
+  it('returns already_banned status without appending when the type is present', async () => {
+    const { client } = buildRpcClient({
+      data: [
+        { extra_rules: { pins: [], bans: ['sweet treat'] }, status: 'already_banned' },
+      ],
+      error: null,
+    });
+    const repo = new ExtraRulesRepository(client);
+
+    const result = await repo.appendBanAtomic({
+      childId: CHILD_ID,
+      householdId: HOUSEHOLD_ID,
+      componentType: 'sweet treat',
+    });
+
+    expect(result).toEqual({
+      extra_rules: { pins: [], bans: ['sweet treat'] },
+      status: 'already_banned',
+    });
+  });
+
+  it('returns null when the RPC reports not_found (cross-household / missing row)', async () => {
+    const { client } = buildRpcClient({
+      data: [{ extra_rules: null, status: 'not_found' }],
+      error: null,
+    });
+    const repo = new ExtraRulesRepository(client);
+
+    const result = await repo.appendBanAtomic({
+      childId: CHILD_ID,
+      householdId: HOUSEHOLD_ID,
+      componentType: 'sweet treat',
+    });
+
+    expect(result).toBeNull();
+  });
+
+  it('returns null on an empty RPC response', async () => {
+    const { client } = buildRpcClient({ data: [], error: null });
+    const repo = new ExtraRulesRepository(client);
+
+    expect(
+      await repo.appendBanAtomic({
+        childId: CHILD_ID,
+        householdId: HOUSEHOLD_ID,
+        componentType: 'sweet treat',
+      }),
+    ).toBeNull();
+  });
+
+  it('throws when the RPC returns an error', async () => {
+    const { client } = buildRpcClient({ data: null, error: new Error('rpc down') });
+    const repo = new ExtraRulesRepository(client);
+
+    await expect(
+      repo.appendBanAtomic({
+        childId: CHILD_ID,
+        householdId: HOUSEHOLD_ID,
+        componentType: 'sweet treat',
+      }),
+    ).rejects.toThrow(/rpc down/);
+  });
+});
+
 describe('parseExtraRules', () => {
   it('passes through a valid object', () => {
     expect(parseExtraRules({ pins: ['fruit'], bans: ['candy'] })).toEqual({

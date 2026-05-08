@@ -49,6 +49,36 @@ export class ExtraRulesRepository extends BaseRepository {
     return parseExtraRules((data as { extra_rules: unknown }).extra_rules);
   }
 
+  // Atomic append used by passive-bias application (Story 3.22). Performs the
+  // "is the type already in bans?" check and the array append in a single
+  // UPDATE so two concurrent applyBias calls for different component types
+  // cannot stomp each other's writes (read-then-write would lose one ban).
+  // Returns null only when no row matches (id + household_id) — the caller
+  // treats that as a soft failure and leaves the removal signals unapplied
+  // so a later swap can retry.
+  async appendBanAtomic(opts: {
+    childId: string;
+    householdId: string;
+    componentType: string;
+  }): Promise<{ extra_rules: ExtraRules; status: 'appended' | 'already_banned' } | null> {
+    const { data, error } = await this.client.rpc('append_extra_ban', {
+      p_child_id: opts.childId,
+      p_household_id: opts.householdId,
+      p_component_type: opts.componentType,
+    });
+    if (error) throw error;
+    // RETURNS TABLE(...) yields an array of rows over PostgREST.
+    const row = Array.isArray(data) ? data[0] : data;
+    if (!row) return null;
+    const status = (row as { status?: unknown }).status;
+    if (status === 'not_found') return null;
+    if (status !== 'appended' && status !== 'already_banned') return null;
+    return {
+      extra_rules: parseExtraRules((row as { extra_rules?: unknown }).extra_rules),
+      status,
+    };
+  }
+
   // Read used by the plan-generation pipeline to inject rules into the planner
   // prompt. Returns the default empty rules for any row missing the column
   // (e.g. local DB pre-migration) so the worker never crashes on a fresh row.

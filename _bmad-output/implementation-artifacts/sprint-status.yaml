@@ -1,5 +1,5 @@
 # generated: 2026-04-23
-# last_updated: 2026-05-07 (Story 3-21 → done after review patches applied)
+# last_updated: 2026-05-07 (Story 3-22 → review after concurrent-applyBias patch)
 # project: hivekitchen
 # project_key: NOKEY
 # tracking_system: file-system
@@ -35,7 +35,7 @@
 # - Dev moves story to 'review', then runs code-review (fresh context, different LLM recommended)
 
 generated: 2026-04-23
-last_updated: 2026-05-07 (Story 3-21 → done after review patches applied)
+last_updated: 2026-05-07 (Story 3-22 → review after concurrent-applyBias patch)
 project: hivekitchen
 project_key: NOKEY
 tracking_system: file-system
@@ -105,7 +105,7 @@ development_status:
   3-19-day-level-context-overrides: done
   3-20-lunch-bag-composition-modification-snack-vs-main-modeling: done
   3-21-pin-ban-extra-component-types-reusable-extra-library: done
-  3-22-passive-bias-from-extra-removals-high-activity-extra-proposal: ready-for-dev
+  3-22-passive-bias-from-extra-removals-high-activity-extra-proposal: review
   3-23-per-slot-policy-scoping-bag-wide-allergy-rule: ready-for-dev
   3-24-allergy-uncertainty-flagging-safe-substitution: ready-for-dev
   3-25-hard-fail-escalation-no-safe-plan-possible: ready-for-dev
