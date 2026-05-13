@@ -96,6 +96,8 @@ function makeService(opts?: {
     culturalPriorService: makeCulturalPriorService(),
     elevenLabsApiKey: 'test-el-key',
     voiceId: 'test-voice-id',
+    agentId: 'test-agent-id',
+    ttsModelId: 'eleven_flash_v2_5',
     logger: makeLogger(),
   });
 }

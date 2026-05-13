@@ -41,6 +41,13 @@ export interface VoiceServiceDeps {
   culturalPriorService: CulturalPriorService;
   elevenLabsApiKey: string;
   voiceId: string;
+  // ElevenLabs ConvAI agent ID used by Epic 2 voice onboarding (2-s21+).
+  // Distinct from `voiceId`, which is a TTS voice identifier used by the
+  // narration path (2-s20) and the legacy proxy `streamTts` path.
+  agentId: string;
+  // Slice 2-S20 — model used by the browser-direct TTS WebSocket. Wired
+  // through env (ELEVENLABS_TTS_MODEL_ID, default `eleven_flash_v2_5`).
+  ttsModelId: string;
   logger: FastifyBaseLogger;
   memoryService?: MemoryService;
 }
@@ -62,6 +69,8 @@ export class VoiceService {
   private readonly culturalPriorService: CulturalPriorService;
   private readonly elevenLabsApiKey: string;
   private readonly voiceId: string;
+  private readonly agentId: string;
+  private readonly ttsModelId: string;
   private readonly logger: FastifyBaseLogger;
   private readonly memoryService?: MemoryService;
   private readonly sessions = new Map<string, WsSession>();
@@ -72,6 +81,8 @@ export class VoiceService {
     this.culturalPriorService = deps.culturalPriorService;
     this.elevenLabsApiKey = deps.elevenLabsApiKey;
     this.voiceId = deps.voiceId;
+    this.agentId = deps.agentId;
+    this.ttsModelId = deps.ttsModelId;
     this.logger = deps.logger;
     this.memoryService = deps.memoryService;
   }
@@ -648,6 +659,48 @@ export class VoiceService {
       throw new UpstreamError('ElevenLabs STT returned no transcript text');
     }
     return json.text;
+  }
+
+  // Slice 2-S20 — browser-direct TTS via single-use token.
+  // Mints a short-lived single-use token from ElevenLabs and returns it
+  // alongside the voice_id and model_id the browser should use when opening
+  // the TTS WebSocket directly at
+  //   wss://api.elevenlabs.io/v1/text-to-speech/{voice_id}/stream-input
+  //     ?single_use_token=<token>&model_id=<model>&output_format=pcm_16000
+  // Raw audio never transits the HK API. Token TTL is 15 minutes,
+  // single-use (consumed on connect), so the long-lived xi-api-key stays
+  // server-side.
+  //
+  // Why TTS WS (not ConvAI signed URL): for one-shot narration we don't need
+  // a conversational agent — TTS is cheaper (character billing vs minute
+  // billing), simpler (no first_message override hack, no agent_response
+  // close detection), and the voice is selected by voice_id rather than by
+  // a dashboard-configured agent.
+  async issueTtsToken(): Promise<{ token: string; voice_id: string; model_id: string }> {
+    const url = 'https://api.elevenlabs.io/v1/single-use-token/tts_websocket';
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'xi-api-key': this.elevenLabsApiKey },
+    });
+    if (!res.ok) {
+      const body = await res.text().catch(() => '<unreadable>');
+      this.logger.error(
+        { module: 'voice', action: 'tts.token_mint_failed', status: res.status, body },
+        'ElevenLabs single-use-token mint failed',
+      );
+      throw new UpstreamError(
+        `ElevenLabs single-use-token mint failed: HTTP ${res.status} — ${body.slice(0, 300)}`,
+      );
+    }
+    const json = (await res.json()) as { token?: unknown };
+    if (typeof json.token !== 'string' || json.token.length === 0) {
+      throw new UpstreamError('ElevenLabs single-use-token response missing token');
+    }
+    return {
+      token: json.token,
+      voice_id: this.voiceId,
+      model_id: this.ttsModelId,
+    };
   }
 
   private async streamTts(text: string, ws: WebSocket): Promise<void> {

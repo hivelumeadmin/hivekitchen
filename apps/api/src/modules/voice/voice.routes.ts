@@ -5,6 +5,7 @@ import {
   VoiceSessionCreateSchema,
   VoiceSessionCreateResponseSchema,
   WsClientMessageSchema,
+  TtsTokenResponseSchema,
 } from '@hivekitchen/contracts';
 import { VoiceRepository } from './voice.repository.js';
 import { VoiceService, WsAuthFailedError, WsSessionNotFoundError } from './voice.service.js';
@@ -36,6 +37,8 @@ const voiceRoutesPlugin: FastifyPluginAsync = async (fastify) => {
     culturalPriorService,
     elevenLabsApiKey: fastify.env.ELEVENLABS_API_KEY,
     voiceId: fastify.env.ELEVENLABS_VOICE_ID,
+    agentId: fastify.env.ELEVENLABS_AGENT_ID,
+    ttsModelId: fastify.env.ELEVENLABS_TTS_MODEL_ID,
     logger: fastify.log,
     memoryService: fastify.memoryService,
   });
@@ -61,6 +64,28 @@ const voiceRoutesPlugin: FastifyPluginAsync = async (fastify) => {
         metadata: { session_id: sessionId },
       };
       return { session_id: sessionId };
+    },
+  );
+
+  // Slice 2-S20 — browser-direct TTS via ElevenLabs single-use token.
+  // The route mints a short-lived (15-min, single-use) token and returns it
+  // alongside the voice_id + model_id the browser must use when opening the
+  // TTS WebSocket directly. Audio bytes never transit the HK API; the
+  // long-lived xi-api-key stays server-side.
+  // Authenticated like every other /v1/voice route — usage is metered.
+  fastify.post(
+    '/v1/voice/tts/token',
+    { schema: { response: { 200: TtsTokenResponseSchema } } },
+    async (request) => {
+      const tokenResponse = await service.issueTtsToken();
+      request.auditContext = {
+        event_type: 'voice.tts_synthesized',
+        user_id: request.user.id,
+        household_id: request.user.household_id,
+        request_id: request.id,
+        metadata: {},
+      };
+      return tokenResponse;
     },
   );
 

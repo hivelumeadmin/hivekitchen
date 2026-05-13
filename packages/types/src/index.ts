@@ -32,6 +32,7 @@ import {
   TurnBodyPresence,
   VoiceSessionCreateSchema,
   VoiceSessionCreateResponseSchema,
+  TtsTokenResponseSchema,
   WsClientMessageSchema,
   WsServerMessageSchema,
   WsSessionReadySchema,
@@ -207,6 +208,8 @@ export type TurnBodyPresence = z.infer<typeof TurnBodyPresence>;
 // Voice (Story 2.6b — HK-owned WebSocket pipeline)
 export type VoiceSessionCreate = z.infer<typeof VoiceSessionCreateSchema>;
 export type VoiceSessionCreateResponse = z.infer<typeof VoiceSessionCreateResponseSchema>;
+// Slice 2-S20 — browser-direct TTS via single-use token + TTS WebSocket
+export type TtsTokenResponse = z.infer<typeof TtsTokenResponseSchema>;
 export type WsClientMessage = z.infer<typeof WsClientMessageSchema>;
 export type WsServerMessage = z.infer<typeof WsServerMessageSchema>;
 export type WsSessionReady = z.infer<typeof WsSessionReadySchema>;

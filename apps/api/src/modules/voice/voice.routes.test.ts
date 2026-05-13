@@ -120,6 +120,8 @@ async function buildTestApp(opts: {
     JWT_SECRET,
     ELEVENLABS_API_KEY: 'test-key',
     ELEVENLABS_VOICE_ID: VOICE_ID,
+    ELEVENLABS_AGENT_ID: 'test-agent-id',
+    ELEVENLABS_TTS_MODEL_ID: 'eleven_flash_v2_5',
   };
   app.decorate('env', env as unknown as FastifyInstance['env']);
   app.decorate('supabase', opts.supabase as unknown as FastifyInstance['supabase']);
@@ -247,6 +249,105 @@ describe('POST /v1/voice/sessions', () => {
     });
 
     expect(res.statusCode).toBe(400);
+  });
+});
+
+describe('POST /v1/voice/tts/token (slice 2-s20)', () => {
+  let app: FastifyInstance;
+  let fetchSpy: ReturnType<typeof vi.spyOn> | undefined;
+
+  afterEach(async () => {
+    if (app) await app.close();
+    if (fetchSpy) fetchSpy.mockRestore();
+  });
+
+  it('happy path → 200 with { token, voice_id, model_id }', async () => {
+    app = await buildTestApp({ supabase: buildMockSupabase({}) });
+    const token = signAccessToken(app);
+
+    fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(
+      async (input: unknown) => {
+        const url = typeof input === 'string' ? input : (input as URL).toString();
+        expect(url).toBe('https://api.elevenlabs.io/v1/single-use-token/tts_websocket');
+        return new Response(JSON.stringify({ token: 'el-single-use-abc' }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        });
+      },
+    );
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/v1/voice/tts/token',
+      headers: { authorization: `Bearer ${token}` },
+    });
+
+    expect(res.statusCode).toBe(200);
+    const body = JSON.parse(res.body) as {
+      token: string;
+      voice_id: string;
+      model_id: string;
+    };
+    expect(body).toEqual({
+      token: 'el-single-use-abc',
+      voice_id: VOICE_ID,
+      model_id: 'eleven_flash_v2_5',
+    });
+  });
+
+  it('unauthenticated → 401', async () => {
+    app = await buildTestApp({ supabase: buildMockSupabase({}) });
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/v1/voice/tts/token',
+    });
+
+    expect(res.statusCode).toBe(401);
+  });
+
+  it('ElevenLabs upstream failure → 502', async () => {
+    app = await buildTestApp({ supabase: buildMockSupabase({}) });
+    const token = signAccessToken(app);
+
+    fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(
+      async () =>
+        new Response('quota exceeded', {
+          status: 500,
+          headers: { 'content-type': 'text/plain' },
+        }),
+    );
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/v1/voice/tts/token',
+      headers: { authorization: `Bearer ${token}` },
+    });
+
+    expect(res.statusCode).toBe(502);
+    const body = JSON.parse(res.body) as { type: string };
+    expect(body.type).toBe('/errors/upstream');
+  });
+
+  it('ElevenLabs returns malformed body (no token) → 502', async () => {
+    app = await buildTestApp({ supabase: buildMockSupabase({}) });
+    const token = signAccessToken(app);
+
+    fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(
+      async () =>
+        new Response(JSON.stringify({ unexpected: 'shape' }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        }),
+    );
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/v1/voice/tts/token',
+      headers: { authorization: `Bearer ${token}` },
+    });
+
+    expect(res.statusCode).toBe(502);
   });
 });
 

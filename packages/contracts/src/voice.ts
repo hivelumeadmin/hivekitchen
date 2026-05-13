@@ -14,6 +14,22 @@ export const VoiceSessionCreateResponseSchema = z.object({
   session_id: z.string().uuid(),
 });
 
+// POST /v1/voice/tts/token — browser-direct TTS via ElevenLabs TTS WebSocket.
+// Slice 2-S20. The HK API mints a short-lived single-use token via the
+// ElevenLabs single-use-token endpoint; the browser then opens the TTS
+// WebSocket directly at
+//   wss://api.elevenlabs.io/v1/text-to-speech/{voice_id}/stream-input
+//     ?single_use_token=<token>&model_id=<model>&output_format=pcm_16000
+// and streams audio back. Raw audio bypasses the HK API entirely; the
+// long-lived xi-api-key stays server-side. Token TTL is 15 minutes,
+// single-use (consumed on connect).
+// Request body is empty (voice and model are server-configured).
+export const TtsTokenResponseSchema = z.object({
+  token: z.string().min(1),
+  voice_id: z.string().min(1),
+  model_id: z.string().min(1),
+});
+
 // WebSocket — client → server text frames
 export const WsClientMessageSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('ping') }).strict(),
@@ -77,6 +93,7 @@ export const WsServerMessageSchema = z.discriminatedUnion('type', [
 export type WsErrorCode = z.infer<typeof WsErrorCodeSchema>;
 export type VoiceSessionCreate = z.infer<typeof VoiceSessionCreateSchema>;
 export type VoiceSessionCreateResponse = z.infer<typeof VoiceSessionCreateResponseSchema>;
+export type TtsTokenResponse = z.infer<typeof TtsTokenResponseSchema>;
 export type WsClientMessage = z.infer<typeof WsClientMessageSchema>;
 export type WsServerMessage = z.infer<typeof WsServerMessageSchema>;
 export type WsSessionReady = z.infer<typeof WsSessionReadySchema>;
