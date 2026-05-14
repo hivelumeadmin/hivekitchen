@@ -40,10 +40,15 @@ CREATE TABLE plans (
 CREATE UNIQUE INDEX plans_household_week_unique
   ON plans (household_id, week_id);
 
+-- child_id has no inline REFERENCES clause: the children table is created
+-- LATER in timestamp order (20260510000000_create_children_table.sql).
+-- The FK constraint is added in 20260510000600_add_plan_items_child_fk.sql,
+-- which runs after children exists. Inline FK here would block clean-slate
+-- migration apply with "relation 'children' does not exist".
 CREATE TABLE plan_items (
   id           uuid        NOT NULL DEFAULT gen_random_uuid() PRIMARY KEY,
   plan_id      uuid        NOT NULL REFERENCES plans(id) ON DELETE CASCADE,
-  child_id     uuid        NOT NULL REFERENCES children(id) ON DELETE CASCADE,
+  child_id     uuid        NOT NULL,
   day          text        NOT NULL,
   slot         text        NOT NULL,
   recipe_id    uuid,
