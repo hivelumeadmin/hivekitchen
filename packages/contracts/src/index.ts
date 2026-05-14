@@ -17,4 +17,6 @@ export * from './day-override.js';
 export * from './cultural.js';
 export * from './lumi.js';
 export * from './recipe.js';
+export * from './recipe-vocabulary.js';
+export * from './kitchen-map.js';
 export * from './pantry.js';

@@ -125,6 +125,41 @@ import {
   RecipeFetchOutputSchema,
   RecipeIngredientSchema,
   RecipeDetailSchema,
+  RecipeRowSchema,
+  RecipeUnitSchema,
+  RecipeSourceSchema,
+  RecipeVisibilitySchema,
+  RecipeSlotSchema,
+  HouseholdRecipeUsageRowSchema,
+  RecipeCommentPublicSchema,
+  AllergenRuleClassSchema,
+  AllergenSeveritySchema,
+  AllergenTagRowSchema,
+  DietaryCategorySchema,
+  DietaryTagRowSchema,
+  CulturalTagRowSchema,
+  CuisineRegionSchema,
+  CuisineTagRowSchema,
+  VocabularySnapshotSchema,
+  KitchenMapSchema,
+  KitchenMapHouseholdSchema,
+  KitchenMapCaregiverSchema,
+  KitchenMapCaregiverRoleSchema,
+  KitchenMapChildSchema,
+  KitchenMapCulturalSchema,
+  KitchenMapCulturalPriorSchema,
+  KitchenMapCulturalPriorStateSchema,
+  KitchenMapMemorySchema,
+  KitchenMapMemoryNodeSchema,
+  KitchenMapMemoryNodeTypeSchema,
+  KitchenMapAllergyRulesSchema,
+  KitchenMapAllergyRuleSchema,
+  KitchenMapAllergyRuleTypeSchema,
+  KitchenMapHouseholdExtrasSchema,
+  KitchenMapExtraLibraryItemSchema,
+  KitchenMapRecipesSchema,
+  KitchenMapFavouriteRecipeSchema,
+  KitchenMapMetaSchema,
   PantryReadInputSchema,
   PantryReadOutputSchema,
   PantryItemSchema,
@@ -343,6 +378,47 @@ export type RecipeFetchInput = z.infer<typeof RecipeFetchInputSchema>;
 export type RecipeFetchOutput = z.infer<typeof RecipeFetchOutputSchema>;
 export type RecipeIngredient = z.infer<typeof RecipeIngredientSchema>;
 export type RecipeDetail = z.infer<typeof RecipeDetailSchema>;
+
+// Slice A0 — Recipes catalog DB row shapes
+export type RecipeRow = z.infer<typeof RecipeRowSchema>;
+export type RecipeUnit = z.infer<typeof RecipeUnitSchema>;
+export type RecipeSource = z.infer<typeof RecipeSourceSchema>;
+export type RecipeVisibility = z.infer<typeof RecipeVisibilitySchema>;
+export type RecipeSlot = z.infer<typeof RecipeSlotSchema>;
+export type HouseholdRecipeUsageRow = z.infer<typeof HouseholdRecipeUsageRowSchema>;
+export type RecipeCommentPublic = z.infer<typeof RecipeCommentPublicSchema>;
+
+// Slice A0c — Vocabulary table row shapes
+export type AllergenRuleClass = z.infer<typeof AllergenRuleClassSchema>;
+export type AllergenSeverity = z.infer<typeof AllergenSeveritySchema>;
+export type AllergenTagRow = z.infer<typeof AllergenTagRowSchema>;
+export type DietaryCategory = z.infer<typeof DietaryCategorySchema>;
+export type DietaryTagRow = z.infer<typeof DietaryTagRowSchema>;
+export type CulturalTagRow = z.infer<typeof CulturalTagRowSchema>;
+export type CuisineRegion = z.infer<typeof CuisineRegionSchema>;
+export type CuisineTagRow = z.infer<typeof CuisineTagRowSchema>;
+export type VocabularySnapshot = z.infer<typeof VocabularySnapshotSchema>;
+
+// Slice A0 — Kitchen Map projection
+export type KitchenMap = z.infer<typeof KitchenMapSchema>;
+export type KitchenMapHousehold = z.infer<typeof KitchenMapHouseholdSchema>;
+export type KitchenMapCaregiver = z.infer<typeof KitchenMapCaregiverSchema>;
+export type KitchenMapCaregiverRole = z.infer<typeof KitchenMapCaregiverRoleSchema>;
+export type KitchenMapChild = z.infer<typeof KitchenMapChildSchema>;
+export type KitchenMapCultural = z.infer<typeof KitchenMapCulturalSchema>;
+export type KitchenMapCulturalPrior = z.infer<typeof KitchenMapCulturalPriorSchema>;
+export type KitchenMapCulturalPriorState = z.infer<typeof KitchenMapCulturalPriorStateSchema>;
+export type KitchenMapMemory = z.infer<typeof KitchenMapMemorySchema>;
+export type KitchenMapMemoryNode = z.infer<typeof KitchenMapMemoryNodeSchema>;
+export type KitchenMapMemoryNodeType = z.infer<typeof KitchenMapMemoryNodeTypeSchema>;
+export type KitchenMapAllergyRules = z.infer<typeof KitchenMapAllergyRulesSchema>;
+export type KitchenMapAllergyRule = z.infer<typeof KitchenMapAllergyRuleSchema>;
+export type KitchenMapAllergyRuleType = z.infer<typeof KitchenMapAllergyRuleTypeSchema>;
+export type KitchenMapHouseholdExtras = z.infer<typeof KitchenMapHouseholdExtrasSchema>;
+export type KitchenMapExtraLibraryItem = z.infer<typeof KitchenMapExtraLibraryItemSchema>;
+export type KitchenMapRecipes = z.infer<typeof KitchenMapRecipesSchema>;
+export type KitchenMapFavouriteRecipe = z.infer<typeof KitchenMapFavouriteRecipeSchema>;
+export type KitchenMapMeta = z.infer<typeof KitchenMapMetaSchema>;
 
 export type PantryReadInput = z.infer<typeof PantryReadInputSchema>;
 export type PantryReadOutput = z.infer<typeof PantryReadOutputSchema>;
