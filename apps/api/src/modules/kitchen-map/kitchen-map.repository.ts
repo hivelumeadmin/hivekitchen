@@ -286,25 +286,20 @@ export class KitchenMapRepository extends BaseRepository {
   }
 
   private decryptChildren(rows: EncryptedChildRow[], dek: Buffer | null): RawChildRow[] {
+    // decryptField() handles both real AES-GCM ciphertext (dek required) and
+    // NOOP-prefixed dev-mode rows (dek may be null) internally — call it
+    // unconditionally rather than branching on dek === null, otherwise
+    // NOOP-prefixed payloads get JSON.parse'd as a literal string.
     const out: RawChildRow[] = [];
     for (const row of rows) {
       try {
         out.push({
           id: row.id,
-          name: dek === null ? row.name : decryptField<string>(row.name, dek),
+          name: decryptField<string>(row.name, dek),
           age_band: row.age_band,
-          declared_allergens:
-            dek === null
-              ? this.parseJsonStringArray(row.declared_allergens)
-              : decryptField<string[]>(row.declared_allergens, dek),
-          cultural_identifiers:
-            dek === null
-              ? this.parseJsonStringArray(row.cultural_identifiers)
-              : decryptField<string[]>(row.cultural_identifiers, dek),
-          dietary_preferences:
-            dek === null
-              ? this.parseJsonStringArray(row.dietary_preferences)
-              : decryptField<string[]>(row.dietary_preferences, dek),
+          declared_allergens: decryptField<string[]>(row.declared_allergens, dek),
+          cultural_identifiers: decryptField<string[]>(row.cultural_identifiers, dek),
+          dietary_preferences: decryptField<string[]>(row.dietary_preferences, dek),
           bag_composition: this.normaliseBagComposition(row.bag_composition),
           extra_rules: this.normaliseExtraRules(row.extra_rules),
         });
@@ -343,15 +338,6 @@ export class KitchenMapRepository extends BaseRepository {
       });
     }
     return out;
-  }
-
-  private parseJsonStringArray(value: string): string[] {
-    try {
-      const parsed = JSON.parse(value);
-      return Array.isArray(parsed) ? parsed.filter((v) => typeof v === 'string') : [];
-    } catch {
-      return [];
-    }
   }
 
   private normaliseBagComposition(
