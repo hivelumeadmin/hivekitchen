@@ -28,6 +28,8 @@ import { sendgridPlugin } from './plugins/sendgrid.plugin.js';
 import { twilioPlugin } from './plugins/twilio.plugin.js';
 import { ioredisPlugin } from './plugins/ioredis.plugin.js';
 import { bullmqPlugin } from './plugins/bullmq.plugin.js';
+import { vocabularyPlugin } from './modules/vocabulary/vocabulary.plugin.js';
+import { kitchenMapPlugin } from './modules/kitchen-map/kitchen-map.plugin.js';
 import { auditPartitionRotationPlugin } from './jobs/audit-partition-rotation.job.js';
 import { planGenerationJobPlugin } from './jobs/plan-generation.job.js';
 import { planRegenerationJobPlugin } from './jobs/plan-regeneration.job.js';
@@ -91,6 +93,13 @@ export async function buildApp(opts: BuildAppOptions) {
   await app.register(twilioPlugin);
   await app.register(ioredisPlugin);
   await app.register(bullmqPlugin);
+
+  // Slice A0.5 — vocabulary tables loaded into memory at startup; kitchen-map
+  // service decorates fastify with the projection read-through cache. Both
+  // depend on supabase + redis above. vocabularyPlugin must run before any
+  // service that validates tag arrays.
+  await app.register(vocabularyPlugin);
+  await app.register(kitchenMapPlugin);
 
   await app.register(auditHook);
   await app.register(memoryHook);
