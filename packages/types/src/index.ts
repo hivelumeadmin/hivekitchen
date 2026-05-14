@@ -160,6 +160,13 @@ import {
   KitchenMapRecipesSchema,
   KitchenMapFavouriteRecipeSchema,
   KitchenMapMetaSchema,
+  ChildUpsertInputSchema,
+  ChildUpsertOutputSchema,
+  CulturalNoteInputSchema,
+  CulturalNoteOutputSchema,
+  MemoryNoteFromOnboardingInputSchema,
+  MemoryNoteFromOnboardingOutputSchema,
+  MemoryNoteFromOnboardingNodeTypeSchema,
   PantryReadInputSchema,
   PantryReadOutputSchema,
   PantryItemSchema,
@@ -419,6 +426,15 @@ export type KitchenMapExtraLibraryItem = z.infer<typeof KitchenMapExtraLibraryIt
 export type KitchenMapRecipes = z.infer<typeof KitchenMapRecipesSchema>;
 export type KitchenMapFavouriteRecipe = z.infer<typeof KitchenMapFavouriteRecipeSchema>;
 export type KitchenMapMeta = z.infer<typeof KitchenMapMetaSchema>;
+
+// Slice C — Onboarding agent tool I/O
+export type ChildUpsertInput = z.infer<typeof ChildUpsertInputSchema>;
+export type ChildUpsertOutput = z.infer<typeof ChildUpsertOutputSchema>;
+export type CulturalNoteInput = z.infer<typeof CulturalNoteInputSchema>;
+export type CulturalNoteOutput = z.infer<typeof CulturalNoteOutputSchema>;
+export type MemoryNoteFromOnboardingInput = z.infer<typeof MemoryNoteFromOnboardingInputSchema>;
+export type MemoryNoteFromOnboardingOutput = z.infer<typeof MemoryNoteFromOnboardingOutputSchema>;
+export type MemoryNoteFromOnboardingNodeType = z.infer<typeof MemoryNoteFromOnboardingNodeTypeSchema>;
 
 export type PantryReadInput = z.infer<typeof PantryReadInputSchema>;
 export type PantryReadOutput = z.infer<typeof PantryReadOutputSchema>;

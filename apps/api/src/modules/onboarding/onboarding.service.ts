@@ -1,10 +1,16 @@
 import type { FastifyBaseLogger } from 'fastify';
 import { OPENING_GREETING } from '@hivekitchen/contracts';
+import type { KitchenMap } from '@hivekitchen/types';
 import { ConflictError, UpstreamError } from '../../common/errors.js';
 import { stripExpressionTags } from '../../common/strip-expression-tags.js';
 import type { OnboardingAgent, LlmMessage } from '../../agents/onboarding.agent.js';
+import { createOnboardingToolSpecs } from '../../agents/tools/onboarding.tools.js';
+import type { ChildrenService } from '../children/children.service.js';
+import type { CulturalPriorRepository } from '../cultural-priors/cultural-prior.repository.js';
 import type { CulturalPriorService } from '../cultural-priors/cultural-prior.service.js';
+import type { KitchenMapService } from '../kitchen-map/kitchen-map.service.js';
 import type { MemoryService } from '../memory/memory.service.js';
+import type { VocabularyService } from '../vocabulary/vocabulary.service.js';
 import {
   isUniqueViolation,
   type ThreadRepository,
@@ -18,6 +24,15 @@ export interface OnboardingServiceDeps {
   culturalPriorService: CulturalPriorService;
   logger: FastifyBaseLogger;
   memoryService?: MemoryService;
+  // Slice C — optional tool-loop deps. When all four are provided AND the
+  // feature flag is true, submitTextTurn drives the agent's tool-call loop
+  // to populate the kitchen map progressively. When any is missing or the
+  // flag is false, the service falls back to the legacy single-shot path.
+  childrenService?: ChildrenService;
+  culturalPriorRepository?: CulturalPriorRepository;
+  kitchenMapService?: KitchenMapService;
+  vocabularyService?: VocabularyService;
+  agentToolsEnabled?: boolean;
 }
 
 export interface SubmitTextTurnInput {
@@ -65,6 +80,12 @@ export class OnboardingService {
   private readonly culturalPriorService: CulturalPriorService;
   private readonly logger: FastifyBaseLogger;
   private readonly memoryService?: MemoryService;
+  // Slice C optional deps
+  private readonly childrenService?: ChildrenService;
+  private readonly culturalPriorRepository?: CulturalPriorRepository;
+  private readonly kitchenMapService?: KitchenMapService;
+  private readonly vocabularyService?: VocabularyService;
+  private readonly agentToolsEnabled: boolean;
 
   constructor(deps: OnboardingServiceDeps) {
     this.threads = deps.threads;
@@ -72,6 +93,26 @@ export class OnboardingService {
     this.culturalPriorService = deps.culturalPriorService;
     this.logger = deps.logger;
     this.memoryService = deps.memoryService;
+    this.childrenService = deps.childrenService;
+    this.culturalPriorRepository = deps.culturalPriorRepository;
+    this.kitchenMapService = deps.kitchenMapService;
+    this.vocabularyService = deps.vocabularyService;
+    this.agentToolsEnabled = deps.agentToolsEnabled ?? false;
+  }
+
+  /**
+   * Slice C — true when all four tool-loop deps are present and the env flag
+   * is on. When false the service uses the legacy single-shot agent path.
+   */
+  private get toolLoopAvailable(): boolean {
+    return (
+      this.agentToolsEnabled &&
+      this.childrenService !== undefined &&
+      this.culturalPriorRepository !== undefined &&
+      this.kitchenMapService !== undefined &&
+      this.vocabularyService !== undefined &&
+      this.memoryService !== undefined
+    );
   }
 
   async submitTextTurn(input: SubmitTextTurnInput): Promise<SubmitTextTurnResult> {
@@ -188,10 +229,46 @@ export class OnboardingService {
     //    detail field; OpenAI errors can leak request bodies, headers, and
     //    rate-limit JSON. Log the raw err server-side, return a generic
     //    detail to the client.
+    //
+    //    Slice C — when the tool loop is available, build per-turn tool
+    //    specs (closure-captured householdId/userId) plus a Kitchen Map +
+    //    Vocabulary system block. The agent then writes structured data to
+    //    the household DB as it talks. When the loop isn't available, fall
+    //    through to the legacy single-shot respond() — behaviour identical
+    //    to pre-slice-C.
     let lumiText: string;
+    let toolCallsSummary: Array<{ tool: string; error: boolean }> | undefined;
     try {
-      const reply = await this.agent.respond(agentInput, { modality: TEXT_MODALITY });
-      lumiText = reply.text;
+      if (
+        this.toolLoopAvailable &&
+        this.childrenService !== undefined &&
+        this.culturalPriorRepository !== undefined &&
+        this.kitchenMapService !== undefined &&
+        this.vocabularyService !== undefined &&
+        this.memoryService !== undefined
+      ) {
+        const map = await this.kitchenMapService.get(input.householdId);
+        const toolSpecs = createOnboardingToolSpecs(
+          { householdId: input.householdId, userId: input.userId, logger: this.logger },
+          {
+            childrenService: this.childrenService,
+            culturalPriorRepository: this.culturalPriorRepository,
+            memoryService: this.memoryService,
+            vocabularyService: this.vocabularyService,
+          },
+        );
+        const reply = await this.agent.respond(agentInput, {
+          modality: TEXT_MODALITY,
+          tools: toolSpecs,
+          kitchenMapBlock: renderKitchenMapBlock(map),
+          vocabularyBlock: renderVocabularyBlock(this.vocabularyService),
+        });
+        lumiText = reply.text;
+        toolCallsSummary = reply.toolCallsSummary;
+      } else {
+        const reply = await this.agent.respond(agentInput, { modality: TEXT_MODALITY });
+        lumiText = reply.text;
+      }
     } catch (err) {
       this.logger.error(
         {
@@ -204,6 +281,21 @@ export class OnboardingService {
         'OnboardingAgent.respond failed during text turn',
       );
       throw new UpstreamError('Onboarding agent unavailable');
+    }
+
+    if (toolCallsSummary !== undefined && toolCallsSummary.length > 0) {
+      this.logger.info(
+        {
+          module: 'onboarding',
+          action: 'onboarding.text_turn_tools',
+          household_id: input.householdId,
+          thread_id: thread.id,
+          tool_count: toolCallsSummary.length,
+          tools_used: toolCallsSummary.map((t) => t.tool),
+          tool_errors: toolCallsSummary.filter((t) => t.error).length,
+        },
+        'onboarding agent used tools during turn',
+      );
     }
 
     // R2-P8 — defense-in-depth: TEXT_RULES instructs the model not to emit
@@ -496,4 +588,82 @@ export class OnboardingService {
     }
     return out;
   }
+}
+
+// ---------------------------------------------------------------------------
+// Slice C — system-prompt block renderers
+// ---------------------------------------------------------------------------
+// The agent's tool-loop path injects two blocks into the system prompt:
+//   - kitchenMapBlock: the household's current projection (what's been
+//     captured so far). Agent uses this to avoid re-asking known facts
+//     and to probe for gaps.
+//   - vocabularyBlock: the active tag vocabulary (allergens, dietary,
+//     cultural, cuisine). Agent uses this to emit valid tag values.
+//
+// Both are placed at the top of the system prompt so OpenAI's auto-prefix
+// caching can pick them up. They change only when the underlying data
+// changes (kitchen_map_version bump / *_tags table write); within a single
+// household conversation the cache stays warm.
+// ---------------------------------------------------------------------------
+
+function renderKitchenMapBlock(map: KitchenMap): string {
+  // Trim noisy fields (created_at, etc.) before serialising — the agent
+  // only needs current state, not row metadata.
+  const trimmed = {
+    household: {
+      tier: map.household.tier,
+      timezone: map.household.timezone,
+    },
+    caregivers: map.caregivers.map((c) => ({
+      role: c.role,
+      display_name: c.display_name,
+      cultural_language: c.cultural_language,
+    })),
+    children: map.children.map((c) => ({
+      id: c.id,
+      name: c.name,
+      age_band: c.age_band,
+      declared_allergens: c.declared_allergens,
+      cultural_identifiers: c.cultural_identifiers,
+      dietary_preferences: c.dietary_preferences,
+      school_policies: c.school_policies,
+    })),
+    cultural: {
+      active: map.cultural.active.map((p) => p.key),
+      suggested: map.cultural.suggested.map((p) => p.key),
+    },
+    memory_notes: map.memory.nodes.map((n) => ({
+      type: n.node_type,
+      facet: n.facet,
+      text: n.prose_text,
+      child_id: n.subject_child_id,
+    })),
+    is_complete: map.meta.is_complete,
+  };
+  return '```json\n' + JSON.stringify(trimmed, null, 2) + '\n```';
+}
+
+function renderVocabularyBlock(vocab: VocabularyService): string {
+  const snap = vocab.snapshot();
+  const lines: string[] = [];
+
+  lines.push('Allergens (use as declared_allergens values):');
+  for (const a of snap.allergen_tags.filter((t) => t.is_active)) {
+    const aliases = a.alias_keys.length > 0 ? ` (aliases: ${a.alias_keys.join(', ')})` : '';
+    lines.push(`  ${a.key}${aliases}`);
+  }
+
+  lines.push('\nDietary tags (use as dietary_preferences values):');
+  for (const d of snap.dietary_tags.filter((t) => t.is_active)) {
+    const implies = d.implies.length > 0 ? ` (implies: ${d.implies.join(', ')})` : '';
+    lines.push(`  ${d.key}${implies}`);
+  }
+
+  lines.push('\nCultural tags (use as cultural_identifiers values or cultural.note keys):');
+  for (const c of snap.cultural_tags.filter((t) => t.is_active)) {
+    const template = c.is_template ? ' [template]' : '';
+    lines.push(`  ${c.key}${template}`);
+  }
+
+  return lines.join('\n');
 }

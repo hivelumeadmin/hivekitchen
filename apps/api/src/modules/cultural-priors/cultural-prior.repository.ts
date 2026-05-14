@@ -85,6 +85,60 @@ export class CulturalPriorRepository extends BaseRepository {
     return out;
   }
 
+  /**
+   * Slice C — per-turn variant used by the onboarding agent's cultural.note tool.
+   *
+   * Inserts state='suggested' for first-time tags, and is a no-op when a row
+   * already exists for (household_id, key). Returns { id, was_existing } so
+   * the caller can audit-distinguish INSERT from UPDATE.
+   *
+   * Why no-op on conflict: the per-turn agent may emit the same cultural
+   * key multiple times during a long interview. The first call wins; later
+   * calls with different confidence/presence numbers don't disturb the
+   * existing row. Ratification (state → 'active') is a separate user action.
+   */
+  async noteSuggested(
+    householdId: string,
+    input: { key: string; label: string; confidence: number; presence: number },
+  ): Promise<{ id: string; was_existing: boolean }> {
+    const { data, error } = await this.client
+      .from('cultural_priors')
+      .upsert(
+        {
+          household_id: householdId,
+          key: input.key,
+          label: input.label,
+          tier: 'L1',
+          state: 'suggested',
+          presence: input.presence,
+          confidence: input.confidence,
+        },
+        { onConflict: 'household_id,key', ignoreDuplicates: true },
+      )
+      .select('id');
+    if (error) throw error;
+
+    const inserted = (data as { id: string }[] | null) ?? [];
+    if (inserted.length > 0 && inserted[0] !== undefined) {
+      return { id: inserted[0].id, was_existing: false };
+    }
+
+    // Conflict path — fetch the pre-existing row's id.
+    const { data: existing, error: findErr } = await this.client
+      .from('cultural_priors')
+      .select('id')
+      .eq('household_id', householdId)
+      .eq('key', input.key)
+      .maybeSingle();
+    if (findErr) throw findErr;
+    if (existing === null) {
+      throw new Error(
+        `cultural_priors upsert conflict for (${householdId}, ${input.key}) but no row found on follow-up SELECT`,
+      );
+    }
+    return { id: (existing as { id: string }).id, was_existing: true };
+  }
+
   async findByHousehold(householdId: string): Promise<CulturalPriorRow[]> {
     const { data, error } = await this.client
       .from('cultural_priors')

@@ -1,37 +1,129 @@
 import type OpenAI from 'openai';
+import type {
+  ChatCompletionMessageParam,
+  ChatCompletionTool,
+} from 'openai/resources/chat/completions';
+import { z } from 'zod';
 import {
   getOnboardingSystemPrompt,
   type OnboardingModality,
 } from './prompts/onboarding.prompt.js';
+import type { ToolSpec } from './tools.manifest.js';
 
 export type LlmMessage = { role: 'system' | 'user' | 'assistant'; content: string };
+
+export interface OnboardingToolCallSummary {
+  tool: string;
+  /** True when the tool handler threw — the agent still received a JSON
+   *  error result and may have recovered, so this is informational, not
+   *  necessarily fatal. */
+  error: boolean;
+}
 
 export interface OnboardingAgentResponse {
   text: string;
   complete: boolean;
+  /** Present only when the tool-call loop ran. One entry per tool call,
+   *  in invocation order. Used by OnboardingService for audit logging. */
+  toolCallsSummary?: OnboardingToolCallSummary[];
+}
+
+export interface RespondOptions {
+  modality?: OnboardingModality;
+  /** When provided AND modality === 'text', the agent uses the tool-call
+   *  loop. Voice mode ignores tools (one-shot conversational response). */
+  tools?: ToolSpec[];
+  /** Pre-rendered kitchen-map block to inject into the system prompt
+   *  (cache-friendly placement, top of system message). */
+  kitchenMapBlock?: string;
+  /** Pre-rendered vocabulary snapshot block (cache-friendly placement). */
+  vocabularyBlock?: string;
 }
 
 const SESSION_COMPLETE_SENTINEL = '[SESSION_COMPLETE]';
 const CLOSING_PHRASE_VOICE =
   "[warmly] That's everything I needed — let me put together your first plan.";
 
+// Tool-call loop guard. Onboarding turns typically use 0–3 tool calls; this
+// is a defense against runaway loops, not a tuned limit.
+const MAX_TOOL_ITERATIONS = 6;
+const TEXT_MODEL = 'gpt-4o';
+const TEXT_MODEL_MAX_TOKENS = 800;
+const TEXT_MODEL_TEMPERATURE = 0.7;
+
+// OpenAI's function-name format doesn't allow dots ('child.upsert'),
+// so we use '__' as an on-the-wire substitute.
+function toOpenAIToolName(internal: string): string {
+  return internal.replace(/\./g, '__');
+}
+
+function fromOpenAIToolName(external: string): string {
+  return external.replace(/__/g, '.');
+}
+
+function toOpenAITools(specs: ToolSpec[]): ChatCompletionTool[] {
+  return specs.map((spec) => {
+    const schema = z.toJSONSchema(spec.inputSchema) as Record<string, unknown>;
+    if ('$schema' in schema) {
+      const copy = { ...schema };
+      delete copy['$schema'];
+      return {
+        type: 'function',
+        function: {
+          name: toOpenAIToolName(spec.name),
+          description: spec.description,
+          parameters: copy,
+        },
+      };
+    }
+    return {
+      type: 'function',
+      function: {
+        name: toOpenAIToolName(spec.name),
+        description: spec.description,
+        parameters: schema,
+      },
+    };
+  });
+}
+
 export class OnboardingAgent {
   constructor(private readonly openai: OpenAI) {}
 
   async respond(
     messages: LlmMessage[],
-    opts: { modality?: OnboardingModality } = {},
+    opts: RespondOptions = {},
   ): Promise<OnboardingAgentResponse> {
     const modality = opts.modality ?? 'voice';
+    const tools = modality === 'text' ? (opts.tools ?? []) : [];
+
+    // Tool-call loop only runs for text mode AND when tools are provided.
+    // Voice mode keeps the simple single-shot path; we can revisit when the
+    // voice path resumes (slice 2-s21+).
+    if (tools.length > 0) {
+      return this.respondWithTools(messages, opts, tools);
+    }
+
+    return this.respondSingleShot(messages, modality);
+  }
+
+  /**
+   * Legacy single-shot path. Used by voice mode + by text mode when the
+   * feature flag is off. Behavior-preserving from before slice C.
+   */
+  private async respondSingleShot(
+    messages: LlmMessage[],
+    modality: OnboardingModality,
+  ): Promise<OnboardingAgentResponse> {
     const systemPrompt = getOnboardingSystemPrompt(modality);
     const fullMessages: LlmMessage[] = [
       { role: 'system', content: systemPrompt },
       ...messages.filter((m) => m.role !== 'system'),
     ];
     const completion = await this.openai.chat.completions.create({
-      model: 'gpt-4o',
+      model: TEXT_MODEL,
       messages: fullMessages,
-      temperature: 0.7,
+      temperature: TEXT_MODEL_TEMPERATURE,
       max_tokens: 300,
     });
     const fallback =
@@ -47,6 +139,135 @@ export class OnboardingAgent {
       : raw;
 
     return { text, complete };
+  }
+
+  /**
+   * Slice C — tool-call loop for text-mode onboarding. The agent emits tool
+   * calls (child.upsert, cultural.note, memory.note) as part of generating
+   * its prose response; tool handlers populate the household DB; the loop
+   * continues until the agent emits prose with no tool calls (or finish_reason='stop').
+   *
+   * Tool errors are surfaced back as JSON tool-result messages so the agent
+   * can recover (e.g. apologise to the user and ask for clarification),
+   * rather than failing the turn. Max iterations bounds runaway loops.
+   *
+   * Kitchen Map + Vocabulary snapshots inject into the system prompt at
+   * cache-friendly positions; OpenAI's auto-prefix caching makes this
+   * effectively free after the first hit for the same household version.
+   */
+  private async respondWithTools(
+    history: LlmMessage[],
+    opts: RespondOptions,
+    tools: ToolSpec[],
+  ): Promise<OnboardingAgentResponse> {
+    const toolMap = new Map(tools.map((t) => [t.name, t]));
+    const summary: OnboardingToolCallSummary[] = [];
+
+    const systemPrompt = this.buildToolSystemPrompt(opts);
+    const messages: ChatCompletionMessageParam[] = [
+      { role: 'system', content: systemPrompt },
+      ...history
+        .filter((m) => m.role !== 'system')
+        .map((m): ChatCompletionMessageParam => ({ role: m.role, content: m.content })),
+    ];
+
+    const openaiTools = toOpenAITools(tools);
+    let lastAssistantContent: string | null = null;
+
+    for (let iter = 0; iter < MAX_TOOL_ITERATIONS; iter++) {
+      const completion = await this.openai.chat.completions.create({
+        model: TEXT_MODEL,
+        messages,
+        tools: openaiTools,
+        tool_choice: 'auto',
+        temperature: TEXT_MODEL_TEMPERATURE,
+        max_tokens: TEXT_MODEL_MAX_TOKENS,
+      });
+
+      const choice = completion.choices[0];
+      if (!choice) break;
+
+      const msg = choice.message;
+      const toolCalls = msg.tool_calls ?? [];
+      lastAssistantContent = msg.content ?? lastAssistantContent;
+
+      // No tool calls (or natural stop) → return the prose response.
+      if (toolCalls.length === 0 || choice.finish_reason === 'stop') {
+        const text = msg.content ?? 'Let me think about that for a moment.';
+        return { text, complete: false, toolCallsSummary: summary };
+      }
+
+      // Append the assistant turn (carrying tool_calls so OpenAI sees the chain).
+      messages.push({
+        role: 'assistant',
+        content: msg.content,
+        tool_calls: toolCalls,
+      });
+
+      // Dispatch each tool call. Errors are reported back to the model as
+      // JSON tool results — never thrown out of the loop.
+      for (const tc of toolCalls) {
+        if (tc.type !== 'function') continue;
+        const internalName = fromOpenAIToolName(tc.function.name);
+        const spec = toolMap.get(internalName);
+
+        if (spec === undefined) {
+          summary.push({ tool: internalName, error: true });
+          messages.push({
+            role: 'tool',
+            tool_call_id: tc.id,
+            content: JSON.stringify({ error: `Unknown tool: ${internalName}` }),
+          });
+          continue;
+        }
+
+        let result: unknown;
+        let isError = false;
+        try {
+          const args = JSON.parse(tc.function.arguments) as unknown;
+          result = await spec.fn(args);
+        } catch (err) {
+          isError = true;
+          result = { error: err instanceof Error ? err.message : String(err) };
+        }
+
+        summary.push({ tool: internalName, error: isError });
+        messages.push({
+          role: 'tool',
+          tool_call_id: tc.id,
+          content: JSON.stringify(result),
+        });
+      }
+    }
+
+    // Iteration cap exhausted — return the last prose we have, even if empty.
+    return {
+      text: lastAssistantContent ?? 'Let me come back to that — could you tell me more?',
+      complete: false,
+      toolCallsSummary: summary,
+    };
+  }
+
+  /**
+   * Builds the system prompt for the tool-loop path. Static text and
+   * vocabulary/kitchen-map blocks go at the top so OpenAI's auto-prefix
+   * caching can pick them up.
+   */
+  private buildToolSystemPrompt(opts: RespondOptions): string {
+    const base = getOnboardingSystemPrompt('text');
+    const parts: string[] = [base];
+
+    if (opts.vocabularyBlock !== undefined) {
+      parts.push('\n# Tag vocabulary\n');
+      parts.push(opts.vocabularyBlock);
+    }
+
+    if (opts.kitchenMapBlock !== undefined) {
+      parts.push('\n# Current household state (Kitchen Map)\n');
+      parts.push(opts.kitchenMapBlock);
+    }
+
+    return parts.join('\n');
   }
 
   closingPhrase(): string {

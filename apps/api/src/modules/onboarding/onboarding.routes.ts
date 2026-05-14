@@ -1,3 +1,4 @@
+import { Buffer } from 'node:buffer';
 import fp from 'fastify-plugin';
 import type { FastifyPluginAsync } from 'fastify';
 import {
@@ -8,6 +9,8 @@ import {
 import { ThreadRepository } from '../threads/thread.repository.js';
 import { OnboardingAgent } from '../../agents/onboarding.agent.js';
 import { authorize } from '../../middleware/authorize.hook.js';
+import { ChildrenRepository } from '../children/children.repository.js';
+import { ChildrenService } from '../children/children.service.js';
 import { CulturalPriorRepository } from '../cultural-priors/cultural-prior.repository.js';
 import { CulturalPriorService } from '../cultural-priors/cultural-prior.service.js';
 import { OnboardingService } from './onboarding.service.js';
@@ -22,12 +25,29 @@ const onboardingRoutesPlugin: FastifyPluginAsync = async (fastify) => {
     agent,
     logger: fastify.log,
   });
+
+  // Slice C — construct ChildrenService here so the onboarding tool loop
+  // can write children rows during the interview. ChildrenService is also
+  // constructed in apps/api/src/modules/children/children.routes.ts for the
+  // parent-facing HTTP route — both consumers share the same KEK + repo
+  // pattern. A future refactor could promote ChildrenService to a Fastify
+  // plugin to eliminate the duplication; out of scope for slice C.
+  const kekHex = fastify.env.ENVELOPE_ENCRYPTION_MASTER_KEY;
+  const kek = kekHex ? Buffer.from(kekHex, 'hex') : null;
+  const childrenRepository = new ChildrenRepository(fastify.supabase, kek, fastify.log);
+  const childrenService = new ChildrenService(childrenRepository);
+
   const service = new OnboardingService({
     threads,
     agent,
     culturalPriorService,
     logger: fastify.log,
     memoryService: fastify.memoryService,
+    childrenService,
+    culturalPriorRepository,
+    kitchenMapService: fastify.kitchenMapService,
+    vocabularyService: fastify.vocabularyService,
+    agentToolsEnabled: fastify.env.ONBOARDING_AGENT_TOOLS_ENABLED,
   });
 
   // R2-D3 — onboarding authors the household's cultural template, palate

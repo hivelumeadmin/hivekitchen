@@ -23,6 +23,17 @@ const EnvSchema = z
     WEB_BASE_URL: z.string().url().default('http://localhost:5173'),
 
     OPENAI_API_KEY: z.string().min(1),
+    // Slice C — when true, the OnboardingAgent uses an OpenAI function-call
+    // loop in text mode to populate the kitchen map (children, cultural
+    // priors, memory nodes) progressively during the conversation. When
+    // false the agent runs the legacy single-shot path with batch
+    // extraction at finalize. Default true; flip to 'false' for rollback.
+    ONBOARDING_AGENT_TOOLS_ENABLED: z
+      .preprocess(
+        (v) => (typeof v === 'string' ? v.toLowerCase() !== 'false' : true),
+        z.boolean(),
+      )
+      .default(true),
 
     ELEVENLABS_API_KEY: z.string().min(1),
     ELEVENLABS_VOICE_ID: z.string().min(1),

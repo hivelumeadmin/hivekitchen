@@ -19,4 +19,5 @@ export * from './lumi.js';
 export * from './recipe.js';
 export * from './recipe-vocabulary.js';
 export * from './kitchen-map.js';
+export * from './onboarding-tools.js';
 export * from './pantry.js';

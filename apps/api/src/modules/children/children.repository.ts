@@ -156,6 +156,44 @@ export class ChildrenRepository extends BaseRepository {
     }));
   }
 
+  /**
+   * Slice C — update the encrypted profile fields on an existing child.
+   * Mirrors insert()'s encryption discipline. Used by ChildrenService.upsertByName
+   * for the onboarding agent's idempotent child.upsert tool. Returns null
+   * when no row matched (id + household_id pair was wrong).
+   */
+  async updateProfile(params: {
+    id: string;
+    household_id: string;
+    name: string;
+    age_band: InsertChildParams['age_band'];
+    school_policy_notes: string | null;
+    declared_allergens: string[];
+    cultural_identifiers: string[];
+    dietary_preferences: string[];
+  }): Promise<DecryptedChildRow | null> {
+    const dek = await this.getHouseholdDek(params.household_id);
+    const updateRow = {
+      name: params.name,
+      age_band: params.age_band,
+      school_policy_notes: params.school_policy_notes,
+      declared_allergens: encryptField(params.declared_allergens, dek),
+      cultural_identifiers: encryptField(params.cultural_identifiers, dek),
+      dietary_preferences: encryptField(params.dietary_preferences, dek),
+      updated_at: new Date().toISOString(),
+    };
+    const { data, error } = await this.client
+      .from('children')
+      .update(updateRow)
+      .eq('id', params.id)
+      .eq('household_id', params.household_id)
+      .select(CHILD_COLUMNS)
+      .maybeSingle();
+    if (error) throw error;
+    if (data === null) return null;
+    return this.decryptRow(data as ChildRow, dek);
+  }
+
   async updateBagComposition(
     id: string,
     householdId: string,

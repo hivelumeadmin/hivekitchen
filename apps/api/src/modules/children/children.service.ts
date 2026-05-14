@@ -44,6 +44,70 @@ export class ChildrenService {
     return toChildResponse(row);
   }
 
+  /**
+   * Slice C — idempotent child upsert keyed on case-insensitive name match
+   * within the household. Used by the onboarding agent's child.upsert tool
+   * so retries / re-mentions don't create duplicate rows.
+   *
+   * Returns { child, was_existing }. was_existing=true means an existing
+   * row was UPDATEd; false means a new row was INSERTed.
+   *
+   * Bypasses the parental-notice acknowledgement check that
+   * POST /v1/households/:id/children enforces — onboarding is the path
+   * by which a household reaches consent, so writes are gated by audit
+   * rather than by prior consent. The auditing service stamps
+   * source='onboarding_agent' so post-hoc compliance review can
+   * distinguish agent-initiated from parent-initiated child writes.
+   */
+  async upsertByName(input: AddChildInput): Promise<{
+    child: ChildResponse;
+    was_existing: boolean;
+  }> {
+    const existing = await this.repository.findByHouseholdId(input.householdId);
+    const target = existing.find(
+      (c) => c.name.trim().toLocaleLowerCase() === input.body.name.trim().toLocaleLowerCase(),
+    );
+
+    if (target !== undefined) {
+      const row = await this.repository.updateProfile({
+        id: target.id,
+        household_id: input.householdId,
+        name: input.body.name.trim(),
+        age_band: input.body.age_band,
+        school_policy_notes: input.body.school_policy_notes ?? null,
+        declared_allergens: input.body.declared_allergens,
+        cultural_identifiers: input.body.cultural_identifiers,
+        dietary_preferences: input.body.dietary_preferences,
+      });
+      if (row === null) {
+        // Race: the matched row was deleted between find and update.
+        // Fall through to insert.
+        const inserted = await this.repository.insert({
+          household_id: input.householdId,
+          name: input.body.name,
+          age_band: input.body.age_band,
+          school_policy_notes: input.body.school_policy_notes ?? null,
+          declared_allergens: input.body.declared_allergens,
+          cultural_identifiers: input.body.cultural_identifiers,
+          dietary_preferences: input.body.dietary_preferences,
+        });
+        return { child: toChildResponse(inserted), was_existing: false };
+      }
+      return { child: toChildResponse(row), was_existing: true };
+    }
+
+    const inserted = await this.repository.insert({
+      household_id: input.householdId,
+      name: input.body.name,
+      age_band: input.body.age_band,
+      school_policy_notes: input.body.school_policy_notes ?? null,
+      declared_allergens: input.body.declared_allergens,
+      cultural_identifiers: input.body.cultural_identifiers,
+      dietary_preferences: input.body.dietary_preferences,
+    });
+    return { child: toChildResponse(inserted), was_existing: false };
+  }
+
   async getChild(input: GetChildInput): Promise<ChildResponse> {
     const row = await this.repository.findById(input.householdId, input.childId);
     if (row === null) throw new NotFoundError('Child not found');
