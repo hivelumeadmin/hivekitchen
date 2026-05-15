@@ -5,6 +5,7 @@ import { CulturalPriorRepository } from '../modules/cultural-priors/cultural-pri
 import { CulturalPriorService } from '../modules/cultural-priors/cultural-prior.service.js';
 import { ThreadRepository } from '../modules/threads/thread.repository.js';
 import { RecipeService } from '../modules/recipe/recipe.service.js';
+import { RecipesRepository } from '../modules/recipe/recipes.repository.js';
 import { PantryService } from '../modules/pantry/pantry.service.js';
 import { DomainOrchestrator } from './orchestrator.js';
 import type { OrchestratorServices } from './orchestrator.js';
@@ -49,11 +50,12 @@ const orchestratorHookPlugin: FastifyPluginAsync = async (fastify) => {
     logger: fastify.log,
   });
 
-  // Recipe / pantry services remain stubs in Story 3.5; their real impls
-  // land in later stories. Tool factories isolate the wire shape from the
-  // service layer so future stories can swap impls without touching tools.
-  // PlansService is now decorated by plansHook (Story 3.5).
-  const recipeService = new RecipeService();
+  // Slice D.2 — RecipeService now has a real read path (search + fetch).
+  // Constructed with the repository so the agent's recipe.search / recipe.fetch
+  // tools return live catalog rows instead of throwing NotImplementedError.
+  // PantryService still a stub — wired up in a future story.
+  const recipesRepository = new RecipesRepository(fastify.supabase);
+  const recipeService = new RecipeService(recipesRepository, fastify.log);
   const pantryService = new PantryService();
 
   const services: OrchestratorServices = {
