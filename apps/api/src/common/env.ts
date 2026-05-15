@@ -23,6 +23,17 @@ const EnvSchema = z
     WEB_BASE_URL: z.string().url().default('http://localhost:5173'),
 
     OPENAI_API_KEY: z.string().min(1),
+    // When true, OpenAIAdapter calls omit the `OpenAI-Data-Privacy: zero-retention`
+    // header so requests appear in the OpenAI dashboard's Activity/Logs panel for
+    // debugging. Default false → ZDR stays on (prod-safe; OpenAI retains no
+    // request bodies). Only flip true in dev environments — production calls
+    // see real child + household data and should remain zero-retention.
+    OPENAI_TRACES_ENABLED: z
+      .preprocess(
+        (v) => (typeof v === 'string' ? v.toLowerCase() === 'true' : false),
+        z.boolean(),
+      )
+      .default(false),
     // Slice C — when true, the OnboardingAgent uses an OpenAI function-call
     // loop in text mode to populate the kitchen map (children, cultural
     // priors, memory nodes) progressively during the conversation. When
@@ -91,6 +102,22 @@ const EnvSchema = z
         path: ['ENVELOPE_ENCRYPTION_MASTER_KEY'],
         message:
           'required in staging/production — set a 64-char hex KEK or configure Supabase Vault',
+      });
+    }
+    // Hard-block ZDR-disable in non-dev environments. Child + household data
+    // flows through OpenAI prompts; allowing OpenAI to retain those bodies
+    // outside development is a deliberate posture change that should not be
+    // toggleable via env alone in prod.
+    if (
+      data.OPENAI_TRACES_ENABLED &&
+      data.NODE_ENV !== 'development' &&
+      data.NODE_ENV !== 'test'
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['OPENAI_TRACES_ENABLED'],
+        message:
+          'cannot be true outside development/test — staging+ must keep OpenAI zero-retention',
       });
     }
   });

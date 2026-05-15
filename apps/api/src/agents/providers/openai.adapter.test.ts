@@ -208,6 +208,64 @@ describe('OpenAIAdapter', () => {
     });
   });
 
+  describe('tracesEnabled (env-gated ZDR toggle)', () => {
+    it('omits OpenAI-Data-Privacy when tracesEnabled=true (dashboard logs requests)', async () => {
+      const create = vi.fn().mockResolvedValue(buildResponse({ content: 'ok' }));
+      const adapter = new OpenAIAdapter(buildClient(create), { tracesEnabled: true });
+
+      await adapter.complete('hi', [], BASE_OPTIONS);
+
+      const [, requestOptions] = create.mock.calls[0] as [
+        unknown,
+        { headers?: Record<string, string> } | undefined,
+      ];
+      expect(requestOptions?.headers?.['OpenAI-Data-Privacy']).toBeUndefined();
+    });
+
+    it('sends OpenAI-Data-Privacy=zero-retention when tracesEnabled=false (default)', async () => {
+      const create = vi.fn().mockResolvedValue(buildResponse({ content: 'ok' }));
+      const adapter = new OpenAIAdapter(buildClient(create), { tracesEnabled: false });
+
+      await adapter.complete('hi', [], BASE_OPTIONS);
+
+      const [, requestOptions] = create.mock.calls[0] as [
+        unknown,
+        { headers?: Record<string, string> } | undefined,
+      ];
+      expect(requestOptions?.headers?.['OpenAI-Data-Privacy']).toBe('zero-retention');
+    });
+
+    it('also drops the header on completeWithMessages when tracesEnabled=true', async () => {
+      const create = vi.fn().mockResolvedValue(buildResponse({ content: 'ok' }));
+      const adapter = new OpenAIAdapter(buildClient(create), { tracesEnabled: true });
+
+      await adapter.completeWithMessages(
+        [{ role: 'user', content: 'hi' }],
+        [],
+        BASE_OPTIONS,
+      );
+
+      const [, requestOptions] = create.mock.calls[0] as [
+        unknown,
+        { headers?: Record<string, string> } | undefined,
+      ];
+      expect(requestOptions?.headers?.['OpenAI-Data-Privacy']).toBeUndefined();
+    });
+
+    it('also drops the header on probe() when tracesEnabled=true', async () => {
+      const create = vi.fn().mockResolvedValue(buildResponse({ content: 'pong' }));
+      const adapter = new OpenAIAdapter(buildClient(create), { tracesEnabled: true });
+
+      await adapter.probe();
+
+      const [, requestOptions] = create.mock.calls[0] as [
+        unknown,
+        { headers?: Record<string, string> } | undefined,
+      ];
+      expect(requestOptions?.headers?.['OpenAI-Data-Privacy']).toBeUndefined();
+    });
+  });
+
   describe('probe()', () => {
     it('returns true when the SDK call succeeds', async () => {
       const create = vi.fn().mockResolvedValue(buildResponse({ content: 'pong' }));

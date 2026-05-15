@@ -21,6 +21,21 @@ import type {
 
 const ZERO_RETENTION_HEADER = { 'OpenAI-Data-Privacy': 'zero-retention' } as const;
 
+/**
+ * Returns the headers to pass to chat.completions.create. When traces are
+ * disabled (default), we send `OpenAI-Data-Privacy: zero-retention` so OpenAI
+ * processes the request but stores no body/response — billing counters still
+ * tick, but the Activity / Logs / Traces dashboard panels are empty.
+ *
+ * When traces are enabled (dev-only — env validation hard-blocks staging/prod),
+ * the header is omitted entirely so requests appear in the OpenAI dashboard
+ * for debugging. An empty object — not `undefined` — keeps the SDK call shape
+ * stable across both paths.
+ */
+function buildRequestHeaders(tracesEnabled: boolean): Record<string, string> {
+  return tracesEnabled ? {} : { ...ZERO_RETENTION_HEADER };
+}
+
 // Slice B — semantic tier → concrete OpenAI model id. Bump the values here
 // to upgrade a tier across every call site at once.
 const TIER_TO_MODEL: Record<LLMTier, string> = {
@@ -209,8 +224,16 @@ function mapChatCompletion(response: ChatCompletion): LLMResponse {
 
 export class OpenAIAdapter implements LLMProvider {
   readonly name = 'openai';
+  private readonly tracesEnabled: boolean;
 
-  constructor(private readonly client: OpenAI) {}
+  constructor(
+    private readonly client: OpenAI,
+    options: { tracesEnabled?: boolean } = {},
+  ) {
+    // Default false → ZDR header is sent on every call. The orchestrator hook
+    // passes env.OPENAI_TRACES_ENABLED; tests can opt in explicitly.
+    this.tracesEnabled = options.tracesEnabled ?? false;
+  }
 
   async complete(
     prompt: string,
@@ -226,7 +249,7 @@ export class OpenAIAdapter implements LLMProvider {
     };
 
     const response = (await this.client.chat.completions.create(params, {
-      headers: { ...ZERO_RETENTION_HEADER },
+      headers: buildRequestHeaders(this.tracesEnabled),
     })) as ChatCompletion;
 
     return mapChatCompletion(response);
@@ -250,7 +273,7 @@ export class OpenAIAdapter implements LLMProvider {
     };
 
     const response = (await this.client.chat.completions.create(params, {
-      headers: { ...ZERO_RETENTION_HEADER },
+      headers: buildRequestHeaders(this.tracesEnabled),
     })) as ChatCompletion;
 
     return mapChatCompletion(response);
@@ -271,7 +294,7 @@ export class OpenAIAdapter implements LLMProvider {
     };
 
     const stream = await this.client.chat.completions.create(params, {
-      headers: { ...ZERO_RETENTION_HEADER },
+      headers: buildRequestHeaders(this.tracesEnabled),
     });
 
     // The streaming overload returns an async iterable; the union return
@@ -315,7 +338,7 @@ export class OpenAIAdapter implements LLMProvider {
           messages: [{ role: 'user', content: 'ping' }],
           max_tokens: 1,
         },
-        { headers: { ...ZERO_RETENTION_HEADER } },
+        { headers: buildRequestHeaders(this.tracesEnabled) },
       );
       return true;
     } catch {

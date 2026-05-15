@@ -67,7 +67,19 @@ const orchestratorHookPlugin: FastifyPluginAsync = async (fastify) => {
     culturalPrior: culturalPriorService,
   };
 
-  const openaiAdapter = new OpenAIAdapter(fastify.openai);
+  // OPENAI_TRACES_ENABLED is env-validated; staging/prod are hard-blocked from
+  // setting it true (env.ts superRefine). When true in dev, the adapter drops
+  // the zero-retention header so requests appear in the OpenAI dashboard.
+  const openaiTracesEnabled = fastify.env?.OPENAI_TRACES_ENABLED ?? false;
+  if (openaiTracesEnabled) {
+    fastify.log.warn(
+      { module: 'orchestrator', node_env: fastify.env?.NODE_ENV },
+      'OPENAI_TRACES_ENABLED=true — OpenAI dashboard will log full request bodies (zero-retention disabled)',
+    );
+  }
+  const openaiAdapter = new OpenAIAdapter(fastify.openai, {
+    tracesEnabled: openaiTracesEnabled,
+  });
   const anthropicAdapter = new AnthropicAdapter();
   const orchestrator = new DomainOrchestrator(
     [openaiAdapter, anthropicAdapter],
