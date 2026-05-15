@@ -1,5 +1,5 @@
 # generated: 2026-04-23
-# last_updated: 2026-05-07 (Story 3-22 → review after concurrent-applyBias patch)
+# last_updated: 2026-05-15 (Epic 2 audit: 2-s22 + 2-s24 → done; 2-s23 + 2-s25 rescoped)
 # project: hivekitchen
 # project_key: NOKEY
 # tracking_system: file-system
@@ -16,12 +16,12 @@
 #   - backlog → in-progress: Automatically when first story is created (via create-story)
 #   - in-progress → done: Manually when all stories reach 'done' status
 #
-# Story Status:
-#   - backlog: Story only exists in epic file
-#   - ready-for-dev: Story file created in stories folder
+# Story / Slice Status:
+#   - backlog: Story / slice only exists in epic / slice file
+#   - ready-for-dev: Story / slice file created in stories folder
 #   - in-progress: Developer actively working on implementation
 #   - review: Ready for code review (via Dev's code-review workflow)
-#   - done: Story completed
+#   - done: Story / slice completed
 #
 # Retrospective Status:
 #   - optional: Can be completed but not required
@@ -30,19 +30,36 @@
 # WORKFLOW NOTES:
 # ===============
 # - Epic transitions to 'in-progress' automatically when first story is created
-# - Stories can be worked in parallel if team capacity allows
-# - Developer typically creates next story after previous one is 'done' to incorporate learnings
-# - Dev moves story to 'review', then runs code-review (fresh context, different LLM recommended)
+# - Stories / slices can be worked in parallel if team capacity allows
+# - Developer typically creates next story / slice after previous one is 'done' to incorporate learnings
+# - Dev moves story / slice to 'review', then runs code-review (fresh context, different LLM recommended)
+
+# APPROACH-B MIGRATION (2026-05-12):
+# ===================================
+# Epics 4–11 backlog stories have been re-decomposed into vertical slices.
+# See `_bmad-output/planning-artifacts/epic-{4,5,6,7,8,9,10,11}-vertical-slices.md`
+# for the full re-decomposition: demo paths, layer fan-out, walls, and the
+# mapping from old story IDs into slices.
+#
+# Slice IDs use the format `<epic>-s<n>-<slug>` (e.g. `5-s6-packeroftheday`).
+# Done / review / ready-for-dev stories in Epics 1, 2, 3, 12 are unchanged —
+# the slicing applies to *future* work, not already-shipped work.
+#
+# Each slice's `# folds:` comment cites the original story IDs whose ACs
+# the slice satisfies, so PRD requirement traceability (FR/NFR/UX-DR codes)
+# is preserved.
+#
+# Walls (decision moments) are flagged with `# WALL:` markers.
 
 generated: 2026-04-23
-last_updated: 2026-05-07 (Story 3-22 → review after concurrent-applyBias patch)
+last_updated: 2026-05-15 (Epic 2 audit: 2-s22 + 2-s24 → done; 2-s23 + 2-s25 rescoped)
 project: hivekitchen
 project_key: NOKEY
 tracking_system: file-system
 story_location: "{project-root}/_bmad-output/implementation-artifacts"
 
 development_status:
-  # Epic 1: Foundation & Engineering Bedrock
+  # Epic 1: Foundation & Engineering Bedrock (unchanged — infrastructure, out of scope for approach-b)
   epic-1: in-progress
   1-1-scaffold-apps-marketing-astro-and-packages-ui-workspace-package: done
   1-2-wire-workspace-package-json-scripts-dockerfile-per-app-env-local-example: done
@@ -62,7 +79,7 @@ development_status:
   1-16-upgrade-zod-3-to-4: done
   epic-1-retrospective: optional
 
-  # Epic 2: Household Onboarding & Profile
+  # Epic 2: Household Onboarding & Profile (unchanged — all stories done)
   epic-2: in-progress
   2-1-supabase-auth-email-password-google-apple-oauth: done
   2-2-4-role-rbac-prehandler-jwt-rotation-on-use: done
@@ -80,9 +97,26 @@ development_status:
   2-12-per-child-lunch-bag-slot-declaration: done
   2-13-visible-memory-write-primitives-memory-nodes-seed: done
   2-14-onboarding-mental-model-copy-anxiety-leakage-telemetry: done
+  # Fix slice surfaced 2026-05-12 by VT-2-T17 verification thread.
+  # See: _bmad-output/planning-artifacts/2-s19-resume-incomplete-onboarding.md
+  2-s19-resume-incomplete-onboarding: done                                    # folds: VT-2-T17 fix
+  # ==========================================================================
+  # Epic 2 onboarding integration — surfaced 2026-05-12.
+  # Component-level stories 2-6 / 2-6b / 2-7 / 2-11 / 2-13 / 2-14 shipped but
+  # the feature thread end-to-end was never verified. These 7 slices close
+  # the gap and graduate Epic 2 from "components built" to "feature works."
+  # See: _bmad-output/planning-artifacts/epic-2-onboarding-integration.md
+  # ==========================================================================
+  2-s20-tts-read-onboarding-landing: review                                   # folds: VT-2-T6 prep (env-wiring smoke test); shipped 2026-05-12
+  2-s21-voice-interview-mvp-stt-tts-roundtrip: backlog                        # folds: 2-6 + 2-6b integration verification; deferred per text-first policy
+  2-s22-onboarding-agent-tool-wiring: done                                    # shipped via Slice C (bad8f49, 783b9d1, 7a62577) — child.upsert + cultural.note + memory.note wired into OnboardingService
+  2-s23-consent-and-handoff-to-app: backlog                                   # RESCOPED 2026-05-15 to verification-only: consent+handoff infra already shipped (Stories 2-8/2-9 + 2-s19 is_onboarded derivation). Walk VT-2-T6/T11 on a fresh signup, file any gap.
+  2-s24-text-mode-parity: done                                                # shipped — Slice C was built ON the text path. OnboardingText.tsx → /v1/onboarding/text/turn; E2E at apps/web/test/e2e/2-7-text-onboarding.spec.ts
+  2-s25-cultural-ratification-card: backlog                                   # RESCOPED 2026-05-15 to verification-only: card + ratify endpoint shipped (RatifyAction opt_in/tell_lumi_more/forget; cultural_priors.state detected→opt_in_confirmed). Family-language ratchet moved to Epic 5 5-S10 (Story 5.14) where ambient-signal detection lives. This slice now: walk 2-11 E2E on fresh signup, confirm cultural.lookup returns ratified state to planner, then close.
+  2-s26-resume-mid-flow-onboarding: backlog                                   # NEXT NET-NEW: onboarding_state + onboarding_turns persistence; builds on 2-s19 routing
   epic-2-retrospective: optional
 
-  # Epic 3: Weekly Plan & Ready-Answer Open
+  # Epic 3: Weekly Plan & Ready-Answer Open (unchanged — done / in-flight stories kept as-is)
   epic-3: in-progress
   3-1-allergy-guardrail-service-deterministic-authoritative-outside-agent-boundary: done
   3-2-domain-orchestrator-llmprovider-adapter-openai-primary-anthropic-stub: done
@@ -116,117 +150,169 @@ development_status:
   3-30-llm-provider-failover-circuit-breaker-audit: ready-for-dev
   epic-3-retrospective: optional
 
-  # Epic 4: Lunch Link & Heart Note Sacred Channel
+  # ==========================================================================
+  # Epic 4: Lunch Link & Heart Note Sacred Channel — 18 slices (was 16 stories)
+  # See: _bmad-output/planning-artifacts/epic-4-vertical-slices.md
+  # ==========================================================================
   epic-4: backlog
-  4-1-lunch-link-hmac-signed-urls-lunch-link-sessions-table: backlog
-  4-2-lunchlinkpage-child-scope-heart-note-bag-preview-emoji-rater: backlog
-  4-3-8pm-window-enforcement-60s-grace-410-gone-post-expiry: backlog
-  4-4-heart-note-composer-text-hold-to-talk-voice-envelope-encrypted: backlog
-  4-5-sacred-channel-delivery-no-ai-modification: backlog
-  4-6-scheduled-heart-note-delivery-edit-cancel-before-window-delivery-status: backlog
-  4-7-sendgrid-twilio-parent-copied-url-multi-channel-delivery: backlog
-  4-8-service-worker-for-lunch-route: backlog
-  4-9-flavorpassport-sparse-page-parent-child-variants: backlog
-  4-10-heartnotecomposer-grandparent-scope-with-at-cap-rhythm-copy: backlog
-  4-11-premium-voice-playback-of-heart-note-via-lunch-link: backlog
-  4-12-child-request-a-lunch-text-suggestion-parent-approval: backlog
-  4-13-no-heart-note-absence-nudges-anti-pattern-enforcement: backlog
-  4-14-layer-2-per-slot-signal-weighting-sibling-specific-patterns: backlog
-  4-15-allergy-transparency-log-exportable-to-parent-fr80: backlog
-  4-16-multilingual-font-fallbacks-for-non-latin-scripts: backlog
+  4-s1-compose-heart-note-draft: backlog                                      # folds: 4.4 (partial)
+  4-s2-render-heart-note-on-child-surface-stub-token: backlog                 # folds: 4.2 (partial)
+  4-s3-real-signed-tokens-8pm-window: backlog                                 # folds: 4.1, 4.3
+  4-s4-emoji-rating: backlog                                                  # folds: 4.2 (full), 4.14 (partial)
+  4-s5-sacred-channel-doctrine-encryption-lint: backlog                       # WALL: MVP wall; folds: 4.5, 4.4 (encryption)
+  4-s6-scheduling-edit-cancel-delivery-status: backlog                        # folds: 4.6
+  4-s7-hold-to-talk-voice-composition: backlog                                # folds: 4.4 (voice path)
+  4-s8-sendgrid-email-delivery: backlog                                       # folds: 4.7 (email)
+  4-s9-twilio-sms-whatsapp-parent-copied-url: backlog                         # folds: 4.7 (remaining)
+  4-s10-service-worker-offline-lunch-link: backlog                            # folds: 4.8
+  4-s11-layer-2-signal-planner-feedback-loop: backlog                         # folds: 4.14 (full)
+  4-s12-flavorpassport: backlog                                               # folds: 4.9
+  4-s13-grandparent-composer-at-cap-rhythm: backlog                           # folds: 4.10
+  4-s14-premium-voice-playback: backlog                                       # folds: 4.11
+  4-s15-child-request-a-lunch-parent-approval: backlog                        # folds: 4.12
+  4-s16-multilingual-fonts-rtl: backlog                                       # folds: 4.16
+  4-s17-allergy-transparency-log-export: backlog                              # folds: 4.15
+  4-s18-absence-nudge-lint-rule: backlog                                      # folds: 4.13
   epic-4-retrospective: optional
 
-  # Epic 5: Household Coordination & Evening Check-in
+  # ==========================================================================
+  # Epic 5: Household Coordination & Evening Check-in — 18 slices (was 17 stories)
+  # See: _bmad-output/planning-artifacts/epic-5-vertical-slices.md
+  # 2026-05-12: reconciled with Epic 12. Old 5-s1 (text thread stub Lumi) +
+  # old 5-s2 (real Lumi responses) folded into 12-s8 + 12-s9. Remaining
+  # slices renumbered down by 2. MVP wall now on 5-s3 (PackerOfTheDay).
+  # ==========================================================================
   epic-5: backlog
-  5-1-shared-family-thread-server-assigned-monotonic-sequence-thread-resync: backlog
-  5-2-sse-channel-per-user-id-client-id-per-tab-presence: backlog
-  5-3-threadturn-polymorphic-envelope-5-body-components: backlog
-  5-4-disambiguationpicker-l1-l4-with-bidirectional-tether: backlog
-  5-5-secondary-caregiver-invite-redemption-flow-revoke-transfer: backlog
-  5-6-packeroftheday-assignment-handoff: backlog
-  5-7-evening-check-in-unlimited-text-tier-capped-voice: backlog
-  5-8-elevenlabs-hmac-webhook-early-ack-continuation-pattern: backlog
-  5-9-concurrent-caption-fallback-for-voice-output: backlog
-  5-10-adaptive-lumi-tone-length-parent-initiated-only: backlog
-  5-11-passive-profile-enrichment-via-memory-note-tool: backlog
-  5-12-i-noticed-learning-moments-with-confirm-correct: backlog
-  5-13-plan-reasoning-explanations-on-demand: backlog
-  5-14-cultural-recognition-l2-l3-ratification-turns-family-language-ratchet: backlog
-  5-15-geolocation-opt-in-household-level-only: backlog
-  5-16-voice-transcript-retention-controls-90d-default-opt-in-longer-immediate-delete: backlog
-  5-17-thread-integrity-anomaly-client-beacon: backlog
+  5-s1-multi-tab-presence: backlog                                            # folds: 5.2
+  5-s2-caregiver-invite-redemption: backlog                                   # folds: 5.5
+  5-s3-packeroftheday: backlog                                                # WALL: MVP wall; folds: 5.1 (schema), 5.6
+  5-s4-thread-sequencing-sse-resync: backlog                                  # folds: 5.1 (server_seq + resync), 5.17 (anomaly beacon)
+  5-s5-voice-thread-standard-tier-captions: backlog                           # folds: 5.7 (voice), 5.8 (HMAC), 5.9 (captions)
+  5-s6-latency-doctrine-early-ack-filler-phrase-lint: backlog                 # folds: 5.8 (early-ack), 5.10 (lint)
+  5-s7-passive-memory-enrichment: backlog                                     # folds: 5.11
+  5-s8-i-noticed-learning-moments: backlog                                    # folds: 5.12
+  5-s9-why-this-plan-reasoning: backlog                                       # folds: 5.13
+  5-s10-cultural-recognition-family-language-ratchet: backlog                 # folds: 5.14
+  5-s11-adaptive-lumi-tone-length: backlog                                    # folds: 5.10 (full)
+  5-s12-disambiguationpicker-l3-l4: backlog                                   # folds: 5.4
+  5-s13-caption-only-mode: backlog                                            # folds: 5.9 (full)
+  5-s14-geolocation-opt-in-household-level: backlog                           # folds: 5.15
+  5-s15-voice-transcript-retention-controls: backlog                          # folds: 5.16
+  5-s16-voice-tier-cap: backlog                                               # folds: 5.7 (tier-cap)
+  5-s17-caregiver-transfer-revoke: backlog                                    # folds: 5.5 (full)
+  5-s18-thread-integrity-anomaly-beacon: backlog                              # folds: 5.17 (full)
   epic-5-retrospective: optional
 
-  # Epic 6: Grocery & Silent Pantry-Plan-List Loop
+  # ==========================================================================
+  # Epic 6: Grocery & Silent Pantry-Plan-List Loop — 11 slices (was 6 stories)
+  # See: _bmad-output/planning-artifacts/epic-6-vertical-slices.md
+  # ==========================================================================
   epic-6: backlog
-  6-1-shopping-list-derivation-from-current-weeks-plan: backlog
-  6-2-store-mode-ui-one-handed-aisle-aware-sort-sticky-check-off: backlog
-  6-3-cultural-supplier-directory-routing-multi-store-split-list: backlog
-  6-4-tap-to-purchase-silent-pantry-update-parent-correctable-inference: backlog
-  6-5-leftover-aware-swap-proposals: backlog
-  6-6-add-non-plan-items-connectivity-loss-ux: backlog
+  6-s1-real-grocery-list-from-plan: backlog                                   # folds: 6.1 (partial)
+  6-s2-snack-vs-main-separation: backlog                                      # folds: 6.1 (FR110 carve-out)
+  6-s3-store-mode-one-handed: backlog                                         # folds: 6.2
+  6-s4-tap-to-check-off: backlog                                              # folds: 6.2 (full), 6.4 (UI side)
+  6-s5-silent-pantry-update: backlog                                          # folds: 6.4 (pantry write)
+  6-s6-pantry-aware-derivation: backlog                                       # WALL: MVP wall; folds: 6.1 (full), 6.4 (loop closure)
+  6-s7-manual-items-non-plan-staples: backlog                                 # folds: 6.6 (manual items)
+  6-s8-connectivity-loss-ux: backlog                                          # folds: 6.6 (offline)
+  6-s9-pantry-correction: backlog                                             # folds: 6.4 (correction)
+  6-s10-leftover-aware-swap-proposals: backlog                                # folds: 6.5
+  6-s11-cultural-supplier-directory-routing: backlog                          # folds: 6.3
   epic-6-retrospective: optional
 
-  # Epic 7: Visible Memory & Trust Controls
+  # ==========================================================================
+  # Epic 7: Visible Memory & Trust Controls — 13 slices (was 10 stories)
+  # See: _bmad-output/planning-artifacts/epic-7-vertical-slices.md
+  # ==========================================================================
   epic-7: backlog
-  7-1-visible-memory-panel-with-authored-prose-from-projection: backlog
-  7-2-provenance-chips-edit-delete-primitives: backlog
-  7-3-soft-forget-nightly-soft-hard-promotion-job: backlog
-  7-4-reset-flavor-journey-annual: backlog
-  7-5-account-deletion-with-30-day-processor-erasure: backlog
-  7-6-parental-review-dashboard-compliance-trust-unified: backlog
-  7-7-auditable-json-data-export-fr71: backlog
-  7-8-consent-history-view-fr72: backlog
-  7-9-state-level-minor-privacy-patchwork-overrides: backlog
-  7-10-payload-scrubbing-primitive-for-future-sharing-surface: backlog
+  7-s1-visible-memory-read: backlog                                           # folds: 7.1 (partial)
+  7-s2-provenance-chips: backlog                                              # folds: 7.2 (provenance)
+  7-s3-edit-a-sentence: backlog                                               # folds: 7.2 (edit)
+  7-s4-soft-forget: backlog                                                   # folds: 7.3 (soft-forget)
+  7-s5-soft-hard-promotion-job: backlog                                       # WALL: feature MVP wall; folds: 7.3 (full)
+  7-s6-first-time-helper-pulse: backlog                                       # folds: 7.1 (first-time-reveal)
+  7-s7-annual-flavor-journey-reset: backlog                                   # folds: 7.4
+  7-s8-parental-review-dashboard: backlog                                     # folds: 7.6
+  7-s9-consent-history-view: backlog                                          # folds: 7.8
+  7-s10-json-data-export: backlog                                             # folds: 7.7
+  7-s11-account-deletion-30-day-cascade: backlog                              # WALL: regulatory MVP wall; folds: 7.5
+  7-s12-state-residency-override-scaffold: backlog                            # folds: 7.9
+  7-s13-payload-scrubbing-primitive: backlog                                  # folds: 7.10
   epic-7-retrospective: optional
 
-  # Epic 8: Billing, Tiers & Gift Subscriptions
+  # ==========================================================================
+  # Epic 8: Billing, Tiers & Gift Subscriptions — 13 slices (was 10 stories)
+  # See: _bmad-output/planning-artifacts/epic-8-vertical-slices.md
+  # ==========================================================================
   epic-8: backlog
-  8-1-stripe-checkout-integration-standard-premium-tier-subscriptions: backlog
-  8-2-school-year-auto-pause-via-parent-declared-calendar: backlog
-  8-3-upgrade-downgrade-cancel-receipts: backlog
-  8-4-failed-payment-grace-service-continuity: backlog
-  8-5-stripe-webhook-hmac-validated: backlog
-  8-6-gift-subscription-purchase-129-yr-premium: backlog
-  8-7-guest-heart-note-authoring-add-on-24-yr-signed-jwt-invite: backlog
-  8-8-redeem-gifted-subscription-fr13: backlog
-  8-9-gift-cancellation-before-redemption-with-full-refund: backlog
-  8-10-premium-tier-feature-gate-logic-activation-of-epic-4-5-stubs: backlog
+  8-s1-first-subscription-standard-monthly: backlog                           # folds: 8.1 (partial), 8.5 (partial)
+  8-s2-full-tier-cadence-matrix: backlog                                      # folds: 8.1 (full)
+  8-s3-upgrade-downgrade: backlog                                             # folds: 8.3 (upgrade)
+  8-s4-cancel-cleanly: backlog                                                # folds: 8.3 (cancel)
+  8-s5-receipts: backlog                                                      # WALL: revenue MVP wall; folds: 8.3 (receipts)
+  8-s6-full-webhook-lifecycle: backlog                                        # folds: 8.5 (full)
+  8-s7-failed-payment-grace: backlog                                          # folds: 8.4
+  8-s8-school-year-auto-pause: backlog                                        # folds: 8.2
+  8-s9-tier-gate-real-premium-metering: backlog                               # WALL: tier-gate wall; folds: 8.10
+  8-s10-gift-purchase: backlog                                                # folds: 8.6
+  8-s11-gift-redemption: backlog                                              # WALL: gift MVP wall; folds: 8.8
+  8-s12-gift-cancellation: backlog                                            # folds: 8.9
+  8-s13-guest-heart-note-add-on: backlog                                      # folds: 8.7
   epic-8-retrospective: optional
 
-  # Epic 9: Ops Dashboard, Compliance Export & Incident Response
+  # ==========================================================================
+  # Epic 9: Ops Dashboard, Compliance Export & Incident Response — 9 slices (was 8 stories)
+  # See: _bmad-output/planning-artifacts/epic-9-10-vertical-slices.md
+  # ==========================================================================
   epic-9: backlog
-  9-1-allergy-safety-anomaly-dashboard-ops-scope: backlog
-  9-2-plan-generation-latency-voice-cost-guardrail-catch-rate-lunch-link-delivery-metrics: backlog
-  9-3-three-stage-plan-audit-timeline-component: backlog
-  9-4-incident-response-sla-workflow: backlog
-  9-5-parent-support-request-channel-ops-response-with-bounded-sla: backlog
-  9-6-compliance-officer-audit-log-subset-export-fr101: backlog
-  9-7-audit-logs-covering-all-categories-fr98: backlog
-  9-8-guardrail-mismatch-thread-integrity-anomaly-client-errors-backing-dashboards: backlog
+  9-s1-three-stage-plan-audit-timeline: backlog                               # folds: 9.3
+  9-s2-allergy-safety-anomaly-dashboard: backlog                              # folds: 9.1
+  9-s3-incident-response-sla-workflow: backlog                                # WALL: incident MVP wall; folds: 9.4
+  9-s4-operational-metrics-dashboard: backlog                                 # folds: 9.2
+  9-s5-parent-support-channel: backlog                                        # folds: 9.5
+  9-s6-compliance-officer-audit-log-export: backlog                           # folds: 9.6
+  9-s7-audit-retention-enforcement: backlog                                   # WALL: compliance launch wall; folds: 9.7 (retention)
+  9-s8-end-to-end-audit-coverage: backlog                                     # folds: 9.7 (coverage)
+  9-s9-anomaly-beacon-dashboards: backlog                                     # folds: 9.8
   epic-9-retrospective: optional
 
-  # Epic 10: Beta-to-Public-Launch Transition
+  # ==========================================================================
+  # Epic 10: Beta-to-Public-Launch Transition — 7 slices (was 5 stories)
+  # See: _bmad-output/planning-artifacts/epic-9-10-vertical-slices.md
+  # ==========================================================================
   epic-10: backlog
-  10-1-credit-card-vpc-at-subscription-signup-0-01-immediate-refund: backlog
-  10-2-beta-to-paid-transition-flow-with-14-day-refund-window: backlog
-  10-3-tier-variant-cohort-assignment-via-households-tier-variant: backlog
-  10-4-voice-cost-soft-cap-95th-percentile-messaging-hard-rate-limit: backlog
-  10-5-in-product-surveys-at-validation-milestones: backlog
+  10-s1-credit-card-vpc: backlog                                              # WALL: CC-VPC launch wall; folds: 10.1
+  10-s2-beta-to-paid-transition: backlog                                      # folds: 10.2 (transition)
+  10-s3-14-day-first-charge-refund: backlog                                   # folds: 10.2 (refund window)
+  10-s4-ab-cohort-assignment-tier-variants: backlog                           # folds: 10.3
+  10-s5-voice-soft-cap-95th-percentile-messaging: backlog                     # folds: 10.4 (soft-cap)
+  10-s6-voice-hard-rate-limit-sustained-abuse: backlog                        # folds: 10.4 (hard-limit)
+  10-s7-validation-milestone-surveys: backlog                                 # folds: 10.5
   epic-10-retrospective: optional
 
-  # Epic 11: Marketing & Public Acquisition
+  # ==========================================================================
+  # Epic 11: Marketing & Public Acquisition — 8 slices (was 6 stories)
+  # See: _bmad-output/planning-artifacts/epic-11-vertical-slices.md
+  # ==========================================================================
   epic-11: backlog
-  11-1-astro-marketing-site-scaffold-landing-page: backlog
-  11-2-pricing-page-with-structured-data: backlog
-  11-3-pre-login-interactive-demo: backlog
-  11-4-cultural-community-partner-pages: backlog
-  11-5-faq-legal-pages: backlog
-  11-6-gift-purchase-entry-point-non-indexed-authenticated-routes: backlog
+  11-s1-landing-page: backlog                                                 # folds: 11.1 (page side)
+  11-s2-pricing-page: backlog                                                 # folds: 11.2 (page side)
+  11-s3-seo-meta-structured-data: backlog                                     # folds: 11.1 + 11.2 (SEO sides)
+  11-s4-faq-legal-pages: backlog                                              # folds: 11.5
+  11-s5-robots-indexing-rules: backlog                                        # WALL: launch wall; folds: 11.6 (robots side)
+  11-s6-pre-login-interactive-demo: backlog                                   # folds: 11.3
+  11-s7-cultural-community-partner-pages: backlog                             # folds: 11.4
+  11-s8-gift-purchase-entry: backlog                                          # folds: 11.6 (gift side)
   epic-11-retrospective: optional
 
-  # Epic 12: Ambient Lumi Companion
+  # ==========================================================================
+  # Epic 12: Ambient Lumi Companion (Phase 1 + 2 done; Phase 2+ converted)
+  # Phase 1 + 2 stories 12.1–12.7 are unchanged (shipped).
+  # Phase 2+ stories 12.8–12.12 → 5 slices.
+  # See: _bmad-output/planning-artifacts/epic-12-vertical-slices.md
+  # NOTE: 12-S8 reconciles a coupling with Epic 5 5-S1 — see slice doc.
+  # ==========================================================================
   epic-12: in-progress
   12-1-lumi-contracts-lumisurface-lumicontextsignal-lumiturnrequest: done
   12-2-global-lumi-store-lumi-store-ts: done
@@ -235,9 +321,9 @@ development_status:
   12-5-talk-session-lifecycle-post-delete-v1-lumi-voice-sessions: done
   12-6-lumiorb-and-lumipanel-in-root-layout: done
   12-7-route-context-registration: done
-  12-8-tap-to-talk-browser-direct-elevenlabs-stt-tts-websockets: backlog
-  12-9-lumiagent-with-surface-prompt-dispatch-and-household-snapshot: backlog
-  12-10-post-v1-lumi-turns-ambient-text-turn-endpoint: backlog
-  12-11-proactive-nudge-infrastructure-sse-delivery-redis-rate-limit: backlog
-  12-12-global-proactive-nudge-opt-out-in-notification-preferences: backlog
+  12-s8-ambient-text-turn-stub-agent: backlog                                 # folds: 12.10 (stub)
+  12-s9-lumiagent-surface-prompt-household-snapshot: backlog                  # WALL: MVP wall; folds: 12.9, 12.10 (full)
+  12-s10-tap-to-talk-voice-browser-direct: backlog                            # folds: 12.8
+  12-s11-proactive-nudge-turn-persistence: backlog                            # folds: 12.11 (persistence)
+  12-s12-orb-breathing-nudge-sse-opt-out: backlog                             # folds: 12.11 (SSE), 12.12
   epic-12-retrospective: optional
