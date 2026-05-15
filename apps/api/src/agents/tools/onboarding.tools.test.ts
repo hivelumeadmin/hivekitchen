@@ -167,6 +167,68 @@ describe('createChildUpsertToolSpec', () => {
       }),
     ).rejects.toThrow();
   });
+
+  it('PATCH semantics: omitted tag arrays pass through as undefined (preserve existing)', async () => {
+    await spec.fn({
+      name: 'Layla',
+      age_band: 'child',
+      // no declared_allergens, no cultural_identifiers, no dietary_preferences
+    });
+    // Service receives undefined for the omitted fields so it can merge with
+    // existing row values rather than clobbering them.
+    expect(deps.childrenService.upsertByName).toHaveBeenCalledWith(
+      expect.objectContaining({
+        body: expect.objectContaining({
+          name: 'Layla',
+          age_band: 'child',
+          declared_allergens: undefined,
+          cultural_identifiers: undefined,
+          dietary_preferences: undefined,
+        }),
+      }),
+    );
+    // Vocabulary validators should NOT be called for fields the agent omitted.
+    expect(deps.vocabularyService.validateAllergens).not.toHaveBeenCalled();
+    expect(deps.vocabularyService.validateCultural).not.toHaveBeenCalled();
+    expect(deps.vocabularyService.validateDietary).not.toHaveBeenCalled();
+  });
+
+  it('PATCH semantics: explicit empty array IS an overwrite (validated through)', async () => {
+    await spec.fn({
+      name: 'Layla',
+      age_band: 'child',
+      declared_allergens: [],
+    });
+    // Empty array is a deliberate clear — the service should receive it as
+    // [] (overwrite), not undefined (preserve).
+    expect(deps.childrenService.upsertByName).toHaveBeenCalledWith(
+      expect.objectContaining({
+        body: expect.objectContaining({
+          declared_allergens: [],
+        }),
+      }),
+    );
+    // Validator IS called for the explicit empty array (returns []).
+    expect(deps.vocabularyService.validateAllergens).toHaveBeenCalledWith([]);
+  });
+
+  it('PATCH semantics: partial update — only declared_allergens supplied', async () => {
+    await spec.fn({
+      name: 'Layla',
+      age_band: 'child',
+      declared_allergens: ['peanut'],
+      // dietary_preferences + cultural_identifiers omitted
+    });
+    expect(deps.childrenService.upsertByName).toHaveBeenCalledWith(
+      expect.objectContaining({
+        body: expect.objectContaining({
+          declared_allergens: ['peanut'],
+          cultural_identifiers: undefined,
+          dietary_preferences: undefined,
+        }),
+      }),
+    );
+  });
 });
 
 // ---------------------------------------------------------------------------

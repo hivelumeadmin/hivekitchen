@@ -65,28 +65,35 @@ export function createChildUpsertToolSpec(
     fn: async (input: unknown) => {
       const parsed = ChildUpsertInputSchema.parse(input);
 
-      // Validate tag arrays against the live vocabulary. Failures here surface
-      // as Error → JSON tool-result so the agent can correct on retry.
-      const declared_allergens = deps.vocabularyService.validateAllergens(
-        parsed.declared_allergens,
-      );
-      const cultural_identifiers = deps.vocabularyService.validateCultural(
-        parsed.cultural_identifiers,
-      );
-      const validated_dietary = deps.vocabularyService.validateDietary(
-        parsed.dietary_preferences,
-      );
-      // Expand implies-closure server-side — agent emits the narrowest tag
-      // (e.g. 'vegan') and the service fans it out (+ 'vegetarian', 'dairy_free',
-      // 'egg_free'). Saves prompt tokens and keeps the implies graph canonical.
-      const dietary_preferences = deps.vocabularyService.expandImpliesClosure(validated_dietary);
+      // PATCH semantics: validate tag arrays only when the agent provided
+      // them. undefined means "no update" → service preserves existing.
+      // An explicit empty array is a deliberate clear; the validator handles
+      // it (no entries to validate, returns []).
+      const declared_allergens =
+        parsed.declared_allergens === undefined
+          ? undefined
+          : deps.vocabularyService.validateAllergens(parsed.declared_allergens);
+      const cultural_identifiers =
+        parsed.cultural_identifiers === undefined
+          ? undefined
+          : deps.vocabularyService.validateCultural(parsed.cultural_identifiers);
+      const dietary_preferences =
+        parsed.dietary_preferences === undefined
+          ? undefined
+          : deps.vocabularyService.expandImpliesClosure(
+              // Expand implies-closure server-side — agent emits the narrowest
+              // tag (e.g. 'vegan') and the service fans it out
+              // (+ 'vegetarian', 'dairy_free', 'egg_free'). Saves prompt tokens
+              // and keeps the implies graph canonical.
+              deps.vocabularyService.validateDietary(parsed.dietary_preferences),
+            );
 
       const result = await deps.childrenService.upsertByName({
         householdId: ctx.householdId,
         body: {
           name: parsed.name,
           age_band: parsed.age_band,
-          school_policy_notes: parsed.school_policy_notes ?? null,
+          school_policy_notes: parsed.school_policy_notes,
           declared_allergens,
           cultural_identifiers,
           dietary_preferences,

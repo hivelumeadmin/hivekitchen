@@ -38,18 +38,23 @@ export const ChildUpsertInputSchema = z.object({
   age_band: AgeBandSchema,
 
   /** Optional — short note about the child's school policy as the agent
-   *  understood it. Persisted to children.school_policy_notes. */
+   *  understood it. Persisted to children.school_policy_notes. Omitted
+   *  on update means "preserve existing"; pass null to explicitly clear. */
   school_policy_notes: z.string().trim().max(500).nullish(),
 
-  /** Allergen tag keys. Service validates against allergen_tags. */
-  declared_allergens: TagArraySchema.default([]),
+  /** Allergen tag keys. Service validates against allergen_tags.
+   *  PATCH SEMANTICS: omitting this field on an update preserves the
+   *  existing array. Pass an explicit array (including []) to overwrite. */
+  declared_allergens: TagArraySchema.optional(),
 
-  /** Cultural tag keys. Service validates against cultural_tags. */
-  cultural_identifiers: TagArraySchema.default([]),
+  /** Cultural tag keys. Service validates against cultural_tags.
+   *  PATCH SEMANTICS: see declared_allergens. */
+  cultural_identifiers: TagArraySchema.optional(),
 
   /** Dietary tag keys. Service validates against dietary_tags; the implies-
-   *  closure is expanded server-side, the agent emits the narrowest tag. */
-  dietary_preferences: TagArraySchema.default([]),
+   *  closure is expanded server-side, the agent emits the narrowest tag.
+   *  PATCH SEMANTICS: see declared_allergens. */
+  dietary_preferences: TagArraySchema.optional(),
 });
 
 export const ChildUpsertOutputSchema = z.object({

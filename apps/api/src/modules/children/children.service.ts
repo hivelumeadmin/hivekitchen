@@ -12,6 +12,27 @@ export interface AddChildInput {
   body: AddChildBody;
 }
 
+/**
+ * Slice C / polish — partial-update variant of AddChildBody for the
+ * onboarding agent's child.upsert tool. Tag arrays + school_policy_notes
+ * are optional (undefined = preserve existing on update; empty array =
+ * explicit overwrite). name + age_band stay required because they're
+ * the identifying fields.
+ */
+export interface UpsertByNameBody {
+  name: AddChildBody['name'];
+  age_band: AddChildBody['age_band'];
+  school_policy_notes?: AddChildBody['school_policy_notes'] | undefined;
+  declared_allergens?: AddChildBody['declared_allergens'] | undefined;
+  cultural_identifiers?: AddChildBody['cultural_identifiers'] | undefined;
+  dietary_preferences?: AddChildBody['dietary_preferences'] | undefined;
+}
+
+export interface UpsertByNameInput {
+  householdId: string;
+  body: UpsertByNameBody;
+}
+
 export interface GetChildInput {
   householdId: string;
   childId: string;
@@ -49,6 +70,13 @@ export class ChildrenService {
    * within the household. Used by the onboarding agent's child.upsert tool
    * so retries / re-mentions don't create duplicate rows.
    *
+   * PATCH semantics on update: optional tag-array fields preserve existing
+   * values when omitted (undefined). Pass an explicit array (including
+   * empty []) to overwrite. This lets the onboarding agent volunteer
+   * incremental facts without clobbering earlier learnings — e.g. turn 1
+   * sets declared_allergens=['peanut']; turn 2's child.upsert that
+   * doesn't mention allergens preserves ['peanut'] rather than clearing it.
+   *
    * Returns { child, was_existing }. was_existing=true means an existing
    * row was UPDATEd; false means a new row was INSERTed.
    *
@@ -59,7 +87,7 @@ export class ChildrenService {
    * source='onboarding_agent' so post-hoc compliance review can
    * distinguish agent-initiated from parent-initiated child writes.
    */
-  async upsertByName(input: AddChildInput): Promise<{
+  async upsertByName(input: UpsertByNameInput): Promise<{
     child: ChildResponse;
     was_existing: boolean;
   }> {
@@ -69,41 +97,49 @@ export class ChildrenService {
     );
 
     if (target !== undefined) {
+      // PATCH merge: undefined fields preserve existing values; explicit
+      // arrays (including []) overwrite. school_policy_notes follows the
+      // same rule (undefined preserves; null explicitly clears).
       const row = await this.repository.updateProfile({
         id: target.id,
         household_id: input.householdId,
         name: input.body.name.trim(),
         age_band: input.body.age_band,
-        school_policy_notes: input.body.school_policy_notes ?? null,
-        declared_allergens: input.body.declared_allergens,
-        cultural_identifiers: input.body.cultural_identifiers,
-        dietary_preferences: input.body.dietary_preferences,
+        school_policy_notes:
+          input.body.school_policy_notes === undefined
+            ? target.school_policy_notes
+            : input.body.school_policy_notes,
+        declared_allergens: input.body.declared_allergens ?? target.declared_allergens,
+        cultural_identifiers: input.body.cultural_identifiers ?? target.cultural_identifiers,
+        dietary_preferences: input.body.dietary_preferences ?? target.dietary_preferences,
       });
       if (row === null) {
         // Race: the matched row was deleted between find and update.
-        // Fall through to insert.
+        // Fall through to insert with whatever fields the input has.
         const inserted = await this.repository.insert({
           household_id: input.householdId,
           name: input.body.name,
           age_band: input.body.age_band,
           school_policy_notes: input.body.school_policy_notes ?? null,
-          declared_allergens: input.body.declared_allergens,
-          cultural_identifiers: input.body.cultural_identifiers,
-          dietary_preferences: input.body.dietary_preferences,
+          declared_allergens: input.body.declared_allergens ?? [],
+          cultural_identifiers: input.body.cultural_identifiers ?? [],
+          dietary_preferences: input.body.dietary_preferences ?? [],
         });
         return { child: toChildResponse(inserted), was_existing: false };
       }
       return { child: toChildResponse(row), was_existing: true };
     }
 
+    // INSERT path: missing tag arrays default to empty (no existing value
+    // to merge with). This matches the existing addChild semantics.
     const inserted = await this.repository.insert({
       household_id: input.householdId,
       name: input.body.name,
       age_band: input.body.age_band,
       school_policy_notes: input.body.school_policy_notes ?? null,
-      declared_allergens: input.body.declared_allergens,
-      cultural_identifiers: input.body.cultural_identifiers,
-      dietary_preferences: input.body.dietary_preferences,
+      declared_allergens: input.body.declared_allergens ?? [],
+      cultural_identifiers: input.body.cultural_identifiers ?? [],
+      dietary_preferences: input.body.dietary_preferences ?? [],
     });
     return { child: toChildResponse(inserted), was_existing: false };
   }
