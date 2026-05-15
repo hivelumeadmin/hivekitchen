@@ -1,5 +1,5 @@
 # generated: 2026-04-23
-# last_updated: 2026-05-15 (Epic 2 audit: 2-s22 + 2-s24 → done; 2-s23 + 2-s25 rescoped)
+# last_updated: 2026-05-15 (Epic 2: 2-s26 done)
 # project: hivekitchen
 # project_key: NOKEY
 # tracking_system: file-system
@@ -52,7 +52,7 @@
 # Walls (decision moments) are flagged with `# WALL:` markers.
 
 generated: 2026-04-23
-last_updated: 2026-05-15 (Epic 2 audit: 2-s22 + 2-s24 → done; 2-s23 + 2-s25 rescoped)
+last_updated: 2026-05-15 (Epic 2: 2-s26 done)
 project: hivekitchen
 project_key: NOKEY
 tracking_system: file-system
@@ -113,7 +113,7 @@ development_status:
   2-s23-consent-and-handoff-to-app: backlog                                   # RESCOPED 2026-05-15 to verification-only: consent+handoff infra already shipped (Stories 2-8/2-9 + 2-s19 is_onboarded derivation). Walk VT-2-T6/T11 on a fresh signup, file any gap.
   2-s24-text-mode-parity: done                                                # shipped — Slice C was built ON the text path. OnboardingText.tsx → /v1/onboarding/text/turn; E2E at apps/web/test/e2e/2-7-text-onboarding.spec.ts
   2-s25-cultural-ratification-card: backlog                                   # RESCOPED 2026-05-15 to verification-only: card + ratify endpoint shipped (RatifyAction opt_in/tell_lumi_more/forget; cultural_priors.state detected→opt_in_confirmed). Family-language ratchet moved to Epic 5 5-S10 (Story 5.14) where ambient-signal detection lives. This slice now: walk 2-11 E2E on fresh signup, confirm cultural.lookup returns ratified state to planner, then close.
-  2-s26-resume-mid-flow-onboarding: backlog                                   # NEXT NET-NEW: onboarding_state + onboarding_turns persistence; builds on 2-s19 routing
+  2-s26-resume-mid-flow-onboarding: done                                      # Done 2026-05-15. Reuses threads/thread_turns instead of new onboarding_state tables — see story for rationale
   epic-2-retrospective: optional
 
   # Epic 3: Weekly Plan & Ready-Answer Open (unchanged — done / in-flight stories kept as-is)

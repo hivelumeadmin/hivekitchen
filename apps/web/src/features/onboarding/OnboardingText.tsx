@@ -11,11 +11,30 @@ type Turn = { id: string; role: 'lumi' | 'user'; content: string };
 
 const GREETING_TURN_ID = 'greeting';
 
-export function OnboardingText({ onFinalized }: { onFinalized?: () => void } = {}) {
+// Slice 2-S26 — `initialTurns` is the resume-mode entry point. When provided,
+// the synthetic OPENING_GREETING is prepended exactly as on a fresh start
+// (it's a client-render constant — the server intentionally excludes it from
+// GET /v1/onboarding/state) and the prior real turns render in order beneath
+// it. Without the prop the component renders the fresh-start transcript, so
+// the existing 2-7 test suite and standalone usage are unaffected.
+export interface OnboardingTextProps {
+  onFinalized?: () => void;
+  initialTurns?: Array<{ id: string; role: 'lumi' | 'user'; content: string }>;
+}
+
+export function OnboardingText({ onFinalized, initialTurns }: OnboardingTextProps = {}) {
   const navigate = useNavigate();
-  const [turns, setTurns] = useState<Turn[]>([
-    { id: GREETING_TURN_ID, role: 'lumi', content: OPENING_GREETING },
-  ]);
+  const [turns, setTurns] = useState<Turn[]>(() => {
+    const seed: Turn[] = [
+      { id: GREETING_TURN_ID, role: 'lumi', content: OPENING_GREETING },
+    ];
+    if (initialTurns !== undefined) {
+      for (const t of initialTurns) {
+        seed.push({ id: t.id, role: t.role, content: t.content });
+      }
+    }
+    return seed;
+  });
   const [draft, setDraft] = useState('');
   const [pending, setPending] = useState(false);
   const [isComplete, setIsComplete] = useState(false);

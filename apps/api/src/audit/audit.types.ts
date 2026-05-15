@@ -31,6 +31,7 @@ export const AUDIT_EVENT_TYPES = [
   'voice.session_started',
   'voice.session_ended',
   'voice.webhook_auth_failed',
+  'voice.tts_synthesized', // slice 2-S20: one-shot TTS for on-page narration
   // billing
   'billing.subscribed',
   'billing.cancelled',
@@ -83,6 +84,10 @@ export const AUDIT_EVENT_TYPES = [
   'template.state_changed',
   // onboarding
   'onboarding.mental_model_shown',
+  // onboarding resume (slice 2-S26)
+  'onboarding.resume_offered',
+  'onboarding.resumed',
+  'onboarding.reset',
   // tile
   'tile.edit_retried',
 ] as const;

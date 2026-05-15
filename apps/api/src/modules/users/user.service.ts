@@ -25,15 +25,36 @@ export class UserService {
     private readonly supabase: SupabaseClient,
   ) {}
 
-  async getMyProfile(userId: string): Promise<UserProfile> {
+  async getMyProfile(userId: string, householdId: string): Promise<UserProfile> {
     const row = await this.repository.findUserById(userId);
     if (!row) throw new UnauthorizedError('User not found');
     const auth_providers = await this.fetchAuthProviders(userId);
-    return toUserProfile(row, auth_providers);
+    const flags = await this.deriveOnboardingFlags(row, householdId);
+    return toUserProfile(row, auth_providers, flags);
+  }
+
+  // 2-S19 + 2-S26 — derive both onboarding flags from the same row + repo
+  // probes. Mirrors AuthRepository.getOnboardingProgress (one DB pass for
+  // each: children-count if ack present, then active-thread probe only if
+  // still not onboarded). is_onboarded and is_onboarding_in_progress are
+  // mutually exclusive: at most one is true.
+  private async deriveOnboardingFlags(
+    row: UserProfileRow,
+    householdId: string,
+  ): Promise<{ is_onboarded: boolean; is_onboarding_in_progress: boolean }> {
+    if (row.parental_notice_acknowledged_at) {
+      const hasChildren = await this.repository.hasChildren(householdId);
+      if (hasChildren) {
+        return { is_onboarded: true, is_onboarding_in_progress: false };
+      }
+    }
+    const inProgress = await this.repository.hasActiveOnboardingThread(householdId);
+    return { is_onboarded: false, is_onboarding_in_progress: inProgress };
   }
 
   async updateMyProfile(
     userId: string,
+    householdId: string,
     input: UpdateProfileRequest,
   ): Promise<UpdateMyProfileResult> {
     const fieldsProvided = (Object.keys(input) as Array<keyof UpdateProfileRequest>).filter(
@@ -85,11 +106,13 @@ export class UserService {
     }
 
     const auth_providers = await this.fetchAuthProviders(userId);
-    return { profile: toUserProfile(row, auth_providers), fieldsChanged };
+    const flags = await this.deriveOnboardingFlags(row, householdId);
+    return { profile: toUserProfile(row, auth_providers, flags), fieldsChanged };
   }
 
   async updateMyNotifications(
     userId: string,
+    householdId: string,
     input: UpdateNotificationPrefsRequest,
   ): Promise<UserProfile> {
     const currentRow = await this.repository.findUserById(userId);
@@ -106,11 +129,13 @@ export class UserService {
 
     const row = await this.repository.updateUserProfile(userId, { notification_prefs: merged });
     const auth_providers = await this.fetchAuthProviders(userId);
-    return toUserProfile(row, auth_providers);
+    const flags = await this.deriveOnboardingFlags(row, householdId);
+    return toUserProfile(row, auth_providers, flags);
   }
 
   async updateMyPreferences(
     userId: string,
+    householdId: string,
     input: UpdateCulturalPreferenceRequest,
   ): Promise<UpdateMyPreferencesResult> {
     const currentRow = await this.repository.findUserById(userId);
@@ -131,7 +156,8 @@ export class UserService {
       cultural_language: input.cultural_language,
     });
     const auth_providers = await this.fetchAuthProviders(userId);
-    return { profile: toUserProfile(row, auth_providers), fieldsChanged };
+    const flags = await this.deriveOnboardingFlags(row, householdId);
+    return { profile: toUserProfile(row, auth_providers, flags), fieldsChanged };
   }
 
   async initiatePasswordReset(email: string, webBaseUrl: string): Promise<void> {
@@ -164,7 +190,11 @@ export class UserService {
   }
 }
 
-function toUserProfile(row: UserProfileRow, auth_providers: string[]): UserProfile {
+function toUserProfile(
+  row: UserProfileRow,
+  auth_providers: string[],
+  flags: { is_onboarded: boolean; is_onboarding_in_progress: boolean },
+): UserProfile {
   return {
     id: row.id,
     email: row.email,
@@ -179,6 +209,8 @@ function toUserProfile(row: UserProfileRow, auth_providers: string[]): UserProfi
     cultural_language: CulturalLanguageSchema.parse(row.cultural_language),
     parental_notice_acknowledged_at: row.parental_notice_acknowledged_at,
     parental_notice_acknowledged_version: row.parental_notice_acknowledged_version,
+    is_onboarded: flags.is_onboarded,
+    is_onboarding_in_progress: flags.is_onboarding_in_progress,
   };
 }
 

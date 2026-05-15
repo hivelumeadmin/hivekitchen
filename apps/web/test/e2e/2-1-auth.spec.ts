@@ -5,18 +5,18 @@ test.describe('Story 2-1: email/password + OAuth login', () => {
   test('returning user lands on /app after email login', async ({ page }) => {
     await mockLogin(page, { isFirstLogin: false });
     await page.goto('/auth/login');
-    await page.getByLabel(/^email$/i).fill('parent@example.com');
-    await page.getByLabel(/^password$/i).fill('verylongpassword');
-    await page.getByRole('button', { name: /^sign in$/i }).click();
+    await page.getByLabel('Email Address', { exact: true }).fill('parent@example.com');
+    await page.getByLabel('Password', { exact: true }).fill('verylongpassword');
+    await page.getByRole('button', { name: /enter kitchen/i }).click();
     await expect(page).toHaveURL(/\/app$/);
   });
 
   test('first-login user is routed to /onboarding regardless of email path', async ({ page }) => {
     await mockLogin(page, { isFirstLogin: true });
     await page.goto('/auth/login');
-    await page.getByLabel(/^email$/i).fill('parent@example.com');
-    await page.getByLabel(/^password$/i).fill('verylongpassword');
-    await page.getByRole('button', { name: /^sign in$/i }).click();
+    await page.getByLabel('Email Address', { exact: true }).fill('parent@example.com');
+    await page.getByLabel('Password', { exact: true }).fill('verylongpassword');
+    await page.getByRole('button', { name: /enter kitchen/i }).click();
     await expect(page).toHaveURL(/\/onboarding$/);
   });
 
@@ -29,9 +29,9 @@ test.describe('Story 2-1: email/password + OAuth login', () => {
       }),
     );
     await page.goto('/auth/login');
-    await page.getByLabel(/^email$/i).fill('parent@example.com');
-    await page.getByLabel(/^password$/i).fill('wrongpassword12');
-    await page.getByRole('button', { name: /^sign in$/i }).click();
+    await page.getByLabel('Email Address', { exact: true }).fill('parent@example.com');
+    await page.getByLabel('Password', { exact: true }).fill('wrongpassword12');
+    await page.getByRole('button', { name: /enter kitchen/i }).click();
     await expect(page.getByRole('alert')).toContainText(/invalid email or password/i);
     await expect(page).toHaveURL(/\/auth\/login$/);
   });
@@ -45,9 +45,9 @@ test.describe('Story 2-1: email/password + OAuth login', () => {
       }),
     );
     await page.goto('/auth/login');
-    await page.getByLabel(/^email$/i).fill('parent@example.com');
-    await page.getByLabel(/^password$/i).fill('verylongpassword');
-    await page.getByRole('button', { name: /^sign in$/i }).click();
+    await page.getByLabel('Email Address', { exact: true }).fill('parent@example.com');
+    await page.getByLabel('Password', { exact: true }).fill('verylongpassword');
+    await page.getByRole('button', { name: /enter kitchen/i }).click();
     await expect(page.getByRole('alert')).toContainText(/something went wrong/i);
   });
 
@@ -61,6 +61,8 @@ test.describe('Story 2-1: email/password + OAuth login', () => {
           expires_in: 900,
           user: authUser(),
           is_first_login: false,
+          is_onboarded: true,
+          is_onboarding_in_progress: false,
         }),
       }),
     );

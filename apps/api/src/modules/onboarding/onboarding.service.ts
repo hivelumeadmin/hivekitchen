@@ -47,6 +47,12 @@ export interface SubmitTextTurnResult {
   lumi_turn_id: string;
   lumi_response: string;
   is_complete: boolean;
+  // Slice 2-S26 — internal signal for the route handler's audit emission.
+  // Stripped by the response Zod schema before serialization (the wire shape
+  // is TextOnboardingTurnResponseSchema, which excludes this field).
+  // True when the household already had ≥1 message turn on this thread
+  // before this call ran — i.e., the user is mid-conversation, not on turn 1.
+  _was_resumed: boolean;
 }
 
 export interface FinalizeTextOnboardingResult {
@@ -57,6 +63,30 @@ export interface FinalizeTextOnboardingResult {
     allergens_mentioned: string[];
     family_rhythms: string[];
   };
+}
+
+// Slice 2-S26 — resume-mid-flow state shape returned from getState().
+// Mirrors the contract in @hivekitchen/contracts (OnboardingStateResponseSchema).
+// Kept as a service-layer interface to avoid the route directly importing
+// the contract type and re-shaping in two places.
+export interface OnboardingStateResult {
+  status: 'not_started' | 'in_progress' | 'completed';
+  thread_id?: string;
+  modality?: 'text' | 'voice';
+  started_at?: string;
+  last_activity_at?: string;
+  turns?: Array<{
+    id: string;
+    role: 'user' | 'lumi';
+    content: string;
+    created_at: string;
+  }>;
+}
+
+export interface OnboardingResetResult {
+  // The closed thread's id, if one was actually closed (vs. idempotent no-op).
+  // Caller uses this for the audit metadata so the prior thread is discoverable.
+  closed_thread_id: string | null;
 }
 
 const ONBOARDING_THREAD_TYPE = 'onboarding';
@@ -156,6 +186,17 @@ export class OnboardingService {
     // 3. Read the existing turns once — we need them for both the F16 gate,
     //    the F08 orphan check, and as agent history.
     const existingTurns = await this.threads.listTurns(thread.id);
+
+    // Slice 2-S26 — resume detection. A real-message turn already on the
+    // thread (excluding the synthetic OPENING_GREETING which lives only
+    // client-side) means this call is a mid-conversation continuation, not
+    // turn 1. Surface to the route so it can write the onboarding.resumed
+    // audit row. Computed BEFORE the orphan-recovery branch overwrites the
+    // turn-list reasoning so the signal stays honest.
+    const wasResumed = existingTurns.some(
+      (t) =>
+        t.body.type === 'message' && (t.role === 'user' || t.role === 'lumi'),
+    );
 
     // F16 — an active thread that already carries a summary system_event
     // means the household is effectively done; refuse new turns rather than
@@ -380,6 +421,7 @@ export class OnboardingService {
       lumi_turn_id: lumiTurn.id,
       lumi_response: sanitizedLumiText,
       is_complete: isComplete,
+      _was_resumed: wasResumed,
     };
   }
 
@@ -596,6 +638,136 @@ export class OnboardingService {
     );
 
     return { thread_id: thread.id, summary };
+  }
+
+  // Slice 2-S26 — three-state read for GET /v1/onboarding/state.
+  //
+  // Rules:
+  //   - completed: there's a CLOSED onboarding thread with a summary turn.
+  //     We deliberately do NOT check the 2-S19 derivation (parental notice +
+  //     children) here — the page reaches this endpoint only when the user
+  //     was routed in by !is_onboarded, so the only "completed" we care about
+  //     surfacing is the rare case of a stale closed-thread race.
+  //   - in_progress: ACTIVE onboarding thread exists and has ≥1 real (user
+  //     or lumi message) turn. A brand-new active thread with zero turns is
+  //     treated as not_started so the user gets the normal mode-picker UI.
+  //     (Stripe-test/seed scripts can create empty active threads; the resume
+  //     UI would otherwise greet them with an empty transcript.)
+  //   - not_started: anything else.
+  //
+  // The synthetic OPENING_GREETING is excluded from the returned turns array
+  // because it's a client-render constant — see onboarding.ts in contracts.
+  async getState(householdId: string): Promise<OnboardingStateResult> {
+    // 1. Closed thread with a summary turn → completed.
+    if (await this.householdHasCompletedOnboarding(householdId)) {
+      return { status: 'completed' };
+    }
+
+    // 2. Active onboarding thread? Try text first, then voice. Modality is
+    //    informational so the UI can label the resume offer correctly.
+    let thread = await this.threads.findActiveThreadByHousehold(
+      householdId,
+      ONBOARDING_THREAD_TYPE,
+      'text',
+    );
+    if (thread === null) {
+      thread = await this.threads.findActiveThreadByHousehold(
+        householdId,
+        ONBOARDING_THREAD_TYPE,
+        'voice',
+      );
+    }
+    if (thread === null) {
+      return { status: 'not_started' };
+    }
+
+    const turns = await this.threads.listTurns(thread.id);
+
+    // F16 — a summary turn on an active thread (concurrent finalize race
+    // mid-flight) means the household is effectively done; close out the UI
+    // gracefully.
+    if (turns.some((t) => t.body.type === 'system_event' && t.body.event === SUMMARY_EVENT)) {
+      return { status: 'completed' };
+    }
+
+    // Empty thread (no real turns yet): treat as not_started so the mode
+    // picker renders rather than an empty "pick up where you left off" card.
+    const messageTurns = turns.filter(
+      (t): t is TurnRow & { body: { type: 'message'; content: string } } =>
+        t.body.type === 'message' && (t.role === 'user' || t.role === 'lumi'),
+    );
+    if (messageTurns.length === 0) {
+      return { status: 'not_started' };
+    }
+
+    const lastTurn = messageTurns[messageTurns.length - 1]!;
+
+    return {
+      status: 'in_progress',
+      thread_id: thread.id,
+      modality: thread.modality,
+      started_at: thread.created_at,
+      last_activity_at: lastTurn.created_at,
+      turns: messageTurns.map((t) => ({
+        id: t.id,
+        role: t.role as 'user' | 'lumi',
+        content: t.body.content,
+        created_at: t.created_at,
+      })),
+    };
+  }
+
+  // Slice 2-S26 — close the active onboarding thread so the next attempt
+  // starts fresh. Idempotent: no-op when there's no active thread.
+  // Returns the closed thread's id (or null) so the caller can attach it to
+  // the audit row metadata.
+  async resetState(householdId: string): Promise<OnboardingResetResult> {
+    const text = await this.threads.findActiveThreadByHousehold(
+      householdId,
+      ONBOARDING_THREAD_TYPE,
+      'text',
+    );
+    const voice =
+      text === null
+        ? await this.threads.findActiveThreadByHousehold(
+            householdId,
+            ONBOARDING_THREAD_TYPE,
+            'voice',
+          )
+        : null;
+    const thread = text ?? voice;
+    if (thread === null) {
+      return { closed_thread_id: null };
+    }
+
+    // Append a system_event marker so the prior thread carries the reason
+    // for closure in its turn history. Useful for ops debugging without
+    // having to cross-reference audit rows.
+    try {
+      await this.threads.appendTurnNext({
+        threadId: thread.id,
+        role: 'system',
+        body: { type: 'system_event', event: 'onboarding.reset', payload: { event_type: 'reset_by_user' } },
+        modality: thread.modality,
+      });
+    } catch (err) {
+      // Best-effort marker; the thread close below is the authoritative
+      // signal. Log + proceed so an event-write failure doesn't strand
+      // the user on the Resume surface.
+      this.logger.warn(
+        {
+          err,
+          module: 'onboarding',
+          action: 'onboarding.reset_marker_failed',
+          household_id: householdId,
+          thread_id: thread.id,
+        },
+        'onboarding reset marker write failed — proceeding to close',
+      );
+    }
+
+    await this.threads.closeThread(thread.id);
+    return { closed_thread_id: thread.id };
   }
 
   // Has the household already produced a system_event 'onboarding.summary'

@@ -112,6 +112,8 @@ describe('LoginResponseSchema', () => {
         expires_in: 900,
         user: validUser,
         is_first_login: false,
+        is_onboarded: true,
+        is_onboarding_in_progress: false,
       }).success,
     ).toBe(true);
   });
@@ -123,6 +125,8 @@ describe('LoginResponseSchema', () => {
         expires_in: 900,
         user: validUser,
         is_first_login: false,
+        is_onboarded: true,
+        is_onboarding_in_progress: false,
       }).success,
     ).toBe(false);
   });
@@ -134,6 +138,33 @@ describe('LoginResponseSchema', () => {
         expires_in: 900,
         user: validUser,
         is_first_login: 'yes',
+        is_onboarded: true,
+        is_onboarding_in_progress: false,
+      }).success,
+    ).toBe(false);
+  });
+
+  it('rejects missing is_onboarded', () => {
+    expect(
+      LoginResponseSchema.safeParse({
+        access_token: 'tok',
+        expires_in: 900,
+        user: validUser,
+        is_first_login: false,
+        is_onboarding_in_progress: false,
+      }).success,
+    ).toBe(false);
+  });
+
+  // 2-S26 — is_onboarding_in_progress is required for parity with is_onboarded.
+  it('rejects missing is_onboarding_in_progress', () => {
+    expect(
+      LoginResponseSchema.safeParse({
+        access_token: 'tok',
+        expires_in: 900,
+        user: validUser,
+        is_first_login: false,
+        is_onboarded: false,
       }).success,
     ).toBe(false);
   });

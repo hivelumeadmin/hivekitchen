@@ -2,6 +2,7 @@ import { Buffer } from 'node:buffer';
 import fp from 'fastify-plugin';
 import type { FastifyPluginAsync } from 'fastify';
 import {
+  OnboardingStateResponseSchema,
   TextOnboardingTurnRequestSchema,
   TextOnboardingTurnResponseSchema,
   TextOnboardingFinalizeResponseSchema,
@@ -13,6 +14,8 @@ import { ChildrenRepository } from '../children/children.repository.js';
 import { ChildrenService } from '../children/children.service.js';
 import { CulturalPriorRepository } from '../cultural-priors/cultural-prior.repository.js';
 import { CulturalPriorService } from '../cultural-priors/cultural-prior.service.js';
+import { AuditRepository } from '../../audit/audit.repository.js';
+import { AuditService } from '../../audit/audit.service.js';
 import { OnboardingService } from './onboarding.service.js';
 
 const onboardingRoutesPlugin: FastifyPluginAsync = async (fastify) => {
@@ -50,6 +53,14 @@ const onboardingRoutesPlugin: FastifyPluginAsync = async (fastify) => {
     agentToolsEnabled: fastify.env.ONBOARDING_AGENT_TOOLS_ENABLED,
   });
 
+  // Slice 2-S26 — fire-and-forget audit writer for resume / reset events.
+  // The text/turn route writes onboarding.resumed when service detects a
+  // mid-conversation continuation; state route writes onboarding.resume_offered;
+  // reset route writes onboarding.reset. Each is a secondary write (alongside
+  // the request's primary auditContext or none), so the auth.routes.ts pattern
+  // (`void auditService.write(...).catch(...)`) is the right shape.
+  const auditService = new AuditService(new AuditRepository(fastify.supabase));
+
   // R2-D3 — onboarding authors the household's cultural template, palate
   // notes, and allergen declarations. Restrict to the primary parent;
   // secondary caregivers (Story 2-3 invite) get 403.
@@ -81,10 +92,102 @@ const onboardingRoutesPlugin: FastifyPluginAsync = async (fastify) => {
           message_chars: body.message.length,
           response_chars: result.lumi_response.length,
           is_complete: result.is_complete,
+          was_resumed: result._was_resumed,
         },
         'onboarding text turn served',
       );
+
+      // Slice 2-S26 — fire-and-forget audit row when this turn is a resume
+      // continuation. One row per resumed turn is intentional (volume is
+      // low — onboarding has ≤~10 turns total — and a per-turn count signal
+      // is useful for "how often do users abandon then return" metrics).
+      if (result._was_resumed) {
+        void auditService
+          .write({
+            event_type: 'onboarding.resumed',
+            user_id: request.user.id,
+            household_id: request.user.household_id,
+            request_id: request.id,
+            metadata: {
+              thread_id: result.thread_id,
+              turn_id: result.turn_id,
+            },
+          })
+          .catch((err: unknown) => {
+            request.log.error(
+              { err, module: 'onboarding', action: 'onboarding.resumed_audit_failed' },
+              'onboarding.resumed audit write failed',
+            );
+          });
+      }
+
       return result;
+    },
+  );
+
+  // Slice 2-S26 — three-state snapshot for the /onboarding entry surface.
+  // Returns minimal payload for not_started / completed (just the status),
+  // and a hydrated transcript for in_progress so the client can re-mount
+  // OnboardingText with prior turns prepended.
+  fastify.get(
+    '/v1/onboarding/state',
+    {
+      preHandler: requirePrimaryParent,
+      schema: {
+        response: { 200: OnboardingStateResponseSchema },
+      },
+    },
+    async (request) => {
+      const result = await service.getState(request.user.household_id);
+
+      if (result.status === 'in_progress') {
+        void auditService
+          .write({
+            event_type: 'onboarding.resume_offered',
+            user_id: request.user.id,
+            household_id: request.user.household_id,
+            request_id: request.id,
+            metadata: {
+              thread_id: result.thread_id ?? null,
+              modality: result.modality ?? null,
+              turn_count: result.turns?.length ?? 0,
+            },
+          })
+          .catch((err: unknown) => {
+            request.log.error(
+              {
+                err,
+                module: 'onboarding',
+                action: 'onboarding.resume_offered_audit_failed',
+              },
+              'onboarding.resume_offered audit write failed',
+            );
+          });
+      }
+
+      return result;
+    },
+  );
+
+  // Slice 2-S26 — close the active onboarding thread so "Start over" gives
+  // the user a fresh transcript. Idempotent: 204 either way. The audit row
+  // captures the prior thread_id when one was actually closed.
+  fastify.post(
+    '/v1/onboarding/state/reset',
+    { preHandler: requirePrimaryParent },
+    async (request, reply) => {
+      const result = await service.resetState(request.user.household_id);
+      request.auditContext = {
+        event_type: 'onboarding.reset',
+        user_id: request.user.id,
+        household_id: request.user.household_id,
+        request_id: request.id,
+        metadata: {
+          prior_thread_id: result.closed_thread_id,
+          was_noop: result.closed_thread_id === null,
+        },
+      };
+      return reply.code(204).send();
     },
   );
 

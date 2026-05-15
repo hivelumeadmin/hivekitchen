@@ -56,6 +56,14 @@ export const UserProfileSchema = z.object({
   cultural_language: CulturalLanguageSchema,
   parental_notice_acknowledged_at: z.string().datetime().nullable(),
   parental_notice_acknowledged_version: z.string().nullable(),
+  // 2-S19: true when (parental_notice_acknowledged_at IS NOT NULL) AND
+  // the household has at least one child. Mirrors LoginResponse.is_onboarded.
+  // Drives route-guards that read /me to decide whether to allow /app or
+  // bounce to /onboarding.
+  is_onboarded: z.boolean(),
+  // 2-S26 — mirrors LoginResponse.is_onboarding_in_progress so route-guards
+  // and the /onboarding page can detect resumability after a /me refresh.
+  is_onboarding_in_progress: z.boolean(),
 });
 
 // ---- PATCH /v1/users/me request body --------------------------------------

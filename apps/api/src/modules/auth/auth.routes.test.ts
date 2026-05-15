@@ -36,6 +36,10 @@ function buildMockSupabase(opts: {
   updateError?: unknown;
   refreshTokenLookupResult?: unknown;
   refreshTokenLookupError?: unknown;
+  // 2-S19: getIsOnboarded reads users.parental_notice_acknowledged_at and
+  // counts children rows. Defaults emulate a fully-onboarded household.
+  parentalNoticeAckAt?: string | null;
+  childrenCount?: number;
 }) {
   const updateResult = { data: null, error: opts.updateError ?? null };
   // consumeRefreshToken now uses .select('id') and expects an array of updated rows.
@@ -87,16 +91,82 @@ function buildMockSupabase(opts: {
     },
     from(table: string) {
       if (table === 'users') {
+        // Two selects hit `users`; disambiguate by exact-match against the
+        // two known column lists rather than substring (which would silently
+        // route any future select containing 'parental_notice_acknowledged_at'
+        // through the onboarding-probe branch).
+        const PROFILE_COLS = 'id, email, display_name, current_household_id, role';
+        const ONBOARDING_PROBE_COLS = 'parental_notice_acknowledged_at';
         return {
-          select() {
+          select(columns: string) {
+            let data: unknown;
+            if (columns === ONBOARDING_PROBE_COLS) {
+              data = {
+                parental_notice_acknowledged_at: opts.parentalNoticeAckAt ?? '2026-05-01T00:00:00Z',
+              };
+            } else if (columns === PROFILE_COLS) {
+              data = opts.selectResult;
+            } else {
+              throw new Error(`unexpected users select columns: ${columns}`);
+            }
             return {
               eq() {
                 return {
-                  maybeSingle: vi
-                    .fn()
-                    .mockResolvedValue({ data: opts.selectResult, error: opts.selectError ?? null }),
+                  maybeSingle: vi.fn().mockResolvedValue({ data, error: opts.selectError ?? null }),
                 };
               },
+            };
+          },
+        };
+      }
+      if (table === 'children') {
+        // getIsOnboarded uses select('id', { count: 'exact', head: true }).eq('household_id', …)
+        return {
+          select() {
+            return {
+              eq: vi.fn().mockResolvedValue({
+                data: null,
+                error: null,
+                count: opts.childrenCount ?? 1,
+              }),
+            };
+          },
+        };
+      }
+      if (table === 'threads') {
+        // 2-S26: only reached when ack is null OR children=0. Defaults yield
+        // not_started so existing tests (which use ack=truthy + children=1)
+        // never hit this branch.
+        return {
+          select() {
+            return {
+              eq: () => ({
+                eq: () => ({
+                  eq: () => ({
+                    limit: vi.fn().mockResolvedValue({ data: [], error: null }),
+                  }),
+                }),
+              }),
+            };
+          },
+        };
+      }
+      if (table === 'thread_turns') {
+        // 2-S26: summary probe — unreachable under default auth-test fixtures.
+        return {
+          select() {
+            return {
+              eq: () => ({
+                eq: () => ({
+                  filter: () => ({
+                    filter: vi.fn().mockResolvedValue({
+                      data: null,
+                      error: null,
+                      count: 0,
+                    }),
+                  }),
+                }),
+              }),
             };
           },
         };
@@ -234,10 +304,19 @@ describe('POST /v1/auth/login', () => {
     });
 
     expect(res.statusCode).toBe(200);
-    const body = JSON.parse(res.body) as { access_token: string; user: { id: string }; is_first_login: boolean };
+    const body = JSON.parse(res.body) as {
+      access_token: string;
+      user: { id: string };
+      is_first_login: boolean;
+      is_onboarded: boolean;
+      is_onboarding_in_progress: boolean;
+    };
     expect(typeof body.access_token).toBe('string');
     expect(body.user.id).toBe(SAMPLE_USER_ID);
     expect(body.is_first_login).toBe(false);
+    expect(body.is_onboarded).toBe(true);
+    // 2-S26: in_progress is mutually exclusive with onboarded.
+    expect(body.is_onboarding_in_progress).toBe(false);
 
     const setCookie = res.headers['set-cookie'];
     const cookieStr = Array.isArray(setCookie) ? setCookie[0] ?? '' : (setCookie ?? '');
@@ -324,8 +403,18 @@ describe('POST /v1/auth/callback', () => {
     });
 
     expect(res.statusCode).toBe(200);
-    const body = JSON.parse(res.body) as { user: { id: string } };
+    const body = JSON.parse(res.body) as {
+      user: { id: string };
+      is_onboarded: boolean;
+      is_first_login: boolean;
+      is_onboarding_in_progress: boolean;
+    };
     expect(body.user.id).toBe(SAMPLE_USER_ID);
+    // 2-S19: oauth route must propagate is_onboarded (shared loginPayload helper).
+    expect(body.is_onboarded).toBe(true);
+    expect(body.is_first_login).toBe(false);
+    // 2-S26: oauth route must also propagate is_onboarding_in_progress.
+    expect(body.is_onboarding_in_progress).toBe(false);
   });
 
   it('bad code → 401', async () => {

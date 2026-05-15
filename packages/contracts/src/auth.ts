@@ -28,6 +28,15 @@ export const LoginResponseSchema = z.object({
   expires_in: z.number().int().positive(),
   user: AuthUserSchema,
   is_first_login: z.boolean(),
+  // True when the user has acknowledged the parental notice AND has at least
+  // one child. Drives client routing: false → /onboarding regardless of
+  // is_first_login (catches resumed-after-abandon onboarding).
+  is_onboarded: z.boolean(),
+  // 2-S26 — true when not onboarded but the household has an active
+  // onboarding thread with at least one turn (text or voice). Drives the
+  // /onboarding page to surface the Resume prompt instead of the mode picker.
+  // Mutually exclusive with is_onboarded: at most one is true.
+  is_onboarding_in_progress: z.boolean(),
 });
 
 // POST /v1/auth/logout — empty 204 response, no schema needed.

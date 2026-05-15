@@ -23,6 +23,8 @@ describe('UserProfileSchema', () => {
     cultural_language: 'default' as const,
     parental_notice_acknowledged_at: null,
     parental_notice_acknowledged_version: null,
+    is_onboarded: false,
+    is_onboarding_in_progress: false,
   };
 
   it('accepts a valid profile with email provider', () => {

@@ -52,7 +52,12 @@ export const authRoutes: FastifyPluginAsync = async (fastify) => {
         event_type: 'auth.login',
         user_id: result.user.id,
         request_id: request.id,
-        metadata: { method: 'email', is_first_login: result.is_first_login, is_onboarded: result.is_onboarded },
+        metadata: {
+        method: 'email',
+        is_first_login: result.is_first_login,
+        is_onboarded: result.is_onboarded,
+        is_onboarding_in_progress: result.is_onboarding_in_progress,
+      },
       };
       return loginPayload(result);
     },
@@ -79,7 +84,12 @@ export const authRoutes: FastifyPluginAsync = async (fastify) => {
         event_type: 'auth.login',
         user_id: result.user.id,
         request_id: request.id,
-        metadata: { method: body.provider, is_first_login: result.is_first_login, is_onboarded: result.is_onboarded },
+        metadata: {
+        method: body.provider,
+        is_first_login: result.is_first_login,
+        is_onboarded: result.is_onboarded,
+        is_onboarding_in_progress: result.is_onboarding_in_progress,
+      },
       };
       return loginPayload(result);
     },
@@ -166,6 +176,7 @@ function loginPayload(result: LoginResult) {
     user: result.user,
     is_first_login: result.is_first_login,
     is_onboarded: result.is_onboarded,
+    is_onboarding_in_progress: result.is_onboarding_in_progress,
   };
 }
 

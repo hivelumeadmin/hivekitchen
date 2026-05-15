@@ -21,6 +21,8 @@ interface MockRepo {
   findRefreshTokenByHash: ReturnType<typeof vi.fn>;
   consumeRefreshToken: ReturnType<typeof vi.fn>;
   revokeAllByFamilyId: ReturnType<typeof vi.fn>;
+  getIsOnboarded: ReturnType<typeof vi.fn>;
+  getOnboardingProgress: ReturnType<typeof vi.fn>;
 }
 
 const SAMPLE_USER: UserRow = {
@@ -47,6 +49,8 @@ function makeMocks() {
     findRefreshTokenByHash: vi.fn(),
     consumeRefreshToken: vi.fn().mockResolvedValue(true),
     revokeAllByFamilyId: vi.fn().mockResolvedValue(undefined),
+    getIsOnboarded: vi.fn().mockResolvedValue(true),
+    getOnboardingProgress: vi.fn().mockResolvedValue('completed'),
   };
   const jwt = { sign: vi.fn().mockReturnValue('signed.jwt.token') };
   // Type-erase to satisfy AuthService constructor; runtime shape matches.
@@ -69,7 +73,7 @@ describe('AuthService.loginWithPassword', () => {
     mocks = makeMocks();
   });
 
-  it('first login: creates household + user and returns is_first_login=true', async () => {
+  it('first login: creates household + user and returns is_first_login=true, is_onboarded=false', async () => {
     mocks.supabase.auth.signInWithPassword.mockResolvedValue(okSupaResult(SAMPLE_USER.id));
     mocks.repository.findUserByAuthId.mockResolvedValue(null);
     mocks.repository.createHouseholdAndUser.mockResolvedValue(SAMPLE_USER);
@@ -82,20 +86,60 @@ describe('AuthService.loginWithPassword', () => {
       display_name: 'Sample Parent',
     });
     expect(result.is_first_login).toBe(true);
+    expect(result.is_onboarded).toBe(false);
+    expect(result.is_onboarding_in_progress).toBe(false);
+    // First-login users are by definition not started; we should not pay the
+    // round-trip cost of asking the repository.
+    expect(mocks.repository.getOnboardingProgress).not.toHaveBeenCalled();
     expect(result.user).toEqual(SAMPLE_USER);
     expect(result.access_token).toBe('signed.jwt.token');
     expect(result.expires_in).toBe(15 * 60);
   });
 
-  it('returning user: skips createHouseholdAndUser, is_first_login=false', async () => {
+  it('returning user, fully onboarded: is_first_login=false, is_onboarded=true, in_progress=false', async () => {
     mocks.supabase.auth.signInWithPassword.mockResolvedValue(okSupaResult(SAMPLE_USER.id));
     mocks.repository.findUserByAuthId.mockResolvedValue(SAMPLE_USER);
+    mocks.repository.getOnboardingProgress.mockResolvedValue('completed');
 
     const result = await mocks.service.loginWithPassword({ email: 'parent@example.com', password: 'verylongpassword' });
 
     expect(mocks.repository.createHouseholdAndUser).not.toHaveBeenCalled();
     expect(result.is_first_login).toBe(false);
-    expect(result.user).toEqual(SAMPLE_USER);
+    expect(result.is_onboarded).toBe(true);
+    expect(result.is_onboarding_in_progress).toBe(false);
+    expect(mocks.repository.getOnboardingProgress).toHaveBeenCalledWith(
+      SAMPLE_USER.id,
+      SAMPLE_USER.current_household_id,
+    );
+  });
+
+  // 2-S19 — resumed-after-abandon, NEVER started: returning user exists but
+  // has no parental notice / no children AND no active onboarding thread.
+  it('returning user, not started: is_first_login=false, is_onboarded=false, in_progress=false', async () => {
+    mocks.supabase.auth.signInWithPassword.mockResolvedValue(okSupaResult(SAMPLE_USER.id));
+    mocks.repository.findUserByAuthId.mockResolvedValue(SAMPLE_USER);
+    mocks.repository.getOnboardingProgress.mockResolvedValue('not_started');
+
+    const result = await mocks.service.loginWithPassword({ email: 'parent@example.com', password: 'verylongpassword' });
+
+    expect(result.is_first_login).toBe(false);
+    expect(result.is_onboarded).toBe(false);
+    expect(result.is_onboarding_in_progress).toBe(false);
+  });
+
+  // 2-S26 — resume case: returning user with an active onboarding thread.
+  // is_onboarded=false (consent + child gates still apply) but in_progress=true
+  // so the /onboarding page surfaces the Resume prompt.
+  it('returning user, mid-flow: is_first_login=false, is_onboarded=false, in_progress=true', async () => {
+    mocks.supabase.auth.signInWithPassword.mockResolvedValue(okSupaResult(SAMPLE_USER.id));
+    mocks.repository.findUserByAuthId.mockResolvedValue(SAMPLE_USER);
+    mocks.repository.getOnboardingProgress.mockResolvedValue('in_progress');
+
+    const result = await mocks.service.loginWithPassword({ email: 'parent@example.com', password: 'verylongpassword' });
+
+    expect(result.is_first_login).toBe(false);
+    expect(result.is_onboarded).toBe(false);
+    expect(result.is_onboarding_in_progress).toBe(true);
   });
 
   it('inserts refresh token by SHA-256 hash, never plaintext', async () => {

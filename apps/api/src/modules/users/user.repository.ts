@@ -36,6 +36,46 @@ export class UserRepository extends BaseRepository {
     return (data as UserProfileRow | null) ?? null;
   }
 
+  // 2-S19: childen-count probe for the is_onboarded derivation on /me.
+  // Mirrors AuthRepository.getIsOnboarded's children query; kept separate so
+  // each module owns its own data access path.
+  async hasChildren(household_id: string): Promise<boolean> {
+    const { count, error } = await this.client
+      .from('children')
+      .select('id', { count: 'exact', head: true })
+      .eq('household_id', household_id);
+    if (error) throw error;
+    return (count ?? 0) > 0;
+  }
+
+  // 2-S26: in-progress probe for is_onboarding_in_progress on /me. True when
+  // an active onboarding thread exists for the household AND it does not yet
+  // carry a summary system_event turn. Modality-agnostic — the resume flow
+  // spans text and voice. Mirrors AuthRepository.getOnboardingProgress's
+  // in-progress branch; kept separate so the user module owns its own reads.
+  async hasActiveOnboardingThread(household_id: string): Promise<boolean> {
+    const { data: threadRows, error: threadError } = await this.client
+      .from('threads')
+      .select('id')
+      .eq('household_id', household_id)
+      .eq('type', 'onboarding')
+      .eq('status', 'active')
+      .limit(1);
+    if (threadError) throw threadError;
+    const threadId = (threadRows as { id: string }[] | null)?.[0]?.id;
+    if (!threadId) return false;
+
+    const { count: summaryCount, error: summaryError } = await this.client
+      .from('thread_turns')
+      .select('id', { count: 'exact', head: true })
+      .eq('thread_id', threadId)
+      .eq('role', 'system')
+      .filter('body->>type', 'eq', 'system_event')
+      .filter('body->>event', 'eq', 'onboarding.summary');
+    if (summaryError) throw summaryError;
+    return (summaryCount ?? 0) === 0;
+  }
+
   async updateUserProfile(id: string, input: UpdateUserProfileInput): Promise<UserProfileRow> {
     const { data, error } = await this.client
       .from('users')

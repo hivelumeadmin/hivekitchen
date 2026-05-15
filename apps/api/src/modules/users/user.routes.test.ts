@@ -23,6 +23,14 @@ interface MockOpts {
   adminGetUserIdentities?: Array<{ provider: string }> | null;
   adminUpdateUserError?: { code?: string; message?: string } | null;
   resetPasswordError?: unknown;
+  // 2-S19: every getMyProfile / updateMy* response goes through deriveIsOnboarded
+  // → repository.hasChildren(household_id). Default 1 (household is onboarded).
+  childrenCount?: number;
+  // 2-S26: when ack is null or children=0, deriveOnboardingFlags falls
+  // through to repository.hasActiveOnboardingThread → threads + thread_turns.
+  // Defaults: no active thread, treat household as fully not-started (in_progress=false).
+  activeOnboardingThreadId?: string | null;
+  inProgressSummaryTurnCount?: number;
 }
 
 interface AuthAdminMock {
@@ -91,6 +99,54 @@ function buildMockSupabase(opts: MockOpts): SupabaseMock {
               }),
             };
           },
+        };
+      }
+      if (table === 'children') {
+        // 2-S19: deriveIsOnboarded → repository.hasChildren probe.
+        return {
+          select: () => ({
+            eq: vi.fn().mockResolvedValue({
+              data: null,
+              error: null,
+              count: opts.childrenCount ?? 1,
+            }),
+          }),
+        };
+      }
+      if (table === 'threads') {
+        // 2-S26: hasActiveOnboardingThread → select('id').eq().eq().eq().limit(1).
+        // Default: no active thread (resume surface stays hidden).
+        const threadId = opts.activeOnboardingThreadId ?? null;
+        const result = threadId ? [{ id: threadId }] : [];
+        return {
+          select: () => ({
+            eq: () => ({
+              eq: () => ({
+                eq: () => ({
+                  limit: vi.fn().mockResolvedValue({ data: result, error: null }),
+                }),
+              }),
+            }),
+          }),
+        };
+      }
+      if (table === 'thread_turns') {
+        // 2-S26: summary-event count probe on the active thread.
+        // Default 0 → repository reports in-progress (no summary turn yet).
+        return {
+          select: () => ({
+            eq: () => ({
+              eq: () => ({
+                filter: () => ({
+                  filter: vi.fn().mockResolvedValue({
+                    data: null,
+                    error: null,
+                    count: opts.inProgressSummaryTurnCount ?? 0,
+                  }),
+                }),
+              }),
+            }),
+          }),
         };
       }
       throw new Error(`unexpected table ${table}`);

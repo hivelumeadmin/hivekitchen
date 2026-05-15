@@ -1,28 +1,61 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useScope } from '@hivekitchen/ui';
+import {
+  OnboardingStateResponseSchema,
+  type OnboardingStateResponse,
+} from '@hivekitchen/contracts';
 import { useAuthStore } from '@/stores/auth.store.js';
+import { hkFetch } from '@/lib/fetch.js';
+import { AppFooter } from '@/components/AppFooter.js';
+import { AppHeader } from '@/components/AppHeader.js';
 import { OnboardingVoice } from '@/features/onboarding/OnboardingVoice.js';
 import { OnboardingText } from '@/features/onboarding/OnboardingText.js';
 import { OnboardingConsent } from '@/features/onboarding/OnboardingConsent.js';
+import { OnboardingResume } from '@/features/onboarding/OnboardingResume.js';
 import { CulturalRatificationStep } from '@/features/onboarding/CulturalRatificationStep.js';
 import { OnboardingMentalModel } from '@/features/onboarding/OnboardingMentalModel.js';
+import { MediaSection } from '@/features/onboarding/components/MediaSection.js';
+import { OnboardingActions } from '@/features/onboarding/components/OnboardingActions.js';
+import { OnboardingHero } from '@/features/onboarding/components/OnboardingHero.js';
+import { PreviewTiles } from '@/features/onboarding/components/PreviewTiles.js';
+import { onboardingMock } from '@/features/onboarding/data/mockData.js';
 
 type OnboardingMode =
   | 'select'
+  | 'resume'
   | 'voice'
   | 'text'
   | 'consent'
   | 'cultural-ratification'
   | 'mental-model';
 
+/**
+ * Production onboarding flow. State-machine of 6 modes:
+ *
+ *   select → (voice | text) → consent → [cultural-ratification?] → mental-model → /app
+ *
+ * v2.0 chrome (AppHeader + AppFooter) wraps every mode. The `select` mode
+ * renders the v2.0 onboarding intro composition (Hero + MediaSection + Actions
+ * + PreviewTiles). All other modes keep their v1 step components verbatim — they
+ * own real logic (ElevenLabs voice WS, consent flows, cultural inference) that
+ * isn't part of this visual-only migration. Phase 5+ will replace the inner
+ * step UIs with v2.0 components.
+ */
 export default function OnboardingPage() {
   useScope('app-scope');
   const navigate = useNavigate();
-  const [mode, setMode] = useState<OnboardingMode>('select');
+  // Slice 2-S26 — start in 'loading' until GET /v1/onboarding/state resolves.
+  // The probe decides whether to show 'select' (fresh) or 'resume' (mid-flow).
+  // Once the user picks a mode, mode transitions are local and the resume
+  // state stays static (we don't re-probe mid-flow).
+  const [mode, setMode] = useState<OnboardingMode | 'loading'>('loading');
+  const [resumeState, setResumeState] = useState<OnboardingStateResponse | null>(null);
   const [voiceError, setVoiceError] = useState<string | null>(null);
   const householdId = useAuthStore((s) => s.user?.current_household_id ?? null);
   const userRole = useAuthStore((s) => s.user?.role ?? null);
+  const displayName = useAuthStore((s) => s.user?.display_name ?? null);
+  const firstName = displayName ? displayName.split(/\s+/)[0] : null;
 
   // Onboarding is a primary-parent-only flow. Secondaries redeem an invite and
   // land in /app directly — they should never be routed here.
@@ -31,6 +64,46 @@ export default function OnboardingPage() {
       void navigate('/app');
     }
   }, [userRole, navigate]);
+
+  // Slice 2-S26 — probe onboarding state on mount. A successful 'in_progress'
+  // result swaps the mode picker for the Resume surface; 'completed' bounces
+  // to /app (defensive — auth callback should have already routed there);
+  // 'not_started' or any error falls through to the normal 'select' mode.
+  useEffect(() => {
+    const controller = new AbortController();
+    let cancelled = false;
+    (async () => {
+      try {
+        const raw = await hkFetch<unknown>('/v1/onboarding/state', {
+          method: 'GET',
+          signal: controller.signal,
+        });
+        if (cancelled) return;
+        const parsed = OnboardingStateResponseSchema.parse(raw);
+        if (parsed.status === 'completed') {
+          void navigate('/app');
+          return;
+        }
+        if (parsed.status === 'in_progress') {
+          setResumeState(parsed);
+          setMode('resume');
+          return;
+        }
+        setMode('select');
+      } catch (err) {
+        if (cancelled) return;
+        if (err instanceof DOMException && err.name === 'AbortError') return;
+        // Non-fatal: fall through to the normal mode picker. A logged-out
+        // user hitting /onboarding directly would hit a 401 here; the
+        // existing route guards handle redirecting to /auth/login.
+        setMode('select');
+      }
+    })();
+    return () => {
+      cancelled = true;
+      controller.abort();
+    };
+  }, [navigate]);
 
   // Story 2.14 — if a stale state lands at cultural-ratification with no
   // household (race with auth), skip to the mental-model step so the parent
@@ -41,135 +114,190 @@ export default function OnboardingPage() {
     }
   }, [mode, householdId]);
 
-  if (mode === 'voice') {
-    return (
-      <main className="min-h-screen flex items-center justify-center px-4">
-        <div className="w-full max-w-md flex flex-col items-center gap-6">
-          <h1 className="font-serif text-2xl text-stone-800 text-center">
-            Let&apos;s get to know your family
-          </h1>
-          <p className="font-sans text-sm text-stone-500 text-center">
-            Lumi will ask three questions to personalise your plan.
-          </p>
+  const handleStartOver = async (): Promise<void> => {
+    try {
+      await hkFetch('/v1/onboarding/state/reset', { method: 'POST' });
+    } catch {
+      // Best-effort: if reset fails the user is still on the resume surface
+      // and can retry. Swallow rather than blocking the UI.
+    }
+    setResumeState(null);
+    setMode('select');
+  };
 
-          {voiceError !== null ? (
-            <div className="flex flex-col items-center gap-4 text-center">
-              <p className="font-sans text-stone-600">{voiceError}</p>
-              <button
-                type="button"
-                onClick={() => {
-                  setVoiceError(null);
-                  setMode('text');
-                }}
-                className="font-sans text-sm text-amber-700 underline underline-offset-2"
-              >
-                Continue with text instead
-              </button>
-            </div>
-          ) : (
-            <OnboardingVoice
-              onComplete={() => setMode('consent')}
-              onError={(message) => setVoiceError(message)}
-            />
-          )}
-        </div>
-      </main>
-    );
-  }
-
-  if (mode === 'text') {
-    return (
-      <main className="min-h-screen flex items-start justify-center px-4 py-8">
-        <div className="w-full max-w-2xl flex flex-col gap-6">
-          <h1 className="font-serif text-2xl text-stone-800 text-center">
-            Let&apos;s get to know your family
-          </h1>
-          <OnboardingText onFinalized={() => setMode('consent')} />
-        </div>
-      </main>
-    );
-  }
-
-  if (mode === 'consent') {
-    return (
-      <main className="min-h-screen flex items-start justify-center px-4 py-8">
-        <div className="w-full max-w-2xl flex flex-col gap-6">
-          <h1 className="font-serif text-2xl text-stone-800 text-center">
-            One final step
-          </h1>
-          <OnboardingConsent
-            onConsented={() => {
-              if (householdId !== null) {
-                setMode('cultural-ratification');
-              } else {
-                // No household → skip cultural ratification but still show
-                // the mental-model copy before entering /app (Story 2.14).
-                setMode('mental-model');
-              }
-            }}
-          />
-        </div>
-      </main>
-    );
-  }
-
-  if (mode === 'cultural-ratification') {
-    if (householdId === null) return null;
-    return (
-      <main className="min-h-screen flex items-start justify-center px-4 py-8">
-        <div className="w-full max-w-2xl flex flex-col gap-6">
-          <h1 className="font-serif text-2xl text-stone-800 text-center">
-            Lumi noticed a few things
-          </h1>
-          <CulturalRatificationStep
-            householdId={householdId}
-            onComplete={() => setMode('mental-model')}
-          />
-        </div>
-      </main>
-    );
-  }
-
-  if (mode === 'mental-model') {
-    return (
-      <main className="min-h-screen flex items-center justify-center px-4">
-        <div className="w-full max-w-md">
-          <OnboardingMentalModel onComplete={() => void navigate('/app')} />
-        </div>
-      </main>
-    );
-  }
+  const handleContinue = (): void => {
+    if (resumeState === null) return;
+    // Voice-origin threads continue in text mode this slice (story AC5).
+    // The server thread keeps its 'voice' modality column; we just render
+    // the text UI on top of the same turn history.
+    setMode('text');
+  };
 
   return (
-    <main className="min-h-screen flex items-center justify-center px-4">
-      <div className="w-full max-w-md flex flex-col items-center gap-8">
-        <div className="text-center">
-          <h1 className="font-serif text-3xl text-stone-800 mb-3">
-            Welcome to HiveKitchen
-          </h1>
-          <p className="font-sans text-stone-500 leading-relaxed">
-            Lumi will learn about your family in a short conversation —
-            under 10 minutes, three questions.
-          </p>
-        </div>
-
-        <div className="flex flex-col items-center gap-3 w-full">
-          <button
-            type="button"
-            onClick={() => setMode('voice')}
-            className="w-full px-8 py-3 rounded-full bg-amber-600 text-white font-sans text-base hover:bg-amber-700 transition-colors"
-          >
-            Start with voice
-          </button>
-          <button
-            type="button"
-            onClick={() => setMode('text')}
-            className="font-sans text-sm text-stone-500 underline underline-offset-2 hover:text-stone-700 transition-colors"
-          >
-            I&apos;d rather type
-          </button>
-        </div>
-      </div>
-    </main>
+    <div className="flex min-h-screen flex-col bg-bg text-fg">
+      <AppHeader />
+      <main className="flex flex-1 flex-col">
+        {renderMode()}
+      </main>
+      <AppFooter />
+    </div>
   );
+
+  function renderMode() {
+    if (mode === 'loading') {
+      // Brief spinner-less placeholder. The state probe usually resolves in
+      // <100ms; rendering a full skeleton flashes more than it helps. An
+      // accessible region label lets screen readers announce the page.
+      return (
+        <section
+          aria-busy="true"
+          aria-label="Loading onboarding"
+          className="flex flex-1 items-center justify-center px-8 py-16"
+        />
+      );
+    }
+
+    if (mode === 'resume' && resumeState !== null) {
+      return (
+        <OnboardingResume
+          state={resumeState}
+          firstName={firstName}
+          onContinue={handleContinue}
+          onStartOver={handleStartOver}
+        />
+      );
+    }
+
+    if (mode === 'select') {
+      const m = onboardingMock;
+      return (
+        <>
+          <OnboardingHero
+            eyebrow={m.hero.eyebrow}
+            headline={m.hero.headline}
+            subhead={m.hero.subhead}
+            imageSrc={m.hero.imageSrc}
+            imageAlt={m.hero.imageAlt}
+          />
+          <MediaSection />
+          <OnboardingActions
+            onBegin={() => setMode('voice')}
+            onLookAround={() => setMode('text')}
+            primaryLabel="Start with voice"
+            secondaryLabel="I'd rather type"
+          />
+          <PreviewTiles tiles={m.previewTiles} />
+        </>
+      );
+    }
+
+    if (mode === 'voice') {
+      return (
+        <div className="flex flex-1 items-center justify-center px-4 py-12">
+          <div className="flex w-full max-w-md flex-col items-center gap-6">
+            <header className="text-center">
+              <h1 className="font-serif text-2xl text-fg">Let&apos;s get to know your family</h1>
+              <p className="mt-2 text-sm text-fg-muted">
+                Lumi will ask three questions to personalise your plan.
+              </p>
+            </header>
+
+            {voiceError !== null ? (
+              <div className="flex flex-col items-center gap-4 text-center">
+                <p className="text-fg-muted">{voiceError}</p>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setVoiceError(null);
+                    setMode('text');
+                  }}
+                  className="text-sm text-amber-warm underline underline-offset-2 hover:text-amber"
+                >
+                  Continue with text instead
+                </button>
+              </div>
+            ) : (
+              <OnboardingVoice
+                onComplete={() => setMode('consent')}
+                onError={(message) => setVoiceError(message)}
+              />
+            )}
+          </div>
+        </div>
+      );
+    }
+
+    if (mode === 'text') {
+      // Slice 2-S26 — when arriving from Resume, pass prior turns so the
+      // transcript re-hydrates. On a fresh start (resumeState === null)
+      // OnboardingText falls back to its single-greeting initial state,
+      // preserving 2-7 behavior exactly.
+      const initialTurns = resumeState?.turns?.map((t) => ({
+        id: t.id,
+        role: t.role,
+        content: t.content,
+      }));
+      return (
+        <div className="flex flex-1 items-start justify-center px-4 py-12">
+          <div className="flex w-full max-w-2xl flex-col gap-6">
+            <h1 className="text-center font-serif text-2xl text-fg">
+              Let&apos;s get to know your family
+            </h1>
+            <OnboardingText
+              onFinalized={() => setMode('consent')}
+              initialTurns={initialTurns}
+            />
+          </div>
+        </div>
+      );
+    }
+
+    if (mode === 'consent') {
+      return (
+        <div className="flex flex-1 items-start justify-center px-4 py-12">
+          <div className="flex w-full max-w-2xl flex-col gap-6">
+            <h1 className="text-center font-serif text-2xl text-fg">One final step</h1>
+            <OnboardingConsent
+              onConsented={() => {
+                if (householdId !== null) {
+                  setMode('cultural-ratification');
+                } else {
+                  setMode('mental-model');
+                }
+              }}
+            />
+          </div>
+        </div>
+      );
+    }
+
+    if (mode === 'cultural-ratification') {
+      if (householdId === null) return null;
+      return (
+        <div className="flex flex-1 items-start justify-center px-4 py-12">
+          <div className="flex w-full max-w-2xl flex-col gap-6">
+            <h1 className="text-center font-serif text-2xl text-fg">
+              Lumi noticed a few things
+            </h1>
+            <CulturalRatificationStep
+              householdId={householdId}
+              onComplete={() => setMode('mental-model')}
+            />
+          </div>
+        </div>
+      );
+    }
+
+    if (mode === 'mental-model') {
+      return (
+        <div className="flex flex-1 items-center justify-center px-4 py-12">
+          <div className="w-full max-w-md">
+            <OnboardingMentalModel onComplete={() => void navigate('/app')} />
+          </div>
+        </div>
+      );
+    }
+
+    return null;
+  }
 }

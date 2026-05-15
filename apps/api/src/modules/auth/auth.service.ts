@@ -12,6 +12,8 @@ export interface LoginResult {
   expires_in: number;
   user: UserRow;
   is_first_login: boolean;
+  is_onboarded: boolean;
+  is_onboarding_in_progress: boolean;
   refresh_token_plaintext: string;
   refresh_token_max_age_seconds: number;
 }
@@ -182,11 +184,22 @@ export class AuthService {
       expires_at: new Date(Date.now() + REFRESH_TOKEN_TTL_SECONDS * 1000),
     });
 
+    // Slice 2-S19 + 2-S26. First-login users are by definition not started yet
+    // (skip the round-trip). For returning users, derive both flags from the
+    // single three-state read (one DB pass instead of two).
+    const progress: 'not_started' | 'in_progress' | 'completed' = is_first_login
+      ? 'not_started'
+      : await this.repository.getOnboardingProgress(user.id, user.current_household_id);
+    const is_onboarded = progress === 'completed';
+    const is_onboarding_in_progress = progress === 'in_progress';
+
     return {
       access_token,
       expires_in: ACCESS_TOKEN_TTL_SECONDS,
       user,
       is_first_login,
+      is_onboarded,
+      is_onboarding_in_progress,
       refresh_token_plaintext,
       refresh_token_max_age_seconds: REFRESH_TOKEN_TTL_SECONDS,
     };

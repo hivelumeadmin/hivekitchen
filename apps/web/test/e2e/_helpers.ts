@@ -33,9 +33,20 @@ export interface UserProfileOverrides {
   cultural_language?: string;
   parental_notice_acknowledged_at?: string | null;
   parental_notice_acknowledged_version?: string | null;
+  is_onboarded?: boolean;
+  // 2-S26: mirrors LoginResponse — mutually exclusive with is_onboarded.
+  is_onboarding_in_progress?: boolean;
 }
 
 export function userProfile(overrides: UserProfileOverrides = {}) {
+  // 2-S19: UserProfileSchema requires `is_onboarded`. Derive a sensible
+  // default from `parental_notice_acknowledged_at` (matches the server-side
+  // derivation), but let callers override explicitly.
+  const ackAt =
+    overrides.parental_notice_acknowledged_at === undefined
+      ? '2026-04-01T10:00:00.000Z'
+      : overrides.parental_notice_acknowledged_at;
+  const isOnboarded = overrides.is_onboarded ?? ackAt !== null;
   return {
     id: SAMPLE_USER_ID,
     email: 'parent@example.com',
@@ -45,16 +56,34 @@ export function userProfile(overrides: UserProfileOverrides = {}) {
     auth_providers: ['email'],
     notification_prefs: { weekly_plan_ready: true, grocery_list_ready: true },
     cultural_language: 'default',
-    parental_notice_acknowledged_at: '2026-04-01T10:00:00.000Z',
+    parental_notice_acknowledged_at: ackAt,
     parental_notice_acknowledged_version: 'v1',
+    is_onboarded: isOnboarded,
+    // 2-S26: default false. Tests that exercise the resume surface override.
+    is_onboarding_in_progress: overrides.is_onboarding_in_progress ?? false,
     ...overrides,
   };
 }
 
 export async function mockLogin(
   page: Page,
-  opts: { isFirstLogin?: boolean; user?: ReturnType<typeof authUser> } = {},
+  opts: {
+    isFirstLogin?: boolean;
+    isOnboarded?: boolean;
+    // 2-S26: when true, the login response includes `is_onboarding_in_progress: true`.
+    // Drives the /onboarding page to render the Resume surface on mount.
+    isOnboardingInProgress?: boolean;
+    user?: ReturnType<typeof authUser>;
+  } = {},
 ) {
+  // 2-S19: is_onboarded must be present in the response or login.tsx routes
+  // every test to /onboarding (the field reads as `undefined → falsy`).
+  // Default behavior: returning users (isFirstLogin=false) are onboarded;
+  // first-login users (isFirstLogin=true) are not — they shouldn't be able
+  // to land on /app yet.
+  const isFirstLogin = opts.isFirstLogin ?? false;
+  const isOnboarded = opts.isOnboarded ?? !isFirstLogin;
+  const isOnboardingInProgress = opts.isOnboardingInProgress ?? false;
   await page.route('**/v1/auth/login', (route) =>
     route.fulfill({
       status: 200,
@@ -63,7 +92,9 @@ export async function mockLogin(
         access_token: 'jwt-test-token',
         expires_in: 900,
         user: opts.user ?? authUser(),
-        is_first_login: opts.isFirstLogin ?? false,
+        is_first_login: isFirstLogin,
+        is_onboarded: isOnboarded,
+        is_onboarding_in_progress: isOnboardingInProgress,
       }),
     }),
   );
@@ -88,9 +119,13 @@ export async function loginAndNavigate(
 ) {
   await mockLogin(page, { isFirstLogin: opts.isFirstLogin ?? false });
   await page.goto(`/auth/login?next=${encodeURIComponent(destination)}`);
-  await page.getByLabel(/^email$/i).fill('parent@example.com');
-  await page.getByLabel(/^password$/i).fill('verylongpassword');
-  await page.getByRole('button', { name: /^sign in$/i }).click();
+  // v2.0 labels — see login.tsx loginCopyMock. Exact-match the email and
+  // password labels because the password field's eye-toggle has aria-label
+  // "Show password" / "Hide password" which would also match /password/i.
+  // CTA was renamed from "Sign in" to "Enter Kitchen" in γ Phase 1.
+  await page.getByLabel('Email Address', { exact: true }).fill('parent@example.com');
+  await page.getByLabel('Password', { exact: true }).fill('verylongpassword');
+  await page.getByRole('button', { name: /enter kitchen/i }).click();
   if (opts.isFirstLogin === true) {
     await page.waitForURL(/\/onboarding$/);
   } else {

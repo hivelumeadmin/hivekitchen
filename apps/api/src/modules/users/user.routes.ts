@@ -26,7 +26,7 @@ const userRoutesPlugin: FastifyPluginAsync = async (fastify) => {
       schema: { response: { 200: UserProfileSchema } },
     },
     async (request) => {
-      return service.getMyProfile(request.user.id);
+      return service.getMyProfile(request.user.id, request.user.household_id);
     },
   );
 
@@ -40,7 +40,11 @@ const userRoutesPlugin: FastifyPluginAsync = async (fastify) => {
     },
     async (request) => {
       const body = request.body as UpdateProfileRequest;
-      const { profile, fieldsChanged } = await service.updateMyProfile(request.user.id, body);
+      const { profile, fieldsChanged } = await service.updateMyProfile(
+        request.user.id,
+        request.user.household_id,
+        body,
+      );
       request.auditContext = {
         event_type: 'account.updated',
         user_id: request.user.id,
@@ -62,7 +66,11 @@ const userRoutesPlugin: FastifyPluginAsync = async (fastify) => {
     },
     async (request) => {
       const body = request.body as UpdateNotificationPrefsRequest;
-      const profile = await service.updateMyNotifications(request.user.id, body);
+      const profile = await service.updateMyNotifications(
+        request.user.id,
+        request.user.household_id,
+        body,
+      );
       request.auditContext = {
         event_type: 'account.updated',
         user_id: request.user.id,
@@ -84,7 +92,11 @@ const userRoutesPlugin: FastifyPluginAsync = async (fastify) => {
     },
     async (request) => {
       const body = request.body as UpdateCulturalPreferenceRequest;
-      const { profile, fieldsChanged } = await service.updateMyPreferences(request.user.id, body);
+      const { profile, fieldsChanged } = await service.updateMyPreferences(
+        request.user.id,
+        request.user.household_id,
+        body,
+      );
       request.auditContext = {
         event_type: 'account.updated',
         user_id: request.user.id,

@@ -4,13 +4,13 @@ import { authUser } from './_helpers.js';
 test.describe('Story 2-4b: password reset completion page', () => {
   test('no recovery hash → "Link expired" view', async ({ page }) => {
     await page.goto('/auth/reset-password');
-    await expect(page.getByRole('heading', { name: /link expired/i })).toBeVisible();
-    await expect(page.getByRole('link', { name: /send a new link/i })).toBeVisible();
+    await expect(page.getByRole('heading', { name: /this link has expired/i })).toBeVisible();
+    await expect(page.getByRole('button', { name: /send a new link/i })).toBeVisible();
   });
 
   test('non-recovery hash type → "Link expired" view', async ({ page }) => {
     await page.goto('/auth/reset-password#access_token=abc&type=signup');
-    await expect(page.getByRole('heading', { name: /link expired/i })).toBeVisible();
+    await expect(page.getByRole('heading', { name: /this link has expired/i })).toBeVisible();
   });
 
   test('valid hash renders the reset form and accepts a new password', async ({ page }) => {
@@ -25,14 +25,16 @@ test.describe('Story 2-4b: password reset completion page', () => {
           expires_in: 900,
           user: authUser(),
           is_first_login: false,
+          is_onboarded: true,
+          is_onboarding_in_progress: false,
         }),
       });
     });
 
     await page.goto('/auth/reset-password#access_token=recovery-token-xyz&type=recovery');
-    await expect(page.getByRole('heading', { name: /reset your password/i })).toBeVisible();
+    await expect(page.getByRole('heading', { name: /set a new password/i })).toBeVisible();
     await page.getByLabel(/new password/i).fill('a-new-strong-password');
-    await page.getByRole('button', { name: /^reset password$/i }).click();
+    await page.getByRole('button', { name: /save and continue/i }).click();
     await expect(page).toHaveURL(/\/app$/);
     expect(postedBody).toEqual({
       token: 'recovery-token-xyz',
@@ -44,9 +46,9 @@ test.describe('Story 2-4b: password reset completion page', () => {
     await page.goto('/auth/reset-password#access_token=any-token&type=recovery');
     const passwordInput = page.getByLabel(/new password/i);
     await expect(passwordInput).toHaveAttribute('type', 'password');
-    await page.getByRole('button', { name: /^show$/i }).click();
+    await page.getByRole('button', { name: /show password/i }).click();
     await expect(passwordInput).toHaveAttribute('type', 'text');
-    await page.getByRole('button', { name: /^hide$/i }).click();
+    await page.getByRole('button', { name: /hide password/i }).click();
     await expect(passwordInput).toHaveAttribute('type', 'password');
   });
 
@@ -61,8 +63,8 @@ test.describe('Story 2-4b: password reset completion page', () => {
 
     await page.goto('/auth/reset-password#access_token=stale-token&type=recovery');
     await page.getByLabel(/new password/i).fill('a-new-strong-password');
-    await page.getByRole('button', { name: /^reset password$/i }).click();
-    await expect(page.getByRole('heading', { name: /link expired/i })).toBeVisible();
+    await page.getByRole('button', { name: /save and continue/i }).click();
+    await expect(page.getByRole('heading', { name: /this link has expired/i })).toBeVisible();
   });
 
   test('400 from the API surfaces the validation message', async ({ page }) => {
@@ -76,7 +78,7 @@ test.describe('Story 2-4b: password reset completion page', () => {
 
     await page.goto('/auth/reset-password#access_token=any-token&type=recovery');
     await page.getByLabel(/new password/i).fill('a-new-strong-password');
-    await page.getByRole('button', { name: /^reset password$/i }).click();
+    await page.getByRole('button', { name: /save and continue/i }).click();
     await expect(page.getByRole('alert')).toContainText(/12.*128 characters/i);
   });
 
