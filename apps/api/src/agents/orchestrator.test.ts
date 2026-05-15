@@ -118,7 +118,7 @@ function buildProvider(name: string, overrides: Partial<LLMProvider> = {}): LLMP
     content: `from-${name}`,
     toolCalls: [],
     finishReason: 'stop',
-    usage: { promptTokens: 1, completionTokens: 1 },
+    usage: { promptTokens: 1, completionTokens: 1, cachedPromptTokens: 0 },
   };
   const complete = overrides.complete ?? vi.fn().mockResolvedValue(stoppedResponse);
   const completeWithMessages =
@@ -369,7 +369,7 @@ describe('DomainOrchestrator', () => {
         content: null,
         toolCalls: [{ id: 'call_1', name: 'memory.note', arguments: {} }],
         finishReason: 'tool_calls',
-        usage: { promptTokens: 1, completionTokens: 1 },
+        usage: { promptTokens: 1, completionTokens: 1, cachedPromptTokens: 0 },
       };
       const primary = buildProvider('primary', {
         complete: vi.fn().mockResolvedValue(responseWithForbiddenCall),
@@ -391,7 +391,7 @@ describe('DomainOrchestrator', () => {
         content: null,
         toolCalls: [{ id: 'call_1', name: 'memory.note', arguments: {} }],
         finishReason: 'tool_calls',
-        usage: { promptTokens: 1, completionTokens: 1 },
+        usage: { promptTokens: 1, completionTokens: 1, cachedPromptTokens: 0 },
       };
       const primary = buildProvider('primary', {
         complete: vi.fn().mockResolvedValue(responseWithForbiddenCall),
@@ -687,7 +687,7 @@ describe('DomainOrchestrator', () => {
               content: null,
               toolCalls: [{ id: 'tc1', name: 'plan.compose', arguments: MINIMAL_PLAN_OUTPUT }],
               finishReason: 'tool_calls',
-              usage: { promptTokens: 1, completionTokens: 1 },
+              usage: { promptTokens: 1, completionTokens: 1, cachedPromptTokens: 0 },
             });
           },
         ),
@@ -735,7 +735,7 @@ describe('DomainOrchestrator', () => {
               content: null,
               toolCalls: [{ id: 'tc-bag', name: 'plan.compose', arguments: MINIMAL_PLAN_OUTPUT }],
               finishReason: 'tool_calls',
-              usage: { promptTokens: 1, completionTokens: 1 },
+              usage: { promptTokens: 1, completionTokens: 1, cachedPromptTokens: 0 },
             });
           },
         ),
@@ -783,7 +783,7 @@ describe('DomainOrchestrator', () => {
               content: null,
               toolCalls: [{ id: 'tc2', name: 'plan.compose', arguments: MINIMAL_PLAN_OUTPUT }],
               finishReason: 'tool_calls',
-              usage: { promptTokens: 1, completionTokens: 1 },
+              usage: { promptTokens: 1, completionTokens: 1, cachedPromptTokens: 0 },
             });
           },
         ),

@@ -100,7 +100,7 @@ function buildProvider(overrides: Partial<LLMProvider> = {}): LLMProvider {
     content: 'idle',
     toolCalls: [],
     finishReason: 'stop',
-    usage: { promptTokens: 1, completionTokens: 1 },
+    usage: { promptTokens: 1, completionTokens: 1, cachedPromptTokens: 0 },
   };
   const complete = overrides.complete ?? vi.fn().mockResolvedValue(stoppedResponse);
   const completeWithMessages =
@@ -173,14 +173,14 @@ describe('DomainOrchestrator.planWeek', () => {
           { id: planComposeCallId, name: 'plan.compose', arguments: { stub: true } },
         ],
         finishReason: 'tool_calls',
-        usage: { promptTokens: 10, completionTokens: 5 },
+        usage: { promptTokens: 10, completionTokens: 5, cachedPromptTokens: 0 },
       },
       // Second turn returns 'stop' after the tool result is fed back in.
       {
         content: 'done',
         toolCalls: [],
         finishReason: 'stop',
-        usage: { promptTokens: 20, completionTokens: 5 },
+        usage: { promptTokens: 20, completionTokens: 5, cachedPromptTokens: 0 },
       },
     ];
     const completeWithMessages = vi.fn().mockImplementation(() => {
@@ -209,7 +209,7 @@ describe('DomainOrchestrator.planWeek', () => {
       content: null,
       toolCalls: [{ id: 'call_search', name: 'recipe.search', arguments: { q: 'rice' } }],
       finishReason: 'tool_calls',
-      usage: { promptTokens: 1, completionTokens: 1 },
+      usage: { promptTokens: 1, completionTokens: 1, cachedPromptTokens: 0 },
     });
     const orchestrator = buildOrchestrator(buildProvider({ completeWithMessages }));
 
@@ -223,7 +223,7 @@ describe('DomainOrchestrator.planWeek', () => {
       content: null,
       toolCalls: [{ id: 'call_compose_1', name: 'plan.compose', arguments: {} }],
       finishReason: 'tool_calls',
-      usage: { promptTokens: 1, completionTokens: 1 },
+      usage: { promptTokens: 1, completionTokens: 1, cachedPromptTokens: 0 },
     });
     const orchestrator = buildOrchestrator(buildProvider({ completeWithMessages }));
     wirePlanComposeStub(async () => makeValidPlanComposeOutput());
@@ -250,7 +250,7 @@ describe('DomainOrchestrator.planWeek', () => {
       content: null,
       toolCalls: [{ id: 'call_compose_1', name: 'plan.compose', arguments: {} }],
       finishReason: 'tool_calls',
-      usage: { promptTokens: 1, completionTokens: 1 },
+      usage: { promptTokens: 1, completionTokens: 1, cachedPromptTokens: 0 },
     });
     const orchestrator = buildOrchestrator(buildProvider({ completeWithMessages }));
     wirePlanComposeStub(async () => makeValidPlanComposeOutput());
@@ -271,7 +271,7 @@ describe('DomainOrchestrator.planWeek', () => {
       content: null,
       toolCalls: [{ id: 'call_compose_1', name: 'plan.compose', arguments: {} }],
       finishReason: 'tool_calls',
-      usage: { promptTokens: 1, completionTokens: 1 },
+      usage: { promptTokens: 1, completionTokens: 1, cachedPromptTokens: 0 },
     });
     const orchestrator = buildOrchestrator(buildProvider({ completeWithMessages }));
     wirePlanComposeStub(async () => makeValidPlanComposeOutput());
@@ -290,7 +290,7 @@ describe('DomainOrchestrator.planWeek', () => {
       content: null,
       toolCalls: [{ id: 'call_note', name: 'memory.note', arguments: {} }],
       finishReason: 'tool_calls',
-      usage: { promptTokens: 1, completionTokens: 1 },
+      usage: { promptTokens: 1, completionTokens: 1, cachedPromptTokens: 0 },
     });
     const orchestrator = buildOrchestrator(buildProvider({ completeWithMessages }));
 
@@ -304,7 +304,7 @@ describe('DomainOrchestrator.planWeek', () => {
       content: null,
       toolCalls: [{ id: 'call_compose_1', name: 'plan.compose', arguments: {} }],
       finishReason: 'tool_calls',
-      usage: { promptTokens: 1, completionTokens: 1 },
+      usage: { promptTokens: 1, completionTokens: 1, cachedPromptTokens: 0 },
     });
     const orchestrator = buildOrchestrator(buildProvider({ completeWithMessages }));
     wirePlanComposeStub(async () => {

@@ -238,6 +238,14 @@ export class OnboardingService {
     //    to pre-slice-C.
     let lumiText: string;
     let toolCallsSummary: Array<{ tool: string; error: boolean }> | undefined;
+    let agentUsage:
+      | {
+          promptTokens: number;
+          completionTokens: number;
+          cachedPromptTokens: number;
+          iterations: number;
+        }
+      | undefined;
     try {
       if (
         this.toolLoopAvailable &&
@@ -265,9 +273,11 @@ export class OnboardingService {
         });
         lumiText = reply.text;
         toolCallsSummary = reply.toolCallsSummary;
+        agentUsage = reply.usage;
       } else {
         const reply = await this.agent.respond(agentInput, { modality: TEXT_MODALITY });
         lumiText = reply.text;
+        agentUsage = reply.usage;
       }
     } catch (err) {
       this.logger.error(
@@ -281,6 +291,31 @@ export class OnboardingService {
         'OnboardingAgent.respond failed during text turn',
       );
       throw new UpstreamError('Onboarding agent unavailable');
+    }
+
+    // Slice B — surface agent token usage + prompt-cache effectiveness.
+    // Logged unconditionally because the legacy single-shot path benefits
+    // from cache visibility too. The cached_prompt_tokens figure tells us
+    // whether the kitchen-map block + vocabulary block (the long stable
+    // prefix) are actually being served from cache after the first turn.
+    if (agentUsage !== undefined) {
+      this.logger.info(
+        {
+          module: 'onboarding',
+          action: 'onboarding.text_turn_usage',
+          household_id: input.householdId,
+          thread_id: thread.id,
+          prompt_tokens: agentUsage.promptTokens,
+          completion_tokens: agentUsage.completionTokens,
+          cached_prompt_tokens: agentUsage.cachedPromptTokens,
+          iterations: agentUsage.iterations,
+          cache_hit_ratio:
+            agentUsage.promptTokens > 0
+              ? Number((agentUsage.cachedPromptTokens / agentUsage.promptTokens).toFixed(3))
+              : 0,
+        },
+        'onboarding agent token usage',
+      );
     }
 
     if (toolCallsSummary !== undefined && toolCallsSummary.length > 0) {

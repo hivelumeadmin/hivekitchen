@@ -20,12 +20,28 @@ export interface OnboardingToolCallSummary {
   error: boolean;
 }
 
+export interface OnboardingAgentUsage {
+  /** Total input tokens billed across every LLM call this turn (single-shot
+   *  = 1 call; tool loop = up to MAX_TOOL_ITERATIONS calls). */
+  promptTokens: number;
+  /** Total output tokens billed. */
+  completionTokens: number;
+  /** Slice B — input tokens served from OpenAI's auto-prefix cache,
+   *  summed across iterations. Zero when caching didn't trigger. */
+  cachedPromptTokens: number;
+  /** Number of LLM round-trips this turn used. 1 for single-shot; >1 means
+   *  the agent had to iterate to resolve tool calls. */
+  iterations: number;
+}
+
 export interface OnboardingAgentResponse {
   text: string;
   complete: boolean;
   /** Present only when the tool-call loop ran. One entry per tool call,
    *  in invocation order. Used by OnboardingService for audit logging. */
   toolCallsSummary?: OnboardingToolCallSummary[];
+  /** Token-usage breakdown for telemetry. Always set. */
+  usage: OnboardingAgentUsage;
 }
 
 export interface RespondOptions {
@@ -50,6 +66,20 @@ const MAX_TOOL_ITERATIONS = 6;
 const TEXT_MODEL = 'gpt-4o';
 const TEXT_MODEL_MAX_TOKENS = 800;
 const TEXT_MODEL_TEMPERATURE = 0.7;
+
+// Slice B — extract auto-prefix cached input tokens from the OpenAI usage
+// block. The gpt-4o family returns usage.prompt_tokens_details.cached_tokens
+// when caching kicked in; older models may not, in which case this is 0.
+// Read structurally because openai SDK types may not yet include the field.
+function cachedPromptTokensFromUsage(
+  usage: { prompt_tokens_details?: unknown } | null | undefined,
+): number {
+  if (!usage) return 0;
+  const details = usage.prompt_tokens_details;
+  if (details === undefined || details === null || typeof details !== 'object') return 0;
+  const cached = (details as { cached_tokens?: unknown }).cached_tokens;
+  return typeof cached === 'number' && cached >= 0 ? cached : 0;
+}
 
 // OpenAI's function-name format doesn't allow dots ('child.upsert'),
 // so we use '__' as an on-the-wire substitute.
@@ -138,7 +168,17 @@ export class OnboardingAgent {
       ? trimmed.slice(0, trimmed.length - SESSION_COMPLETE_SENTINEL.length).trimEnd()
       : raw;
 
-    return { text, complete };
+    const usage = completion.usage;
+    return {
+      text,
+      complete,
+      usage: {
+        promptTokens: usage?.prompt_tokens ?? 0,
+        completionTokens: usage?.completion_tokens ?? 0,
+        cachedPromptTokens: cachedPromptTokensFromUsage(usage),
+        iterations: 1,
+      },
+    };
   }
 
   /**
@@ -173,6 +213,15 @@ export class OnboardingAgent {
 
     const openaiTools = toOpenAITools(tools);
     let lastAssistantContent: string | null = null;
+    // Slice B — accumulate usage across iterations. The system prompt +
+    // kitchen-map block + vocabulary block are stable across iterations of
+    // a single turn, so OpenAI auto-prefix caching should hit on
+    // iterations 2+. Total cachedPromptTokens reveals whether that's
+    // actually working in prod.
+    let totalPromptTokens = 0;
+    let totalCompletionTokens = 0;
+    let totalCachedPromptTokens = 0;
+    let iterationsRun = 0;
 
     for (let iter = 0; iter < MAX_TOOL_ITERATIONS; iter++) {
       const completion = await this.openai.chat.completions.create({
@@ -184,6 +233,11 @@ export class OnboardingAgent {
         max_tokens: TEXT_MODEL_MAX_TOKENS,
       });
 
+      iterationsRun = iter + 1;
+      totalPromptTokens += completion.usage?.prompt_tokens ?? 0;
+      totalCompletionTokens += completion.usage?.completion_tokens ?? 0;
+      totalCachedPromptTokens += cachedPromptTokensFromUsage(completion.usage);
+
       const choice = completion.choices[0];
       if (!choice) break;
 
@@ -194,7 +248,17 @@ export class OnboardingAgent {
       // No tool calls (or natural stop) → return the prose response.
       if (toolCalls.length === 0 || choice.finish_reason === 'stop') {
         const text = msg.content ?? 'Let me think about that for a moment.';
-        return { text, complete: false, toolCallsSummary: summary };
+        return {
+          text,
+          complete: false,
+          toolCallsSummary: summary,
+          usage: {
+            promptTokens: totalPromptTokens,
+            completionTokens: totalCompletionTokens,
+            cachedPromptTokens: totalCachedPromptTokens,
+            iterations: iterationsRun,
+          },
+        };
       }
 
       // Append the assistant turn (carrying tool_calls so OpenAI sees the chain).
@@ -245,6 +309,12 @@ export class OnboardingAgent {
       text: lastAssistantContent ?? 'Let me come back to that — could you tell me more?',
       complete: false,
       toolCallsSummary: summary,
+      usage: {
+        promptTokens: totalPromptTokens,
+        completionTokens: totalCompletionTokens,
+        cachedPromptTokens: totalCachedPromptTokens,
+        iterations: iterationsRun,
+      },
     };
   }
 

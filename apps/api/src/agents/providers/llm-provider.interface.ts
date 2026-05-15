@@ -1,7 +1,31 @@
 import type { ToolSpec } from '../tools.manifest.js';
 
+/**
+ * Slice B — semantic tier for model selection. The adapter resolves the
+ * tier to a concrete provider model name at call time so calling code
+ * never has to hardcode "gpt-4o" vs "gpt-4o-mini" vs reasoning-tier IDs.
+ *
+ *   'flagship'  — frontier model. Multi-constraint reasoning, plan
+ *                 synthesis, anything that justifies the cost premium.
+ *                 OpenAI: gpt-4o.
+ *   'mini'      — small, fast, cheap. Focused single-task sub-agents
+ *                 (Recipe Generator, Swap Agent), classification, tag
+ *                 inference. OpenAI: gpt-4o-mini.
+ *   'reasoning' — slow, deliberate reasoning model when chain-of-thought
+ *                 quality matters. OpenAI: o1 / o3 family (where
+ *                 available). Reserved for cases where flagship's
+ *                 single-pass output isn't enough.
+ */
+export type LLMTier = 'flagship' | 'mini' | 'reasoning';
+
 export interface LLMCallOptions {
-  model: string;
+  /** Explicit provider model name. When set, takes precedence over `tier`.
+   *  Use for one-off overrides; prefer `tier` for normal call sites so
+   *  model bumps are a one-line change in the adapter. */
+  model?: string;
+  /** Semantic tier; resolved by the adapter to a concrete model. Either
+   *  `model` or `tier` must be set. */
+  tier?: LLMTier;
   temperature?: number;
   maxTokens?: number;
   systemPrompt?: string;
@@ -17,7 +41,16 @@ export interface LLMResponse {
   content: string | null;
   toolCalls: LLMToolCall[];
   finishReason: 'stop' | 'tool_calls' | 'length' | 'error';
-  usage: { promptTokens: number; completionTokens: number };
+  usage: {
+    promptTokens: number;
+    completionTokens: number;
+    /** Slice B — count of input tokens served from the provider's
+     *  auto-prefix cache (OpenAI gpt-4o family) or explicit
+     *  cache_control blocks (Anthropic). Zero when caching didn't
+     *  trigger. Telemetry signal for observing cache effectiveness on
+     *  hot prompts (kitchen-map injection, planner system prompt). */
+    cachedPromptTokens: number;
+  };
 }
 
 export interface LLMStreamEvent {

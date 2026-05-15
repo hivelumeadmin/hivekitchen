@@ -264,8 +264,29 @@ export class DomainOrchestrator {
       const response = await this.completeWithMessages(
         messages,
         tools,
-        { model: 'gpt-4o', temperature: 0.7, maxTokens: 4096 },
+        // Slice B — semantic tier rather than hardcoded model id. Adapter
+        // resolves to gpt-4o today; a future model bump is a one-line
+        // change in providers/openai.adapter.ts.
+        { tier: 'flagship', temperature: 0.7, maxTokens: 4096 },
         PLANNER_PROMPT.toolsAllowed,
+      );
+
+      // Slice B — observe prompt-cache effectiveness. The planner's system
+      // prompt + the per-household context lines are stable across the
+      // inner iterations of a single planWeek call, so OpenAI's auto-prefix
+      // cache should hit on iterations 2+. Log it so we can confirm in prod.
+      this.logger.debug(
+        {
+          requestId,
+          householdId,
+          iteration: i,
+          model_tier: 'flagship',
+          prompt_tokens: response.usage.promptTokens,
+          cached_prompt_tokens: response.usage.cachedPromptTokens,
+          completion_tokens: response.usage.completionTokens,
+          tool_call_count: response.toolCalls.length,
+        },
+        'planWeek: llm iteration completed',
       );
 
       messages.push({

@@ -15,10 +15,35 @@ import type {
   LLMProvider,
   LLMResponse,
   LLMStreamEvent,
+  LLMTier,
   LLMToolCall,
 } from './llm-provider.interface.js';
 
 const ZERO_RETENTION_HEADER = { 'OpenAI-Data-Privacy': 'zero-retention' } as const;
+
+// Slice B — semantic tier → concrete OpenAI model id. Bump the values here
+// to upgrade a tier across every call site at once.
+const TIER_TO_MODEL: Record<LLMTier, string> = {
+  flagship: 'gpt-4o',
+  mini: 'gpt-4o-mini',
+  reasoning: 'o1-mini',
+};
+
+/**
+ * Resolves LLMCallOptions to a concrete model name. Explicit `model` wins
+ * over `tier`. When neither is set, falls back to flagship — defensive
+ * default since LLMCallOptions allows both to be optional at the type
+ * level. Call sites should always set one or the other.
+ */
+function resolveModel(options: LLMCallOptions): string {
+  if (options.model !== undefined && options.model.length > 0) {
+    return options.model;
+  }
+  if (options.tier !== undefined) {
+    return TIER_TO_MODEL[options.tier];
+  }
+  return TIER_TO_MODEL.flagship;
+}
 
 // OpenAI requires tool function names to match ^[a-zA-Z0-9_-]+$. The internal
 // manifest uses dotted names ("allergy.check"); convert to underscore form
@@ -131,6 +156,20 @@ function parseToolCallArguments(raw: string): unknown {
   }
 }
 
+// Slice B — extract auto-prefix cached input tokens from the OpenAI usage
+// block. The gpt-4o family returns `usage.prompt_tokens_details.cached_tokens`
+// when caching kicked in; older / smaller models may not, in which case
+// this is 0. Type via the new field is not yet in older versions of the
+// openai SDK types, so we read it via a structural narrowing rather than
+// asserting against the type.
+function cachedPromptTokensFromUsage(usage: ChatCompletion['usage']): number {
+  if (!usage) return 0;
+  const details = (usage as { prompt_tokens_details?: unknown }).prompt_tokens_details;
+  if (details === undefined || details === null || typeof details !== 'object') return 0;
+  const cached = (details as { cached_tokens?: unknown }).cached_tokens;
+  return typeof cached === 'number' && cached >= 0 ? cached : 0;
+}
+
 function mapChatCompletion(response: ChatCompletion): LLMResponse {
   const choice = response.choices[0];
   if (!choice) {
@@ -141,6 +180,7 @@ function mapChatCompletion(response: ChatCompletion): LLMResponse {
       usage: {
         promptTokens: response.usage?.prompt_tokens ?? 0,
         completionTokens: response.usage?.completion_tokens ?? 0,
+        cachedPromptTokens: cachedPromptTokensFromUsage(response.usage),
       },
     };
   }
@@ -162,6 +202,7 @@ function mapChatCompletion(response: ChatCompletion): LLMResponse {
     usage: {
       promptTokens: response.usage?.prompt_tokens ?? 0,
       completionTokens: response.usage?.completion_tokens ?? 0,
+      cachedPromptTokens: cachedPromptTokensFromUsage(response.usage),
     },
   };
 }
@@ -177,7 +218,7 @@ export class OpenAIAdapter implements LLMProvider {
     options: LLMCallOptions,
   ): Promise<LLMResponse> {
     const params: ChatCompletionCreateParams = {
-      model: options.model,
+      model: resolveModel(options),
       messages: buildMessages(prompt, options.systemPrompt),
       ...(options.temperature !== undefined ? { temperature: options.temperature } : {}),
       ...(options.maxTokens !== undefined ? { max_tokens: options.maxTokens } : {}),
@@ -201,7 +242,7 @@ export class OpenAIAdapter implements LLMProvider {
     options: LLMCallOptions,
   ): Promise<LLMResponse> {
     const params: ChatCompletionCreateParams = {
-      model: options.model,
+      model: resolveModel(options),
       messages: buildMessagesFromLLM(messages),
       ...(options.temperature !== undefined ? { temperature: options.temperature } : {}),
       ...(options.maxTokens !== undefined ? { max_tokens: options.maxTokens } : {}),
@@ -221,7 +262,7 @@ export class OpenAIAdapter implements LLMProvider {
     options: LLMCallOptions,
   ): AsyncIterable<LLMStreamEvent> {
     const params: ChatCompletionCreateParams = {
-      model: options.model,
+      model: resolveModel(options),
       messages: buildMessages(prompt, options.systemPrompt),
       stream: true,
       ...(options.temperature !== undefined ? { temperature: options.temperature } : {}),

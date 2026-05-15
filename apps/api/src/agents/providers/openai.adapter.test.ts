@@ -52,6 +52,70 @@ describe('OpenAIAdapter', () => {
     expect(adapter.name).toBe('openai');
   });
 
+  describe('slice B — tier resolution + cached prompt tokens', () => {
+    it('resolves tier "flagship" to gpt-4o when no explicit model is passed', async () => {
+      const create = vi.fn().mockResolvedValue(buildResponse({ content: 'ok' }));
+      const adapter = new OpenAIAdapter(buildClient(create));
+      await adapter.complete('hi', [], { tier: 'flagship' });
+      const [params] = create.mock.calls[0] as [{ model: string }];
+      expect(params.model).toBe('gpt-4o');
+    });
+
+    it('resolves tier "mini" to gpt-4o-mini', async () => {
+      const create = vi.fn().mockResolvedValue(buildResponse({ content: 'ok' }));
+      const adapter = new OpenAIAdapter(buildClient(create));
+      await adapter.complete('hi', [], { tier: 'mini' });
+      const [params] = create.mock.calls[0] as [{ model: string }];
+      expect(params.model).toBe('gpt-4o-mini');
+    });
+
+    it('explicit model takes precedence over tier', async () => {
+      const create = vi.fn().mockResolvedValue(buildResponse({ content: 'ok' }));
+      const adapter = new OpenAIAdapter(buildClient(create));
+      await adapter.complete('hi', [], { tier: 'mini', model: 'gpt-4o' });
+      const [params] = create.mock.calls[0] as [{ model: string }];
+      expect(params.model).toBe('gpt-4o');
+    });
+
+    it('falls back to gpt-4o when neither tier nor model is set (defensive default)', async () => {
+      const create = vi.fn().mockResolvedValue(buildResponse({ content: 'ok' }));
+      const adapter = new OpenAIAdapter(buildClient(create));
+      await adapter.complete('hi', [], {} as LLMCallOptions);
+      const [params] = create.mock.calls[0] as [{ model: string }];
+      expect(params.model).toBe('gpt-4o');
+    });
+
+    it('extracts cachedPromptTokens from usage.prompt_tokens_details.cached_tokens', async () => {
+      const create = vi.fn().mockResolvedValue({
+        choices: [
+          {
+            finish_reason: 'stop',
+            message: { role: 'assistant', content: 'ok' },
+          },
+        ],
+        usage: {
+          prompt_tokens: 4096,
+          completion_tokens: 100,
+          prompt_tokens_details: { cached_tokens: 3072 },
+        },
+      });
+      const adapter = new OpenAIAdapter(buildClient(create));
+      const result = await adapter.complete('hi', [], { tier: 'flagship' });
+      expect(result.usage).toEqual({
+        promptTokens: 4096,
+        completionTokens: 100,
+        cachedPromptTokens: 3072,
+      });
+    });
+
+    it('reports cachedPromptTokens=0 when usage block omits prompt_tokens_details', async () => {
+      const create = vi.fn().mockResolvedValue(buildResponse({ content: 'ok' }));
+      const adapter = new OpenAIAdapter(buildClient(create));
+      const result = await adapter.complete('hi', [], { tier: 'flagship' });
+      expect(result.usage.cachedPromptTokens).toBe(0);
+    });
+  });
+
   describe('complete()', () => {
     it('calls chat.completions.create with no tools when toolset is empty', async () => {
       const create = vi.fn().mockResolvedValue(buildResponse({ content: 'hello' }));
@@ -70,7 +134,7 @@ describe('OpenAIAdapter', () => {
       expect(result.finishReason).toBe('stop');
       expect(result.toolCalls).toEqual([]);
       expect(result.content).toBe('hello');
-      expect(result.usage).toEqual({ promptTokens: 10, completionTokens: 5 });
+      expect(result.usage).toEqual({ promptTokens: 10, completionTokens: 5, cachedPromptTokens: 0 });
     });
 
     it('passes a system prompt as the first message when provided', async () => {
