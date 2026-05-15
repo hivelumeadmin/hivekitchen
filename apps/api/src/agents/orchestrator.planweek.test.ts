@@ -316,3 +316,218 @@ describe('DomainOrchestrator.planWeek', () => {
     ).rejects.toThrow(/plan\.compose fatal/);
   });
 });
+
+// ===========================================================================
+// Slice E — DomainOrchestrator.swapBlockedItems
+// ===========================================================================
+
+describe('DomainOrchestrator.swapBlockedItems', () => {
+  it('runs the swap loop and returns the parsed PlanComposeOutput from plan.compose', async () => {
+    const composeCallId = 'call_swap_1';
+    const responses: LLMResponse[] = [
+      {
+        content: null,
+        toolCalls: [
+          { id: composeCallId, name: 'plan.compose', arguments: { stub: true } },
+        ],
+        finishReason: 'tool_calls',
+        usage: { promptTokens: 200, completionTokens: 80, cachedPromptTokens: 0 },
+      },
+      // Second turn after tool result, returns stop without further tool calls.
+      {
+        content: 'done',
+        toolCalls: [],
+        finishReason: 'stop',
+        usage: { promptTokens: 220, completionTokens: 10, cachedPromptTokens: 200 },
+      },
+    ];
+    let idx = 0;
+    const completeWithMessages = vi.fn().mockImplementation(async () => {
+      const r = responses[Math.min(idx, responses.length - 1)];
+      idx += 1;
+      return r;
+    });
+    const provider = buildProvider({ completeWithMessages });
+    const orchestrator = buildOrchestrator(provider);
+
+    const swapOutput = {
+      plan_id: PLAN_ID,
+      household_id: HOUSEHOLD_ID,
+      week_of: '2026-05-18',
+      days: [
+        {
+          day: 'monday' as const,
+          items: [
+            {
+              child_id: CHILD_ID,
+              slot: 'main',
+              ingredients: ['sunflower seed butter', 'bread'],
+            },
+          ],
+        },
+      ],
+      prompt_version: 'v1.0.0',
+    };
+    wirePlanComposeStub(async () => swapOutput);
+
+    const result = await orchestrator.swapBlockedItems({
+      householdId: HOUSEHOLD_ID,
+      weekOf: '2026-05-18',
+      requestId: REQUEST_ID,
+      blockedItems: [
+        {
+          child_id: CHILD_ID,
+          day: 'monday',
+          slot: 'main',
+          original_ingredients: ['peanut butter', 'bread'],
+          blocked_by: [{ allergen: 'peanut', ingredient: 'peanut butter' }],
+        },
+      ],
+    });
+
+    expect(result).toEqual(swapOutput);
+  });
+
+  it('invokes the LLM with the mini tier (cost target for surgical retry)', async () => {
+    const completeWithMessages = vi.fn().mockResolvedValue({
+      content: null,
+      toolCalls: [
+        { id: 'call_swap_2', name: 'plan.compose', arguments: { stub: true } },
+      ],
+      finishReason: 'tool_calls',
+      usage: { promptTokens: 100, completionTokens: 30, cachedPromptTokens: 0 },
+    } satisfies LLMResponse);
+    const provider = buildProvider({ completeWithMessages });
+    const orchestrator = buildOrchestrator(provider);
+
+    wirePlanComposeStub(async () => makeValidPlanComposeOutput());
+
+    await orchestrator.swapBlockedItems({
+      householdId: HOUSEHOLD_ID,
+      weekOf: '2026-05-18',
+      requestId: REQUEST_ID,
+      blockedItems: [
+        {
+          child_id: CHILD_ID,
+          day: 'monday',
+          slot: 'main',
+          original_ingredients: ['peanut butter'],
+          blocked_by: [{ allergen: 'peanut', ingredient: 'peanut butter' }],
+        },
+      ],
+    });
+
+    expect(completeWithMessages).toHaveBeenCalled();
+    const callArgs = completeWithMessages.mock.calls[0] as [unknown, unknown, { tier: string }];
+    expect(callArgs[2]?.tier).toBe('mini');
+  });
+
+  it('injects blocked item context (allergen + original ingredients) into the user message', async () => {
+    const completeWithMessages = vi.fn().mockResolvedValue({
+      content: null,
+      toolCalls: [
+        { id: 'call_swap_3', name: 'plan.compose', arguments: { stub: true } },
+      ],
+      finishReason: 'tool_calls',
+      usage: { promptTokens: 100, completionTokens: 30, cachedPromptTokens: 0 },
+    } satisfies LLMResponse);
+    const provider = buildProvider({ completeWithMessages });
+    const orchestrator = buildOrchestrator(provider);
+
+    wirePlanComposeStub(async () => makeValidPlanComposeOutput());
+
+    await orchestrator.swapBlockedItems({
+      householdId: HOUSEHOLD_ID,
+      weekOf: '2026-05-18',
+      requestId: REQUEST_ID,
+      blockedItems: [
+        {
+          child_id: CHILD_ID,
+          day: 'monday',
+          slot: 'main',
+          original_ingredients: ['peanut butter', 'banana bread'],
+          blocked_by: [{ allergen: 'peanut', ingredient: 'peanut butter' }],
+        },
+      ],
+    });
+
+    const messages = completeWithMessages.mock.calls[0]?.[0] as Array<{ role: string; content: string }>;
+    const userMessage = messages.find((m) => m.role === 'user');
+    expect(userMessage?.content).toContain('Blocked items to swap (1)');
+    expect(userMessage?.content).toContain('peanut butter, banana bread');
+    expect(userMessage?.content).toContain('peanut via peanut butter');
+  });
+
+  it('throws when blockedItems is empty (caller bug, fail fast)', async () => {
+    const orchestrator = buildOrchestrator(buildProvider());
+    await expect(
+      orchestrator.swapBlockedItems({
+        householdId: HOUSEHOLD_ID,
+        weekOf: '2026-05-18',
+        requestId: REQUEST_ID,
+        blockedItems: [],
+      }),
+    ).rejects.toThrow(/blockedItems must not be empty/);
+  });
+
+  it('throws when the swap agent never calls plan.compose within the iteration cap', async () => {
+    // Provider keeps returning stop with no tool call — agent never composed.
+    const completeWithMessages = vi.fn().mockResolvedValue({
+      content: 'unable to swap',
+      toolCalls: [],
+      finishReason: 'stop',
+      usage: { promptTokens: 100, completionTokens: 5, cachedPromptTokens: 0 },
+    } satisfies LLMResponse);
+    const provider = buildProvider({ completeWithMessages });
+    const orchestrator = buildOrchestrator(provider);
+
+    await expect(
+      orchestrator.swapBlockedItems({
+        householdId: HOUSEHOLD_ID,
+        weekOf: '2026-05-18',
+        requestId: REQUEST_ID,
+        blockedItems: [
+          {
+            child_id: CHILD_ID,
+            day: 'monday',
+            slot: 'main',
+            original_ingredients: ['peanut butter'],
+            blocked_by: [{ allergen: 'peanut', ingredient: 'peanut butter' }],
+          },
+        ],
+      }),
+    ).rejects.toThrow(/did not call plan\.compose/);
+  });
+
+  it('rejects forbidden tool calls outside the SWAP_PROMPT allowlist', async () => {
+    // The swap agent's allowlist excludes memory.note + pantry.read + cultural.lookup.
+    // If the model tries to call one of those, ForbiddenToolCallError should fire.
+    const completeWithMessages = vi.fn().mockResolvedValue({
+      content: null,
+      toolCalls: [
+        { id: 'call_bad', name: 'memory.note', arguments: { stub: true } },
+      ],
+      finishReason: 'tool_calls',
+      usage: { promptTokens: 100, completionTokens: 5, cachedPromptTokens: 0 },
+    } satisfies LLMResponse);
+    const provider = buildProvider({ completeWithMessages });
+    const orchestrator = buildOrchestrator(provider);
+
+    await expect(
+      orchestrator.swapBlockedItems({
+        householdId: HOUSEHOLD_ID,
+        weekOf: '2026-05-18',
+        requestId: REQUEST_ID,
+        blockedItems: [
+          {
+            child_id: CHILD_ID,
+            day: 'monday',
+            slot: 'main',
+            original_ingredients: ['peanut butter'],
+            blocked_by: [{ allergen: 'peanut', ingredient: 'peanut butter' }],
+          },
+        ],
+      }),
+    ).rejects.toBeInstanceOf(ForbiddenToolCallError);
+  });
+});

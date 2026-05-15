@@ -19,6 +19,7 @@ import {
   loadExtraLibraryForHousehold,
   loadExtraRulesForChildren,
 } from './planner-context.loader.js';
+import { trySurgicalSwap } from './swap-retry.helper.js';
 
 export const REGEN_QUEUE = 'plan-regeneration';
 
@@ -163,10 +164,33 @@ const planRegenerationPlugin: FastifyPluginAsync = async (fastify) => {
 
       // Commit with full-week allergy guardrail. For day-scope, the merged
       // items set covers all days so the guardrail evaluates the full plan.
+      // The regenerate callback first tries the Slice E Swap Agent (mini-tier
+      // surgical retry over only the blocked slots) before falling back to a
+      // full flagship-tier planWeek regen. lastAttemptCommit carries the
+      // most recent commit input across retries so the swap path has the
+      // exact ingredients to minimally edit.
+      let lastAttemptCommit = commitInput;
       await fastify.plansService.commit(
         commitInput,
         request_id,
         async (rejections: GuardrailResult[]): Promise<CommitPlanInput> => {
+          const surgical = await trySurgicalSwap({
+            orchestrator: fastify.orchestrator,
+            previousCommit: lastAttemptCommit,
+            rejections,
+            weekOf: week_of,
+            requestId: request_id,
+            logger: fastify.log,
+          });
+          if (surgical !== null) {
+            // Surgical swap covers all blocked slots and the merge already
+            // preserves non-blocked items (including the day-scope other-day
+            // items captured into commitInput above). No extra merge needed.
+            const swapCommit = { ...surgical, revision: current_revision + 1 };
+            lastAttemptCommit = swapCommit;
+            return swapCommit;
+          }
+
           const conflictLines = rejections
             .flatMap((r) => (r.verdict === 'blocked' ? r.conflicts : []))
             .map((c) => `allergen: ${c.allergen}, ingredient: ${c.ingredient}`);
@@ -208,6 +232,7 @@ const planRegenerationPlugin: FastifyPluginAsync = async (fastify) => {
             retryCommit.items = [...otherDayItems, ...retryCommit.items];
           }
 
+          lastAttemptCommit = retryCommit;
           return retryCommit;
         },
       );

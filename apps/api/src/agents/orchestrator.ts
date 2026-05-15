@@ -19,6 +19,7 @@ import { createPantryReadSpec } from './tools/pantry.tools.js';
 import { createPlanComposeSpec } from './tools/plan.tools.js';
 import { createCulturalLookupSpec } from './tools/cultural.tools.js';
 import { PLANNER_PROMPT } from './prompts/planner.prompt.js';
+import { SWAP_PROMPT } from './prompts/swap.prompt.js';
 import { CircuitBreaker } from './circuit-breaker.js';
 import type {
   LLMCallOptions,
@@ -80,6 +81,19 @@ export interface PlannerExtraProposal {
   child_name: string;
   override_date: string;
   override_type: 'sport_practice' | 'field_trip';
+}
+
+// Slice E — input shape for DomainOrchestrator.swapBlockedItems. One entry
+// per slot the deterministic allergy guardrail blocked, carrying the
+// original ingredients so the agent can reason about minimal-edit
+// substitutions ("peanut butter → sunflower seed butter") rather than
+// rebuilding the whole meal.
+export interface BlockedItem {
+  readonly child_id: string;
+  readonly day: string;
+  readonly slot: string;
+  readonly original_ingredients: readonly string[];
+  readonly blocked_by: ReadonlyArray<{ allergen: string; ingredient: string }>;
 }
 
 export interface OrchestratorServices {
@@ -347,6 +361,157 @@ export class DomainOrchestrator {
     );
 
     return planComposeResult;
+  }
+
+  // Slice E — per-slot Swap Agent. Mirrors planWeek's structure but with a
+  // tight prompt + the mini tier + a narrow tools allowlist. Used by the
+  // BullMQ regenerate callbacks (plan-generation.job, plan-regeneration.job)
+  // when the deterministic allergy guardrail blocks a small number of slots:
+  // instead of paying for a full flagship-tier replanWeek, we ask a cheap
+  // agent to propose minimal-edit substitutions for just the blocked items.
+  //
+  // The returned PlanComposeOutput's `days` array contains ONLY the changed
+  // slots. The caller merges by (child_id, day, slot) over the previous
+  // CommitPlanInput, validates coverage, and falls back to a full planWeek
+  // if any blocked slot is missing a replacement.
+  //
+  // Design notes (forward-looking, not implemented here):
+  //   - When Lumi voice/chat orchestration arrives (Epic 12 phase 2+), we
+  //     will NOT introduce a separate Triage Agent. The "merged orchestrator"
+  //     principle: one agent classifies intent AND executes, saving a model
+  //     hop per turn. This Swap Agent is the first instance of that pattern:
+  //     one agent, narrow scope, mini tier.
+  async swapBlockedItems(opts: {
+    householdId: string;
+    weekOf: string;
+    requestId: string;
+    blockedItems: readonly BlockedItem[];
+  }): Promise<PlanComposeOutput> {
+    const MAX_SWAP_ITERATIONS = 5;
+    const tools = Array.from(TOOL_MANIFEST.values());
+
+    if (opts.blockedItems.length === 0) {
+      throw new Error('swapBlockedItems: blockedItems must not be empty');
+    }
+
+    const blockedLines = opts.blockedItems.map((b, i) => {
+      const reasons = b.blocked_by
+        .map((r) => `${r.allergen} via ${r.ingredient}`)
+        .join('; ');
+      return [
+        `[${String(i + 1)}] child_id=${b.child_id} day=${b.day} slot=${b.slot}`,
+        `    original_ingredients: ${b.original_ingredients.join(', ')}`,
+        `    blocked_by: ${reasons}`,
+      ].join('\n');
+    });
+
+    const contextLines = [
+      `Household ID: ${opts.householdId}`,
+      `Week starting: ${opts.weekOf} (Monday)`,
+      `Request ID: ${opts.requestId}`,
+      `Blocked items to swap (${String(opts.blockedItems.length)}):`,
+      ...blockedLines,
+      'Call plan.compose with ONLY these slots replaced. Other days/slots are already cleared and must not appear in your output.',
+    ];
+
+    const messages: LLMMessage[] = [
+      { role: 'system', content: SWAP_PROMPT.text },
+      { role: 'user', content: contextLines.join('\n') },
+    ];
+
+    let swapResult: PlanComposeOutput | null = null;
+
+    for (let i = 0; i < MAX_SWAP_ITERATIONS; i++) {
+      const response = await this.completeWithMessages(
+        messages,
+        tools,
+        // Mini tier: blocked-item count is small, output is small, hard
+        // safety constraints are validated post-hoc by the deterministic
+        // guardrail. A mini-class model has plenty of recall for the common
+        // allergen substitutions this agent handles.
+        { tier: 'mini', temperature: 0.4, maxTokens: 1024 },
+        SWAP_PROMPT.toolsAllowed,
+      );
+
+      this.logger.debug(
+        {
+          requestId: opts.requestId,
+          householdId: opts.householdId,
+          iteration: i,
+          model_tier: 'mini',
+          prompt_tokens: response.usage.promptTokens,
+          cached_prompt_tokens: response.usage.cachedPromptTokens,
+          completion_tokens: response.usage.completionTokens,
+          tool_call_count: response.toolCalls.length,
+          blocked_item_count: opts.blockedItems.length,
+        },
+        'swapBlockedItems: llm iteration completed',
+      );
+
+      messages.push({
+        role: 'assistant',
+        content: response.content,
+        toolCalls: response.toolCalls,
+      });
+
+      if (response.finishReason === 'stop' || response.toolCalls.length === 0) {
+        break;
+      }
+
+      for (const tc of response.toolCalls) {
+        const spec = TOOL_MANIFEST.get(tc.name);
+        if (!spec) {
+          this.logger.error(
+            { requestId: opts.requestId, toolName: tc.name },
+            'swapBlockedItems: unregistered tool called — treating as fatal',
+          );
+          throw new ForbiddenToolCallError(tc.name);
+        }
+
+        let result: unknown;
+        try {
+          result = await spec.fn(tc.arguments);
+        } catch (err) {
+          // Same policy as planWeek: plan.compose errors are fatal (no point
+          // continuing the loop with no compose result); other tool errors
+          // are surfaced as JSON so the agent can adapt within the loop.
+          if (tc.name === 'plan.compose') throw err;
+          result = { error: err instanceof Error ? err.message : String(err) };
+        }
+
+        if (tc.name === 'plan.compose') {
+          swapResult = PlanComposeOutputSchema.parse(result);
+        }
+
+        messages.push({
+          role: 'tool',
+          content: JSON.stringify(result),
+          toolCallId: tc.id,
+          name: tc.name,
+        });
+      }
+
+      if (swapResult !== null) break;
+    }
+
+    if (swapResult === null) {
+      throw new Error(
+        `swapBlockedItems: swap agent did not call plan.compose within ${String(MAX_SWAP_ITERATIONS)} iterations (householdId=${opts.householdId}, weekOf=${opts.weekOf})`,
+      );
+    }
+
+    this.logger.info(
+      {
+        requestId: opts.requestId,
+        householdId: opts.householdId,
+        weekOf: opts.weekOf,
+        blocked_item_count: opts.blockedItems.length,
+        proposed_day_count: swapResult.days.length,
+      },
+      'swapBlockedItems: replacements proposed',
+    );
+
+    return swapResult;
   }
 
   getActiveProvider(): LLMProvider {

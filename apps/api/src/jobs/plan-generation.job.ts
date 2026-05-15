@@ -24,6 +24,7 @@ import {
   loadExtraRulesForChildren,
   loadHighActivityExtraProposalsForHousehold,
 } from './planner-context.loader.js';
+import { trySurgicalSwap } from './swap-retry.helper.js';
 
 export { deriveWeekId };
 
@@ -316,12 +317,31 @@ const planGenerationPlugin: FastifyPluginAsync = async (fastify) => {
       const commitInput = buildCommitInput(composeOutput, weekId, request_id);
 
       // Allergy guardrail + brief_state refresh are wired inside
-      // PlansService.commit(). The regenerate callback re-runs the planner
-      // with rejection context so the next attempt avoids the unsafe items.
+      // PlansService.commit(). The regenerate callback first tries the
+      // Slice E Swap Agent — a mini-tier per-slot surgical retry — and only
+      // falls back to a full flagship-tier planWeek regen when the swap
+      // can't be done (no blocked verdicts) or can't cover every blocked
+      // slot. Captures the previous attempt's commitInput in closure so the
+      // swap path has the original ingredients to minimally edit.
+      let lastAttemptCommit = commitInput;
       await fastify.plansService.commit(
         commitInput,
         request_id,
         async (rejections: GuardrailResult[]) => {
+          const surgical = await trySurgicalSwap({
+            orchestrator: fastify.orchestrator,
+            previousCommit: lastAttemptCommit,
+            rejections,
+            weekOf: week_of,
+            requestId: request_id,
+            logger: fastify.log,
+          });
+          if (surgical !== null) {
+            lastAttemptCommit = surgical;
+            return surgical;
+          }
+
+          // Full-regen fallback. Mirrors the pre-Slice-E behavior.
           const rejectionContext = rejections
             .flatMap((r) => (r.verdict === 'blocked' ? r.conflicts : []))
             .map((c) => `allergen: ${c.allergen}, ingredient: ${c.ingredient}`)
@@ -339,7 +359,9 @@ const planGenerationPlugin: FastifyPluginAsync = async (fastify) => {
             extraLibraryItems,
             extraProposals,
           );
-          return buildCommitInput(retryOutput, weekId, request_id);
+          const retryCommit = buildCommitInput(retryOutput, weekId, request_id);
+          lastAttemptCommit = retryCommit;
+          return retryCommit;
         },
       );
 
