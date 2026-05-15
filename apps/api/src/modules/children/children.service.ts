@@ -144,6 +144,26 @@ export class ChildrenService {
     return { child: toChildResponse(inserted), was_existing: false };
   }
 
+  /**
+   * Slice C polish — case-insensitive name lookup used by the onboarding
+   * agent's memory.note tool to resolve subject_child_name → child_id when
+   * the agent fires child.upsert and memory.note in the same iteration
+   * (parallel tool execution: memory.note sees no child_id at call time
+   * because child.upsert hasn't returned yet). Returns the matched child's
+   * id, or null if no match.
+   *
+   * Name match is .trim().toLocaleLowerCase() — same rule as upsertByName,
+   * so a memory.note in the SAME turn as the child.upsert that just
+   * created the child will resolve correctly.
+   */
+  async findChildIdByName(householdId: string, name: string): Promise<string | null> {
+    const existing = await this.repository.findByHouseholdId(householdId);
+    const target = existing.find(
+      (c) => c.name.trim().toLocaleLowerCase() === name.trim().toLocaleLowerCase(),
+    );
+    return target?.id ?? null;
+  }
+
   async getChild(input: GetChildInput): Promise<ChildResponse> {
     const row = await this.repository.findById(input.householdId, input.childId);
     if (row === null) throw new NotFoundError('Child not found');

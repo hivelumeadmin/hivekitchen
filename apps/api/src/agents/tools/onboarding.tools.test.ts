@@ -41,6 +41,7 @@ function makeDeps(overrides: Partial<OnboardingToolDeps> = {}): OnboardingToolDe
         child: { id: CHILD_ID, name: 'Layla' },
         was_existing: false,
       }),
+      findChildIdByName: vi.fn().mockResolvedValue(CHILD_ID),
     } as unknown as OnboardingToolDeps['childrenService'],
     culturalPriorRepository: {
       noteSuggested: vi
@@ -321,6 +322,50 @@ describe('createMemoryNoteToolSpec', () => {
       prose_text: 'Layla is peanut-allergic.',
       subject_child_id: CHILD_ID,
     });
+    expect(deps.memoryService.noteFromAgent).toHaveBeenCalledWith(
+      expect.objectContaining({ subjectChildId: CHILD_ID }),
+    );
+  });
+
+  it('resolves subject_child_name to child_id via ChildrenService', async () => {
+    await spec.fn({
+      node_type: 'preference',
+      facet: 'refusal',
+      prose_text: "Layla won't touch mushrooms.",
+      subject_child_name: 'Layla',
+    });
+    expect(deps.childrenService.findChildIdByName).toHaveBeenCalledWith(
+      HOUSEHOLD_ID,
+      'Layla',
+    );
+    expect(deps.memoryService.noteFromAgent).toHaveBeenCalledWith(
+      expect.objectContaining({ subjectChildId: CHILD_ID }),
+    );
+  });
+
+  it('falls back to household-wide when subject_child_name does not resolve', async () => {
+    vi.mocked(deps.childrenService.findChildIdByName).mockResolvedValueOnce(null);
+    await spec.fn({
+      node_type: 'preference',
+      facet: 'refusal',
+      prose_text: "Phantom kid won't touch mushrooms.",
+      subject_child_name: 'PhantomKid',
+    });
+    expect(deps.memoryService.noteFromAgent).toHaveBeenCalledWith(
+      expect.objectContaining({ subjectChildId: null }),
+    );
+  });
+
+  it('prefers subject_child_id when both id and name are provided', async () => {
+    await spec.fn({
+      node_type: 'preference',
+      facet: 'refusal',
+      prose_text: "Layla won't touch mushrooms.",
+      subject_child_id: CHILD_ID,
+      subject_child_name: 'Layla',
+    });
+    // id wins, name resolver should not be consulted
+    expect(deps.childrenService.findChildIdByName).not.toHaveBeenCalled();
     expect(deps.memoryService.noteFromAgent).toHaveBeenCalledWith(
       expect.objectContaining({ subjectChildId: CHILD_ID }),
     );

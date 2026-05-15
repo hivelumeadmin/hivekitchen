@@ -198,12 +198,37 @@ export function createMemoryNoteToolSpec(
     fn: async (input: unknown) => {
       const parsed = MemoryNoteFromOnboardingInputSchema.parse(input);
 
+      // Resolve subject_child_id from subject_child_name when needed.
+      // If both are provided, id wins. If only name is provided, look up
+      // by case-insensitive match within the household. If name is
+      // provided but no match, log a warn and leave subject_child_id null
+      // (memory is still recorded as household-wide — safer than
+      // throwing and forcing the agent to recover).
+      let subjectChildId: string | null = parsed.subject_child_id ?? null;
+      if (subjectChildId === null && parsed.subject_child_name) {
+        subjectChildId = await deps.childrenService.findChildIdByName(
+          ctx.householdId,
+          parsed.subject_child_name,
+        );
+        if (subjectChildId === null) {
+          ctx.logger.warn(
+            {
+              module: 'onboarding-tools',
+              action: 'memory.note.unresolved_child_name',
+              household_id: ctx.householdId,
+              subject_child_name: parsed.subject_child_name,
+            },
+            'memory.note: subject_child_name did not match any child in household — recording as household-wide',
+          );
+        }
+      }
+
       const result = await deps.memoryService.noteFromAgent({
         householdId: ctx.householdId,
         nodeType: parsed.node_type,
         facet: parsed.facet,
         proseText: parsed.prose_text,
-        subjectChildId: parsed.subject_child_id ?? null,
+        subjectChildId,
         confidence: parsed.confidence ?? 0.8,
         sourceRef: {
           source_type: 'onboarding_turn',

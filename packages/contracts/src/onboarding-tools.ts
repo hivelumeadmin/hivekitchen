@@ -114,10 +114,18 @@ export const MemoryNoteFromOnboardingInputSchema = z.object({
   /** The note itself (≤2000 chars). Plain prose the agent extracted from
    *  the conversation, written in third person about the family. */
   prose_text: z.string().trim().min(1).max(2000),
-  /** When the note is about a specific child (e.g. allergy, obsession),
-   *  the child_id returned by a prior child.upsert call. Null/omitted for
-   *  household-wide rhythms. */
+  /** When the note is about a specific child, the child_id returned by a
+   *  prior child.upsert call. Null/omitted for household-wide rhythms.
+   *  Prefer subject_child_name when calling in the same iteration as
+   *  child.upsert — child_id isn't available until the next iteration
+   *  because tool calls within one iteration run in parallel. */
   subject_child_id: z.string().uuid().nullish(),
+  /** Alternative to subject_child_id: pass the child's display name and
+   *  the service resolves to the child_id via case-insensitive match
+   *  within the household. Useful when memory.note fires in the SAME
+   *  iteration as child.upsert (parallel tool execution — child_id not
+   *  yet available). If both id and name are provided, id wins. */
+  subject_child_name: z.string().trim().min(1).max(100).nullish(),
   /** 0.0–1.0. Defaults to 0.8 at the service layer when omitted. */
   confidence: z.number().min(0).max(1).nullish(),
 });
