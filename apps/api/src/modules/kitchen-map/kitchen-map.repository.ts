@@ -54,7 +54,9 @@ export interface RawMemoryNodeRow {
 
 export interface RawSchoolPolicyRow {
   child_id: string;
-  policy_text: string;
+  policy_type: string;
+  policy_description: string | null;
+  slot_scope: 'bag_wide' | 'main' | 'snack' | 'extra';
 }
 
 export interface RawAllergyRuleRow {
@@ -138,7 +140,7 @@ const CHILD_COLUMNS =
   'id, name, age_band, declared_allergens, cultural_identifiers, dietary_preferences, bag_composition, extra_rules';
 const CULTURAL_PRIOR_COLUMNS = 'key, label, tier, state, confidence, presence';
 const MEMORY_COLUMNS = 'node_type, facet, prose_text, subject_child_id';
-const SCHOOL_POLICY_COLUMNS = 'child_id, policy_text';
+const SCHOOL_POLICY_COLUMNS = 'child_id, policy_type, policy_description, slot_scope';
 const ALLERGY_RULE_COLUMNS = 'household_id, child_id, allergen, rule_type';
 const EXTRA_LIBRARY_COLUMNS = 'id, name, component_type';
 const USAGE_JOIN_COLUMNS =
@@ -262,7 +264,8 @@ export class KitchenMapRepository extends BaseRepository {
     const { data, error } = await this.client
       .from('school_policies')
       .select(SCHOOL_POLICY_COLUMNS)
-      .in('child_id', childIds);
+      .in('child_id', childIds)
+      .eq('is_active', true);
     if (error) throw error;
     return (data ?? []) as RawSchoolPolicyRow[];
   }

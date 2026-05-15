@@ -141,15 +141,30 @@ describe('composeKitchenMap — children + school_policies', () => {
           },
         ],
         school_policies: [
-          { child_id: UUID(10), policy_text: 'no_nuts' },
-          { child_id: UUID(10), policy_text: 'school_provides_water' },
-          { child_id: UUID(99), policy_text: 'should_not_appear_no_such_child' },
+          {
+            child_id: UUID(10),
+            policy_type: 'nut_free',
+            policy_description: null,
+            slot_scope: 'bag_wide',
+          },
+          {
+            child_id: UUID(10),
+            policy_type: 'no_heating',
+            policy_description: 'School provides water; no microwaves',
+            slot_scope: 'main',
+          },
+          {
+            child_id: UUID(99),
+            policy_type: 'should_not_appear_no_such_child',
+            policy_description: null,
+            slot_scope: 'bag_wide',
+          },
         ],
       }),
     );
     expect(map.children[0]?.school_policies).toEqual([
-      'no_nuts',
-      'school_provides_water',
+      'nut_free',
+      'no_heating:main — School provides water; no microwaves',
     ]);
   });
 

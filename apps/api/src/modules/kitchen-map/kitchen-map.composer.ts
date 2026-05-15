@@ -112,10 +112,17 @@ function projectCaregivers(caregivers: RawCaregiverRow[]): KitchenMapCaregiver[]
 }
 
 function groupSchoolPoliciesByChild(rows: RawSchoolPolicyRow[]): Map<string, string[]> {
+  // Project each policy row to a single agent-friendly string. policy_type is
+  // the canonical identifier (e.g. 'nut_free'); slot_scope qualifies which
+  // slot it applies to. Description is optional human prose — included when
+  // present for context but kept terse.
   const out = new Map<string, string[]>();
   for (const r of rows) {
+    const slot = r.slot_scope === 'bag_wide' ? '' : `:${r.slot_scope}`;
+    const desc = r.policy_description ? ` — ${r.policy_description}` : '';
+    const projected = `${r.policy_type}${slot}${desc}`;
     const list = out.get(r.child_id) ?? [];
-    list.push(r.policy_text);
+    list.push(projected);
     out.set(r.child_id, list);
   }
   return out;
