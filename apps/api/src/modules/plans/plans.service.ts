@@ -18,6 +18,7 @@ import type { BriefStateRepository } from './brief-state.repository.js';
 import type { BriefStateComposer } from './brief-state.composer.js';
 import type { ExtraRemovalSignalService } from './extra-removal-signal.service.js';
 import type { SnackSkusRepository } from './snack-skus.repository.js';
+import type { RecipeService } from '../recipe/recipe.service.js';
 import type { PlanRegenerationJobData } from '../../jobs/plan-regeneration.job.js';
 import type {
   BriefStateRow,
@@ -48,6 +49,11 @@ export interface PlansServiceDeps {
   // The swapItem hook is a no-op when the service is not provided.
   extraRemovalSignalService?: ExtraRemovalSignalService;
   snackSkusRepository?: SnackSkusRepository;
+  // Slice D — at plan-commit time, main-slot items are materialized into
+  // the recipes catalog and household_recipe_usage is bumped. Optional so
+  // tests pre-dating slice D can construct PlansService without it; when
+  // omitted, commit() proceeds without populating recipe_id.
+  recipeService?: RecipeService;
 }
 
 // Story 3.13 — regeneration rate limit (architecture §3.6).
@@ -69,6 +75,7 @@ export class PlansService {
   private readonly regenQueue: Queue;
   private readonly extraRemovalSignalService: ExtraRemovalSignalService | null;
   private readonly snackSkusRepository: SnackSkusRepository | null;
+  private readonly recipeService: RecipeService | null;
 
   constructor(deps: PlansServiceDeps) {
     this.repo = deps.repository;
@@ -81,6 +88,7 @@ export class PlansService {
     this.regenQueue = deps.regenQueue;
     this.extraRemovalSignalService = deps.extraRemovalSignalService ?? null;
     this.snackSkusRepository = deps.snackSkusRepository ?? null;
+    this.recipeService = deps.recipeService ?? null;
   }
 
   // Single-row read from brief_state. Never composes at request time
@@ -173,8 +181,38 @@ export class PlansService {
       );
 
       if (result.verdict === 'cleared') {
+        // Slice D — materialize recipes for main-slot items before commit so
+        // plan_items.recipe_id points at a real row. Skipped entirely when
+        // RecipeService isn't wired (legacy test paths). Materialization
+        // failures are surfaced — without recipe_id, the favourite-recipes
+        // projection on the kitchen map can never recover for this plan.
+        const materializedRecipeIds: string[] = [];
+        if (this.recipeService !== null) {
+          current = await this.materializeRecipesForCommit(current, materializedRecipeIds);
+        }
+
         const clearedAt = new Date().toISOString();
         await this.repo.commit(current, clearedAt, GUARDRAIL_VERSION);
+
+        // Slice D — household_recipe_usage bumps run AFTER commit so a usage
+        // row never references a recipe that ultimately failed to land on the
+        // plan. Fire-and-forget: usage signal is a ranking input, not a
+        // safety constraint — a failed bump degrades ranking, never blocks
+        // the plan. Deduplicate by recipe_id since the same recipe can be
+        // materialized once and used across multiple (child, day) items.
+        if (this.recipeService !== null && materializedRecipeIds.length > 0) {
+          const uniqueRecipeIds = [...new Set(materializedRecipeIds)];
+          for (const recipeId of uniqueRecipeIds) {
+            void this.recipeService
+              .recordUse({ householdId: current.household_id, recipeId })
+              .catch((err: unknown) => {
+                this.logger.error(
+                  { err, plan_id: planId, recipe_id: recipeId },
+                  'recipe usage bump failed — plan committed',
+                );
+              });
+          }
+        }
 
         // Refresh the brief_state projection — the composer swallows its own
         // errors, so awaiting here is safe and keeps the commit → projection
@@ -411,6 +449,55 @@ export class PlansService {
       planItemId: oldItem.id,
       requestId: opts.requestId,
     });
+  }
+
+  // Slice D — walk every main-slot item, materialize a recipe row (or reuse an
+  // existing one with the same canonical name in this household), and stamp
+  // the recipe_id onto the item. Snack + extra slots are passed through
+  // untouched (they reference snack_skus.item_sku_id, not recipe_id).
+  //
+  // Returns a new CommitPlanInput so the caller can pass it to repo.commit.
+  // Populates recordedRecipeIds (out-param) for the post-commit usage bump.
+  //
+  // Failure mode: bubble up. A failed materialize means we'd have committed
+  // a plan with a NULL recipe_id, breaking the favourite-recipes projection
+  // on the kitchen map for this plan permanently. Better to surface a 5xx
+  // and let the caller retry the whole commit.
+  private async materializeRecipesForCommit(
+    input: CommitPlanInput,
+    recordedRecipeIds: string[],
+  ): Promise<CommitPlanInput> {
+    if (this.recipeService === null) return input;
+
+    const items: CommitPlanInput['items'] = [];
+    for (const item of input.items) {
+      if (item.slot !== 'main') {
+        items.push(item);
+        continue;
+      }
+      // Agent may already have supplied a recipe_id (slice D.2 search/fetch
+      // tools, future). Trust it — don't re-materialize.
+      if (item.recipe_id !== undefined) {
+        items.push(item);
+        recordedRecipeIds.push(item.recipe_id);
+        continue;
+      }
+      const result = await this.recipeService.materializeFromPlanItem({
+        householdId: input.household_id,
+        ingredients: item.ingredients,
+        slot: 'main',
+      });
+      if (result === null) {
+        // Empty ingredients — the guardrail already rejects these as
+        // uncertain('empty_ingredients') before this point, so shouldn't
+        // happen; pass through if it does so we don't lose the item.
+        items.push(item);
+        continue;
+      }
+      items.push({ ...item, recipe_id: result.recipeId });
+      recordedRecipeIds.push(result.recipeId);
+    }
+    return { ...input, items };
   }
 
   // Story 3.12 — sick-day pause: marks paused_at on all plan_items for the day.

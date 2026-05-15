@@ -13,6 +13,8 @@ import { DayOverridesService } from './day-overrides.service.js';
 import { SnackSkusRepository } from './snack-skus.repository.js';
 import { ExtraRulesRepository } from '../children/extra-rules.repository.js';
 import { ExtraRemovalSignalService } from './extra-removal-signal.service.js';
+import { RecipeService } from '../recipe/recipe.service.js';
+import { RecipesRepository } from '../recipe/recipes.repository.js';
 
 const plansHookPlugin: FastifyPluginAsync = async (fastify) => {
   if (!fastify.supabase) {
@@ -60,6 +62,14 @@ const plansHookPlugin: FastifyPluginAsync = async (fastify) => {
     auditService: fastify.auditService,
     logger: fastify.log,
   });
+  // Slice D — recipes catalog. At plan-commit time, RecipeService materializes
+  // a recipes row for each main-slot plan item (idempotent by canonical name
+  // within the household) and bumps household_recipe_usage so the kitchen
+  // map's favourite-recipes projection has signal to rank by. The agent's
+  // recipe.search / recipe.fetch tools still throw NotImplementedError; that
+  // read path is wired in slice D.2.
+  const recipesRepository = new RecipesRepository(fastify.supabase);
+  const recipeService = new RecipeService(recipesRepository, fastify.log);
 
   const plansService = new PlansService({
     repository,
@@ -72,6 +82,7 @@ const plansHookPlugin: FastifyPluginAsync = async (fastify) => {
     regenQueue: fastify.bullmq.getQueue(REGEN_QUEUE),  // Story 3.13
     extraRemovalSignalService,                         // Story 3.22
     snackSkusRepository,                               // Story 3.22
+    recipeService,                                     // Slice D
   });
   if (fastify.hasDecorator('planAdjustmentService')) {
     throw new Error(

@@ -1495,3 +1495,249 @@ describe('PlansService.getPlanHistory (Story 3.15)', () => {
     });
   });
 });
+
+// ===========================================================================
+// Slice D — recipe materialization at plan commit
+// ===========================================================================
+// At commit time, every main-slot item must be associated with a recipes row
+// (created or reused-by-canonical-name) and household_recipe_usage must be
+// bumped. Snack + extra slot items pass through untouched.
+
+import type { RecipeService } from '../recipe/recipe.service.js';
+
+const SLICE_D_RECIPE_ID = '77777777-7777-4777-8777-777777777777';
+
+type RecipeServiceMock = RecipeService & {
+  materializeFromPlanItem: ReturnType<typeof vi.fn>;
+  recordUse: ReturnType<typeof vi.fn>;
+};
+
+function buildRecipeService(
+  opts: { recipeId?: string; wasExisting?: boolean } = {},
+): RecipeServiceMock {
+  return {
+    materializeFromPlanItem: vi.fn().mockResolvedValue({
+      recipeId: opts.recipeId ?? SLICE_D_RECIPE_ID,
+      wasExisting: opts.wasExisting ?? false,
+    }),
+    recordUse: vi.fn().mockResolvedValue(undefined),
+  } as unknown as RecipeServiceMock;
+}
+
+describe('PlansService.commit — Slice D recipe materialization', () => {
+  it('attaches a materialized recipe_id to main-slot items before repo.commit', async () => {
+    const repo = buildRepo();
+    const recipeService = buildRecipeService();
+    const service = new PlansService({
+      repository: repo,
+      briefStateRepository: buildBriefStateRepo(),
+      briefStateComposer: buildBriefStateComposer(),
+      allergyGuardrail: buildGuardrail([{ verdict: 'cleared', conflicts: [] }]),
+      auditService: buildAudit(),
+      logger: buildLogger(),
+      redis: buildRedis(),
+      regenQueue: buildRegenQueue(),
+      recipeService,
+    });
+
+    await service.commit(makeInput(), REQUEST_ID, vi.fn());
+
+    expect(recipeService.materializeFromPlanItem).toHaveBeenCalledWith({
+      householdId: HOUSEHOLD_ID,
+      ingredients: ['rice', 'lentils'],
+      slot: 'main',
+    });
+
+    const committed = repo.commit.mock.calls[0]?.[0] as CommitPlanInput;
+    expect(committed.items[0]?.recipe_id).toBe(SLICE_D_RECIPE_ID);
+  });
+
+  it('skips materialization for snack + extra slot items (they reference item_sku_id)', async () => {
+    const repo = buildRepo();
+    const recipeService = buildRecipeService();
+    const service = new PlansService({
+      repository: repo,
+      briefStateRepository: buildBriefStateRepo(),
+      briefStateComposer: buildBriefStateComposer(),
+      allergyGuardrail: buildGuardrail([{ verdict: 'cleared', conflicts: [] }]),
+      auditService: buildAudit(),
+      logger: buildLogger(),
+      redis: buildRedis(),
+      regenQueue: buildRegenQueue(),
+      recipeService,
+    });
+
+    const input = makeInput({
+      items: [
+        { child_id: CHILD_ID, day: 'monday', slot: 'snack', ingredients: ['granola'] },
+        { child_id: CHILD_ID, day: 'monday', slot: 'extra', ingredients: ['fruit'] },
+      ],
+    });
+    await service.commit(input, REQUEST_ID, vi.fn());
+
+    expect(recipeService.materializeFromPlanItem).not.toHaveBeenCalled();
+    const committed = repo.commit.mock.calls[0]?.[0] as CommitPlanInput;
+    // snack + extra items pass through unchanged — no recipe_id stamped
+    expect(committed.items[0]?.recipe_id).toBeUndefined();
+    expect(committed.items[1]?.recipe_id).toBeUndefined();
+  });
+
+  it('respects a recipe_id supplied by the agent (does not re-materialize)', async () => {
+    const repo = buildRepo();
+    const recipeService = buildRecipeService();
+    const agentSuppliedRecipeId = '66666666-6666-4666-8666-666666666666';
+    const service = new PlansService({
+      repository: repo,
+      briefStateRepository: buildBriefStateRepo(),
+      briefStateComposer: buildBriefStateComposer(),
+      allergyGuardrail: buildGuardrail([{ verdict: 'cleared', conflicts: [] }]),
+      auditService: buildAudit(),
+      logger: buildLogger(),
+      redis: buildRedis(),
+      regenQueue: buildRegenQueue(),
+      recipeService,
+    });
+
+    const input = makeInput({
+      items: [
+        {
+          child_id: CHILD_ID,
+          day: 'monday',
+          slot: 'main',
+          ingredients: ['rice'],
+          recipe_id: agentSuppliedRecipeId,
+        },
+      ],
+    });
+    await service.commit(input, REQUEST_ID, vi.fn());
+
+    expect(recipeService.materializeFromPlanItem).not.toHaveBeenCalled();
+    const committed = repo.commit.mock.calls[0]?.[0] as CommitPlanInput;
+    expect(committed.items[0]?.recipe_id).toBe(agentSuppliedRecipeId);
+  });
+
+  it('calls recordUse once per unique recipe_id after commit succeeds', async () => {
+    const repo = buildRepo();
+    const recipeService = buildRecipeService();
+    const service = new PlansService({
+      repository: repo,
+      briefStateRepository: buildBriefStateRepo(),
+      briefStateComposer: buildBriefStateComposer(),
+      allergyGuardrail: buildGuardrail([{ verdict: 'cleared', conflicts: [] }]),
+      auditService: buildAudit(),
+      logger: buildLogger(),
+      redis: buildRedis(),
+      regenQueue: buildRegenQueue(),
+      recipeService,
+    });
+
+    // Three main items → materializeFromPlanItem returns the same recipe_id
+    // for each (same canonical name); recordUse must be called once.
+    const input = makeInput({
+      items: [
+        { child_id: CHILD_ID, day: 'monday', slot: 'main', ingredients: ['rice'] },
+        { child_id: CHILD_ID, day: 'tuesday', slot: 'main', ingredients: ['rice'] },
+        { child_id: CHILD_ID, day: 'wednesday', slot: 'main', ingredients: ['rice'] },
+      ],
+    });
+    await service.commit(input, REQUEST_ID, vi.fn());
+
+    // Flush the fire-and-forget recordUse microtasks.
+    await new Promise((r) => setImmediate(r));
+
+    expect(recipeService.materializeFromPlanItem).toHaveBeenCalledTimes(3);
+    expect(recipeService.recordUse).toHaveBeenCalledTimes(1);
+    expect(recipeService.recordUse).toHaveBeenCalledWith({
+      householdId: HOUSEHOLD_ID,
+      recipeId: SLICE_D_RECIPE_ID,
+    });
+  });
+
+  it('orders materialization before repo.commit (recipe_ids land in the committed payload)', async () => {
+    const callOrder: string[] = [];
+    const recipeService = {
+      materializeFromPlanItem: vi.fn(async () => {
+        callOrder.push('materialize');
+        return { recipeId: SLICE_D_RECIPE_ID, wasExisting: false };
+      }),
+      recordUse: vi.fn(async () => {
+        callOrder.push('recordUse');
+      }),
+    } as unknown as RecipeServiceMock;
+
+    const repo = buildRepo({
+      commitImpl: async (input) => {
+        callOrder.push('commit');
+        return input.plan_id;
+      },
+    });
+    const service = new PlansService({
+      repository: repo,
+      briefStateRepository: buildBriefStateRepo(),
+      briefStateComposer: buildBriefStateComposer(),
+      allergyGuardrail: buildGuardrail([{ verdict: 'cleared', conflicts: [] }]),
+      auditService: buildAudit(),
+      logger: buildLogger(),
+      redis: buildRedis(),
+      regenQueue: buildRegenQueue(),
+      recipeService,
+    });
+
+    await service.commit(makeInput(), REQUEST_ID, vi.fn());
+    await new Promise((r) => setImmediate(r));
+
+    // materialize → commit → recordUse (usage bump only after the row lands)
+    expect(callOrder).toEqual(['materialize', 'commit', 'recordUse']);
+  });
+
+  it('commits without materialization when RecipeService is not wired (legacy path)', async () => {
+    const repo = buildRepo();
+    const service = new PlansService({
+      repository: repo,
+      briefStateRepository: buildBriefStateRepo(),
+      briefStateComposer: buildBriefStateComposer(),
+      allergyGuardrail: buildGuardrail([{ verdict: 'cleared', conflicts: [] }]),
+      auditService: buildAudit(),
+      logger: buildLogger(),
+      redis: buildRedis(),
+      regenQueue: buildRegenQueue(),
+      // no recipeService — exercises the null-check pre-D path
+    });
+
+    await service.commit(makeInput(), REQUEST_ID, vi.fn());
+
+    expect(repo.commit).toHaveBeenCalledTimes(1);
+    const committed = repo.commit.mock.calls[0]?.[0] as CommitPlanInput;
+    expect(committed.items[0]?.recipe_id).toBeUndefined();
+  });
+
+  it('does not materialize when the guardrail blocks the plan (rolled back retry)', async () => {
+    const repo = buildRepo();
+    const recipeService = buildRecipeService();
+    const blocked: GuardrailResult = {
+      verdict: 'blocked',
+      conflicts: [
+        { child_id: CHILD_ID, allergen: 'peanuts', ingredient: 'peanut butter', day: 'monday', slot: 'main' },
+      ],
+    };
+    const service = new PlansService({
+      repository: repo,
+      briefStateRepository: buildBriefStateRepo(),
+      briefStateComposer: buildBriefStateComposer(),
+      allergyGuardrail: buildGuardrail([blocked, blocked, blocked]),
+      auditService: buildAudit(),
+      logger: buildLogger(),
+      redis: buildRedis(),
+      regenQueue: buildRegenQueue(),
+      recipeService,
+    });
+
+    await expect(
+      service.commit(makeInput(), REQUEST_ID, vi.fn(async () => makeInput())),
+    ).rejects.toBeInstanceOf(GuardrailRejectionError);
+
+    // Guardrail never cleared → no materialization or usage bump
+    expect(recipeService.materializeFromPlanItem).not.toHaveBeenCalled();
+    expect(recipeService.recordUse).not.toHaveBeenCalled();
+  });
+});

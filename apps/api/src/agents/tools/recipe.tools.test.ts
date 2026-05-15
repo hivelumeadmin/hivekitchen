@@ -28,17 +28,44 @@ function buildSearchService(): RecipeService {
 }
 
 function buildFetchService(): RecipeService {
+  // Recipe row matches RecipeRowSchema (slice A0.5 contract rewrite). The
+  // test only asserts routing — it doesn't probe the shape — so we return
+  // a minimal-but-valid catalog row.
   return {
     search: vi.fn(),
     fetch: vi.fn().mockResolvedValue({
       id: RECIPE_ID,
-      name: 'Lentil dal',
-      description: 'Warm yellow dal with rice',
-      ingredients: [{ name: 'red lentils', quantity: '1 cup', allergens: [] }],
-      prep_time_minutes: 25,
+      canonical_name: 'Lentil dal',
+      slug: null,
+      ingredients: [
+        {
+          key: 'red_lentils',
+          modifier: null,
+          display: 'red lentils',
+          quantity: 1,
+          unit: 'cup',
+          optional: false,
+          substitutes: [],
+        },
+      ],
       instructions: 'Simmer.',
-      tags: ['vegetarian'],
+      ingredient_keys: ['red_lentils'],
+      primary_ingredient_key: 'red_lentils',
       allergen_flags: [],
+      dietary_flags: ['vegetarian'],
+      cultural_tags: [],
+      cuisine_tags: [],
+      applicable_slots: ['main'],
+      prep_time_minutes: 25,
+      source: 'agent_generated',
+      created_by_household_id: HOUSEHOLD_ID,
+      visibility: 'private',
+      community_use_count: 0,
+      community_rating_avg: null,
+      community_rating_count: 0,
+      is_active: true,
+      created_at: '2026-05-13T00:00:00.000Z',
+      updated_at: '2026-05-13T00:00:00.000Z',
     }),
   } as unknown as RecipeService;
 }
