@@ -1,7 +1,5 @@
 import type {
   KitchenMap,
-  KitchenMapAllergyRule,
-  KitchenMapAllergyRules,
   KitchenMapCaregiver,
   KitchenMapChild,
   KitchenMapCultural,
@@ -13,7 +11,6 @@ import type {
   KitchenMapRecipes,
 } from '@hivekitchen/types';
 import type {
-  RawAllergyRuleRow,
   RawCaregiverRow,
   RawChildRow,
   RawCulturalPriorRow,
@@ -73,12 +70,18 @@ export function composeKitchenMap(raw: RawKitchenMapData): KitchenMap {
       tier: raw.household.tier,
       tier_variant: raw.household.tier_variant,
       timezone: raw.household.timezone,
+      // Slice 2-s27 — household-level food identity. Cultural / dietary live
+      // here (moved up from per-child). declared_allergens carries household-
+      // wide allergen rules (religious "no pork", etc.); per-child medical
+      // allergens remain on the children projection below.
+      cultural_identifiers: raw.household.cultural_identifiers,
+      dietary_preferences: raw.household.dietary_preferences,
+      declared_allergens: raw.household.declared_allergens,
     },
     caregivers: projectCaregivers(raw.caregivers),
     children,
     cultural: projectCultural(raw.cultural_priors),
     memory: projectMemory(raw.memory_nodes),
-    allergy_rules: projectAllergyRules(raw.allergy_rules),
     household_extras: {
       library: raw.extra_library.map((e) => ({
         id: e.id,
@@ -198,30 +201,6 @@ function projectMemory(rows: RawMemoryNodeRow[]): { nodes: KitchenMapMemoryNode[
     });
   }
   return { nodes };
-}
-
-function projectAllergyRules(rows: RawAllergyRuleRow[]): KitchenMapAllergyRules {
-  const falcpa: KitchenMapAllergyRule[] = [];
-  const household_declared: KitchenMapAllergyRule[] = [];
-
-  for (const r of rows) {
-    const projected: KitchenMapAllergyRule = {
-      allergen: r.allergen,
-      rule_type: r.rule_type,
-      scope_child_id: r.child_id,
-    };
-
-    if (r.household_id === null && r.rule_type === 'falcpa') {
-      falcpa.push(projected);
-    } else if (r.household_id !== null) {
-      household_declared.push(projected);
-    }
-    // Mixed/invalid combinations (household_id NULL but rule_type
-    // parent_declared, or vice-versa) are dropped — should be impossible
-    // given how rows are inserted, but we don't trust unknown data.
-  }
-
-  return { falcpa, household_declared };
 }
 
 function projectRecipes(rows: RawFavouriteRecipeRow[]): KitchenMapRecipes {

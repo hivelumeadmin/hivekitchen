@@ -476,3 +476,342 @@ describe('GET /v1/households/:householdId/brief', () => {
     expect(res.statusCode).toBe(401);
   });
 });
+
+// ===========================================================================
+// Slice 2-s27 — PATCH /v1/households/:id (household food-identity profile)
+// ===========================================================================
+
+import { encryptField } from '../../lib/envelope-encryption.js';
+import { vi } from 'vitest';
+
+const OTHER_HOUSEHOLD_ID = '33333333-3333-4333-8333-333333333333';
+
+interface PatchMockOpts {
+  /** Plain (decrypted) initial values; encoded under NOOP cipher for the mock. */
+  initial?: {
+    cultural_identifiers?: string[];
+    dietary_preferences?: string[];
+    declared_allergens?: string[];
+  };
+}
+
+function buildPatchMockSupabase(opts: PatchMockOpts = {}) {
+  const initial = opts.initial ?? {};
+  let householdRow: {
+    cultural_identifiers: string | null;
+    dietary_preferences: string | null;
+    declared_allergens: string | null;
+  } = {
+    cultural_identifiers:
+      initial.cultural_identifiers !== undefined
+        ? encryptField(initial.cultural_identifiers, null)
+        : null,
+    dietary_preferences:
+      initial.dietary_preferences !== undefined
+        ? encryptField(initial.dietary_preferences, null)
+        : null,
+    declared_allergens:
+      initial.declared_allergens !== undefined
+        ? encryptField(initial.declared_allergens, null)
+        : null,
+  };
+
+  return {
+    from(table: string) {
+      if (table === 'households') {
+        return {
+          select: () => ({
+            eq: () => ({
+              maybeSingle: vi
+                .fn()
+                .mockImplementation(() =>
+                  Promise.resolve({ data: householdRow, error: null }),
+                ),
+          }),
+          }),
+          update: (patch: Record<string, string>) => ({
+            eq: vi.fn().mockImplementation(() => {
+              householdRow = { ...householdRow, ...patch };
+              return {
+                select: () => ({
+                  maybeSingle: vi
+                    .fn()
+                    .mockResolvedValue({ data: householdRow, error: null }),
+                }),
+              };
+            }),
+          }),
+        };
+      }
+      if (table === 'household_keys') {
+        // getHouseholdDek looks up the wrapped DEK here; null = no DEK, which
+        // pushes encryptField/decryptField down the NOOP branch.
+        return {
+          select: () => ({
+            eq: () => ({
+              maybeSingle: vi
+                .fn()
+                .mockResolvedValue({ data: null, error: null }),
+            }),
+          }),
+          insert: () => ({
+            select: () => ({
+              single: vi.fn().mockResolvedValue({ data: null, error: null }),
+            }),
+          }),
+        };
+      }
+      if (table === 'audit_log') {
+        return { insert: vi.fn().mockResolvedValue({ error: null }) };
+      }
+      throw new Error(`unexpected table ${table}`);
+    },
+    rpc: vi.fn().mockResolvedValue({ data: null, error: null }),
+  };
+}
+
+const VOCAB_OK_PATCH = {
+  validateCultural: vi.fn((keys: string[]) => [...keys]),
+  validateDietary: vi.fn((keys: string[]) => [...keys]),
+  validateAllergens: vi.fn((keys: string[]) => [...keys]),
+};
+const VOCAB_REJECTS_ALLERGEN_PATCH = {
+  validateCultural: vi.fn((keys: string[]) => [...keys]),
+  validateDietary: vi.fn((keys: string[]) => [...keys]),
+  validateAllergens: vi.fn((_keys: string[]) => {
+    throw new Error('Unknown or inactive allergen tag: kryptonite');
+  }),
+};
+
+async function buildPatchApp(
+  supabase: ReturnType<typeof buildPatchMockSupabase>,
+  vocabulary: typeof VOCAB_OK_PATCH | typeof VOCAB_REJECTS_ALLERGEN_PATCH = VOCAB_OK_PATCH,
+): Promise<FastifyInstance> {
+  const app = Fastify({ logger: false, genReqId: () => randomUUID() });
+  app.setValidatorCompiler(validatorCompiler);
+  app.setSerializerCompiler(serializerCompiler);
+
+  const env = {
+    NODE_ENV: 'development' as const,
+    JWT_SECRET,
+    ENVELOPE_ENCRYPTION_MASTER_KEY: '',
+  };
+  app.decorate('env', env as unknown as FastifyInstance['env']);
+  app.decorate('supabase', supabase as unknown as FastifyInstance['supabase']);
+  app.decorate(
+    'vocabularyService',
+    vocabulary as unknown as FastifyInstance['vocabularyService'],
+  );
+  if (!app.hasDecorator('plansService')) {
+    app.decorate(
+      'plansService',
+      { getBrief: vi.fn() } as unknown as FastifyInstance['plansService'],
+    );
+  }
+
+  await app.register(jwt, { secret: env.JWT_SECRET, sign: { expiresIn: '15m' } });
+  await app.register(authenticateHook);
+
+  app.setErrorHandler((err, request, reply) => {
+    if (isDomainError(err)) {
+      void reply.status(err.status).type('application/problem+json').send({
+        type: err.type,
+        status: err.status,
+        title: err.title,
+        detail: err.detail,
+        instance: request.id,
+      });
+      return;
+    }
+    if (err instanceof ZodError) {
+      void reply.status(400).type('application/problem+json').send({
+        type: '/errors/validation',
+        status: 400,
+        title: 'Validation failed',
+        detail: err.issues
+          .map((i) => `${i.path.join('.') || '(root)'}: ${i.message}`)
+          .join('; '),
+        instance: request.id,
+      });
+      return;
+    }
+    const validation = (err as { validation?: unknown }).validation;
+    if (Array.isArray(validation) && validation.length > 0) {
+      void reply.status(400).type('application/problem+json').send({
+        type: '/errors/validation',
+        status: 400,
+        title: 'Validation failed',
+        detail: 'invalid',
+        instance: request.id,
+      });
+      return;
+    }
+    void reply.status(500).send({ type: '/errors/internal', status: 500 });
+  });
+
+  await app.register(householdsRoutes);
+  await app.ready();
+  return app;
+}
+
+function signPatchToken(
+  app: FastifyInstance,
+  overrides: Partial<{
+    sub: string;
+    hh: string;
+    role: 'primary_parent' | 'secondary_caregiver' | 'guest_author' | 'ops';
+  }> = {},
+): string {
+  return app.jwt.sign({
+    sub: overrides.sub ?? SAMPLE_USER_ID,
+    hh: overrides.hh ?? SAMPLE_HOUSEHOLD_ID,
+    role: overrides.role ?? 'primary_parent',
+  });
+}
+
+describe('PATCH /v1/households/:id', () => {
+  let app: FastifyInstance;
+  afterEach(async () => {
+    if (app) await app.close();
+  });
+
+  it('200 with the updated profile on a single-field patch', async () => {
+    app = await buildPatchApp(buildPatchMockSupabase());
+    const token = signPatchToken(app);
+
+    const res = await app.inject({
+      method: 'PATCH',
+      url: `/v1/households/${SAMPLE_HOUSEHOLD_ID}`,
+      headers: { authorization: `Bearer ${token}` },
+      payload: { dietary_preferences: ['halal'] },
+    });
+
+    expect(res.statusCode).toBe(200);
+    const body = JSON.parse(res.body) as {
+      id: string;
+      cultural_identifiers: string[];
+      dietary_preferences: string[];
+      declared_allergens: string[];
+    };
+    expect(body.id).toBe(SAMPLE_HOUSEHOLD_ID);
+    expect(body.dietary_preferences).toEqual(['halal']);
+    expect(body.cultural_identifiers).toEqual([]);
+    expect(body.declared_allergens).toEqual([]);
+  });
+
+  it('200 with all three arrays', async () => {
+    app = await buildPatchApp(buildPatchMockSupabase());
+    const token = signPatchToken(app);
+
+    const res = await app.inject({
+      method: 'PATCH',
+      url: `/v1/households/${SAMPLE_HOUSEHOLD_ID}`,
+      headers: { authorization: `Bearer ${token}` },
+      payload: {
+        cultural_identifiers: ['south_asian'],
+        dietary_preferences: ['halal'],
+        declared_allergens: ['pork'],
+      },
+    });
+
+    expect(res.statusCode).toBe(200);
+    const body = JSON.parse(res.body) as {
+      cultural_identifiers: string[];
+      dietary_preferences: string[];
+      declared_allergens: string[];
+    };
+    expect(body.cultural_identifiers).toEqual(['south_asian']);
+    expect(body.dietary_preferences).toEqual(['halal']);
+    expect(body.declared_allergens).toEqual(['pork']);
+  });
+
+  it('200 with empty array clears the field', async () => {
+    app = await buildPatchApp(
+      buildPatchMockSupabase({ initial: { declared_allergens: ['pork'] } }),
+    );
+    const token = signPatchToken(app);
+
+    const res = await app.inject({
+      method: 'PATCH',
+      url: `/v1/households/${SAMPLE_HOUSEHOLD_ID}`,
+      headers: { authorization: `Bearer ${token}` },
+      payload: { declared_allergens: [] },
+    });
+
+    expect(res.statusCode).toBe(200);
+    const body = JSON.parse(res.body) as { declared_allergens: string[] };
+    expect(body.declared_allergens).toEqual([]);
+  });
+
+  it('400 on invalid body (tag too long)', async () => {
+    app = await buildPatchApp(buildPatchMockSupabase());
+    const token = signPatchToken(app);
+
+    const res = await app.inject({
+      method: 'PATCH',
+      url: `/v1/households/${SAMPLE_HOUSEHOLD_ID}`,
+      headers: { authorization: `Bearer ${token}` },
+      payload: { declared_allergens: ['a'.repeat(101)] },
+    });
+
+    expect(res.statusCode).toBe(400);
+  });
+
+  it('400 on vocabulary rejection (unknown allergen)', async () => {
+    app = await buildPatchApp(buildPatchMockSupabase(), VOCAB_REJECTS_ALLERGEN_PATCH);
+    const token = signPatchToken(app);
+
+    const res = await app.inject({
+      method: 'PATCH',
+      url: `/v1/households/${SAMPLE_HOUSEHOLD_ID}`,
+      headers: { authorization: `Bearer ${token}` },
+      payload: { declared_allergens: ['kryptonite'] },
+    });
+
+    expect(res.statusCode).toBe(400);
+    const body = JSON.parse(res.body) as { detail?: string };
+    expect(body.detail).toMatch(/Unknown or inactive/);
+  });
+
+  it('401 without bearer token', async () => {
+    app = await buildPatchApp(buildPatchMockSupabase());
+
+    const res = await app.inject({
+      method: 'PATCH',
+      url: `/v1/households/${SAMPLE_HOUSEHOLD_ID}`,
+      payload: { dietary_preferences: ['halal'] },
+    });
+
+    expect(res.statusCode).toBe(401);
+  });
+
+  it('403 for secondary_caregiver role', async () => {
+    app = await buildPatchApp(buildPatchMockSupabase());
+    const token = signPatchToken(app, { role: 'secondary_caregiver' });
+
+    const res = await app.inject({
+      method: 'PATCH',
+      url: `/v1/households/${SAMPLE_HOUSEHOLD_ID}`,
+      headers: { authorization: `Bearer ${token}` },
+      payload: { dietary_preferences: ['halal'] },
+    });
+
+    expect(res.statusCode).toBe(403);
+  });
+
+  it("403 when URL id is not the caller's household", async () => {
+    app = await buildPatchApp(buildPatchMockSupabase());
+    const token = signPatchToken(app); // hh = SAMPLE_HOUSEHOLD_ID
+
+    const res = await app.inject({
+      method: 'PATCH',
+      url: `/v1/households/${OTHER_HOUSEHOLD_ID}`,
+      headers: { authorization: `Bearer ${token}` },
+      payload: { dietary_preferences: ['halal'] },
+    });
+
+    expect(res.statusCode).toBe(403);
+    const body = JSON.parse(res.body) as { type: string };
+    expect(body.type).toBe('/errors/forbidden');
+  });
+});

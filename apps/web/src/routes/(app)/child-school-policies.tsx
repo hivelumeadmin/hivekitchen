@@ -7,8 +7,8 @@ export default function ChildSchoolPoliciesPage() {
   const childName = searchParams.get('name') ?? 'your child';
 
   return (
-    <div className="py-8 px-4">
+    <main className="mx-auto w-full max-w-7xl flex-grow px-6 pt-12 pb-24">
       <SchoolPoliciesForm childId={childId} childName={childName} />
-    </div>
+    </main>
   );
 }

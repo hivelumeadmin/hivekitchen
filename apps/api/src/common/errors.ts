@@ -139,6 +139,21 @@ export class ParentalNoticeRequiredError extends DomainError {
   }
 }
 
+// Thrown by HouseholdsRepository when an encrypted household column cannot be
+// decrypted — indicates DEK mismatch or data corruption. Callers must surface
+// this as a 500 rather than silently treating the field as empty, because an
+// empty allergen list is semantically different from "data unreadable."
+export class HouseholdDecryptError extends DomainError {
+  readonly type = '/errors/household-decrypt';
+  readonly status = 500;
+  readonly title = 'Household data decryption failed';
+  constructor() {
+    super(
+      'Failed to decrypt household profile data — possible DEK mismatch or data corruption',
+    );
+  }
+}
+
 export function isDomainError(err: unknown): err is DomainError {
   return err instanceof DomainError;
 }

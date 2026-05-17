@@ -49,17 +49,17 @@ export default function InviteRedeemPage() {
   }, [token, navigate]);
 
   return (
-    <main className="min-h-screen flex items-center justify-center px-6">
+    <main className="min-h-screen flex items-center justify-center bg-bg px-6 text-fg">
       {state === 'loading' && (
-        <p className="font-serif text-lg text-warm-neutral-700">Checking your invite…</p>
+        <p className="font-serif text-lg text-fg-muted">Checking your invite…</p>
       )}
       {state === 'expired' && (
-        <p role="alert" className="font-serif text-lg text-warm-neutral-700">
+        <p role="alert" className="font-serif text-lg text-fg-muted">
           This invite link has expired or already been used.
         </p>
       )}
       {state === 'error' && (
-        <p role="alert" className="font-serif text-lg text-warm-neutral-700">
+        <p role="alert" className="font-serif text-lg text-fg-muted">
           Something went wrong. Please try again later.
         </p>
       )}

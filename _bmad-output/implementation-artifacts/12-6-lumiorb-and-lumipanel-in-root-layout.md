@@ -2,6 +2,13 @@
 
 Status: done
 
+> **v2.0 migration applied (γ, May 2026).** LumiOrb + LumiPanel themselves
+> are unchanged. AppLayout shell that hosts them is now v2.0 (`flex-col
+> bg-bg text-fg` + AppHeader + AppFooter + scope assertions). Suppression
+> logic (`useMatch('/lunch/*')` → hide orb/panel on child surfaces) is
+> now active because the lunch route was mounted in γ Phase 4. See
+> [`../v2-migration-log.md`](../v2-migration-log.md).
+
 ## Story
 
 As a Primary Parent,

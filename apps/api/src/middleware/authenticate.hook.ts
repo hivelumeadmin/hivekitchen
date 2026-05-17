@@ -16,6 +16,15 @@ interface AccessTokenPayload {
 
 const authenticateHookPlugin: FastifyPluginAsync = async (fastify) => {
   fastify.addHook('onRequest', async (request) => {
+    // CORS preflight requests never carry the Authorization header (browsers
+    // don't include credentials on the preflight), so authentication on them
+    // is meaningless — and 401-ing the preflight prevents @fastify/cors from
+    // attaching its Access-Control-Allow-* response headers, making the
+    // browser report a CORS failure instead of an auth failure on the
+    // *actual* request. Let CORS handle the preflight; auth runs on the
+    // subsequent real request.
+    if (request.method === 'OPTIONS') return;
+
     const url = (request.url.split('?')[0] ?? '').replace(/\/$/, '') || '/';
     if (SKIP_EXACT.has(url)) return;
     if (SKIP_PREFIXES.some((prefix) => url.startsWith(prefix))) return;

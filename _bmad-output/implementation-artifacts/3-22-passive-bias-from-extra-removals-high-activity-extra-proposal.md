@@ -1,6 +1,6 @@
 # Story 3.22: Passive Bias from Extra Removals + High-Activity Extra Proposal
 
-Status: review
+Status: done
 
 ## Story
 
@@ -375,6 +375,7 @@ _bmad-output/implementation-artifacts/deferred-work.md     + component_type colu
 | 2026-05-07 | Claude | Code review complete — 1 decision-needed, 5 patches, 6 deferred, 3 dismissed. |
 | 2026-05-07 | Amelia | Addressed remaining review patch (concurrent applyBias race) via atomic `append_extra_ban` RPC; status → review. |
 | 2026-05-07 | Claude | Code review Pass 2 complete — 1 decision-needed, 4 patches, 2 deferred, 11 dismissed. |
+| 2026-05-16 | Claude | Code review Pass 3 complete — 0 decision-needed, 1 patch, 5 deferred (all pre-existing), 8 dismissed. Patch applied: regen path now injects extraProposals. Status → done. |
 
 ---
 
@@ -412,3 +413,15 @@ _bmad-output/implementation-artifacts/deferred-work.md     + component_type colu
 **Deferred**
 - [x] [Review][Defer] `markSignalsApplied` time-floor flush can consume a concurrently-inserted signal (inserted after `windowStartIso` was computed but before the UPDATE runs), silently reducing the future rolling count by one removal. Degrades gracefully — no correctness harm, only a minor count-reset side-effect. [`apps/api/src/modules/plans/extra-removal-signal.service.ts:178-198`] — deferred, design choice, low probability
 - [x] [Review][Defer] No `plan_item_id` uniqueness guard — rapid back-and-forth swaps of the same plan item inflate the rolling 30-day count faster than intended. A DB `ON CONFLICT` or application-layer dedup would prevent this. [`supabase/migrations/20260810000000_create_extra_removal_signals.sql`, `apps/api/src/modules/plans/extra-removal-signal.service.ts:59-66`] — deferred, acceptable at MVP scale
+
+### Review Findings (Pass 3 — 2026-05-16)
+
+**Patches**
+- [x] [Review][Patch] Regen path silently drops `extraProposals` — fixed: added `DayOverridesRepository` + `loadHighActivityExtraProposalsForHousehold` to regen job; proposals loaded in parallel with `extraRules`; passed to both `planWeek()` call sites (initial + guardrail-retry). [`apps/api/src/jobs/plan-regeneration.job.ts:109,213`]
+
+**Deferred (pre-existing — confirmed surfaced in Pass 3, already in deferred-work.md)**
+- [x] [Review][Defer] AC2 confirmation gate absent — accepted via spec override in Pass 1; full UX (requires_confirmation flag, pending-input PlanTile, confirm/decline mutation) in deferred-work.md
+- [x] [Review][Defer] AC1 bias non-functional for non-SKU Extra items — accepted in Pass 2; requires `plan_items.component_type` column in deferred-work.md
+- [x] [Review][Defer] `markSignalsApplied` time-floor flush — accepted in Pass 2; already in deferred-work.md
+- [x] [Review][Defer] No `plan_item_id` uniqueness guard — accepted in Pass 2; already in deferred-work.md
+- [x] [Review][Defer] `child_name` embedded verbatim in LLM prompt (`buildExtraProposalLines`) — accepted in Pass 1; already in deferred-work.md

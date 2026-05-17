@@ -8,6 +8,7 @@ import { createOnboardingToolSpecs } from '../../agents/tools/onboarding.tools.j
 import type { ChildrenService } from '../children/children.service.js';
 import type { CulturalPriorRepository } from '../cultural-priors/cultural-prior.repository.js';
 import type { CulturalPriorService } from '../cultural-priors/cultural-prior.service.js';
+import type { HouseholdsService } from '../households/households.service.js';
 import type { KitchenMapService } from '../kitchen-map/kitchen-map.service.js';
 import type { MemoryService } from '../memory/memory.service.js';
 import type { VocabularyService } from '../vocabulary/vocabulary.service.js';
@@ -30,6 +31,7 @@ export interface OnboardingServiceDeps {
   // flag is false, the service falls back to the legacy single-shot path.
   childrenService?: ChildrenService;
   culturalPriorRepository?: CulturalPriorRepository;
+  householdsService?: HouseholdsService;
   kitchenMapService?: KitchenMapService;
   vocabularyService?: VocabularyService;
   agentToolsEnabled?: boolean;
@@ -113,6 +115,7 @@ export class OnboardingService {
   // Slice C optional deps
   private readonly childrenService?: ChildrenService;
   private readonly culturalPriorRepository?: CulturalPriorRepository;
+  private readonly householdsService?: HouseholdsService;
   private readonly kitchenMapService?: KitchenMapService;
   private readonly vocabularyService?: VocabularyService;
   private readonly agentToolsEnabled: boolean;
@@ -125,6 +128,7 @@ export class OnboardingService {
     this.memoryService = deps.memoryService;
     this.childrenService = deps.childrenService;
     this.culturalPriorRepository = deps.culturalPriorRepository;
+    this.householdsService = deps.householdsService;
     this.kitchenMapService = deps.kitchenMapService;
     this.vocabularyService = deps.vocabularyService;
     this.agentToolsEnabled = deps.agentToolsEnabled ?? false;
@@ -139,6 +143,7 @@ export class OnboardingService {
       this.agentToolsEnabled &&
       this.childrenService !== undefined &&
       this.culturalPriorRepository !== undefined &&
+      this.householdsService !== undefined &&
       this.kitchenMapService !== undefined &&
       this.vocabularyService !== undefined &&
       this.memoryService !== undefined
@@ -292,6 +297,7 @@ export class OnboardingService {
         this.toolLoopAvailable &&
         this.childrenService !== undefined &&
         this.culturalPriorRepository !== undefined &&
+        this.householdsService !== undefined &&
         this.kitchenMapService !== undefined &&
         this.vocabularyService !== undefined &&
         this.memoryService !== undefined
@@ -302,6 +308,7 @@ export class OnboardingService {
           {
             childrenService: this.childrenService,
             culturalPriorRepository: this.culturalPriorRepository,
+            householdsService: this.householdsService,
             memoryService: this.memoryService,
             vocabularyService: this.vocabularyService,
           },
@@ -816,10 +823,19 @@ export class OnboardingService {
 function renderKitchenMapBlock(map: KitchenMap): string {
   // Trim noisy fields (created_at, etc.) before serialising — the agent
   // only needs current state, not row metadata.
+  //
+  // Slice 2-s27 — household-level food identity (cultural / dietary /
+  // household-wide allergens) is projected at the top level, mirroring the
+  // new data model. Per-child arrays remain on each child for the
+  // override path (typically empty after this slice) PLUS per-child
+  // medical allergens.
   const trimmed = {
     household: {
       tier: map.household.tier,
       timezone: map.household.timezone,
+      cultural_identifiers: map.household.cultural_identifiers,
+      dietary_preferences: map.household.dietary_preferences,
+      declared_allergens: map.household.declared_allergens,
     },
     caregivers: map.caregivers.map((c) => ({
       role: c.role,

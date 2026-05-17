@@ -13,11 +13,13 @@ import { CulturalCalendarService } from '../services/cultural-calendar.service.j
 import { MemoryContextService } from '../services/memory-context.service.js';
 import { ExtraRulesRepository } from '../modules/children/extra-rules.repository.js';
 import { ExtraLibraryRepository } from '../modules/households/extra-library.repository.js';
+import { DayOverridesRepository } from '../modules/plans/day-overrides.repository.js';
 import {
   loadBagCompositionsForHousehold,
   loadCulturalContextForHousehold,
   loadExtraLibraryForHousehold,
   loadExtraRulesForChildren,
+  loadHighActivityExtraProposalsForHousehold,
 } from './planner-context.loader.js';
 import { trySurgicalSwap } from './swap-retry.helper.js';
 
@@ -77,6 +79,7 @@ const planRegenerationPlugin: FastifyPluginAsync = async (fastify) => {
   const childrenRepository = new ChildrenRepository(fastify.supabase, null, fastify.log);
   const extraRulesRepository = new ExtraRulesRepository(fastify.supabase);
   const extraLibraryRepository = new ExtraLibraryRepository(fastify.supabase);
+  const dayOverridesRepository = new DayOverridesRepository(fastify.supabase);
   const regenWorker = fastify.bullmq.getWorker(
     REGEN_QUEUE,
     async (job: Job<PlanRegenerationJobData>) => {
@@ -100,7 +103,18 @@ const planRegenerationPlugin: FastifyPluginAsync = async (fastify) => {
         loadBagCompositionsForHousehold(household_id, childrenRepository),
         loadExtraLibraryForHousehold(household_id, extraLibraryRepository),
       ]);
-      const extraRules = await loadExtraRulesForChildren(bagCompositions, extraRulesRepository);
+      // Story 3.22 — extra_rules read fans out per-child; depends on bagCompositions.
+      // High-activity proposals also depend on bagCompositions, so both are loaded
+      // in parallel after the initial batch (mirrors plan-generation.job.ts pattern).
+      const [extraRules, extraProposals] = await Promise.all([
+        loadExtraRulesForChildren(bagCompositions, extraRulesRepository),
+        loadHighActivityExtraProposalsForHousehold(
+          household_id,
+          week_of,
+          bagCompositions,
+          dayOverridesRepository,
+        ),
+      ]);
 
       // Run the planner. For scope='day', pass dayScope so the prompt instructs
       // the agent to only plan for that day. The compose output may include only
@@ -116,6 +130,7 @@ const planRegenerationPlugin: FastifyPluginAsync = async (fastify) => {
         bagCompositions,
         extraRules,
         extraLibraryItems,
+        extraProposals,
       );
 
       // For day-scope: filter the output to only include items for the target day.
@@ -208,6 +223,7 @@ const planRegenerationPlugin: FastifyPluginAsync = async (fastify) => {
             bagCompositions,
             extraRules,
             extraLibraryItems,
+            extraProposals,
           );
 
           const filteredRetry =

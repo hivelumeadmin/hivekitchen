@@ -3,13 +3,12 @@ import { useQueryClient } from '@tanstack/react-query';
 import type { ChildResponse, PlanTileSummary } from '@hivekitchen/types';
 import { useAuthStore } from '@/stores/auth.store.js';
 import { useComplianceStore } from '@/stores/compliance.store.js';
+import { PageHeader } from '@/components/PageHeader.js';
 import { AddChildForm } from '@/features/children/AddChildForm.js';
 import { BagCompositionCard } from '@/features/children/BagCompositionCard.js';
 import { AllergyClearedBadge } from './AllergyClearedBadge.js';
 import { DisambiguationPicker } from './DisambiguationPicker.js';
 import { FreshnessState } from './FreshnessState.js';
-import { LumiNote } from './LumiNote.js';
-import { MomentHeadline } from './MomentHeadline.js';
 import { PlanTile, type PlanTileState } from './PlanTile.js';
 import { QuietDiff } from './QuietDiff.js';
 import { useBriefStateQuery } from './useBriefStateQuery.js';
@@ -108,8 +107,6 @@ export function BriefCanvas() {
           setIsRegenerating(true);
         },
         onError: (err) => {
-          // 429 surfaces via HkApiError; replace console.error with a toast
-          // when the toast system lands. For now, log so ops can see it.
           console.error('regeneration failed', err);
         },
       },
@@ -118,18 +115,18 @@ export function BriefCanvas() {
 
   if (isLoading && brief === null) {
     return (
-      <main className="min-h-screen p-4 md:p-8 max-w-2xl mx-auto">
+      <main className="mx-auto w-full max-w-7xl flex-grow px-6 pt-12 pb-24">
         <div
-          className="animate-pulse flex flex-col gap-4"
+          className="animate-pulse flex flex-col gap-6"
           aria-busy="true"
           aria-label="Loading plan"
         >
-          <div className="h-7 w-3/4 bg-stone-200 rounded" />
-          <div className="h-4 w-full bg-stone-100 rounded" />
-          <div className="h-3 w-2/3 bg-stone-100 rounded" />
-          <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mt-2">
+          <div className="h-3 w-1/3 bg-surface rounded" />
+          <div className="h-12 w-2/3 bg-surface rounded" />
+          <div className="h-5 w-1/2 bg-surface/60 rounded" />
+          <div className="grid grid-cols-2 md:grid-cols-5 gap-4 mt-4">
             {Array.from({ length: 5 }).map((_, i) => (
-              <div key={i} className="h-24 bg-stone-100 rounded-lg" />
+              <div key={i} className="h-32 bg-surface rounded-lg" />
             ))}
           </div>
         </div>
@@ -139,7 +136,7 @@ export function BriefCanvas() {
 
   if (!isLoading && brief === null && !isError) {
     return (
-      <main className="min-h-screen p-4 md:p-8 max-w-2xl mx-auto flex items-center justify-center">
+      <main className="mx-auto w-full max-w-7xl flex-grow flex items-center justify-center px-6 pt-12 pb-24">
         {showAddChild && addedChild === null ? (
           <AddChildForm
             householdId={householdId ?? ''}
@@ -165,24 +162,24 @@ export function BriefCanvas() {
             }}
           />
         ) : (
-          <div className="flex flex-col items-center gap-4">
+          <div className="flex flex-col items-center gap-6">
             {savedChildren.length > 0 && (
-              <ul className="w-full max-w-sm space-y-2 mb-2">
+              <ul className="w-full max-w-sm space-y-2">
                 {savedChildren.map((child) => (
-                  <li key={child.id} className="text-sm text-stone-700">
+                  <li key={child.id} className="text-sm text-fg-muted">
                     {child.name} — {child.age_band}
                   </li>
                 ))}
               </ul>
             )}
             <div className="text-center">
-              <p className="font-sans text-[16px] max-w-sm text-stone-500">
+              <p className="max-w-sm text-base text-fg-muted">
                 Lumi is preparing your first plan. Check back Sunday evening.
               </p>
               <button
                 type="button"
                 onClick={() => setShowAddChild(true)}
-                className="font-sans text-sm text-amber-700 underline underline-offset-2 hover:text-amber-900 transition-colors motion-reduce:transition-none mt-2"
+                className="mt-3 text-sm text-amber-warm underline underline-offset-2 hover:text-amber transition-colors motion-reduce:transition-none"
               >
                 Add your first child
               </button>
@@ -194,12 +191,12 @@ export function BriefCanvas() {
   }
 
   return (
-    <main className="min-h-screen p-4 md:p-8 max-w-2xl mx-auto flex flex-col gap-4">
+    <main className="mx-auto w-full max-w-7xl flex-grow px-6 pt-12 pb-24">
       {brief !== null && (
         <>
           {clearedAllergies.length > 0 && (
             <div
-              className="flex flex-wrap gap-2"
+              className="mb-6 flex flex-wrap gap-2"
               aria-label="Allergy clearances"
             >
               {clearedAllergies.map((entry) => (
@@ -213,14 +210,31 @@ export function BriefCanvas() {
               ))}
             </div>
           )}
-          <QuietDiff
-            summary={brief.scaffolding_diff?.summary ?? null}
-            explanation={brief.scaffolding_diff?.explanation}
-          />
-          <MomentHeadline text={brief.moment_headline} />
-          <LumiNote text={brief.lumi_note} />
+
+          {brief.scaffolding_diff?.summary !== null && brief.scaffolding_diff?.summary !== undefined && (
+            <div className="mb-6">
+              <QuietDiff
+                summary={brief.scaffolding_diff.summary}
+                explanation={brief.scaffolding_diff.explanation}
+              />
+            </div>
+          )}
+
+          {brief.moment_headline !== '' ? (
+            <PageHeader
+              eyebrow="This week's brief"
+              headlineSize="lg"
+              description={brief.lumi_note}
+              className="mb-12"
+            >
+              {brief.moment_headline}
+            </PageHeader>
+          ) : (
+            <h1 className="sr-only">Weekly plan</h1>
+          )}
+
           <div
-            className={`grid grid-cols-2 ${brief.plan_tile_summaries.length <= 5 ? 'md:grid-cols-5' : 'md:grid-cols-6'} gap-3 mt-2`}
+            className={`grid grid-cols-2 ${brief.plan_tile_summaries.length <= 5 ? 'md:grid-cols-5' : 'md:grid-cols-6'} gap-4 mb-8`}
             aria-label="Weekly plan"
           >
             {brief.plan_tile_summaries.map((summary) => {
@@ -241,10 +255,6 @@ export function BriefCanvas() {
                   onSwapIntent={
                     canSwap && !summary.paused && swappingItemId === null
                       ? () => {
-                          // Capture the activating tile element so the picker
-                          // can restore focus to it on dismiss. Both click and
-                          // keyboard paths leave document.activeElement on the
-                          // tile at the moment onSwapIntent fires.
                           if (document.activeElement instanceof HTMLElement) {
                             swapTriggerRef.current = document.activeElement;
                           }
@@ -256,6 +266,7 @@ export function BriefCanvas() {
               );
             })}
           </div>
+
           {activeSwapDay !== null && planId !== null && (() => {
             const activeSummary = brief.plan_tile_summaries.find(
               (s) => s.day === activeSwapDay,
@@ -273,8 +284,6 @@ export function BriefCanvas() {
                 onDismiss={dismissPicker}
                 onSwapStarted={(itemId) => {
                   setSwappingItemId(itemId);
-                  // Picker closes via the optimistic path; clear the trigger
-                  // ref so focus doesn't snap back to the now-suppressed tile.
                   swapTriggerRef.current = null;
                   setActiveSwapDay(null);
                 }}
@@ -290,30 +299,40 @@ export function BriefCanvas() {
               />
             );
           })()}
+
           {canSwap && !isRegenerating && (
-            <div className="flex justify-end mt-2">
+            <div className="flex justify-end">
               <button
                 type="button"
                 onClick={() => handleRegenerate('week')}
                 disabled={regenerateMutation.isPending}
-                className="font-sans text-[12px] text-stone-400 hover:text-stone-600 underline underline-offset-2 transition-colors motion-reduce:transition-none focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-stone-300 disabled:opacity-50"
+                className="text-xs text-fg-muted hover:text-amber-warm underline underline-offset-2 transition-colors motion-reduce:transition-none focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-amber-warm disabled:opacity-50"
               >
                 {regenerateMutation.isPending ? 'Queueing…' : 'Ask Lumi to try again'}
               </button>
             </div>
           )}
+
           {isRegenerating && (
-            <p className="font-sans text-[13px] text-stone-500 text-center mt-3">
+            <p className="mt-4 text-center text-[13px] text-fg-muted">
               Lumi is rethinking this week&rsquo;s plan&hellip;
             </p>
           )}
-          <FreshnessState
-            variant={freshnessVariant}
-            lastSyncedAt={brief.updated_at}
-          />
+
+          <div className="mt-6">
+            <FreshnessState
+              variant={freshnessVariant}
+              lastSyncedAt={brief.updated_at}
+            />
+          </div>
         </>
       )}
-      {hasFetchError && brief === null && <FreshnessState variant="failed" />}
+
+      {hasFetchError && brief === null && (
+        <div className="mt-12">
+          <FreshnessState variant="failed" />
+        </div>
+      )}
     </main>
   );
 }

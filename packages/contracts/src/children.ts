@@ -50,3 +50,10 @@ export const ChildResponseSchema = z.object({
 export const AddChildResponseSchema = z.object({ child: ChildResponseSchema });
 export const GetChildResponseSchema = z.object({ child: ChildResponseSchema });
 export const SetBagCompositionResponseSchema = z.object({ child: ChildResponseSchema });
+
+// Slice 4-S1 — household-scoped list of children. The Heart Note compose
+// surface picks the active child from this list (multi-child picker is a
+// later slice).
+export const ListChildrenResponseSchema = z.object({
+  children: z.array(ChildResponseSchema),
+});

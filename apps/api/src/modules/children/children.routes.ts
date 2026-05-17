@@ -5,6 +5,7 @@ import {
   AddChildBodySchema,
   AddChildResponseSchema,
   GetChildResponseSchema,
+  ListChildrenResponseSchema,
   SetBagCompositionBodySchema,
   SetBagCompositionResponseSchema,
   UpdateSchoolPolicyInputSchema,
@@ -118,6 +119,23 @@ const childrenRoutesPlugin: FastifyPluginAsync = async (fastify) => {
       assertCallerInHousehold(request.user.household_id, householdId);
       const child = await childrenService.getChild({ householdId, childId });
       return { child };
+    },
+  );
+
+  // Slice 4-S1 — household-scoped list endpoint. The Heart Note compose
+  // surface needs the children roster to pick the active child; multi-
+  // child picker UI ships in a later slice.
+  fastify.get(
+    '/v1/households/:id/children',
+    {
+      preHandler: requireMember,
+      schema: { response: { 200: ListChildrenResponseSchema } },
+    },
+    async (request) => {
+      const { id: householdId } = request.params as { id: string };
+      assertCallerInHousehold(request.user.household_id, householdId);
+      const children = await childrenRepository.findByHouseholdId(householdId);
+      return { children };
     },
   );
 

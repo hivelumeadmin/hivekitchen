@@ -2,6 +2,14 @@
 
 Status: review
 
+> **v2.0 migration applied (γ Phase 3d, May 2026).** PlanHistoryPage shell
+> migrated to `max-w-7xl flex-grow px-6 pt-12 pb-24`. "Week of {date}" raw
+> `<h1>` promoted to `PageHeader` with `eyebrow="Looking back"`. Link tokens
+> retoked to `text-fg-muted hover:text-amber-warm`. Adapter, redirect-when-
+> current, SwapHistoryPopover overlay, past-variant tile rendering all
+> **still authoritative**. (NB: sprint-status records this as `done`; this
+> file header was not updated.) See [`../v2-migration-log.md`](../v2-migration-log.md).
+
 ## Story
 
 As a Primary Parent,

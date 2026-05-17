@@ -2,6 +2,11 @@
 
 Status: done
 
+> **v2.0 migration applied (γ Phase 5, May 2026).** Notification + Cultural
+> Language sections render under the v2.0 AccountPage shell (PageHeader, v2.0
+> aliases, amber-warm CTA). Section-level behaviors below are still accurate.
+> See [`../v2-migration-log.md`](../v2-migration-log.md).
+
 ## Story
 
 As a Primary Parent,

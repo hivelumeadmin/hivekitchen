@@ -14,6 +14,8 @@ import { ChildrenRepository } from '../children/children.repository.js';
 import { ChildrenService } from '../children/children.service.js';
 import { CulturalPriorRepository } from '../cultural-priors/cultural-prior.repository.js';
 import { CulturalPriorService } from '../cultural-priors/cultural-prior.service.js';
+import { HouseholdsRepository } from '../households/households.repository.js';
+import { HouseholdsService } from '../households/households.service.js';
 import { AuditRepository } from '../../audit/audit.repository.js';
 import { AuditService } from '../../audit/audit.service.js';
 import { OnboardingService } from './onboarding.service.js';
@@ -40,6 +42,16 @@ const onboardingRoutesPlugin: FastifyPluginAsync = async (fastify) => {
   const childrenRepository = new ChildrenRepository(fastify.supabase, kek, fastify.log);
   const childrenService = new ChildrenService(childrenRepository);
 
+  // Slice 2-s27 — household-level food-identity service for the new
+  // household.upsert agent tool. Same KEK + supabase wiring as the children
+  // path; vocabulary validation lives in the service.
+  const householdsRepository = new HouseholdsRepository(fastify.supabase, kek);
+  const householdsService = new HouseholdsService({
+    repository: householdsRepository,
+    vocabulary: fastify.vocabularyService,
+    logger: fastify.log,
+  });
+
   const service = new OnboardingService({
     threads,
     agent,
@@ -48,6 +60,7 @@ const onboardingRoutesPlugin: FastifyPluginAsync = async (fastify) => {
     memoryService: fastify.memoryService,
     childrenService,
     culturalPriorRepository,
+    householdsService,
     kitchenMapService: fastify.kitchenMapService,
     vocabularyService: fastify.vocabularyService,
     agentToolsEnabled: fastify.env.ONBOARDING_AGENT_TOOLS_ENABLED,

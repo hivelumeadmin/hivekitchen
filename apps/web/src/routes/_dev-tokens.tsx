@@ -49,7 +49,7 @@ export function DevTokensPage() {
           Instrument Serif — the sacred, editorial, letter-ink voice.
         </p>
         <p style={{ fontFamily: 'var(--font-sans)', fontSize: '1rem' }}>
-          Inter — all UI, body, buttons, labels.
+          Public Sans — all UI, body, buttons, labels.
         </p>
       </section>
       <section style={{ marginTop: '2rem' }}>

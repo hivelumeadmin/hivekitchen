@@ -1,6 +1,7 @@
 @import '@hivekitchen/design-system/tokens/colors.css';
 @import '@hivekitchen/design-system/tokens/typography.css';
 @import '@hivekitchen/design-system/tokens/motion.css';
+@import '@hivekitchen/design-system/tokens/radius.css';
 
 @tailwind base;
 @tailwind components;

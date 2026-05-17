@@ -2,6 +2,13 @@
 
 Status: done
 
+> **v2.0 migration applied (γ Phase 3b, May 2026).** Both components retoked:
+> `text-stone-500/600` → `text-fg-muted`; QuietDiff popover `border-stone-200
+> bg-white` → `border-border bg-surface`; FreshnessState stale-dot
+> `bg-foliage-400` → `bg-foliage` (single-value v2.0 channel token).
+> Stale/loading/failed/offline variants + ARIA + content rules **unchanged**.
+> See [`../v2-migration-log.md`](../v2-migration-log.md).
+
 ## Story
 
 As a Primary Parent,

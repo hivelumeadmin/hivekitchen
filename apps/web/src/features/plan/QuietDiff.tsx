@@ -26,7 +26,7 @@ export function QuietDiff({ summary, explanation }: QuietDiffProps) {
   }
 
   return (
-    <div className="flex items-start gap-2 font-sans text-[14px] leading-[1.4] text-stone-600">
+    <div className="flex items-start gap-2 font-sans text-sm leading-[1.4] text-fg-muted">
       <p>{summary}</p>
       {explanation !== undefined && (
         <span className="relative mt-0.5 inline-block flex-shrink-0">
@@ -38,7 +38,7 @@ export function QuietDiff({ summary, explanation }: QuietDiffProps) {
             aria-label="Why this change?"
             onClick={() => setOpen((v) => !v)}
             onKeyDown={handleKeyDown}
-            className="rounded-sm font-sans text-[14px] leading-none text-stone-400 transition-colors hover:text-stone-600 motion-reduce:transition-none focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-stone-300"
+            className="rounded-sm font-sans text-sm leading-none text-fg-muted transition-colors hover:text-fg motion-reduce:transition-none focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-border"
           >
             ⋯
           </button>
@@ -54,7 +54,7 @@ export function QuietDiff({ summary, explanation }: QuietDiffProps) {
               role="dialog"
               aria-label="Why this change?"
               onKeyDown={handleKeyDown}
-              className="absolute z-20 start-0 top-6 min-w-[240px] max-w-[300px] rounded-lg border border-stone-200 bg-white p-3 font-sans text-[13px] leading-[1.5] text-stone-600 shadow-sm"
+              className="absolute z-20 start-0 top-6 min-w-[240px] max-w-[300px] rounded-lg border border-border bg-surface p-3 font-sans text-[13px] leading-[1.5] text-fg-muted shadow-sm"
             >
               {explanation}
             </div>

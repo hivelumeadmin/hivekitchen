@@ -31,13 +31,13 @@ export function FreshnessState({ variant, lastSyncedAt }: FreshnessStateProps) {
         : undefined;
     return (
       <p
-        className="inline-flex items-center gap-1.5 mt-2 font-sans text-[13px] text-stone-500"
+        className="inline-flex items-center gap-1.5 mt-2 font-sans text-[13px] text-fg-muted"
         role="status"
         aria-live="polite"
       >
         <span
           aria-hidden="true"
-          className="inline-block h-1.5 w-1.5 flex-shrink-0 rounded-full bg-foliage-400 motion-safe:animate-pulse"
+          className="inline-block h-1.5 w-1.5 flex-shrink-0 rounded-full bg-foliage motion-safe:animate-pulse"
         />
         {timeText !== undefined ? `Checking… ${timeText}` : 'Checking…'}
       </p>
@@ -46,7 +46,7 @@ export function FreshnessState({ variant, lastSyncedAt }: FreshnessStateProps) {
 
   return (
     <p
-      className="mt-2 font-sans text-[13px] text-stone-500"
+      className="mt-2 font-sans text-[13px] text-fg-muted"
       role="status"
       aria-live="polite"
     >

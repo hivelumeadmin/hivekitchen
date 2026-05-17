@@ -2,6 +2,11 @@
 
 Status: done
 
+> **v2.0 migration applied (γ Phase 1, May 2026).** The reset-password page
+> below still uses its original Tailwind tokens — the production route works
+> functionally but visual treatment is pending a follow-up retoking pass.
+> Current production token map: see [`../v2-migration-log.md`](../v2-migration-log.md).
+
 ## Story
 
 As a Primary Parent who has clicked a password reset link in their email,

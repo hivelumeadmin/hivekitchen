@@ -2,6 +2,12 @@
 
 Status: done
 
+> **v2.0 migration applied (γ Phase 5, May 2026).** The AccountPage surface
+> below was retoked to v2.0 semantic aliases and wrapped in `PageHeader` +
+> `max-w-7xl flex-grow` shell. Form internals (`features/children/*Form.tsx`,
+> `ParentalNoticeView`) still hold v1 styling — deferred to per-feature
+> retoking. See [`../v2-migration-log.md`](../v2-migration-log.md).
+
 ## Story
 
 As a Primary Parent,

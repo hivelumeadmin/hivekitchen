@@ -2,6 +2,13 @@
 
 Status: done
 
+> **v2.0 migration applied (γ Phase 3b, May 2026).** Popover panel retoked:
+> `border-stone-200 bg-white text-stone-700` → `border-border bg-surface
+> text-fg-muted`. The badge button (`safety-cleared-*` tokens) is unchanged —
+> those were already v2.0-correct. ARIA disclosure pattern, audit link
+> behavior, isRechecking pulse are all **still authoritative**. See
+> [`../v2-migration-log.md`](../v2-migration-log.md).
+
 <!-- Note: Validation is optional. Run validate-create-story for quality check before dev-story. -->
 
 ## Story

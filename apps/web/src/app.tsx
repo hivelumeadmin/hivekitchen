@@ -1,7 +1,18 @@
 // apps/web/src/app.tsx
 import { createBrowserRouter, Navigate, RouterProvider } from 'react-router-dom';
 import { QueryProvider } from './providers/query-provider.js';
+import { DevDayDetailPage } from './routes/_dev-day-detail.js';
+import { DevEveningCheckinPage } from './routes/_dev-evening-checkin.js';
+import { DevGroceryListPage } from './routes/_dev-grocery-list.js';
+import { DevHeartNotePage } from './routes/_dev-heart-note.js';
+import { DevKitchenInspirationPage } from './routes/_dev-kitchen-inspiration.js';
+import { DevKitchenInterviewPage } from './routes/_dev-kitchen-interview.js';
+import { DevKitchenProfilePage } from './routes/_dev-kitchen-profile.js';
+import { DevLoginPage } from './routes/_dev-login.js';
+import { DevLunchLinkPage } from './routes/_dev-lunch-link.js';
+import { DevOnboardingPage } from './routes/_dev-onboarding.js';
 import { DevTokensPage } from './routes/_dev-tokens.js';
+import { DevWeeklyPlanPage } from './routes/_dev-weekly-plan.js';
 import LoginPage from './routes/auth/login.js';
 import AuthCallbackPage from './routes/auth/callback.js';
 import ResetPasswordPage from './routes/auth/reset-password.js';
@@ -15,6 +26,12 @@ import PlanHistoryRoute from './routes/(app)/plan-history.js';
 import ChildSchoolPoliciesPage from './routes/(app)/child-school-policies.js';
 import ChildBagCompositionPage from './routes/(app)/child-bag-composition.js';
 import ChildExtraRulesPage from './routes/(app)/child-extra-rules.js';
+import DayDetailRoute from './routes/(app)/day-detail.js';
+import HeartNoteRoute from './routes/(app)/heart-note.js';
+import EveningCheckinRoute from './routes/(app)/evening-checkin.js';
+import GroceryListRoute from './routes/(app)/grocery-list.js';
+import KitchenInspirationRoute from './routes/(app)/kitchen-inspiration.js';
+import LunchLinkRoute from './routes/(app)/lunch-link.js';
 
 function RootRedirect() {
   const hash = typeof window !== 'undefined' ? window.location.hash : '';
@@ -45,6 +62,14 @@ const router = createBrowserRouter([
       { path: '/app/children/:childId/school-policies', element: <ChildSchoolPoliciesPage /> },
       { path: '/app/children/:childId/bag-composition', element: <ChildBagCompositionPage /> },
       { path: '/app/children/:childId/extra-rules', element: <ChildExtraRulesPage /> },
+      { path: '/app/day/:day', element: <DayDetailRoute /> },
+      { path: '/app/heart-note', element: <HeartNoteRoute /> },
+      { path: '/app/evening-checkin', element: <EveningCheckinRoute /> },
+      { path: '/app/grocery-list', element: <GroceryListRoute /> },
+      { path: '/app/inspiration', element: <KitchenInspirationRoute /> },
+      // Lunch Link — child-scope surface. AppLayout's useMatch('/lunch/*')
+      // suppresses the parent LumiOrb/LumiPanel for these routes.
+      { path: '/lunch/:linkId', element: <LunchLinkRoute /> },
       { path: '/account', element: <AccountPage /> },
     ],
   },
@@ -65,6 +90,83 @@ export function App() {
     window.location.pathname === '/_dev-tokens'
   ) {
     return <DevTokensPage />;
+  }
+  if (
+    import.meta.env.DEV &&
+    typeof window !== 'undefined' &&
+    window.location.pathname === '/_dev-weekly-plan'
+  ) {
+    return <DevWeeklyPlanPage />;
+  }
+  if (
+    import.meta.env.DEV &&
+    typeof window !== 'undefined' &&
+    window.location.pathname === '/_dev-day-detail'
+  ) {
+    return <DevDayDetailPage />;
+  }
+  if (
+    import.meta.env.DEV &&
+    typeof window !== 'undefined' &&
+    window.location.pathname === '/_dev-heart-note'
+  ) {
+    return <DevHeartNotePage />;
+  }
+  if (
+    import.meta.env.DEV &&
+    typeof window !== 'undefined' &&
+    window.location.pathname === '/_dev-login'
+  ) {
+    return <DevLoginPage />;
+  }
+  if (
+    import.meta.env.DEV &&
+    typeof window !== 'undefined' &&
+    window.location.pathname === '/_dev-onboarding'
+  ) {
+    return <DevOnboardingPage />;
+  }
+  if (
+    import.meta.env.DEV &&
+    typeof window !== 'undefined' &&
+    window.location.pathname === '/_dev-kitchen-interview'
+  ) {
+    return <DevKitchenInterviewPage />;
+  }
+  if (
+    import.meta.env.DEV &&
+    typeof window !== 'undefined' &&
+    window.location.pathname === '/_dev-evening-checkin'
+  ) {
+    return <DevEveningCheckinPage />;
+  }
+  if (
+    import.meta.env.DEV &&
+    typeof window !== 'undefined' &&
+    window.location.pathname === '/_dev-grocery-list'
+  ) {
+    return <DevGroceryListPage />;
+  }
+  if (
+    import.meta.env.DEV &&
+    typeof window !== 'undefined' &&
+    window.location.pathname === '/_dev-kitchen-profile'
+  ) {
+    return <DevKitchenProfilePage />;
+  }
+  if (
+    import.meta.env.DEV &&
+    typeof window !== 'undefined' &&
+    window.location.pathname === '/_dev-kitchen-inspiration'
+  ) {
+    return <DevKitchenInspirationPage />;
+  }
+  if (
+    import.meta.env.DEV &&
+    typeof window !== 'undefined' &&
+    window.location.pathname === '/_dev-lunch-link'
+  ) {
+    return <DevLunchLinkPage />;
   }
   return (
     <QueryProvider>

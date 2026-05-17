@@ -77,15 +77,14 @@ const voiceRoutesPlugin: FastifyPluginAsync = async (fastify) => {
     '/v1/voice/tts/token',
     { schema: { response: { 200: TtsTokenResponseSchema } } },
     async (request) => {
-      const tokenResponse = await service.issueTtsToken();
       request.auditContext = {
-        event_type: 'voice.tts_synthesized',
+        event_type: 'voice.tts_token_issued',
         user_id: request.user.id,
         household_id: request.user.household_id,
         request_id: request.id,
         metadata: {},
       };
-      return tokenResponse;
+      return service.issueTtsToken();
     },
   );
 

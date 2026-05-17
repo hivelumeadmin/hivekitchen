@@ -27,7 +27,7 @@ describe('tokenPresets', () => {
     });
 
     it('each group has all 10 stops referencing the correct CSS custom property', () => {
-      const colors = tokenPresets.extend!.colors as Record<string, Record<number, string>>;
+      const colors = tokenPresets.extend!.colors as unknown as Record<string, Record<number, string>>;
       for (const { key, prefix } of colorGroups) {
         for (const stop of stops) {
           expect(colors[key][stop]).toBe(`var(--${prefix}-${stop})`);
@@ -36,12 +36,12 @@ describe('tokenPresets', () => {
     });
 
     it('sacred-500 references the correct custom property', () => {
-      const colors = tokenPresets.extend!.colors as Record<string, Record<number, string>>;
+      const colors = tokenPresets.extend!.colors as unknown as Record<string, Record<number, string>>;
       expect(colors['sacred'][500]).toBe('var(--sacred-plum-500)');
     });
 
     it('lumi-terracotta has a warmed variant', () => {
-      const colors = tokenPresets.extend!.colors as Record<string, Record<string, string>>;
+      const colors = tokenPresets.extend!.colors as unknown as Record<string, Record<string, string>>;
       expect(colors['lumi-terracotta']['warmed']).toBe('var(--lumi-terracotta-warmed)');
     });
   });
@@ -86,6 +86,82 @@ describe('tokenPresets', () => {
     it('has outline offset', () => {
       const oo = tokenPresets.extend!.outlineOffset as Record<string, string>;
       expect(oo['focus-indicator']).toBe('var(--focus-indicator-offset)');
+    });
+  });
+
+  describe('v2.0 semantic aliases', () => {
+    const colors = () =>
+      tokenPresets.extend!.colors as Record<string, string | Record<string, string>>;
+
+    it('exposes bg, border, honey-accent as flat aliases', () => {
+      const c = colors();
+      expect(c['bg']).toBe('var(--bg)');
+      expect(c['border']).toBe('var(--border)');
+      expect(c['honey-accent']).toBe('var(--honey-accent)');
+    });
+
+    it('exposes surface DEFAULT and -2 variant', () => {
+      const surface = colors()['surface'] as Record<string, string>;
+      expect(surface['DEFAULT']).toBe('var(--surface)');
+      expect(surface[2]).toBe('var(--surface-2)');
+    });
+
+    it('exposes fg DEFAULT and muted variant', () => {
+      const fg = colors()['fg'] as Record<string, string>;
+      expect(fg['DEFAULT']).toBe('var(--fg)');
+      expect(fg['muted']).toBe('var(--fg-muted)');
+    });
+
+    it('exposes amber with DEFAULT, soft, warm', () => {
+      const amber = colors()['amber'] as Record<string, string>;
+      expect(amber['DEFAULT']).toBe('var(--amber)');
+      expect(amber['soft']).toBe('var(--amber-soft)');
+      expect(amber['warm']).toBe('var(--amber-warm)');
+    });
+
+    it('exposes lumi-terracotta DEFAULT and dim alongside scale and warmed', () => {
+      const lt = colors()['lumi-terracotta'] as Record<string, string>;
+      expect(lt['DEFAULT']).toBe('var(--lumi-terracotta)');
+      expect(lt['warmed']).toBe('var(--lumi-terracotta-warmed)');
+      expect(lt['dim']).toBe('var(--lumi-terracotta-dim)');
+      expect(lt['500']).toBe('var(--lumi-terracotta-500)');
+    });
+
+    it('exposes sacred DEFAULT and soft alongside scale', () => {
+      const s = colors()['sacred'] as Record<string, string>;
+      expect(s['DEFAULT']).toBe('var(--sacred-plum)');
+      expect(s['soft']).toBe('var(--sacred-plum-soft)');
+      expect(s['500']).toBe('var(--sacred-plum-500)');
+    });
+
+    it('exposes foliage DEFAULT and soft alongside scale', () => {
+      const f = colors()['foliage'] as Record<string, string>;
+      expect(f['DEFAULT']).toBe('var(--foliage)');
+      expect(f['soft']).toBe('var(--foliage-soft)');
+      expect(f['500']).toBe('var(--foliage-500)');
+    });
+
+    it('exposes safety-cleared DEFAULT and fill alongside scale', () => {
+      const sc = colors()['safety-cleared'] as Record<string, string>;
+      expect(sc['DEFAULT']).toBe('var(--safety-cleared-teal)');
+      expect(sc['fill']).toBe('var(--safety-cleared-fill)');
+      expect(sc['500']).toBe('var(--safety-cleared-teal-500)');
+    });
+
+    it('exposes safety-red as DEFAULT + fill (no scale)', () => {
+      const sr = colors()['safety-red'] as Record<string, string>;
+      expect(sr['DEFAULT']).toBe('var(--safety-red)');
+      expect(sr['fill']).toBe('var(--safety-red-fill)');
+    });
+  });
+
+  describe('borderRadius scale (v2.0)', () => {
+    it('exposes sm / md / lg / xl', () => {
+      const br = tokenPresets.extend!.borderRadius as Record<string, string>;
+      expect(br['sm']).toBe('var(--r-sm)');
+      expect(br['md']).toBe('var(--r-md)');
+      expect(br['lg']).toBe('var(--r-lg)');
+      expect(br['xl']).toBe('var(--r-xl)');
     });
   });
 });

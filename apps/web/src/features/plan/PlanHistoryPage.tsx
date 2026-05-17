@@ -5,6 +5,7 @@ import type { PlanItemRow, PlanTileSummary } from '@hivekitchen/types';
 import { useLumiContext } from '@/hooks/useLumiContext.js';
 import { HkApiError } from '@/lib/fetch.js';
 import { deriveWeekId, getCurrentWeekMonday } from '@/lib/derive-week-id.js';
+import { PageHeader } from '@/components/PageHeader.js';
 import { FreshnessState } from './FreshnessState.js';
 import { PlanTile } from './PlanTile.js';
 import { SwapHistoryPopover } from './SwapHistoryPopover.js';
@@ -86,21 +87,32 @@ export function PlanHistoryPage() {
 
   const isNotFound = isError && error instanceof HkApiError && error.status === 404;
 
+  const weekOfLabel =
+    !isLoading && !isError && data?.plan !== null && data?.week_of !== null && data?.week_of !== undefined
+      ? `Week of ${formatWeekOf(data.week_of)}`
+      : null;
+
   return (
-    <main className="min-h-screen p-4 md:p-8 max-w-2xl mx-auto flex flex-col gap-6">
-      <div>
+    <main className="mx-auto w-full max-w-7xl flex-grow px-6 pt-12 pb-24">
+      <div className="mb-6">
         <Link
           to="/app/plan"
-          className="font-sans text-[13px] text-stone-500 underline underline-offset-2 hover:text-stone-700 transition-colors motion-reduce:transition-none focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-stone-400"
+          className="font-sans text-[13px] text-fg-muted underline underline-offset-2 hover:text-amber-warm transition-colors motion-reduce:transition-none focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-amber-warm"
         >
           Back to this week
         </Link>
       </div>
 
+      {weekOfLabel !== null && (
+        <PageHeader eyebrow="Looking back" headlineSize="lg" className="mb-8">
+          {weekOfLabel}
+        </PageHeader>
+      )}
+
       {isLoading && <FreshnessState variant="loading" />}
       {isNotFound && (
         <p
-          className="font-sans text-[15px] text-stone-500 text-center"
+          className="font-sans text-[15px] text-fg-muted text-center"
           role="status"
         >
           No plan was generated for this week.
@@ -110,21 +122,16 @@ export function PlanHistoryPage() {
 
       {!isLoading && !isError && data !== undefined && data.plan !== null && (
         <>
-          {data.week_of !== null && (
-            <h1 className="font-serif text-[22px] leading-tight text-stone-800">
-              Week of {formatWeekOf(data.week_of)}
-            </h1>
-          )}
           {data.plan_items.length === 0 ? (
             <p
-              className="font-sans text-[15px] text-stone-500 text-center"
+              className="font-sans text-[15px] text-fg-muted text-center"
               role="status"
             >
               No items were recorded for this week.
             </p>
           ) : (
             <div
-              className="grid grid-cols-2 md:grid-cols-5 gap-3"
+              className="grid grid-cols-2 md:grid-cols-5 gap-4"
               aria-label="Historical weekly plan"
             >
               {summaries.map((summary) => {

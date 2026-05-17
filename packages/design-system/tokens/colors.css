@@ -1,3 +1,22 @@
+/* ============================================================
+   WARM-NEUTRAL SCALE CONVENTION (canonical — UX-DR1 anchored)
+   ------------------------------------------------------------
+   Low stops (50–200)   = page-background-like. `warm-neutral-50` is
+                          always the dominant surface for the theme.
+   Mid stops (300–500)  = subdued surface / placeholder / disabled.
+   High stops (700–900) = primary text + emphasis. `warm-neutral-900`
+                          is always the highest-contrast foreground.
+
+   Direction is STABLE across themes — the intent of each stop is
+   constant, only the hex value swaps. Consumers can write
+   `bg-warm-neutral-50 text-warm-neutral-900` in either theme and
+   get the correct rendering.
+
+   This convention is the OPPOSITE of Stitch v2.0's raw `warm-neutral-X`
+   scale in ux-design-directions.html (which treats 50 as text-like).
+   See `.stitch/DESIGN.md` §6 for the v2.0 → repo translation rule.
+   ============================================================ */
+
 /* Light-mode (reciprocal — derived from dark-mode-first)
    Stop derivation: uniform OKLCH lightness stepping from 0.97 (–50) through
    the –500 anchor to 0.20 (–900). Hue and chroma held constant per group.
@@ -93,6 +112,37 @@
   --focus-indicator-color: var(--foliage-500);
   --focus-indicator-width: 2px;
   --focus-indicator-offset: 2px;
+
+  /* ============================================================
+     v2.0 semantic aliases — mirrors Stitch ux-design-directions.html
+     (locked Step 8, refined Step 12). Hexes are v2.0-exact and may
+     differ from corresponding scale stops by chroma-reduction.
+     Consumers should prefer these aliases over raw scale stops.
+     ============================================================ */
+  --bg: #faf7f2;
+  --surface: #f2ede4;
+  --surface-2: #e8e3d8;
+  --fg: #141210;
+  --fg-muted: #56524a;
+  --border: #e8e3d8;
+
+  /* Single-value channel tokens (v2.0) */
+  --lumi-terracotta: #a15838;
+  --lumi-terracotta-dim: #753a24;
+  --sacred-plum: #6b4a5a;
+  --sacred-plum-soft: #533845;
+  --foliage: #5f7a67;
+  --foliage-soft: #46604f;
+  --safety-cleared-teal: #3d6b5f;
+  --safety-cleared-fill: rgba(61, 107, 95, 0.10);
+  --safety-red: #a84236;
+  --safety-red-fill: rgba(168, 66, 54, 0.10);
+
+  /* Accent — amber / honey-accent (recognition only; NEVER button hover) */
+  --amber: #b97730;
+  --amber-soft: #96601f;
+  --amber-warm: #d98f3c;
+  --honey-accent: #d98f3c;
 }
 
 /* Dark-mode — authored FIRST in design; warm-neutral inverts, accent scales
@@ -184,4 +234,33 @@
   --warm-neutral-700: #dedad4;
   --warm-neutral-800: #ede9e4;
   --warm-neutral-900: #faf7f2;
+
+  /* ============================================================
+     v2.0 semantic aliases — dark theme. See light-theme block for
+     authoring notes. Hexes are v2.0-exact.
+     ============================================================ */
+  --bg: #1c1a17;
+  --surface: #262420;
+  --surface-2: #2f2d27;
+  --fg: #faf7f2;
+  --fg-muted: #b0a99d;
+  --border: #2f2d27;
+
+  /* Single-value channel tokens (v2.0 dark) */
+  --lumi-terracotta: #b46a4e;
+  --lumi-terracotta-dim: #8a4f3a;
+  --sacred-plum: #8a5f72;
+  --sacred-plum-soft: #6b4a5a;
+  --foliage: #7a9681;
+  --foliage-soft: #5f7a67;
+  --safety-cleared-teal: #5a9c8b;
+  --safety-cleared-fill: rgba(90, 156, 139, 0.10);
+  --safety-red: #c65a4e;
+  --safety-red-fill: rgba(198, 90, 78, 0.12);
+
+  /* Accent — amber / honey-accent (recognition only) */
+  --amber: #d98f3c;
+  --amber-soft: #b97730;
+  --amber-warm: #e69a3d;
+  --honey-accent: #d98f3c;
 }

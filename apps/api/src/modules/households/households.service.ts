@@ -1,0 +1,108 @@
+import type { FastifyBaseLogger } from 'fastify';
+import type {
+  HouseholdProfilePatchBody,
+  HouseholdProfileResponse,
+} from '@hivekitchen/contracts';
+import type { HouseholdsRepository } from './households.repository.js';
+import type { VocabularyService } from '../vocabulary/vocabulary.service.js';
+
+export interface HouseholdsServiceDeps {
+  repository: HouseholdsRepository;
+  vocabulary: VocabularyService;
+  logger: FastifyBaseLogger;
+}
+
+// Slice 2-s27 — service-layer wrapper around the household profile reads /
+// writes. Vocabulary validation runs here (not in the repository) so the
+// agent tool and the parent-facing route share one canonical validation path.
+export class HouseholdsService {
+  constructor(private readonly deps: HouseholdsServiceDeps) {}
+
+  async getProfile(householdId: string): Promise<HouseholdProfileResponse> {
+    const profile = await this.deps.repository.getProfile(householdId);
+    return {
+      id: householdId,
+      ...profile,
+    };
+  }
+
+  async addAllergens(
+    householdId: string,
+    toAdd: string[],
+    otherPatch: { cultural_identifiers?: string[]; dietary_preferences?: string[] } = {},
+  ): Promise<HouseholdProfileResponse> {
+    const validatedNew = this.deps.vocabulary.validateAllergens(toAdd);
+
+    // Advisory lock prevents concurrent agent turns from reading the same stale
+    // allergen list and overwriting each other's additions. Session-level —
+    // MUST release in finally even if the read or write throws.
+    await this.deps.repository.acquireAllergenLock(householdId);
+    try {
+      const current = await this.deps.repository.getProfile(householdId);
+      // Merge validated new items with already-stored allergens. Do NOT
+      // re-validate stored values through vocabularyService — those passed
+      // validation at write time and a deactivated tag would break the merge.
+      const merged = [...new Set([...current.declared_allergens, ...validatedNew])];
+
+      // Build a pre-validated patch and write directly to the repository,
+      // bypassing patchProfile's re-validation of declared_allergens.
+      const patch: Parameters<typeof this.deps.repository.patchProfile>[1] = {
+        declared_allergens: merged,
+      };
+      if (otherPatch.cultural_identifiers !== undefined) {
+        patch.cultural_identifiers = this.deps.vocabulary.validateCultural(
+          otherPatch.cultural_identifiers,
+        );
+      }
+      if (otherPatch.dietary_preferences !== undefined) {
+        patch.dietary_preferences = this.deps.vocabulary.validateDietary(
+          otherPatch.dietary_preferences,
+        );
+      }
+
+      const updated = await this.deps.repository.patchProfile(householdId, patch);
+      await this.deps.repository.bumpKitchenMapVersion(householdId);
+      return { id: householdId, ...updated };
+    } finally {
+      await this.deps.repository.releaseAllergenLock(householdId);
+    }
+  }
+
+  async patchProfile(
+    householdId: string,
+    patch: HouseholdProfilePatchBody,
+  ): Promise<HouseholdProfileResponse> {
+    // Validate against the active vocabularies BEFORE touching the DB.
+    // Unknown / inactive tags throw with a clear error that surfaces as 400
+    // at the route handler. Expansion (e.g. dietary implies-closure) does NOT
+    // run here — the household is a declared identity, not an inferred set,
+    // so storing the parent's literal tags preserves their intent. Closure
+    // expansion can be applied at planner-read time if needed.
+    const validated: HouseholdProfilePatchBody = {};
+    if (patch.cultural_identifiers !== undefined) {
+      validated.cultural_identifiers = this.deps.vocabulary.validateCultural(
+        patch.cultural_identifiers,
+      );
+    }
+    if (patch.dietary_preferences !== undefined) {
+      validated.dietary_preferences = this.deps.vocabulary.validateDietary(
+        patch.dietary_preferences,
+      );
+    }
+    if (patch.declared_allergens !== undefined) {
+      validated.declared_allergens = this.deps.vocabulary.validateAllergens(
+        patch.declared_allergens,
+      );
+    }
+
+    const updated = await this.deps.repository.patchProfile(householdId, validated);
+    const hasChanges = Object.keys(validated).length > 0;
+    if (hasChanges) {
+      await this.deps.repository.bumpKitchenMapVersion(householdId);
+    }
+    return {
+      id: householdId,
+      ...updated,
+    };
+  }
+}

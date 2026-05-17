@@ -152,9 +152,6 @@ import {
   KitchenMapMemorySchema,
   KitchenMapMemoryNodeSchema,
   KitchenMapMemoryNodeTypeSchema,
-  KitchenMapAllergyRulesSchema,
-  KitchenMapAllergyRuleSchema,
-  KitchenMapAllergyRuleTypeSchema,
   KitchenMapHouseholdExtrasSchema,
   KitchenMapExtraLibraryItemSchema,
   KitchenMapRecipesSchema,
@@ -203,6 +200,11 @@ import {
   ExtraLibraryItemSchema,
   ListExtraLibraryResponseSchema,
   ExtraLibraryHouseholdIdParamSchema,
+  HouseholdUpsertInputSchema,
+  HouseholdUpsertOutputSchema,
+  HouseholdProfilePatchBodySchema,
+  HouseholdProfileResponseSchema,
+  HouseholdIdParamSchema,
 } from '@hivekitchen/contracts';
 
 // Auth
@@ -418,9 +420,6 @@ export type KitchenMapCulturalPriorState = z.infer<typeof KitchenMapCulturalPrio
 export type KitchenMapMemory = z.infer<typeof KitchenMapMemorySchema>;
 export type KitchenMapMemoryNode = z.infer<typeof KitchenMapMemoryNodeSchema>;
 export type KitchenMapMemoryNodeType = z.infer<typeof KitchenMapMemoryNodeTypeSchema>;
-export type KitchenMapAllergyRules = z.infer<typeof KitchenMapAllergyRulesSchema>;
-export type KitchenMapAllergyRule = z.infer<typeof KitchenMapAllergyRuleSchema>;
-export type KitchenMapAllergyRuleType = z.infer<typeof KitchenMapAllergyRuleTypeSchema>;
 export type KitchenMapHouseholdExtras = z.infer<typeof KitchenMapHouseholdExtrasSchema>;
 export type KitchenMapExtraLibraryItem = z.infer<typeof KitchenMapExtraLibraryItemSchema>;
 export type KitchenMapRecipes = z.infer<typeof KitchenMapRecipesSchema>;
@@ -495,3 +494,11 @@ export type CreateExtraLibraryItemInput = z.infer<typeof CreateExtraLibraryItemI
 export type ExtraLibraryItem = z.infer<typeof ExtraLibraryItemSchema>;
 export type ListExtraLibraryResponse = z.infer<typeof ListExtraLibraryResponseSchema>;
 export type ExtraLibraryHouseholdIdParam = z.infer<typeof ExtraLibraryHouseholdIdParamSchema>;
+
+
+// Slice 2-s27 — household food-identity profile (agent tool + REST route)
+export type HouseholdUpsertInput = z.infer<typeof HouseholdUpsertInputSchema>;
+export type HouseholdUpsertOutput = z.infer<typeof HouseholdUpsertOutputSchema>;
+export type HouseholdProfilePatchBody = z.infer<typeof HouseholdProfilePatchBodySchema>;
+export type HouseholdProfileResponse = z.infer<typeof HouseholdProfileResponseSchema>;
+export type HouseholdIdParam = z.infer<typeof HouseholdIdParamSchema>;

@@ -2,6 +2,7 @@ import type { FastifyBaseLogger } from 'fastify';
 import type { GuardrailResult, PlanItemForGuardrail } from '@hivekitchen/types';
 import type { AuditService } from '../../audit/audit.service.js';
 import type { AllergyGuardrailRepository } from './allergy-guardrail.repository.js';
+import { AllergyGuardrailDecryptError } from './allergy-guardrail.repository.js';
 import { evaluate, GUARDRAIL_VERSION } from './allergy-rules.engine.js';
 
 export interface AllergyGuardrailServiceDeps {
@@ -25,7 +26,19 @@ export class AllergyGuardrailService {
     planItems: PlanItemForGuardrail[],
     householdId: string,
   ): Promise<GuardrailResult> {
-    const rules = await this.repo.getRulesForHousehold(householdId);
+    let rules;
+    try {
+      rules = await this.repo.getRulesForHousehold(householdId);
+    } catch (err) {
+      if (err instanceof AllergyGuardrailDecryptError) {
+        this.logger.error(
+          { household_id: householdId, err },
+          'allergen data decrypt failed — returning uncertain to prevent silent approval',
+        );
+        return { verdict: 'uncertain', conflicts: [], reason: 'allergen_data_decrypt_failure' };
+      }
+      throw err;
+    }
     return evaluate(planItems, rules);
   }
 

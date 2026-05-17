@@ -14,20 +14,62 @@ const colorScale = (prefix: string) => ({
 export const tokenPresets = {
   extend: {
     colors: {
-      sacred: colorScale('sacred-plum'),
+      sacred: {
+        ...colorScale('sacred-plum'),
+        DEFAULT: 'var(--sacred-plum)',
+        soft: 'var(--sacred-plum-soft)',
+      },
       'lumi-terracotta': {
         ...colorScale('lumi-terracotta'),
+        DEFAULT: 'var(--lumi-terracotta)',
         warmed: 'var(--lumi-terracotta-warmed)',
+        dim: 'var(--lumi-terracotta-dim)',
       },
-      'safety-cleared': colorScale('safety-cleared-teal'),
+      'safety-cleared': {
+        ...colorScale('safety-cleared-teal'),
+        DEFAULT: 'var(--safety-cleared-teal)',
+        fill: 'var(--safety-cleared-fill)',
+      },
+      'safety-red': {
+        DEFAULT: 'var(--safety-red)',
+        fill: 'var(--safety-red-fill)',
+      },
       'memory-provenance': colorScale('memory-provenance'),
       'honey-amber': colorScale('honey-amber'),
-      foliage: colorScale('foliage'),
+      foliage: {
+        ...colorScale('foliage'),
+        DEFAULT: 'var(--foliage)',
+        soft: 'var(--foliage-soft)',
+      },
       'warm-neutral': colorScale('warm-neutral'),
+
+      // v2.0 semantic aliases — prefer these in generated components
+      bg: 'var(--bg)',
+      surface: {
+        DEFAULT: 'var(--surface)',
+        2: 'var(--surface-2)',
+      },
+      fg: {
+        DEFAULT: 'var(--fg)',
+        muted: 'var(--fg-muted)',
+      },
+      border: 'var(--border)',
+      amber: {
+        DEFAULT: 'var(--amber)',
+        soft: 'var(--amber-soft)',
+        warm: 'var(--amber-warm)',
+      },
+      'honey-accent': 'var(--honey-accent)',
     },
     fontFamily: {
       serif: 'var(--font-serif)',
       sans: 'var(--font-sans)',
+    },
+    borderRadius: {
+      sm: 'var(--r-sm)',
+      md: 'var(--r-md)',
+      lg: 'var(--r-lg)',
+      xl: 'var(--r-xl)',
     },
     transitionTimingFunction: {
       'sacred-ease': 'var(--sacred-ease)',

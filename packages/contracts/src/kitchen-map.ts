@@ -31,6 +31,13 @@ export const KitchenMapHouseholdSchema = z.object({
   // households.tier_variant (Epic 10 A/B cohort tag).
   tier_variant: z.string().min(1),
   timezone: z.string().min(1),
+  // Slice 2-s27 — household-level food identity. Cultural / dietary live
+  // here (moved up from per-child). declared_allergens carries household-
+  // wide allergen rules (religious "no pork", etc.); per-child medical
+  // allergens remain on KitchenMapChildSchema.declared_allergens.
+  cultural_identifiers: z.array(z.string().min(1).max(64)),
+  dietary_preferences: z.array(z.string().min(1).max(64)),
+  declared_allergens: z.array(z.string().min(1).max(64)),
 });
 
 // ---- Caregivers -----------------------------------------------------------
@@ -120,24 +127,6 @@ export const KitchenMapMemorySchema = z.object({
   nodes: z.array(KitchenMapMemoryNodeSchema),
 });
 
-// ---- Allergy rules (projected from allergy_rules table) -------------------
-
-export const KitchenMapAllergyRuleTypeSchema = z.enum(['falcpa', 'parent_declared']);
-
-export const KitchenMapAllergyRuleSchema = z.object({
-  allergen: z.string().min(1).max(64),
-  rule_type: KitchenMapAllergyRuleTypeSchema,
-  // child-scoped rule; null = household-wide; both null = FALCPA reference set
-  scope_child_id: z.string().uuid().nullable(),
-});
-
-export const KitchenMapAllergyRulesSchema = z.object({
-  // System-wide FALCPA reference rows (household_id IS NULL in the table).
-  falcpa: z.array(KitchenMapAllergyRuleSchema),
-  // Parent-declared rules scoped to this household.
-  household_declared: z.array(KitchenMapAllergyRuleSchema),
-});
-
 // ---- Household extras library --------------------------------------------
 
 export const KitchenMapExtraLibraryItemSchema = z.object({
@@ -195,7 +184,6 @@ export const KitchenMapSchema = z.object({
   children: z.array(KitchenMapChildSchema),
   cultural: KitchenMapCulturalSchema,
   memory: KitchenMapMemorySchema,
-  allergy_rules: KitchenMapAllergyRulesSchema,
   household_extras: KitchenMapHouseholdExtrasSchema,
   recipes: KitchenMapRecipesSchema,
   meta: KitchenMapMetaSchema,

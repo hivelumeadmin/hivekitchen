@@ -3,6 +3,7 @@ import type { FastifyBaseLogger } from 'fastify';
 import {
   createChildUpsertToolSpec,
   createCulturalNoteToolSpec,
+  createHouseholdUpsertToolSpec,
   createMemoryNoteToolSpec,
   type OnboardingToolContext,
   type OnboardingToolDeps,
@@ -53,6 +54,26 @@ function makeDeps(overrides: Partial<OnboardingToolDeps> = {}): OnboardingToolDe
         .fn()
         .mockResolvedValue({ node_id: NODE_ID, created_at: NOW }),
     } as unknown as OnboardingToolDeps['memoryService'],
+    householdsService: {
+      patchProfile: vi.fn().mockResolvedValue({
+        id: HOUSEHOLD_ID,
+        cultural_identifiers: [],
+        dietary_preferences: [],
+        declared_allergens: [],
+      }),
+      addAllergens: vi.fn().mockResolvedValue({
+        id: HOUSEHOLD_ID,
+        cultural_identifiers: [],
+        dietary_preferences: [],
+        declared_allergens: [],
+      }),
+      getProfile: vi.fn().mockResolvedValue({
+        id: HOUSEHOLD_ID,
+        cultural_identifiers: [],
+        dietary_preferences: [],
+        declared_allergens: [],
+      }),
+    } as unknown as OnboardingToolDeps['householdsService'],
     vocabularyService: {
       validateAllergens: vi.fn((keys: string[]) => [...new Set(keys)]),
       validateCultural: vi.fn((keys: string[]) => [...new Set(keys)]),
@@ -406,5 +427,120 @@ describe('createMemoryNoteToolSpec', () => {
         sourceRef: expect.objectContaining({ source_type: 'onboarding_turn' }),
       }),
     );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// household.upsert (Slice 2-s27)
+// ---------------------------------------------------------------------------
+
+describe('createHouseholdUpsertToolSpec', () => {
+  let deps: OnboardingToolDeps;
+  let spec: ReturnType<typeof createHouseholdUpsertToolSpec>;
+
+  beforeEach(() => {
+    deps = makeDeps();
+    spec = createHouseholdUpsertToolSpec(makeCtx(), deps);
+  });
+
+  it('happy path: forwards the patch to householdsService.patchProfile and returns household_id', async () => {
+    (deps.householdsService.patchProfile as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      id: HOUSEHOLD_ID,
+      cultural_identifiers: ['south_asian', 'malayali'],
+      dietary_preferences: [],
+      declared_allergens: [],
+    });
+
+    const result = await spec.fn({
+      cultural_identifiers: ['south_asian', 'malayali'],
+    });
+
+    expect(result).toEqual({
+      household_id: HOUSEHOLD_ID,
+      was_existing: true,
+    });
+    expect(deps.householdsService.patchProfile).toHaveBeenCalledWith(HOUSEHOLD_ID, {
+      cultural_identifiers: ['south_asian', 'malayali'],
+      dietary_preferences: undefined,
+      declared_allergens: undefined,
+    });
+  });
+
+  it('PATCH semantics: omitting fields preserves them (only set keys forwarded)', async () => {
+    (deps.householdsService.patchProfile as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      id: HOUSEHOLD_ID,
+      cultural_identifiers: [],
+      dietary_preferences: ['halal'],
+      declared_allergens: [],
+    });
+
+    await spec.fn({ dietary_preferences: ['halal'] });
+
+    const call = (deps.householdsService.patchProfile as ReturnType<typeof vi.fn>).mock
+      .calls[0] as [string, Record<string, unknown>] | undefined;
+    expect(call?.[1]).toEqual({
+      cultural_identifiers: undefined,
+      dietary_preferences: ['halal'],
+      declared_allergens: undefined,
+    });
+  });
+
+  it('empty array clears the field (passed through, not omitted)', async () => {
+    (deps.householdsService.patchProfile as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      id: HOUSEHOLD_ID,
+      cultural_identifiers: [],
+      dietary_preferences: [],
+      declared_allergens: [],
+    });
+
+    await spec.fn({ declared_allergens: [] });
+
+    const call = (deps.householdsService.patchProfile as ReturnType<typeof vi.fn>).mock
+      .calls[0] as [string, Record<string, unknown>] | undefined;
+    expect(call?.[1].declared_allergens).toEqual([]);
+  });
+
+  it('vocabulary rejection from the service propagates as a tool error', async () => {
+    (deps.householdsService.patchProfile as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
+      new Error('Unknown or inactive allergen tag: kryptonite'),
+    );
+
+    await expect(
+      spec.fn({ declared_allergens: ['kryptonite'] }),
+    ).rejects.toThrow(/Unknown or inactive/);
+  });
+
+  it('rejects invalid input via the schema (allergen tag too long)', async () => {
+    await expect(
+      spec.fn({ declared_allergens: ['a'.repeat(101)] }),
+    ).rejects.toThrow();
+    expect(deps.householdsService.patchProfile).not.toHaveBeenCalled();
+  });
+
+  it('declared_allergens_add routes to addAllergens instead of patchProfile', async () => {
+    (deps.householdsService.addAllergens as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      id: HOUSEHOLD_ID,
+      cultural_identifiers: [],
+      dietary_preferences: [],
+      declared_allergens: ['celery', 'sesame'],
+    });
+
+    const result = await spec.fn({ declared_allergens_add: ['sesame'] });
+
+    expect(result).toEqual({ household_id: HOUSEHOLD_ID, was_existing: true });
+    expect(deps.householdsService.addAllergens).toHaveBeenCalledWith(
+      HOUSEHOLD_ID,
+      ['sesame'],
+      { cultural_identifiers: undefined, dietary_preferences: undefined },
+    );
+    expect(deps.householdsService.patchProfile).not.toHaveBeenCalled();
+  });
+
+  it('rejects when both declared_allergens and declared_allergens_add are provided', async () => {
+    await expect(
+      spec.fn({ declared_allergens: ['peanut'], declared_allergens_add: ['sesame'] }),
+    ).rejects.toThrow(/mutually exclusive/);
+    expect(deps.householdsService.patchProfile).not.toHaveBeenCalled();
+    expect(deps.householdsService.addAllergens).not.toHaveBeenCalled();
   });
 });

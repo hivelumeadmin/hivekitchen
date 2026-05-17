@@ -2,6 +2,14 @@
 
 Status: done
 
+> **v2.0 migration applied (γ Phase 3a, May 2026).** PlanTile retoked:
+> `bg-honey-amber-100 border-honey-amber-400` → `bg-amber-warm/10
+> border-amber-warm`; dish name `font-sans text-[19px]` → `font-serif
+> text-2xl`; `bg-white` → `bg-surface`; `text-stone-*` → `text-fg-muted` /
+> `text-fg`. State machine + variant logic + TrustChip + tap-to-swap +
+> AllergyClearedBadge integration **unchanged**. See
+> [`../v2-migration-log.md`](../v2-migration-log.md).
+
 ## Story
 
 As a Primary Parent,

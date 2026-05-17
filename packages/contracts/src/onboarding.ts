@@ -4,9 +4,12 @@ import { z } from 'zod';
 // the agent's history on the very first text turn so the LLM has matching
 // context (otherwise it commonly re-introduces itself on turn 2). Shared
 // between `apps/web` (client render) and `apps/api` (synthetic agentInput
-// prefix on first turn) to prevent drift.
+// prefix on first turn) to prevent drift. Must match the "First Message"
+// section of docs/OnboardingPrompt.md — both opening copies are read as
+// authoritative by the agent prompt, and any drift makes Lumi look
+// schizophrenic on turn 2.
 export const OPENING_GREETING =
-  "I'm Lumi. I'd love to learn a little about your family — three short questions, and you can answer however feels natural. Tell me, what did your grandmother cook?";
+  "Hi, I'm Lumi. I'll help learn your kitchen so HiveKitchen can plan school lunches that are safe, realistic, and actually get eaten. Let's start simple — who am I planning lunches for?";
 
 // POST /v1/onboarding/text/turn — request body
 export const TextOnboardingTurnRequestSchema = z.object({

@@ -9,14 +9,21 @@ import {
   ExtraLibraryItemSchema,
   ListExtraLibraryResponseSchema,
   ExtraLibraryHouseholdIdParamSchema,
+  HouseholdIdParamSchema,
+  HouseholdProfilePatchBodySchema,
+  HouseholdProfileResponseSchema,
 } from '@hivekitchen/contracts';
-import type { TileRetryRequest } from '@hivekitchen/contracts';
+import type {
+  TileRetryRequest,
+  HouseholdProfilePatchBody,
+} from '@hivekitchen/contracts';
 import type { CreateExtraLibraryItemInput } from '@hivekitchen/types';
 import { AuditRepository } from '../../audit/audit.repository.js';
 import { AuditService } from '../../audit/audit.service.js';
-import { ForbiddenError, NotFoundError } from '../../common/errors.js';
+import { ForbiddenError, NotFoundError, ValidationError } from '../../common/errors.js';
 import { authorize } from '../../middleware/authorize.hook.js';
 import { HouseholdsRepository } from './households.repository.js';
+import { HouseholdsService } from './households.service.js';
 import { ExtraLibraryRepository } from './extra-library.repository.js';
 
 // Story 2.14: anxiety-leakage telemetry primitive. The Plan Tile component
@@ -34,6 +41,11 @@ const householdsRoutesPlugin: FastifyPluginAsync = async (fastify) => {
   const kekHex = fastify.env.ENVELOPE_ENCRYPTION_MASTER_KEY;
   const kek = kekHex ? Buffer.from(kekHex, 'hex') : null;
   const households = new HouseholdsRepository(fastify.supabase, kek);
+  const householdsService = new HouseholdsService({
+    repository: households,
+    vocabulary: fastify.vocabularyService,
+    logger: fastify.log,
+  });
   const auditService = new AuditService(new AuditRepository(fastify.supabase));
   // Story 3.21 — household-scoped Extra library.
   const extraLibraryRepository = new ExtraLibraryRepository(fastify.supabase);
@@ -267,6 +279,63 @@ const householdsRoutesPlugin: FastifyPluginAsync = async (fastify) => {
       };
 
       return reply.code(204).send();
+    },
+  );
+  // Slice 2-s27 — household-level food-identity profile. Cultural identifiers,
+  // dietary preferences, and household-wide declared allergens live on the
+  // household now (moved up from per-child). PATCH semantics: omit → preserve;
+  // empty array → clear; non-empty array → replace.
+  fastify.patch(
+    '/v1/households/:id',
+    {
+      preHandler: authorize(['primary_parent']),
+      schema: {
+        params: HouseholdIdParamSchema,
+        body: HouseholdProfilePatchBodySchema,
+        response: { 200: HouseholdProfileResponseSchema },
+      },
+    },
+    async (request) => {
+      const { id: householdId } = request.params as { id: string };
+      if (householdId !== request.user.household_id) {
+        throw new ForbiddenError("Cannot update another household's profile");
+      }
+      const body = request.body as HouseholdProfilePatchBody;
+      let updated;
+      try {
+        updated = await householdsService.patchProfile(householdId, body);
+      } catch (err) {
+        // VocabularyService rejects unknown tags with a plain Error; surface
+        // as a 400 so the parent (or agent) gets actionable feedback.
+        if (err instanceof Error && /Unknown or inactive/.test(err.message)) {
+          throw new ValidationError(err.message);
+        }
+        throw err;
+      }
+
+      // PII-free audit metadata: only the field names that were touched and
+      // their counts. Tag values themselves are user-authored and could leak
+      // sensitive identifiers (e.g. specific religious affiliations) — never
+      // copied into the audit row.
+      const changed_fields: string[] = [];
+      if (body.cultural_identifiers !== undefined) changed_fields.push('cultural_identifiers');
+      if (body.dietary_preferences !== undefined) changed_fields.push('dietary_preferences');
+      if (body.declared_allergens !== undefined) changed_fields.push('declared_allergens');
+
+      request.auditContext = {
+        event_type: 'household.profile_updated',
+        user_id: request.user.id,
+        household_id: householdId,
+        request_id: request.id,
+        metadata: {
+          changed_fields,
+          cultural_count: updated.cultural_identifiers.length,
+          dietary_count: updated.dietary_preferences.length,
+          allergen_count: updated.declared_allergens.length,
+        },
+      };
+
+      return updated;
     },
   );
 };

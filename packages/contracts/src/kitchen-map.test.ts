@@ -3,7 +3,6 @@ import {
   KitchenMapSchema,
   KitchenMapCulturalPriorSchema,
   KitchenMapMemoryNodeSchema,
-  KitchenMapAllergyRuleSchema,
 } from './kitchen-map.js';
 
 const UUID = (n: number): string => `00000000-0000-4000-8000-${n.toString().padStart(12, '0')}`;
@@ -16,6 +15,9 @@ function makeMinimalMap() {
       tier: 'standard',
       tier_variant: 'beta',
       timezone: 'America/New_York',
+      cultural_identifiers: [],
+      dietary_preferences: [],
+      declared_allergens: [],
     },
     caregivers: [
       {
@@ -28,7 +30,6 @@ function makeMinimalMap() {
     children: [],
     cultural: { active: [], suggested: [] },
     memory: { nodes: [] },
-    allergy_rules: { falcpa: [], household_declared: [] },
     household_extras: { library: [] },
     recipes: { favourites: [], banned: [] },
     meta: {
@@ -84,12 +85,6 @@ describe('KitchenMapSchema', () => {
             prose_text: 'Loves yogurt and rice.',
             subject_child_id: UUID(10),
           },
-        ],
-      },
-      allergy_rules: {
-        falcpa: [],
-        household_declared: [
-          { allergen: 'peanut', rule_type: 'falcpa', scope_child_id: UUID(10) },
         ],
       },
       recipes: {
@@ -169,13 +164,3 @@ describe('KitchenMapMemoryNodeSchema', () => {
   });
 });
 
-describe('KitchenMapAllergyRuleSchema', () => {
-  it('accepts a FALCPA-class rule with both scopes null (system reference row)', () => {
-    const r = KitchenMapAllergyRuleSchema.safeParse({
-      allergen: 'peanut',
-      rule_type: 'falcpa',
-      scope_child_id: null,
-    });
-    expect(r.success).toBe(true);
-  });
-});

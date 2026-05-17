@@ -39,31 +39,31 @@ export default function ChildBagCompositionPage() {
 
   if (loadError !== null) {
     return (
-      <div className="py-8 px-4">
-        <p role="alert" className="text-sm text-red-700">
+      <main className="mx-auto w-full max-w-7xl flex-grow px-6 pt-12 pb-24">
+        <p role="alert" className="text-sm text-safety-red">
           {loadError}
         </p>
-      </div>
+      </main>
     );
   }
 
   if (child === null) {
     return (
-      <div className="py-8 px-4">
-        <p className="text-sm text-stone-600">Loading…</p>
-      </div>
+      <main className="mx-auto w-full max-w-7xl flex-grow px-6 pt-12 pb-24">
+        <p className="text-sm text-fg-muted">Loading…</p>
+      </main>
     );
   }
 
   const childName = child.name;
   return (
-    <div className="py-8 px-4">
+    <main className="mx-auto w-full max-w-7xl flex-grow px-6 pt-12 pb-24">
       <BagCompositionForm
         childId={child.id}
         childName={childName}
         initialSnack={child.bag_composition.snack}
         initialExtra={child.bag_composition.extra}
       />
-    </div>
+    </main>
   );
 }

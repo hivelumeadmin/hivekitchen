@@ -44,11 +44,11 @@ describe('FreshnessState', () => {
     expect(screen.getByText('Checking…')).toBeDefined();
   });
 
-  it('stale variant renders a foliage-400 dot', () => {
+  it('stale variant renders a foliage dot', () => {
     const { container } = render(<FreshnessState variant="stale" />);
     const dot = container.querySelector('span[aria-hidden="true"]');
     expect(dot).not.toBeNull();
-    expect(dot?.className).toContain('bg-foliage-400');
+    expect(dot?.className).toContain('bg-foliage');
   });
 
   it('stale variant uses motion-safe:animate-pulse on the foliage dot', () => {

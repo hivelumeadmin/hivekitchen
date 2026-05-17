@@ -1,5 +1,5 @@
 # generated: 2026-04-23
-# last_updated: 2026-05-15 (Epic 2: 2-s26 done)
+# last_updated: 2026-05-17 (Story 4-s1 done after review pass 1)
 # project: hivekitchen
 # project_key: NOKEY
 # tracking_system: file-system
@@ -52,7 +52,7 @@
 # Walls (decision moments) are flagged with `# WALL:` markers.
 
 generated: 2026-04-23
-last_updated: 2026-05-15 (Epic 2: 2-s26 done)
+last_updated: 2026-05-17 (Story 4-s1 done after review pass 1)
 project: hivekitchen
 project_key: NOKEY
 tracking_system: file-system
@@ -107,13 +107,14 @@ development_status:
   # the gap and graduate Epic 2 from "components built" to "feature works."
   # See: _bmad-output/planning-artifacts/epic-2-onboarding-integration.md
   # ==========================================================================
-  2-s20-tts-read-onboarding-landing: review                                   # folds: VT-2-T6 prep (env-wiring smoke test); shipped 2026-05-12
+  2-s20-tts-read-onboarding-landing: done                                     # code review + 12 patches applied; E2E suite (6 tests) green 2026-05-16
   2-s21-voice-interview-mvp-stt-tts-roundtrip: backlog                        # folds: 2-6 + 2-6b integration verification; deferred per text-first policy
   2-s22-onboarding-agent-tool-wiring: done                                    # shipped via Slice C (bad8f49, 783b9d1, 7a62577) — child.upsert + cultural.note + memory.note wired into OnboardingService
   2-s23-consent-and-handoff-to-app: backlog                                   # RESCOPED 2026-05-15 to verification-only: consent+handoff infra already shipped (Stories 2-8/2-9 + 2-s19 is_onboarded derivation). Walk VT-2-T6/T11 on a fresh signup, file any gap.
   2-s24-text-mode-parity: done                                                # shipped — Slice C was built ON the text path. OnboardingText.tsx → /v1/onboarding/text/turn; E2E at apps/web/test/e2e/2-7-text-onboarding.spec.ts
   2-s25-cultural-ratification-card: backlog                                   # RESCOPED 2026-05-15 to verification-only: card + ratify endpoint shipped (RatifyAction opt_in/tell_lumi_more/forget; cultural_priors.state detected→opt_in_confirmed). Family-language ratchet moved to Epic 5 5-S10 (Story 5.14) where ambient-signal detection lives. This slice now: walk 2-11 E2E on fresh signup, confirm cultural.lookup returns ratified state to planner, then close.
   2-s26-resume-mid-flow-onboarding: done                                      # Done 2026-05-15. Reuses threads/thread_turns instead of new onboarding_state tables — see story for rationale
+  2-s27-household-vs-child-scoping: done                                      # Done 2026-05-16. Review pass 2: advisory lock on addAllergens (race fix), decryptArrayColumn fail-closed, backfill pagination + cache bump, TAG_MAX_LEN aligned to 64, audit log fixed, declared_allergens_add tested.
   epic-2-retrospective: optional
 
   # Epic 3: Weekly Plan & Ready-Answer Open (unchanged — done / in-flight stories kept as-is)
@@ -139,7 +140,7 @@ development_status:
   3-19-day-level-context-overrides: done
   3-20-lunch-bag-composition-modification-snack-vs-main-modeling: done
   3-21-pin-ban-extra-component-types-reusable-extra-library: done
-  3-22-passive-bias-from-extra-removals-high-activity-extra-proposal: review
+  3-22-passive-bias-from-extra-removals-high-activity-extra-proposal: done
   3-23-per-slot-policy-scoping-bag-wide-allergy-rule: ready-for-dev
   3-24-allergy-uncertainty-flagging-safe-substitution: ready-for-dev
   3-25-hard-fail-escalation-no-safe-plan-possible: ready-for-dev
@@ -154,8 +155,8 @@ development_status:
   # Epic 4: Lunch Link & Heart Note Sacred Channel — 18 slices (was 16 stories)
   # See: _bmad-output/planning-artifacts/epic-4-vertical-slices.md
   # ==========================================================================
-  epic-4: backlog
-  4-s1-compose-heart-note-draft: backlog                                      # folds: 4.4 (partial)
+  epic-4: in-progress
+  4-s1-compose-heart-note-draft: done                                         # folds: 4.4 (partial). Shipped to review 2026-05-15; review pass 1 2026-05-17
   4-s2-render-heart-note-on-child-surface-stub-token: backlog                 # folds: 4.2 (partial)
   4-s3-real-signed-tokens-8pm-window: backlog                                 # folds: 4.1, 4.3
   4-s4-emoji-rating: backlog                                                  # folds: 4.2 (full), 4.14 (partial)

@@ -9,7 +9,8 @@
     ".": "./src/index.ts",
     "./tokens/colors.css": "./tokens/colors.css",
     "./tokens/typography.css": "./tokens/typography.css",
-    "./tokens/motion.css": "./tokens/motion.css"
+    "./tokens/motion.css": "./tokens/motion.css",
+    "./tokens/radius.css": "./tokens/radius.css"
   },
   "scripts": {
     "typecheck": "tsc -p tsconfig.json && tsc -p tsconfig.test.json",

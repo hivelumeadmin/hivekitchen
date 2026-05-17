@@ -42,9 +42,9 @@ export interface VoiceServiceDeps {
   elevenLabsApiKey: string;
   voiceId: string;
   // ElevenLabs ConvAI agent ID used by Epic 2 voice onboarding (2-s21+).
-  // Distinct from `voiceId`, which is a TTS voice identifier used by the
-  // narration path (2-s20) and the legacy proxy `streamTts` path.
-  agentId: string;
+  // Optional until 2-s21 ships. Distinct from `voiceId`, which is a TTS
+  // voice identifier used by the narration path (2-s20).
+  agentId?: string;
   // Slice 2-S20 — model used by the browser-direct TTS WebSocket. Wired
   // through env (ELEVENLABS_TTS_MODEL_ID, default `eleven_flash_v2_5`).
   ttsModelId: string;
@@ -69,7 +69,7 @@ export class VoiceService {
   private readonly culturalPriorService: CulturalPriorService;
   private readonly elevenLabsApiKey: string;
   private readonly voiceId: string;
-  private readonly agentId: string;
+  private readonly agentId: string | undefined;
   private readonly ttsModelId: string;
   private readonly logger: FastifyBaseLogger;
   private readonly memoryService?: MemoryService;
@@ -678,10 +678,17 @@ export class VoiceService {
   // a dashboard-configured agent.
   async issueTtsToken(): Promise<{ token: string; voice_id: string; model_id: string }> {
     const url = 'https://api.elevenlabs.io/v1/single-use-token/tts_websocket';
-    const res = await fetch(url, {
-      method: 'POST',
-      headers: { 'xi-api-key': this.elevenLabsApiKey },
-    });
+    let res: Response;
+    try {
+      res = await fetch(url, {
+        method: 'POST',
+        headers: { 'xi-api-key': this.elevenLabsApiKey },
+      });
+    } catch (err) {
+      throw new UpstreamError(
+        `ElevenLabs single-use-token request failed: ${err instanceof Error ? err.message : 'network error'}`,
+      );
+    }
     if (!res.ok) {
       const body = await res.text().catch(() => '<unreadable>');
       this.logger.error(
@@ -692,7 +699,12 @@ export class VoiceService {
         `ElevenLabs single-use-token mint failed: HTTP ${res.status} — ${body.slice(0, 300)}`,
       );
     }
-    const json = (await res.json()) as { token?: unknown };
+    let json: { token?: unknown };
+    try {
+      json = (await res.json()) as { token?: unknown };
+    } catch {
+      throw new UpstreamError('ElevenLabs single-use-token response was not valid JSON');
+    }
     if (typeof json.token !== 'string' || json.token.length === 0) {
       throw new UpstreamError('ElevenLabs single-use-token response missing token');
     }

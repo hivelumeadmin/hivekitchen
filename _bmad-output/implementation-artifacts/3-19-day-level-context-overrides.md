@@ -2,6 +2,12 @@
 
 Status: done
 
+> **v2.0 migration partial (γ, May 2026).** Day-override form internals
+> still hold v1 token references — the OverridePicker renders correctly
+> under the v2.0 BriefCanvas chrome, but its internal styling is deferred
+> to per-feature retoking. Backend repository + business logic are
+> **still authoritative**. See [`../v2-migration-log.md`](../v2-migration-log.md).
+
 ## Story
 
 As a Primary Parent,

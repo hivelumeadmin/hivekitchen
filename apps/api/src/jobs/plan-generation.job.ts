@@ -188,7 +188,15 @@ const planGenerationPlugin: FastifyPluginAsync = async (fastify) => {
     const now = new Date();
     const weekOf = getNextMondayFrom(now);
     const householdsRepo = new HouseholdsRepository(fastify.supabase, null);
-    const households = await householdsRepo.findAllActive();
+    const PAGE_SIZE = 500;
+    const households: Array<{ id: string; timezone: string }> = [];
+    let offset = 0;
+    while (true) {
+      const page = await householdsRepo.findAllActive(offset, PAGE_SIZE);
+      households.push(...page);
+      if (page.length < PAGE_SIZE) break;
+      offset += PAGE_SIZE;
+    }
 
     fastify.log.info(
       { module: 'plan-generation', action: 'fanout.start', count: households.length, weekOf },

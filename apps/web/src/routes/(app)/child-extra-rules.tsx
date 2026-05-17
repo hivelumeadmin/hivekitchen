@@ -40,30 +40,30 @@ export default function ChildExtraRulesPage() {
 
   if (loadError !== null) {
     return (
-      <div className="py-8 px-4">
-        <p role="alert" className="text-sm text-red-700">
+      <main className="mx-auto w-full max-w-7xl flex-grow px-6 pt-12 pb-24">
+        <p role="alert" className="text-sm text-safety-red">
           {loadError}
         </p>
-      </div>
+      </main>
     );
   }
 
   if (initialRules === undefined) {
     return (
-      <div className="py-8 px-4">
-        <p className="text-sm text-stone-600">Loading…</p>
-      </div>
+      <main className="mx-auto w-full max-w-7xl flex-grow px-6 pt-12 pb-24">
+        <p className="text-sm text-fg-muted">Loading…</p>
+      </main>
     );
   }
 
   return (
-    <div className="py-8 px-4">
+    <main className="mx-auto w-full max-w-7xl flex-grow px-6 pt-12 pb-24">
       <ExtraRulesForm
         childId={childId}
         childName={childName}
         householdId={householdId ?? ''}
         initialRules={initialRules}
       />
-    </div>
+    </main>
   );
 }

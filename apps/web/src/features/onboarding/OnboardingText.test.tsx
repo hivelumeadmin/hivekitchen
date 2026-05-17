@@ -56,7 +56,7 @@ describe('OnboardingText', () => {
       </MemoryRouter>,
     );
 
-    expect(screen.getByText(/grandmother cook/i)).toBeDefined();
+    expect(screen.getByText(/planning lunches/i)).toBeDefined();
     expect(screen.getByLabelText(/your message to lumi/i)).toBeDefined();
   });
 

@@ -2,6 +2,13 @@
 
 Status: done
 
+> **v2.0 migration applied (γ Phase 3a, May 2026).** DisambiguationPicker
+> renders inside the new BriefCanvas v2.0 shell. Picker internals + tile
+> states + swap intent flow are **still authoritative**; only the
+> surrounding BriefCanvas layout changed. Pre-existing test failures
+> (6 in `DisambiguationPicker.test.tsx`) predate the migration and are
+> flagged for separate triage. See [`../v2-migration-log.md`](../v2-migration-log.md).
+
 ## Story
 
 As a Primary Parent or Secondary Caregiver,

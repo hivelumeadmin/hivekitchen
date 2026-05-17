@@ -9,9 +9,8 @@ const root = resolve(__dirname, '../../../..');
 const expectedFonts = [
   'InstrumentSerif-Regular.woff2',
   'InstrumentSerif-Italic.woff2',
-  'Inter-Regular.woff2',
-  'Inter-Medium.woff2',
-  'Inter-SemiBold.woff2',
+  'PublicSans-Latin.woff2',
+  'PublicSans-LatinExt.woff2',
 ];
 
 describe('self-hosted font files', () => {

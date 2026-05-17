@@ -34,7 +34,9 @@ export default function AuthCallbackPage() {
         useAuthStore.getState().setSession(result.access_token, result.user);
         const next = params.get('next');
         const destination = next && /^\/[^/]/.test(next) ? next : '/app';
-        navigate(result.is_first_login ? '/onboarding' : destination);
+        // 2-S19: route to /onboarding whenever the user isn't fully onboarded,
+        // not just on their first login. Catches resumed-after-abandon flows.
+        navigate(result.is_onboarded ? destination : '/onboarding');
       } catch {
         navigate('/auth/login');
       }
@@ -42,8 +44,8 @@ export default function AuthCallbackPage() {
   }, [params, navigate]);
 
   return (
-    <main className="min-h-screen flex items-center justify-center px-6">
-      <p className="font-serif text-lg text-warm-neutral-700">Signing you in…</p>
+    <main className="min-h-screen flex items-center justify-center bg-bg px-6 text-fg">
+      <p className="font-serif text-lg text-fg-muted">Signing you in…</p>
     </main>
   );
 }

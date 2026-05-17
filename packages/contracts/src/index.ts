@@ -12,6 +12,8 @@ export * from './onboarding.js';
 export * from './onboarding-state.js';
 export * from './compliance.js';
 export * from './children.js';
+export * from './heart-notes.js';
+export * from './household-profile.js';
 export * from './extra-rules.js';
 export * from './school-policy.js';
 export * from './day-override.js';

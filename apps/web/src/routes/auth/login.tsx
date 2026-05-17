@@ -1,19 +1,36 @@
 import { useState, useEffect } from 'react';
 import { useForm } from 'react-hook-form';
-import { zodResolver } from '@/lib/zod-resolver.js';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useScope } from '@hivekitchen/ui';
 import { LoginRequestSchema } from '@hivekitchen/contracts';
 import type { LoginRequest, LoginResponse } from '@hivekitchen/types';
+import { zodResolver } from '@/lib/zod-resolver.js';
 import { hkFetch, HkApiError } from '@/lib/fetch.js';
 import { useAuthStore } from '@/stores/auth.store.js';
 import { supabase } from '@/lib/supabase-client.js';
+import { AppFooter } from '@/components/AppFooter.js';
+import { AppHeader } from '@/components/AppHeader.js';
+import {
+  ArrowRightIcon,
+  EyeIcon,
+  EyeOffIcon,
+  LockIcon,
+  MailIcon,
+} from '@/components/icons.js';
+import { PrimaryButton } from '@/components/PrimaryButton.js';
+import { TextField } from '@/components/TextField.js';
+import { AppleButton } from '@/features/login/components/AppleButton.js';
+import { GoogleButton } from '@/features/login/components/GoogleButton.js';
+import { LoginHero } from '@/features/login/components/LoginHero.js';
+import { OrDivider } from '@/features/login/components/OrDivider.js';
+import { loginCopyMock } from '@/features/login/data/mockData.js';
 
 export default function LoginPage() {
   useScope('app-scope');
   const navigate = useNavigate();
   const [params] = useSearchParams();
   const [apiError, setApiError] = useState<string | null>(null);
+  const [showPassword, setShowPassword] = useState(false);
 
   // Mount-only: if the user lands on /auth/login while already authenticated,
   // bounce to /app. Post-login navigation (including `next=` and first-login
@@ -34,11 +51,16 @@ export default function LoginPage() {
   async function onSubmit(values: LoginRequest) {
     setApiError(null);
     try {
-      const result = await hkFetch<LoginResponse>('/v1/auth/login', { method: 'POST', body: values });
+      const result = await hkFetch<LoginResponse>('/v1/auth/login', {
+        method: 'POST',
+        body: values,
+      });
       useAuthStore.getState().setSession(result.access_token, result.user);
       const next = params.get('next');
       const destination = next && /^\/[^/]/.test(next) ? next : '/app';
-      navigate(result.is_first_login ? '/onboarding' : destination);
+      // 2-S19: route to /onboarding whenever the user isn't fully onboarded,
+      // not just on their first login. Catches resumed-after-abandon flows.
+      navigate(result.is_onboarded ? destination : '/onboarding');
     } catch (err) {
       if (err instanceof HkApiError && err.status === 401) {
         setApiError('Invalid email or password. Please try again.');
@@ -56,81 +78,115 @@ export default function LoginPage() {
       const redirectTo = new URL('/auth/callback', window.location.origin);
       redirectTo.searchParams.set('provider', provider);
       if (validNext !== null) redirectTo.searchParams.set('next', validNext);
-      await supabase.auth.signInWithOAuth({ provider, options: { redirectTo: redirectTo.toString() } });
+      await supabase.auth.signInWithOAuth({
+        provider,
+        options: { redirectTo: redirectTo.toString() },
+      });
     } catch {
       setApiError('Something went wrong. Please try again later.');
     }
   }
 
+  const c = loginCopyMock;
+  const emailReg = register('email');
+  const passwordReg = register('password');
+
   return (
-    <main className="min-h-screen flex items-center justify-center px-6">
-      <div className="w-full max-w-sm space-y-8">
-        <header className="text-center space-y-2">
-          <h1 className="font-serif text-3xl">Welcome to HiveKitchen</h1>
-          <p className="text-sm text-warm-neutral-700">
-            Sign in to continue planning your week.
-          </p>
-        </header>
+    <div className="flex min-h-screen flex-col bg-bg text-fg">
+      <AppHeader />
+      <main className="flex flex-1 flex-col md:flex-row">
+        <LoginHero />
+        <div className="relative z-10 flex w-full flex-col justify-center bg-bg px-8 py-12 md:w-2/5 md:bg-transparent md:px-16 md:py-24 lg:px-24">
+          <div className="mx-auto flex w-full max-w-md flex-col gap-8">
+            <header className="space-y-4">
+              <p className="text-[11px] font-medium uppercase tracking-widest text-amber-warm">
+                {c.eyebrow}
+              </p>
+              <h1 className="font-serif text-[40px] leading-tight text-fg">{c.headline}</h1>
+              <p className="mt-4 max-w-sm text-[15px] leading-relaxed text-fg-muted">
+                {c.description}
+              </p>
+            </header>
 
-        {apiError && (
-          <p role="alert" className="text-sm text-red-700">{apiError}</p>
-        )}
+            {apiError ? (
+              <p
+                role="alert"
+                className="rounded-lg border border-safety-red/30 bg-safety-red/10 px-4 py-3 text-sm text-safety-red"
+              >
+                {apiError}
+              </p>
+            ) : null}
 
-        <form onSubmit={handleSubmit(onSubmit)} className="space-y-4" noValidate>
-          <div className="space-y-1">
-            <label htmlFor="email" className="block text-sm">Email</label>
-            <input
-              id="email"
-              type="email"
-              autoComplete="email"
-              {...register('email')}
-              className="w-full rounded border border-warm-neutral-300 px-3 py-2"
-            />
-            {formState.errors.email && (
-              <p role="alert" className="text-sm text-red-700">{formState.errors.email.message}</p>
-            )}
+            <div className="flex flex-col gap-6">
+              <GoogleButton
+                label={c.googleCta}
+                onClick={() => void startOAuth('google')}
+              />
+              <AppleButton label="Continue with Apple" onClick={() => void startOAuth('apple')} />
+              <OrDivider label={c.orDivider} />
+            </div>
+
+            <form
+              onSubmit={handleSubmit(onSubmit)}
+              className="mt-6 flex flex-col gap-6"
+              noValidate
+            >
+              <div className="flex flex-col gap-4">
+                <TextField
+                  id="login-email"
+                  label={c.emailLabel}
+                  type="email"
+                  autoComplete="email"
+                  placeholder={c.emailPlaceholder}
+                  icon={<MailIcon />}
+                  name={emailReg.name}
+                  onChange={emailReg.onChange}
+                  onBlur={emailReg.onBlur}
+                  inputRef={emailReg.ref}
+                  error={formState.errors.email?.message}
+                />
+                <TextField
+                  id="login-password"
+                  label={c.passwordLabel}
+                  type={showPassword ? 'text' : 'password'}
+                  autoComplete="current-password"
+                  placeholder={c.passwordPlaceholder}
+                  icon={<LockIcon />}
+                  name={passwordReg.name}
+                  onChange={passwordReg.onChange}
+                  onBlur={passwordReg.onBlur}
+                  inputRef={passwordReg.ref}
+                  error={formState.errors.password?.message}
+                  trailing={
+                    <button
+                      type="button"
+                      aria-label={showPassword ? 'Hide password' : 'Show password'}
+                      onClick={() => setShowPassword((s) => !s)}
+                      className="text-fg-muted transition-colors hover:text-fg"
+                    >
+                      {showPassword ? (
+                        <EyeOffIcon className="h-5 w-5" />
+                      ) : (
+                        <EyeIcon className="h-5 w-5" />
+                      )}
+                    </button>
+                  }
+                />
+              </div>
+
+              <PrimaryButton
+                type="submit"
+                size="lg"
+                icon={<ArrowRightIcon />}
+                disabled={formState.isSubmitting}
+              >
+                {c.primaryCta}
+              </PrimaryButton>
+            </form>
           </div>
-
-          <div className="space-y-1">
-            <label htmlFor="password" className="block text-sm">Password</label>
-            <input
-              id="password"
-              type="password"
-              autoComplete="current-password"
-              {...register('password')}
-              className="w-full rounded border border-warm-neutral-300 px-3 py-2"
-            />
-            {formState.errors.password && (
-              <p role="alert" className="text-sm text-red-700">{formState.errors.password.message}</p>
-            )}
-          </div>
-
-          <button
-            type="submit"
-            disabled={formState.isSubmitting}
-            className="w-full rounded bg-honey-amber-600 py-2 text-white"
-          >
-            Sign in
-          </button>
-        </form>
-
-        <div className="space-y-2">
-          <button
-            type="button"
-            onClick={() => void startOAuth('google')}
-            className="w-full rounded border border-warm-neutral-300 py-2"
-          >
-            Continue with Google
-          </button>
-          <button
-            type="button"
-            onClick={() => void startOAuth('apple')}
-            className="w-full rounded border border-warm-neutral-300 py-2"
-          >
-            Continue with Apple
-          </button>
         </div>
-      </div>
-    </main>
+      </main>
+      <AppFooter />
+    </div>
   );
 }

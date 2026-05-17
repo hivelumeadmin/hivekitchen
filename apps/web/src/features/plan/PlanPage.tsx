@@ -4,6 +4,7 @@ import { useScope } from '@hivekitchen/ui';
 import type { GetPlansResponse, PlanItemRow, PlanTileSummary } from '@hivekitchen/types';
 import { useLumiContext } from '@/hooks/useLumiContext.js';
 import { deriveWeekId, getMondayWeeksAgo } from '@/lib/derive-week-id.js';
+import { PageHeader } from '@/components/PageHeader.js';
 import { FreshnessState } from './FreshnessState.js';
 import { PlanTile } from './PlanTile.js';
 import { usePlanQuery } from './queries.js';
@@ -48,15 +49,15 @@ function toPlanTileSummaries(items: PlanItemRow[]): PlanTileSummary[] {
 function PlanWeekContent({ data }: { data: GetPlansResponse }) {
   const summaries = useMemo(() => toPlanTileSummaries(data.plan_items), [data.plan_items]);
   return (
-    <div className="flex flex-col gap-3" aria-label="Weekly plan">
-      <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+    <div className="flex flex-col gap-4" aria-label="Weekly plan">
+      <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
         {summaries.map((summary) => (
           <PlanTile key={summary.day} summary={summary} />
         ))}
       </div>
       {data.is_draft && (
         <p
-          className="font-sans text-[13px] text-stone-400 text-center mt-2"
+          className="font-sans text-[13px] text-fg-muted text-center mt-2"
           role="note"
         >
           This is a draft — Lumi may refine it before Monday.
@@ -105,15 +106,22 @@ export function PlanPage() {
     };
   }, []);
 
+  const eyebrow = activeWeek === 'next' ? "Next week's draft" : "This week's plan";
+  const headline = activeWeek === 'next' ? 'Looking ahead' : 'Your week, ready';
+
   return (
-    <main className="min-h-screen p-4 md:p-8 max-w-2xl mx-auto flex flex-col gap-6">
-      <div role="tablist" aria-label="Week selector" className="flex gap-2">
+    <main className="mx-auto w-full max-w-7xl flex-grow px-6 pt-12 pb-24">
+      <PageHeader eyebrow={eyebrow} headlineSize="lg" className="mb-8">
+        {headline}
+      </PageHeader>
+
+      <div role="tablist" aria-label="Week selector" className="mb-8 flex gap-2">
         <button
           type="button"
           role="tab"
           aria-selected={activeWeek === 'current'}
           onClick={() => setActiveWeek('current')}
-          className="rounded-full px-4 py-1.5 font-sans text-sm font-medium transition-colors motion-reduce:transition-none aria-selected:bg-stone-800 aria-selected:text-white aria-[selected=false]:text-stone-500 aria-[selected=false]:hover:text-stone-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-stone-400"
+          className="rounded-full px-4 py-1.5 font-sans text-sm font-medium transition-colors motion-reduce:transition-none aria-selected:bg-fg aria-selected:text-bg aria-[selected=false]:text-fg-muted aria-[selected=false]:hover:text-fg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-warm"
         >
           This week
         </button>
@@ -126,7 +134,7 @@ export function PlanPage() {
           onClick={() => {
             if (nextAvailable) setActiveWeek('next');
           }}
-          className="rounded-full px-4 py-1.5 font-sans text-sm font-medium transition-colors motion-reduce:transition-none aria-selected:bg-stone-800 aria-selected:text-white aria-[selected=false]:text-stone-500 aria-[selected=false]:enabled:hover:text-stone-700 disabled:opacity-40 disabled:cursor-not-allowed focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-stone-400"
+          className="rounded-full px-4 py-1.5 font-sans text-sm font-medium transition-colors motion-reduce:transition-none aria-selected:bg-fg aria-selected:text-bg aria-[selected=false]:text-fg-muted aria-[selected=false]:enabled:hover:text-fg disabled:opacity-40 disabled:cursor-not-allowed focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-warm"
         >
           Next week
         </button>
@@ -139,11 +147,8 @@ export function PlanPage() {
       {!isLoading && !isError && data !== undefined && (
         <>
           {data.plan === null ? (
-            // FR21 — pre-clearance draft: show the AC-specified copy as a
-            // sibling element. FreshnessState renders a generic loading line;
-            // the next-week copy is rendered separately so we don't duplicate.
             <p
-              className="mt-2 font-sans text-[13px] text-stone-500"
+              className="mt-2 font-sans text-[13px] text-fg-muted"
               role="status"
               aria-live="polite"
             >
@@ -158,12 +163,14 @@ export function PlanPage() {
       )}
 
       {activeWeek === 'current' && lastWeekId !== null && (
-        <Link
-          to={`/app/plan/${lastWeekId}`}
-          className="mt-2 self-center font-sans text-[13px] text-stone-500 underline underline-offset-2 hover:text-stone-700 transition-colors motion-reduce:transition-none focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-stone-400"
-        >
-          View last week
-        </Link>
+        <div className="mt-8 flex justify-center">
+          <Link
+            to={`/app/plan/${lastWeekId}`}
+            className="font-sans text-[13px] text-fg-muted underline underline-offset-2 hover:text-amber-warm transition-colors motion-reduce:transition-none focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-amber-warm"
+          >
+            View last week
+          </Link>
+        </div>
       )}
     </main>
   );

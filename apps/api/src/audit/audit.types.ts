@@ -19,6 +19,8 @@ export const AUDIT_EVENT_TYPES = [
   'memory.updated',
   'memory.seeded',
   // heart_note
+  'heart_note.created',
+  'heart_note.updated',
   'heart_note.sent',
   'heart_note.delivered',
   'heart_note.delivery_failed',
@@ -78,6 +80,7 @@ export const AUDIT_EVENT_TYPES = [
   // households
   'household.extra_library_item_created',
   'household.extra_library_item_archived',
+  'household.profile_updated',
   // school policies
   'school_policy.updated',
   // cultural

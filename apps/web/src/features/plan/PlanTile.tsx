@@ -98,19 +98,19 @@ export function PlanTile({
     }
   }
 
-  // Border treatment by state.
+  // Border treatment by state. v2.0 tokens — pending uses amber-warm dashed.
   const borderClass =
     state === 'pending-input'
-      ? 'border-2 border-dashed border-honey-amber-400'
-      : 'border border-stone-200';
+      ? 'border-2 border-dashed border-amber-warm'
+      : 'border border-border';
 
   const articleClasses = [
-    'relative rounded-lg p-4 flex flex-col gap-1',
+    'relative rounded-lg p-4 flex flex-col gap-1 transition-colors',
     borderClass,
-    hasMorningTint && !isPaused ? 'bg-honey-amber-100' : 'bg-white',
+    hasMorningTint && !isPaused ? 'bg-amber-warm/10' : 'bg-surface',
     isPast || isPaused ? 'opacity-60 pointer-events-none' : '',
     isInteractive
-      ? 'cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-stone-400 focus-visible:ring-offset-1'
+      ? 'cursor-pointer hover:border-amber-warm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-warm focus-visible:ring-offset-1'
       : '',
   ]
     .filter((c) => c !== '')
@@ -138,16 +138,16 @@ export function PlanTile({
         />
       )}
 
-      <h2 className="font-sans text-[13px] font-medium uppercase tracking-wide text-stone-500">
+      <h2 className="text-xs font-medium uppercase tracking-wider text-fg-muted">
         {DAY_LABELS[summary.day]}
       </h2>
 
       {dishLine !== '' ? (
-        <p className="font-sans text-[19px] font-semibold leading-[1.3] text-stone-900">
+        <p className="font-serif text-2xl leading-[1.25] text-fg">
           {dishLine}
         </p>
       ) : (
-        <p className="font-sans text-[15px] font-normal leading-[1.4] text-stone-400">
+        <p className="text-[15px] leading-[1.4] text-fg-muted/60">
           Plan pending
         </p>
       )}
@@ -165,7 +165,7 @@ export function PlanTile({
 
       {isPaused && (
         <p
-          className="mt-1 font-sans text-[12px] text-stone-400 italic"
+          className="mt-1 text-xs italic text-fg-muted/70"
           aria-label="Day paused — sick day"
         >
           Paused
@@ -179,7 +179,7 @@ export function PlanTile({
             aria-expanded={explainOpen}
             aria-controls={`plan-tile-frozen-${summary.day}`}
             onClick={() => setExplainOpen((open) => !open)}
-            className="mt-1 self-start font-sans text-[12px] text-stone-500 underline underline-offset-2 cursor-pointer focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-stone-400"
+            className="mt-1 self-start text-xs text-fg-muted underline underline-offset-2 cursor-pointer focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-amber-warm"
           >
             Editing locked
           </button>
@@ -187,7 +187,7 @@ export function PlanTile({
             <p
               id={`plan-tile-frozen-${summary.day}`}
               role="note"
-              className="mt-1 rounded-md bg-stone-50 p-2 font-sans text-[14px] leading-[1.5] text-stone-700"
+              className="mt-1 rounded-md bg-surface-2 p-2 text-[14px] leading-[1.5] text-fg"
             >
               Editing is locked every Sunday while we finalise your grocery list. It
               reopens within 4 hours.
@@ -200,9 +200,9 @@ export function PlanTile({
         <span
           aria-busy="true"
           aria-label="Swap in progress"
-          className="absolute inset-0 rounded-lg bg-white/70 flex items-center justify-center"
+          className="absolute inset-0 rounded-lg bg-bg/70 flex items-center justify-center"
         >
-          <span className="h-4 w-4 rounded-full border-2 border-stone-300 border-t-stone-700 animate-spin" />
+          <span className="h-4 w-4 rounded-full border-2 border-border border-t-amber-warm animate-spin" />
         </span>
       )}
     </article>

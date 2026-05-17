@@ -16,6 +16,12 @@ export interface RawHouseholdRow {
   tier_variant: string;
   timezone: string;
   kitchen_map_version: number;
+  // Slice 2-s27 — household-level food identity (cultural / dietary /
+  // declared_allergens). These are projected for the composer AFTER
+  // application-layer decryption — the columns on disk hold ciphertext.
+  cultural_identifiers: string[];
+  dietary_preferences: string[];
+  declared_allergens: string[];
 }
 
 export interface RawCaregiverRow {
@@ -59,13 +65,6 @@ export interface RawSchoolPolicyRow {
   slot_scope: 'bag_wide' | 'main' | 'snack' | 'extra';
 }
 
-export interface RawAllergyRuleRow {
-  household_id: string | null; // null = system FALCPA reference row
-  child_id: string | null;
-  allergen: string;
-  rule_type: 'falcpa' | 'parent_declared';
-}
-
 export interface RawExtraLibraryItemRow {
   id: string;
   name: string;
@@ -91,7 +90,6 @@ export interface RawKitchenMapData {
   cultural_priors: RawCulturalPriorRow[];
   memory_nodes: RawMemoryNodeRow[];
   school_policies: RawSchoolPolicyRow[];
-  allergy_rules: RawAllergyRuleRow[];
   extra_library: RawExtraLibraryItemRow[];
   recipe_usage: RawFavouriteRecipeRow[];
 }
@@ -134,14 +132,14 @@ interface UsageJoinRow {
 // Repository
 // ---------------------------------------------------------------------------
 
-const HOUSEHOLD_COLUMNS = 'id, tier, tier_variant, timezone, kitchen_map_version';
+const HOUSEHOLD_COLUMNS =
+  'id, tier, tier_variant, timezone, kitchen_map_version, cultural_identifiers, dietary_preferences, declared_allergens';
 const CAREGIVER_COLUMNS = 'id, role, display_name, cultural_language';
 const CHILD_COLUMNS =
   'id, name, age_band, declared_allergens, cultural_identifiers, dietary_preferences, bag_composition, extra_rules';
 const CULTURAL_PRIOR_COLUMNS = 'key, label, tier, state, confidence, presence';
 const MEMORY_COLUMNS = 'node_type, facet, prose_text, subject_child_id';
 const SCHOOL_POLICY_COLUMNS = 'child_id, policy_type, policy_description, slot_scope';
-const ALLERGY_RULE_COLUMNS = 'household_id, child_id, allergen, rule_type';
 const EXTRA_LIBRARY_COLUMNS = 'id, name, component_type';
 const USAGE_JOIN_COLUMNS =
   'recipe_id, confidence_score, is_household_favorite, is_household_banned, use_count, last_used_at, recipes(canonical_name, primary_ingredient_key, cuisine_tags)';
@@ -173,7 +171,6 @@ export class KitchenMapRepository extends BaseRepository {
       culturalRes,
       memoryRes,
       schoolPoliciesRes,
-      allergyRulesRes,
       extraLibraryRes,
       usageRes,
     ] = await Promise.all([
@@ -188,7 +185,6 @@ export class KitchenMapRepository extends BaseRepository {
         .is('soft_forget_at', null)
         .eq('hard_forgotten', false),
       this.fetchSchoolPoliciesForHousehold(householdId),
-      this.fetchAllergyRulesForHousehold(householdId),
       this.client.from('extra_library').select(EXTRA_LIBRARY_COLUMNS).eq('household_id', householdId),
       this.client
         .from('household_recipe_usage')
@@ -210,8 +206,47 @@ export class KitchenMapRepository extends BaseRepository {
 
     const dek = await dekPromise;
 
+    // Slice 2-s27 — decrypt the three new household-level columns. NULL on
+    // any column reads back as []. A decrypt failure is logged and treated
+    // as [] (mirror of the children decrypt-skip pattern) — never crash the
+    // whole map on a single corrupt cell.
+    const householdRaw = householdRes.data as {
+      id: string;
+      tier: string;
+      tier_variant: string;
+      timezone: string;
+      kitchen_map_version: number;
+      cultural_identifiers: string | null;
+      dietary_preferences: string | null;
+      declared_allergens: string | null;
+    };
+
     return {
-      household: householdRes.data as RawHouseholdRow,
+      household: {
+        id: householdRaw.id,
+        tier: householdRaw.tier,
+        tier_variant: householdRaw.tier_variant,
+        timezone: householdRaw.timezone,
+        kitchen_map_version: householdRaw.kitchen_map_version,
+        cultural_identifiers: this.decryptHouseholdArrayColumn(
+          householdRaw.cultural_identifiers,
+          dek,
+          'cultural_identifiers',
+          householdId,
+        ),
+        dietary_preferences: this.decryptHouseholdArrayColumn(
+          householdRaw.dietary_preferences,
+          dek,
+          'dietary_preferences',
+          householdId,
+        ),
+        declared_allergens: this.decryptHouseholdArrayColumn(
+          householdRaw.declared_allergens,
+          dek,
+          'declared_allergens',
+          householdId,
+        ),
+      },
       caregivers: ((caregiversRes.data ?? []) as Array<{
         id: string;
         role: RawCaregiverRow['role'];
@@ -227,7 +262,6 @@ export class KitchenMapRepository extends BaseRepository {
       cultural_priors: (culturalRes.data ?? []) as RawCulturalPriorRow[],
       memory_nodes: (memoryRes.data ?? []) as RawMemoryNodeRow[],
       school_policies: schoolPoliciesRes,
-      allergy_rules: allergyRulesRes,
       extra_library: (extraLibraryRes.data ?? []) as RawExtraLibraryItemRow[],
       recipe_usage: this.projectUsageRows((usageRes.data ?? []) as unknown as UsageJoinRow[]),
     };
@@ -268,24 +302,6 @@ export class KitchenMapRepository extends BaseRepository {
       .eq('is_active', true);
     if (error) throw error;
     return (data ?? []) as RawSchoolPolicyRow[];
-  }
-
-  private async fetchAllergyRulesForHousehold(
-    householdId: string,
-  ): Promise<RawAllergyRuleRow[]> {
-    // Two queries: FALCPA reference rows (household_id IS NULL) plus the
-    // household's own parent-declared rows. Avoids a PostgREST `.or()`
-    // filter that would interpolate the householdId into a query string.
-    const [system, household] = await Promise.all([
-      this.client.from('allergy_rules').select(ALLERGY_RULE_COLUMNS).is('household_id', null),
-      this.client.from('allergy_rules').select(ALLERGY_RULE_COLUMNS).eq('household_id', householdId),
-    ]);
-    if (system.error) throw system.error;
-    if (household.error) throw household.error;
-    return [
-      ...((system.data ?? []) as RawAllergyRuleRow[]),
-      ...((household.data ?? []) as RawAllergyRuleRow[]),
-    ];
   }
 
   private decryptChildren(rows: EncryptedChildRow[], dek: Buffer | null): RawChildRow[] {
@@ -379,6 +395,32 @@ export class KitchenMapRepository extends BaseRepository {
       return typeof parsed === 'object' && parsed !== null ? (parsed as Record<string, unknown>) : null;
     } catch {
       return null;
+    }
+  }
+
+  // Slice 2-s27 — decrypt one of the household-level food-identity columns.
+  // NULL → []; corrupt cell → [] with a warn log.
+  private decryptHouseholdArrayColumn(
+    stored: string | null,
+    dek: Buffer | null,
+    fieldName: string,
+    householdId: string,
+  ): string[] {
+    if (stored === null) return [];
+    try {
+      return decryptField<string[]>(stored, dek);
+    } catch (err) {
+      this.logger.error(
+        {
+          err,
+          module: 'kitchen-map',
+          action: 'kitchen_map.household_field_decrypt_failed',
+          household_id: householdId,
+          field: fieldName,
+        },
+        'kitchen-map household-field decryption failed — projected as []',
+      );
+      return [];
     }
   }
 }

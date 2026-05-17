@@ -1,0 +1,24 @@
+-- Slice 2-s27 — household food identity backfill PLACEHOLDER.
+--
+-- The columns added in 20260902000000_add_household_food_identity_columns.sql
+-- are envelope-encrypted (AES-GCM under the household DEK). Backfilling them
+-- requires decrypting each child's arrays, computing the de-duplicated union,
+-- and re-encrypting under the household DEK — none of which is possible in
+-- pure SQL because the cipher lives in the application layer.
+--
+-- The actual backfill runs as a one-shot Node script:
+--
+--   pnpm --filter @hivekitchen/api exec tsx scripts/backfill-household-food-identity.ts
+--
+-- See apps/api/scripts/backfill-household-food-identity.ts for the
+-- implementation. The script is idempotent — re-running it produces the same
+-- result. Run it AFTER applying this migration and BEFORE deploying the API
+-- changes that read the new household-level columns (otherwise newly-onboarded
+-- households start with empty arrays, which is correct, but pre-existing
+-- households would read empty arrays at the household level even though
+-- their children carry data — an apparent regression).
+--
+-- This SQL file exists only as a marker in the migration timeline so the
+-- ordering matches the application-side rollout.
+
+SELECT 1;

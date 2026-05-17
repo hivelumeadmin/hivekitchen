@@ -80,6 +80,9 @@ export function AudioPanel({ caption, text }: AudioPanelProps) {
   // Used in the close handler to decide whether to surface an error — read
   // from a ref because the close callback closes over a stale `status` state.
   const heardAudioRef = useRef<boolean>(false);
+  // Tracks whether the server sent isFinal=true during the current WS lifetime.
+  // Used in the close handler to detect a normal close without isFinal (truncated stream).
+  const isFinalReceivedRef = useRef<boolean>(false);
   const [status, setStatus] = useState<AudioStatus>('idle');
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
@@ -103,7 +106,12 @@ export function AudioPanel({ caption, text }: AudioPanelProps) {
     if (ctx === null) return;
 
     // base64 → Uint8Array → Int16Array (PCM 16-bit signed little-endian)
-    const binary = atob(base64);
+    let binary: string;
+    try {
+      binary = atob(base64);
+    } catch {
+      return;
+    }
     const bytes = new Uint8Array(binary.length);
     for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
     const pcm = new Int16Array(bytes.buffer, bytes.byteOffset, bytes.byteLength / 2);
@@ -111,6 +119,8 @@ export function AudioPanel({ caption, text }: AudioPanelProps) {
     // Int16 PCM → Float32 [-1, 1] for AudioBuffer
     const float = new Float32Array(pcm.length);
     for (let i = 0; i < pcm.length; i++) float[i] = pcm[i]! / 0x8000;
+
+    if (float.length === 0) return;
 
     const buffer = ctx.createBuffer(1, float.length, sampleRateRef.current);
     buffer.copyToChannel(float, 0);
@@ -128,6 +138,7 @@ export function AudioPanel({ caption, text }: AudioPanelProps) {
 
   const startPlayback = useCallback(async () => {
     if (status === 'connecting' || status === 'playing') return;
+    cleanup();
     setStatus('connecting');
     setErrorMessage(null);
 
@@ -155,8 +166,10 @@ export function AudioPanel({ caption, text }: AudioPanelProps) {
         // Init audio context lazily so playback respects the user gesture
         // (browsers gate autoplay on user interaction).
         audioCtxRef.current = new AudioContext({ sampleRate: sampleRateRef.current });
+        void audioCtxRef.current.resume();
         nextPlayTimeRef.current = 0;
         heardAudioRef.current = false;
+        isFinalReceivedRef.current = false;
 
         // 3. Init message — ElevenLabs TTS WS convention is to send a
         //    leading space first along with voice settings + generation
@@ -188,6 +201,12 @@ export function AudioPanel({ caption, text }: AudioPanelProps) {
         if (typeof msg !== 'object' || msg === null) return;
         const m = msg as { audio?: unknown; isFinal?: unknown; error?: unknown };
 
+        if (typeof m.error === 'string' && m.error.length > 0) {
+          setStatus('error');
+          setErrorMessage(m.error);
+          return;
+        }
+
         if (typeof m.audio === 'string' && m.audio.length > 0) {
           heardAudioRef.current = true;
           setStatus('playing');
@@ -195,21 +214,17 @@ export function AudioPanel({ caption, text }: AudioPanelProps) {
         }
 
         if (m.isFinal === true) {
+          isFinalReceivedRef.current = true;
           // Server has emitted all audio. Wait out remaining scheduled
-          // playback then close + transition to paused.
+          // playback then close + transition to idle.
           const remaining = Math.max(
             0,
             (nextPlayTimeRef.current - (audioCtxRef.current?.currentTime ?? 0)) * 1000,
           );
           setTimeout(() => {
             try { ws.close(1000, 'narration complete'); } catch { /* noop */ }
-            setStatus('paused');
+            setStatus('idle');
           }, remaining + 250);
-        }
-
-        if (typeof m.error === 'string' && m.error.length > 0) {
-          setStatus('error');
-          setErrorMessage(m.error);
         }
       });
 
@@ -219,12 +234,15 @@ export function AudioPanel({ caption, text }: AudioPanelProps) {
       });
 
       ws.addEventListener('close', (e) => {
-        // If the WS closed before we ever heard audio, surface an error.
-        // (close callbacks see a stale `status`, so we use heardAudioRef instead.)
         if (e.code !== 1000 && !heardAudioRef.current) {
+          // Closed abnormally before any audio arrived — surface as error.
           setStatus('error');
           setErrorMessage(`Connection closed (${e.code})`);
+        } else if (!isFinalReceivedRef.current) {
+          // Closed (normally or not) before isFinal — reset to idle rather than hang.
+          setStatus('idle');
         }
+        // isFinal handler already set status when isFinalReceivedRef is true.
       });
     } catch (err) {
       setStatus('error');

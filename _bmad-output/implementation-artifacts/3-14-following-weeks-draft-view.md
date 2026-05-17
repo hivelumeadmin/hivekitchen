@@ -2,6 +2,13 @@
 
 Status: done
 
+> **v2.0 migration applied (γ Phase 3c, May 2026).** PlanPage shell migrated:
+> `min-h-screen p-4 md:p-8 max-w-2xl` → `max-w-7xl flex-grow px-6 pt-12 pb-24`.
+> Dynamic `PageHeader` added (eyebrow + headline switch with active tab).
+> Tab pill tokens retoked (`bg-stone-800/text-white` → `bg-fg/text-bg`).
+> Friday-4pm-UTC gate + adapter + draft polling + "View last week" link are
+> **still authoritative**. See [`../v2-migration-log.md`](../v2-migration-log.md).
+
 ## Dev Agent Record
 
 ### Implementation Plan

@@ -14,13 +14,15 @@ function makeRaw(overrides: Partial<RawKitchenMapData> = {}): RawKitchenMapData 
       tier_variant: 'beta',
       timezone: 'America/New_York',
       kitchen_map_version: 7,
+      cultural_identifiers: [],
+      dietary_preferences: [],
+      declared_allergens: [],
     },
     caregivers: [],
     children: [],
     cultural_priors: [],
     memory_nodes: [],
     school_policies: [],
-    allergy_rules: [],
     extra_library: [],
     recipe_usage: [],
     ...overrides,
@@ -35,6 +37,9 @@ describe('composeKitchenMap — household + meta', () => {
       tier: 'standard',
       tier_variant: 'beta',
       timezone: 'America/New_York',
+      cultural_identifiers: [],
+      dietary_preferences: [],
+      declared_allergens: [],
     });
     expect(map.meta.map_version).toBe(7);
     expect(map.meta.schema_version).toBe('1.0.0');
@@ -301,43 +306,6 @@ describe('composeKitchenMap — memory', () => {
       }),
     );
     expect(m.memory.nodes).toHaveLength(0);
-  });
-});
-
-describe('composeKitchenMap — allergy rules', () => {
-  it('splits FALCPA system rows from household-declared rows', () => {
-    const m = composeKitchenMap(
-      makeRaw({
-        allergy_rules: [
-          // System FALCPA reference row
-          { household_id: null, child_id: null, allergen: 'peanut', rule_type: 'falcpa' },
-          // Household-declared parent-class rule for a specific child
-          { household_id: UUID(1), child_id: UUID(10), allergen: 'sesame', rule_type: 'parent_declared' },
-          // Household-declared FALCPA-class scoped to the household
-          { household_id: UUID(1), child_id: null, allergen: 'peanut', rule_type: 'falcpa' },
-        ],
-      }),
-    );
-    expect(m.allergy_rules.falcpa).toHaveLength(1);
-    expect(m.allergy_rules.falcpa[0]).toEqual({
-      allergen: 'peanut',
-      rule_type: 'falcpa',
-      scope_child_id: null,
-    });
-    expect(m.allergy_rules.household_declared).toHaveLength(2);
-  });
-
-  it('drops mixed-invalid combinations', () => {
-    const m = composeKitchenMap(
-      makeRaw({
-        allergy_rules: [
-          // household_id NULL but rule_type parent_declared — nonsensical, drop
-          { household_id: null, child_id: null, allergen: 'mustard', rule_type: 'parent_declared' },
-        ],
-      }),
-    );
-    expect(m.allergy_rules.falcpa).toHaveLength(0);
-    expect(m.allergy_rules.household_declared).toHaveLength(0);
   });
 });
 

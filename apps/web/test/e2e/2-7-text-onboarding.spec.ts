@@ -1,7 +1,7 @@
 import { test, expect } from '@playwright/test';
 import { loginAndNavigate } from './_helpers.js';
 
-const OPENING_GREETING_FRAGMENT = /i'm lumi.*your family/i;
+const OPENING_GREETING_FRAGMENT = /i'm lumi.*planning lunches/i;
 
 test.describe('Story 2-7: text-equivalent onboarding path', () => {
   test('clicking "I\'d rather type" mounts the text conversation with Lumi\'s opening greeting', async ({

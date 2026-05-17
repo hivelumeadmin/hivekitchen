@@ -13,6 +13,7 @@ import { useLumiContext } from '@/hooks/useLumiContext.js';
 import { useAuthStore } from '@/stores/auth.store.js';
 import { useComplianceStore } from '@/stores/compliance.store.js';
 import { ParentalNoticeView } from '@/features/compliance/ParentalNoticeView.js';
+import { PageHeader } from '@/components/PageHeader.js';
 
 type LoadState = 'loading' | 'ready' | 'error';
 
@@ -211,16 +212,16 @@ export default function AccountPage() {
 
   if (loadState === 'loading') {
     return (
-      <main className="min-h-screen flex items-center justify-center px-6">
-        <p className="font-serif text-lg text-warm-neutral-700">Loading your profile…</p>
+      <main className="mx-auto flex w-full max-w-7xl flex-grow items-center justify-center px-6 py-24">
+        <p className="font-serif text-lg text-fg-muted">Loading your profile…</p>
       </main>
     );
   }
 
   if (loadState === 'error' || !profile) {
     return (
-      <main className="min-h-screen flex items-center justify-center px-6">
-        <p role="alert" className="font-serif text-lg text-warm-neutral-700">
+      <main className="mx-auto flex w-full max-w-7xl flex-grow items-center justify-center px-6 py-24">
+        <p role="alert" className="font-serif text-lg text-fg-muted">
           We couldn&apos;t load your account. Please try again later.
         </p>
       </main>
@@ -232,15 +233,16 @@ export default function AccountPage() {
   const culturalLanguageLocked = profile.cultural_language !== 'default';
 
   return (
-    <main className="min-h-screen px-6 py-12">
+    <main className="mx-auto w-full max-w-7xl flex-grow px-6 pt-12 pb-24">
+      <PageHeader
+        eyebrow="Settings"
+        headlineSize="md"
+        description="Update your details. Changes apply only to your profile."
+        className="mb-12"
+      >
+        Your account
+      </PageHeader>
       <div className="mx-auto w-full max-w-md space-y-8">
-        <header className="space-y-2">
-          <h1 className="font-serif text-3xl">Your account</h1>
-          <p className="text-sm text-warm-neutral-700">
-            Update your details. Changes apply only to your profile.
-          </p>
-        </header>
-
         <form onSubmit={handleSave} className="space-y-5" noValidate>
           <div className="space-y-1">
             <label htmlFor="display_name" className="block text-sm">Display name</label>
@@ -250,7 +252,7 @@ export default function AccountPage() {
               value={displayName}
               onChange={(e) => setDisplayName(e.target.value)}
               maxLength={100}
-              className="w-full rounded border border-warm-neutral-300 px-3 py-2"
+              className="w-full rounded border border-border px-3 py-2"
             />
           </div>
 
@@ -262,7 +264,7 @@ export default function AccountPage() {
               value={preferredLanguage}
               onChange={(e) => setPreferredLanguage(e.target.value)}
               maxLength={10}
-              className="w-full rounded border border-warm-neutral-300 px-3 py-2"
+              className="w-full rounded border border-border px-3 py-2"
             />
           </div>
 
@@ -270,7 +272,7 @@ export default function AccountPage() {
             <label htmlFor="email" className="block text-sm">Email</label>
             {!editingEmail ? (
               <div className="flex items-center justify-between">
-                <p className="text-sm text-warm-neutral-700">{profile.email}</p>
+                <p className="text-sm text-fg-muted">{profile.email}</p>
                 {isEmailProvider && (
                   <button
                     type="button"
@@ -288,50 +290,50 @@ export default function AccountPage() {
                 value={emailDraft}
                 onChange={(e) => setEmailDraft(e.target.value)}
                 maxLength={254}
-                className="w-full rounded border border-warm-neutral-300 px-3 py-2"
+                className="w-full rounded border border-border px-3 py-2"
               />
             )}
           </div>
 
           {saveError && (
-            <p role="alert" className="text-sm text-red-700">{saveError}</p>
+            <p role="alert" className="text-sm text-safety-red">{saveError}</p>
           )}
 
           <button
             type="submit"
             disabled={saving}
-            className="w-full rounded bg-honey-amber-600 py-2 text-white"
+            className="w-full rounded bg-amber-warm py-2 font-medium text-bg transition-colors hover:bg-amber motion-reduce:transition-none disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-warm focus-visible:ring-offset-2"
           >
             {saving ? 'Saving…' : 'Save changes'}
           </button>
         </form>
 
-        <section className="space-y-3 border-t border-warm-neutral-200 pt-6">
-          <h2 className="font-serif text-xl">Password</h2>
+        <section className="space-y-3 border-t border-border pt-6">
+          <h2 className="font-serif text-xl text-fg">Password</h2>
           {isEmailProvider ? (
             <>
               <button
                 type="button"
                 onClick={() => void handlePasswordReset()}
                 disabled={resetSent}
-                className="w-full rounded border border-warm-neutral-300 py-2"
+                className="w-full rounded border border-border py-2"
               >
                 {resetSent ? 'Check your inbox — a reset link has been sent' : 'Send password reset email'}
               </button>
               {resetError && (
-                <p role="alert" className="text-sm text-red-700">{resetError}</p>
+                <p role="alert" className="text-sm text-safety-red">{resetError}</p>
               )}
             </>
           ) : (
-            <p className="text-sm text-warm-neutral-700">
+            <p className="text-sm text-fg-muted">
               Your account is managed at {oauthProvider ?? 'your provider'}.
             </p>
           )}
         </section>
 
-        <section className="space-y-3 border-t border-warm-neutral-200 pt-6">
-          <h2 className="font-serif text-xl">Notifications</h2>
-          <p className="text-sm text-warm-neutral-700">
+        <section className="space-y-3 border-t border-border pt-6">
+          <h2 className="font-serif text-xl text-fg">Notifications</h2>
+          <p className="text-sm text-fg-muted">
             Choose when Lumi reaches out. Toggle anytime.
           </p>
           <label className="flex items-center justify-between gap-3 py-1">
@@ -359,13 +361,13 @@ export default function AccountPage() {
             />
           </label>
           {notifError && (
-            <p role="alert" className="text-sm text-red-700">{notifError}</p>
+            <p role="alert" className="text-sm text-safety-red">{notifError}</p>
           )}
         </section>
 
-        <section className="space-y-3 border-t border-warm-neutral-200 pt-6">
-          <h2 className="font-serif text-xl">Family language</h2>
-          <p className="text-sm text-warm-neutral-700">
+        <section className="space-y-3 border-t border-border pt-6">
+          <h2 className="font-serif text-xl text-fg">Family language</h2>
+          <p className="text-sm text-fg-muted">
             How Lumi refers to family members in your household.
           </p>
           <select
@@ -375,7 +377,7 @@ export default function AccountPage() {
               void handleCulturalLanguageChange(e.target.value as CulturalLanguagePreference)
             }
             disabled={culturalSaving}
-            className="w-full rounded border border-warm-neutral-300 px-3 py-2"
+            className="w-full rounded border border-border px-3 py-2"
           >
             {CULTURAL_LANGUAGE_OPTIONS.map((opt) => (
               <option
@@ -388,25 +390,25 @@ export default function AccountPage() {
             ))}
           </select>
           {culturalLanguageLocked && (
-            <p className="text-sm text-warm-neutral-700">
+            <p className="text-sm text-fg-muted">
               Family language cannot be changed back once set.
             </p>
           )}
           {culturalError && (
-            <p role="alert" className="text-sm text-red-700">{culturalError}</p>
+            <p role="alert" className="text-sm text-safety-red">{culturalError}</p>
           )}
         </section>
 
-        <section className="space-y-3 border-t border-warm-neutral-200 pt-6">
-          <h2 className="font-serif text-xl">Privacy &amp; Data</h2>
+        <section className="space-y-3 border-t border-border pt-6">
+          <h2 className="font-serif text-xl text-fg">Privacy &amp; Data</h2>
           {profile.parental_notice_acknowledged_at !== null ? (
-            <p className="text-sm text-warm-neutral-700">
+            <p className="text-sm text-fg-muted">
               You acknowledged our parental notice on{' '}
               {new Date(profile.parental_notice_acknowledged_at).toLocaleDateString()}{' '}
               (version {profile.parental_notice_acknowledged_version ?? 'unknown'}).
             </p>
           ) : (
-            <p className="text-sm text-warm-neutral-700">
+            <p className="text-sm text-fg-muted">
               You haven&apos;t read our parental notice yet.
             </p>
           )}
@@ -418,7 +420,7 @@ export default function AccountPage() {
             {showNotice ? 'Hide the parental notice' : 'Read the parental notice'}
           </button>
           {showNotice && (
-            <div className="mt-3 rounded-2xl border border-warm-neutral-200 bg-warm-neutral-50 px-4 py-3">
+            <div className="mt-3 rounded-2xl border border-border bg-surface px-4 py-3">
               <ParentalNoticeView />
             </div>
           )}

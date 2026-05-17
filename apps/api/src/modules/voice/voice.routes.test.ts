@@ -265,10 +265,10 @@ describe('POST /v1/voice/tts/token (slice 2-s20)', () => {
     app = await buildTestApp({ supabase: buildMockSupabase({}) });
     const token = signAccessToken(app);
 
+    let capturedUrl: string | undefined;
     fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(
       async (input: unknown) => {
-        const url = typeof input === 'string' ? input : (input as URL).toString();
-        expect(url).toBe('https://api.elevenlabs.io/v1/single-use-token/tts_websocket');
+        capturedUrl = typeof input === 'string' ? input : (input as URL).toString();
         return new Response(JSON.stringify({ token: 'el-single-use-abc' }), {
           status: 200,
           headers: { 'content-type': 'application/json' },
@@ -282,6 +282,7 @@ describe('POST /v1/voice/tts/token (slice 2-s20)', () => {
       headers: { authorization: `Bearer ${token}` },
     });
 
+    expect(capturedUrl).toBe('https://api.elevenlabs.io/v1/single-use-token/tts_websocket');
     expect(res.statusCode).toBe(200);
     const body = JSON.parse(res.body) as {
       token: string;

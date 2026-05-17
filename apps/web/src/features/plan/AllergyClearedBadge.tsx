@@ -76,7 +76,7 @@ export function AllergyClearedBadge({
           aria-modal={false}
           aria-labelledby={labelId}
           onKeyDown={handleKeyDown}
-          className="absolute z-30 mt-2 max-w-[320px] rounded-lg border border-stone-200 bg-white p-3 shadow-sm font-sans text-[14px] leading-[1.5] text-stone-700"
+          className="absolute z-30 mt-2 max-w-[320px] rounded-lg border border-border bg-surface p-3 shadow-sm font-sans text-sm leading-[1.5] text-fg-muted"
         >
           <p>
             We checked every ingredient against {childName}&apos;s {allergen} allergy.

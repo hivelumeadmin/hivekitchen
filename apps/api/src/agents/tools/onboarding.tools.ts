@@ -4,11 +4,14 @@ import {
   ChildUpsertOutputSchema,
   CulturalNoteInputSchema,
   CulturalNoteOutputSchema,
+  HouseholdUpsertInputSchema,
+  HouseholdUpsertOutputSchema,
   MemoryNoteFromOnboardingInputSchema,
   MemoryNoteFromOnboardingOutputSchema,
 } from '@hivekitchen/contracts';
 import type { ChildrenService } from '../../modules/children/children.service.js';
 import type { CulturalPriorRepository } from '../../modules/cultural-priors/cultural-prior.repository.js';
+import type { HouseholdsService } from '../../modules/households/households.service.js';
 import type { MemoryService } from '../../modules/memory/memory.service.js';
 import type { VocabularyService } from '../../modules/vocabulary/vocabulary.service.js';
 import type { ToolSpec } from '../tools.manifest.js';
@@ -40,6 +43,7 @@ export interface OnboardingToolContext {
 export interface OnboardingToolDeps {
   childrenService: ChildrenService;
   culturalPriorRepository: CulturalPriorRepository;
+  householdsService: HouseholdsService;
   memoryService: MemoryService;
   vocabularyService: VocabularyService;
 }
@@ -258,12 +262,100 @@ export function createMemoryNoteToolSpec(
   };
 }
 
+// ---- household.upsert ----------------------------------------------------
+
+// Slice 2-s27 — household-level food-identity facts (cultural identifiers,
+// dietary preferences, household-wide declared allergens) live on the
+// household row, not duplicated across every child. This tool is the agent's
+// PATCH-style writer for those fields. PATCH semantics mirror child.upsert:
+// omit a field to preserve, empty array to clear, non-empty array to replace.
+
+export function createHouseholdUpsertToolSpec(
+  ctx: OnboardingToolContext,
+  deps: OnboardingToolDeps,
+): ToolSpec {
+  return {
+    name: 'household.upsert',
+    description:
+      'Record household-level food identity. Use this for facts that describe ' +
+      'the whole home — cultural identity, dietary rules, religious or cultural ' +
+      'allergen exclusions. Example triggers: "we\'re a halal household" → set ' +
+      'dietary_preferences=["halal"]; "we don\'t eat pork" → set ' +
+      'declared_allergens=["pork"]; "we\'re Malayali" → set cultural_identifiers=' +
+      '["south_asian","malayali"]. PATCH semantics: only include fields you are ' +
+      'updating; omitting a field preserves the existing value; passing an empty ' +
+      'array clears it. Do NOT use this for per-child facts — use child.upsert ' +
+      'for medical allergies, names, and ages. Tag values are validated against ' +
+      'the household vocabulary (the system prompt lists the active sets). ' +
+      'ALLERGEN ACCUMULATION: if you are adding allergens across multiple turns, ' +
+      'use declared_allergens_add (NOT declared_allergens) so you do not silently ' +
+      'overwrite allergens recorded in a previous turn. declared_allergens_add ' +
+      'merges items into the existing list. declared_allergens replaces the full ' +
+      'list — only use it when you have the complete set. The two fields are ' +
+      'mutually exclusive in a single call.',
+    inputSchema: HouseholdUpsertInputSchema,
+    outputSchema: HouseholdUpsertOutputSchema,
+    maxLatencyMs: 1200,
+    fn: async (input: unknown) => {
+      const parsed = HouseholdUpsertInputSchema.parse(input);
+
+      if (parsed.declared_allergens !== undefined && parsed.declared_allergens_add !== undefined) {
+        throw new Error(
+          'declared_allergens and declared_allergens_add are mutually exclusive — use declared_allergens_add to add items, declared_allergens to replace the full list',
+        );
+      }
+
+      let result;
+      if (parsed.declared_allergens_add !== undefined) {
+        result = await deps.householdsService.addAllergens(
+          ctx.householdId,
+          parsed.declared_allergens_add,
+          {
+            cultural_identifiers: parsed.cultural_identifiers,
+            dietary_preferences: parsed.dietary_preferences,
+          },
+        );
+      } else {
+        result = await deps.householdsService.patchProfile(ctx.householdId, {
+          cultural_identifiers: parsed.cultural_identifiers,
+          dietary_preferences: parsed.dietary_preferences,
+          declared_allergens: parsed.declared_allergens,
+        });
+      }
+
+      ctx.logger.info(
+        {
+          module: 'onboarding-tools',
+          action: 'household.upsert',
+          household_id: ctx.householdId,
+          user_id: ctx.userId,
+          changed_fields: [
+            parsed.cultural_identifiers !== undefined ? 'cultural_identifiers' : null,
+            parsed.dietary_preferences !== undefined ? 'dietary_preferences' : null,
+            parsed.declared_allergens !== undefined ? 'declared_allergens' : null,
+            parsed.declared_allergens_add !== undefined ? 'declared_allergens_add' : null,
+          ].filter((v): v is string => v !== null),
+          cultural_count: result.cultural_identifiers.length,
+          dietary_count: result.dietary_preferences.length,
+          allergen_count: result.declared_allergens.length,
+        },
+        'household.upsert handled',
+      );
+
+      return HouseholdUpsertOutputSchema.parse({
+        household_id: result.id,
+        was_existing: true,
+      });
+    },
+  };
+}
+
 // ---- Factory bundle ------------------------------------------------------
 
 /**
- * Convenience: build all three tool specs for a given (householdId, userId)
- * context. The OnboardingService calls this per turn and passes the returned
- * array to OnboardingAgent.respond().
+ * Convenience: build the full tool spec bundle for a given (householdId,
+ * userId) context. The OnboardingService calls this per turn and passes the
+ * returned array to OnboardingAgent.respond().
  */
 export function createOnboardingToolSpecs(
   ctx: OnboardingToolContext,
@@ -273,5 +365,6 @@ export function createOnboardingToolSpecs(
     createChildUpsertToolSpec(ctx, deps),
     createCulturalNoteToolSpec(ctx, deps),
     createMemoryNoteToolSpec(ctx, deps),
+    createHouseholdUpsertToolSpec(ctx, deps),
   ];
 }

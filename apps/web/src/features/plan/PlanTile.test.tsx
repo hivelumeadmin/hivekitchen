@@ -106,18 +106,18 @@ describe('PlanTile structure', () => {
 });
 
 describe('PlanTile variants', () => {
-  it('today + morning: applies bg-honey-amber-100 tint', () => {
+  it('today + morning: applies bg-amber-warm/10 tint', () => {
     vi.setSystemTime(MONDAY_MORNING);
     render(<PlanTile summary={makeSummary({ day: 'monday' })} />);
     const article = screen.getByLabelText('Monday');
-    expect(article.className).toContain('bg-honey-amber-100');
+    expect(article.className).toContain('bg-amber-warm/10');
   });
 
   it('today + afternoon: omits the morning tint', () => {
     vi.setSystemTime(MONDAY_AFTERNOON);
     render(<PlanTile summary={makeSummary({ day: 'monday' })} />);
     const article = screen.getByLabelText('Monday');
-    expect(article.className).not.toContain('bg-honey-amber-100');
+    expect(article.className).not.toContain('bg-amber-warm/10');
   });
 
   it('past variant: low-saturation classes and tabIndex=-1', () => {
@@ -153,7 +153,7 @@ describe('PlanTile states', () => {
     );
     const article = screen.getByLabelText('Monday');
     expect(article.className).toContain('border-dashed');
-    expect(article.className).toContain('border-honey-amber-400');
+    expect(article.className).toContain('border-amber-warm');
   });
 
   it('swap-in-progress: renders an aria-busy overlay', () => {

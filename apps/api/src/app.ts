@@ -47,6 +47,7 @@ import { culturalPriorRoutes } from './modules/cultural-priors/cultural-prior.ro
 import { householdsRoutes } from './modules/households/households.routes.js';
 import { plansRoutes } from './modules/plans/plans.routes.js';
 import { lumiRoutes } from './modules/lumi/lumi.routes.js';
+import { heartNoteRoutes } from './modules/heart-notes/heart-note.routes.js';
 
 const REQUEST_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -117,17 +118,25 @@ export async function buildApp(opts: BuildAppOptions) {
     sign: { expiresIn: '15m' },
   });
 
-  await app.register(authenticateHook);
-  await app.register(householdScopeHook);
-
-  await app.register(sensible);
-  await app.register(websocket);
-
+  // CORS must register BEFORE authenticateHook. @fastify/cors uses an
+  // onRequest hook to attach Access-Control-Allow-* headers and to short-
+  // circuit preflight OPTIONS. If it registers after the auth hook, auth
+  // runs first and a 401 response is sent without CORS headers — the
+  // browser then reports a CORS error instead of the real 401 (which is
+  // what we were seeing on /v1/events SSE, where EventSource can't send
+  // Authorization). Registering CORS first ensures every response — error
+  // or not — carries the CORS headers.
   await app.register(cors, {
     origin: env.CORS_ALLOWED_ORIGINS,
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
     credentials: true,
   });
+
+  await app.register(authenticateHook);
+  await app.register(householdScopeHook);
+
+  await app.register(sensible);
+  await app.register(websocket);
 
   app.setErrorHandler((err, request, reply) => {
     if (isDomainError(err)) {
@@ -190,6 +199,7 @@ export async function buildApp(opts: BuildAppOptions) {
   await app.register(householdsRoutes);
   await app.register(plansRoutes);
   await app.register(lumiRoutes, { prefix: '/v1/lumi' });
+  await app.register(heartNoteRoutes);
 
   return app;
 }

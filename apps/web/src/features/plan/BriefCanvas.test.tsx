@@ -60,7 +60,15 @@ function makeBrief(overrides: Partial<BriefStateRow> = {}): BriefStateRow {
   };
 }
 
+// Anchor every test to Monday morning so PlanTile variant derivation is
+// deterministic (Monday is "today" → interactive). Without this, tests run
+// against the real wall clock and Monday becomes "past" any day Tue–Sat,
+// making click-driven assertions (DisambiguationPicker open) flake.
+const MONDAY_MORNING = new Date(2026, 4, 4, 8, 0, 0); // Mon May 4 2026 08:00
+
 beforeEach(() => {
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+  vi.setSystemTime(MONDAY_MORNING);
   document.documentElement.classList.add('app-scope');
   setUser();
   vi.clearAllMocks();
@@ -72,6 +80,7 @@ afterEach(() => {
   document.documentElement.classList.remove('app-scope');
   vi.restoreAllMocks();
   vi.unstubAllEnvs();
+  vi.useRealTimers();
 });
 
 describe('BriefCanvas', () => {
@@ -99,7 +108,7 @@ describe('BriefCanvas', () => {
     });
   });
 
-  it('renders MomentHeadline, LumiNote, tile grid, and FreshnessState when brief is populated', async () => {
+  it('renders PageHeader (headline + lumi_note), tile grid, and FreshnessState when brief is populated', async () => {
     const { hkFetch } = await import('@/lib/fetch.js');
     vi.mocked(hkFetch).mockResolvedValue({ brief: makeBrief() } satisfies BriefResponse);
 
@@ -188,7 +197,7 @@ describe('BriefCanvas', () => {
     expect(screen.queryByLabelText('Allergy clearances')).toBeNull();
   });
 
-  it('renders one AllergyClearedBadge per cleared_allergies entry, ABOVE the MomentHeadline (Story 3.10)', async () => {
+  it('renders one AllergyClearedBadge per cleared_allergies entry, ABOVE the PageHeader (Story 3.10)', async () => {
     const { hkFetch } = await import('@/lib/fetch.js');
     vi.mocked(hkFetch).mockResolvedValue({
       brief: makeBrief({
@@ -268,7 +277,7 @@ describe('BriefCanvas', () => {
     expect(screen.queryByRole('button', { name: /why this change/i })).toBeNull();
   });
 
-  it('renders QuietDiff banner ABOVE MomentHeadline when scaffolding_diff is set (Story 3.11)', async () => {
+  it('renders QuietDiff banner ABOVE PageHeader when scaffolding_diff is set (Story 3.11)', async () => {
     const { hkFetch } = await import('@/lib/fetch.js');
     vi.mocked(hkFetch).mockResolvedValue({
       brief: makeBrief({
@@ -289,7 +298,7 @@ describe('BriefCanvas', () => {
 
     const diffText = screen.getByText("Swapped Tuesday's protein to match pantry");
     const headline = screen.getByRole('heading', { level: 1 });
-    // QuietDiff banner must appear before MomentHeadline in DOM (Node.DOCUMENT_POSITION_FOLLOWING === 4).
+    // QuietDiff banner must appear before PageHeader in DOM (Node.DOCUMENT_POSITION_FOLLOWING === 4).
     expect(diffText.compareDocumentPosition(headline) & 4).toBe(4);
   });
 

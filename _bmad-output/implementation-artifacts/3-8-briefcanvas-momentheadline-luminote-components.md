@@ -2,6 +2,16 @@
 
 Status: done
 
+> **v2.0 migration applied (γ Phases 3a + 6, May 2026).** `MomentHeadline`
+> and `LumiNote` have been **deleted** from the codebase. Their roles are
+> now filled by the `PageHeader` primitive (headline + eyebrow + description).
+> BriefCanvas was re-laid-out with `max-w-7xl flex-grow px-6 pt-12 pb-24`.
+> Story 3.8's data wiring (TanStack Query, `useBriefStateQuery`, brief query
+> key, scope assertion, empty-string handling) is **still authoritative**.
+> Token snippets below (`text-stone-*`, `bg-white`, etc.) are deprecated —
+> see [`../v2-migration-log.md`](../v2-migration-log.md) for the current
+> token map.
+
 ## Story
 
 As a Primary Parent,

@@ -21,6 +21,15 @@ optimized_for_llm: true
 
 _This file contains critical rules and patterns that AI agents must follow when implementing code in this project. Focus on unobvious details that agents might otherwise miss._
 
+> **⚠️ Story narratives may be stale post-γ migration (May 2026).** Production
+> routes were re-laid-out against the v2.0 design system in γ Phases 1–6.
+> Several `_bmad-output/implementation-artifacts/*.md` stories still describe
+> v1 components (`MomentHeadline`, `LumiNote` — both deleted) or v1 tokens
+> (`text-stone-*`, `bg-white`, `max-w-2xl mx-auto` shell). Affected stories
+> carry an inline banner. The canonical v1→v2.0 delta is documented at
+> [`_bmad-output/v2-migration-log.md`](v2-migration-log.md). When in doubt,
+> trust the codebase + the migration log over individual story files.
+
 ---
 
 ## Technology Stack & Versions

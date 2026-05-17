@@ -3,6 +3,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { BaseRepository } from '../../repository/base.repository.js';
 import { decryptField, encryptField } from '../../lib/envelope-encryption.js';
 import { getHouseholdDek, getOrCreateHouseholdDek } from '../../lib/household-key.js';
+import { HouseholdDecryptError, NotFoundError } from '../../common/errors.js';
 
 // Story 2.10 lazy-migration shape: pre-2.10 rows held jsonb that was cast to
 // text by `ALTER COLUMN ... TYPE text USING caregiver_relationships::text`.
@@ -74,14 +75,18 @@ export class HouseholdsRepository extends BaseRepository {
     }
   }
 
-  // Returns every household's id + timezone for the plan-generation fan-out.
+  // Returns a page of household ids + timezones for the plan-generation fan-out.
   // Service-role client bypasses RLS — this is a background system query, not
-  // a user-scoped read. No active/inactive flag exists yet; all households
-  // qualify for plan generation in beta.
-  async findAllActive(): Promise<Array<{ id: string; timezone: string }>> {
+  // a user-scoped read. Callers must loop with increasing offset until the
+  // returned slice is shorter than limit (signals last page).
+  async findAllActive(
+    offset = 0,
+    limit = 500,
+  ): Promise<Array<{ id: string; timezone: string }>> {
     const { data, error } = await this.client
       .from('households')
-      .select('id, timezone');
+      .select('id, timezone')
+      .range(offset, offset + limit - 1);
     if (error) throw error;
     return (data ?? []) as Array<{ id: string; timezone: string }>;
   }
@@ -102,6 +107,152 @@ export class HouseholdsRepository extends BaseRepository {
       throw new Error(`household not found: ${householdId}`);
     }
     return Date.now() - new Date(row.created_at).getTime();
+  }
+
+  // ---- Slice 2-s27 — household-level food identity ------------------------
+  //
+  // Three encrypted columns added by migration 20260902000000:
+  // cultural_identifiers / dietary_preferences / declared_allergens. Each
+  // stores an AES-GCM ciphertext (or NOOP:base64(JSON) in NODE_ENV=dev) of a
+  // JSON string[]; NULL means "no household-level value set yet" and reads
+  // back as []. The household DEK is the same one that protects children
+  // and caregiver_relationships, derived via getHouseholdDek / getOrCreateHouseholdDek.
+
+  async getProfile(householdId: string): Promise<{
+    cultural_identifiers: string[];
+    dietary_preferences: string[];
+    declared_allergens: string[];
+  }> {
+    const { data, error } = await this.client
+      .from('households')
+      .select('cultural_identifiers, dietary_preferences, declared_allergens')
+      .eq('id', householdId)
+      .maybeSingle();
+    if (error) throw error;
+    const row = data as
+      | {
+          cultural_identifiers: string | null;
+          dietary_preferences: string | null;
+          declared_allergens: string | null;
+        }
+      | null;
+    if (row === null) {
+      throw new NotFoundError(`household not found: ${householdId}`);
+    }
+
+    // Decrypt only if anything is set — avoids an unnecessary DEK fetch on
+    // brand-new households (and gracefully handles dev environments with no
+    // KEK configured).
+    if (
+      row.cultural_identifiers === null &&
+      row.dietary_preferences === null &&
+      row.declared_allergens === null
+    ) {
+      return {
+        cultural_identifiers: [],
+        dietary_preferences: [],
+        declared_allergens: [],
+      };
+    }
+
+    const dek = await getHouseholdDek(this.client, this.kek, householdId);
+    return {
+      cultural_identifiers: decryptArrayColumn(row.cultural_identifiers, dek),
+      dietary_preferences: decryptArrayColumn(row.dietary_preferences, dek),
+      declared_allergens: decryptArrayColumn(row.declared_allergens, dek),
+    };
+  }
+
+  async patchProfile(
+    householdId: string,
+    patch: {
+      cultural_identifiers?: string[];
+      dietary_preferences?: string[];
+      declared_allergens?: string[];
+    },
+  ): Promise<{
+    cultural_identifiers: string[];
+    dietary_preferences: string[];
+    declared_allergens: string[];
+  }> {
+    const hasAnyField =
+      patch.cultural_identifiers !== undefined ||
+      patch.dietary_preferences !== undefined ||
+      patch.declared_allergens !== undefined;
+
+    if (!hasAnyField) {
+      return this.getProfile(householdId);
+    }
+
+    const dek = await getOrCreateHouseholdDek(this.client, this.kek, householdId);
+    const update: Record<string, string> = {};
+    if (patch.cultural_identifiers !== undefined) {
+      update.cultural_identifiers = encryptField(patch.cultural_identifiers, dek);
+    }
+    if (patch.dietary_preferences !== undefined) {
+      update.dietary_preferences = encryptField(patch.dietary_preferences, dek);
+    }
+    if (patch.declared_allergens !== undefined) {
+      update.declared_allergens = encryptField(patch.declared_allergens, dek);
+    }
+    // Use .update().select() to return the post-write row in a single
+    // round-trip, eliminating the torn-read window between the write and
+    // the follow-on getProfile() call.
+    const { data, error } = await this.client
+      .from('households')
+      .update(update)
+      .eq('id', householdId)
+      .select('cultural_identifiers, dietary_preferences, declared_allergens')
+      .maybeSingle();
+    if (error) throw error;
+    if (data === null) throw new NotFoundError(`household not found: ${householdId}`);
+
+    const row = data as {
+      cultural_identifiers: string | null;
+      dietary_preferences: string | null;
+      declared_allergens: string | null;
+    };
+    return {
+      cultural_identifiers: decryptArrayColumn(row.cultural_identifiers, dek),
+      dietary_preferences: decryptArrayColumn(row.dietary_preferences, dek),
+      declared_allergens: decryptArrayColumn(row.declared_allergens, dek),
+    };
+  }
+
+  async bumpKitchenMapVersion(householdId: string): Promise<void> {
+    const { error } = await this.client.rpc('bump_kitchen_map_version_for_household', {
+      p_household_id: householdId,
+    });
+    if (error) throw error;
+  }
+
+  // Advisory lock helpers — bracket addAllergens read-modify-write to prevent
+  // concurrent turns from silently overwriting each other's allergen additions.
+  // Session-level: caller MUST call releaseAllergenLock in a finally block.
+  async acquireAllergenLock(householdId: string): Promise<void> {
+    const { error } = await this.client.rpc('acquire_household_allergen_lock', {
+      p_household_id: householdId,
+    });
+    if (error) throw error;
+  }
+
+  async releaseAllergenLock(householdId: string): Promise<void> {
+    const { error } = await this.client.rpc('release_household_allergen_lock', {
+      p_household_id: householdId,
+    });
+    if (error) throw error;
+  }
+}
+
+function decryptArrayColumn(stored: string | null, dek: Buffer | null): string[] {
+  if (stored === null) return [];
+  try {
+    return decryptField<string[]>(stored, dek);
+  } catch {
+    // Throw rather than returning [] — an empty allergen list is semantically
+    // different from "data unreadable." Fail-closed keeps the safety invariant:
+    // a corrupt or mis-keyed cell surfaces as a 500, not as "no allergens."
+    throw new HouseholdDecryptError();
   }
 }
 
