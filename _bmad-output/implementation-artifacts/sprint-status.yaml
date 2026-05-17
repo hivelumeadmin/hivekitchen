@@ -1,5 +1,5 @@
 # generated: 2026-04-23
-# last_updated: 2026-05-17 (Story 4-s1 done after review pass 1)
+# last_updated: 2026-05-17 (Story 4-s2 done)
 # project: hivekitchen
 # project_key: NOKEY
 # tracking_system: file-system
@@ -52,7 +52,7 @@
 # Walls (decision moments) are flagged with `# WALL:` markers.
 
 generated: 2026-04-23
-last_updated: 2026-05-17 (Story 4-s1 done after review pass 1)
+last_updated: 2026-05-17 (Story 4-s2 done)
 project: hivekitchen
 project_key: NOKEY
 tracking_system: file-system
@@ -157,7 +157,7 @@ development_status:
   # ==========================================================================
   epic-4: in-progress
   4-s1-compose-heart-note-draft: done                                         # folds: 4.4 (partial). Shipped to review 2026-05-15; review pass 1 2026-05-17
-  4-s2-render-heart-note-on-child-surface-stub-token: backlog                 # folds: 4.2 (partial)
+  4-s2-render-heart-note-on-child-surface-stub-token: done                    # folds: 4.2 (partial)
   4-s3-real-signed-tokens-8pm-window: backlog                                 # folds: 4.1, 4.3
   4-s4-emoji-rating: backlog                                                  # folds: 4.2 (full), 4.14 (partial)
   4-s5-sacred-channel-doctrine-encryption-lint: backlog                       # WALL: MVP wall; folds: 4.5, 4.4 (encryption)

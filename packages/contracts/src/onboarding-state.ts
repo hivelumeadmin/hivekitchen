@@ -24,7 +24,7 @@ export const OnboardingTurnSnapshotSchema = z.object({
   id: z.string().uuid(),
   role: z.enum(['user', 'lumi']),
   content: z.string(),
-  created_at: z.string().datetime(),
+  created_at: z.string().datetime({ offset: true }),
 });
 
 export const OnboardingStateResponseSchema = z.object({
@@ -33,8 +33,8 @@ export const OnboardingStateResponseSchema = z.object({
   // for the other states rather than forcing the client to discriminate.
   thread_id: z.string().uuid().optional(),
   modality: z.enum(['text', 'voice']).optional(),
-  started_at: z.string().datetime().optional(),
-  last_activity_at: z.string().datetime().optional(),
+  started_at: z.string().datetime({ offset: true }).optional(),
+  last_activity_at: z.string().datetime({ offset: true }).optional(),
   turns: z.array(OnboardingTurnSnapshotSchema).optional(),
 });
 

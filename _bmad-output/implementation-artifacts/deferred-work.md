@@ -1,5 +1,21 @@
 # Deferred Work Log
 
+## Deferred from: code review of 4-s2-render-heart-note-on-child-surface-stub-token (2026-05-17)
+
+- **`HeartNoteRepository.findByChildAndDate` filters on `created_at` not `scheduled_for`** — a note authored 2026-05-15 with `scheduled_for: '2026-05-17'` won't surface for the 2026-05-17 lunch link. The intended target date is `scheduled_for`. [`apps/api/src/modules/heart-notes/heart-note.repository.ts:59-77`]
+- **Heart-note `body` has no max-length cap in the contract** — renders unbounded into `HeartNoteCard`, can break the calm one-screen design. Cross-cutting content policy decision (also affects compose surface in S1). [`packages/contracts/src/lunch-link.ts:11-14`, `packages/contracts/src/heart-notes.ts`]
+- **Dev endpoint accepts arbitrary date values** (`1900-01-01`, `9999-12-31`). Should bound to a reasonable window before/after today. Broader API hygiene applicable to S3 real-token endpoint as well. [`packages/contracts/src/lunch-link.ts:7-9`]
+- **Stub-link parser UX: server-side 400 collapses to generic error** — when the parser passes a structurally-valid but semantically-invalid linkId (non-hex UUID, calendar-invalid date like `2026-13-45`), the user sees the generic "Couldn't load this lunch link" instead of the more specific "This link doesn't look right." Tighten client parser to match Zod's stricter checks. UX polish. [`apps/web/src/routes/(app)/lunch-link.tsx:13-29`]
+- **`formatDateLabel` hardcodes `en-US` locale** — non-English parents see American date format regardless of browser locale. Belongs to a wider i18n initiative. [`apps/web/src/routes/(app)/lunch-link.tsx:32-38`]
+- **`formatDateLabel` parses ISO date in browser-local time, ignoring household TZ** — a parent in Sydney and a child in Los Angeles will see different "today" labels for the same heart note. Belongs to a wider TZ design (also affects plan-day boundaries). [`apps/web/src/routes/(app)/lunch-link.tsx:34`]
+- **Child `name` returned to lunch-link surface without sanitization** — newlines, zero-width chars, RTL marks, or 1000-char names render directly into `MumNoteSalutation` and `FeedbackBlock`. Sanitization belongs at the write path in onboarding, not here. [`apps/api/src/modules/lunch-link/lunch-link.service.ts:33`]
+- **Loading skeleton and error states lack `role="status"` / `aria-live`** — screen readers don't announce the loading→loaded or loading→error transition on the lunch-link surface. Part of a wider a11y pass. [`apps/web/src/routes/(app)/lunch-link.tsx:128-145`]
+
+## Deferred from: code review of 4-s2-render-heart-note-on-child-surface-stub-token Pass 2 (2026-05-17)
+
+- **`requireMember` preHandler runs before env guard** — unauthenticated requests to `/v1/lunch-link-dev/…` return 401 in a production deploy (where the env guard is never reached), leaking that the route exists. Cleaner: conditionally register the route only when `NODE_ENV === 'development' || 'test'`. Low-risk because the existing allow-list guard still prevents data access for any authenticated request in production. [`apps/api/src/modules/lunch-link/lunch-link.routes.ts:28-29`]
+- **`HeartNoteCard` receives `from=""` (empty string) when no heart note** — the attribution slot may render as a blank but space-taking line below the "No note today" placeholder copy. Needs verification against `HeartNoteCard` internals; fix is `from={heartNote ? … : undefined}` if the component accepts optional `from`. [`apps/web/src/routes/(app)/lunch-link.tsx:99`]
+
 ## Deferred from: code review of 2-s27-household-vs-child-scoping (2026-05-16)
 
 - **Backfill idempotency comment overstates byte-for-byte equivalence** — AES-GCM uses a random nonce per `encryptField` call; two backfill runs produce different ciphertexts, triggering `kitchen_map_version` bumps on every re-run. Semantically idempotent; comment should clarify. [`apps/api/scripts/backfill-household-food-identity.ts`]

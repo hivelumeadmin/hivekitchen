@@ -48,6 +48,7 @@ import { householdsRoutes } from './modules/households/households.routes.js';
 import { plansRoutes } from './modules/plans/plans.routes.js';
 import { lumiRoutes } from './modules/lumi/lumi.routes.js';
 import { heartNoteRoutes } from './modules/heart-notes/heart-note.routes.js';
+import { lunchLinkRoutes } from './modules/lunch-link/lunch-link.routes.js';
 
 const REQUEST_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -200,6 +201,7 @@ export async function buildApp(opts: BuildAppOptions) {
   await app.register(plansRoutes);
   await app.register(lumiRoutes, { prefix: '/v1/lumi' });
   await app.register(heartNoteRoutes);
+  await app.register(lunchLinkRoutes);
 
   return app;
 }

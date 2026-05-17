@@ -176,7 +176,7 @@ export const CommitPlanInputSchema = z.object({
   week_id: z.string().uuid(),
   week_of: z.string().date(),  // Story 3.13 — ISO 8601 date string ('2026-04-28')
   revision: z.number().int().min(1),
-  generated_at: z.string().datetime(),
+  generated_at: z.string().datetime({ offset: true }),
   prompt_version: z.string().min(1).max(PROMPT_VERSION_MAX),
   items: z.array(PlanItemWriteSchema).min(1),
 });
@@ -187,12 +187,12 @@ export const PlanRowSchema = z.object({
   week_id: z.string().uuid(),
   week_of: z.string().date().nullable().default(null),  // Story 3.13 — null for pre-migration rows
   revision: z.number().int().min(1),
-  generated_at: z.string().datetime(),
-  guardrail_cleared_at: z.string().datetime().nullable(),
+  generated_at: z.string().datetime({ offset: true }),
+  guardrail_cleared_at: z.string().datetime({ offset: true }).nullable(),
   guardrail_version: z.string().max(GUARDRAIL_VERSION_MAX).nullable(),
   prompt_version: z.string().min(1).max(PROMPT_VERSION_MAX),
-  created_at: z.string().datetime(),
-  updated_at: z.string().datetime(),
+  created_at: z.string().datetime({ offset: true }),
+  updated_at: z.string().datetime({ offset: true }),
 });
 
 // --- Story 3.6 — brief_state projection schemas ---
@@ -209,10 +209,10 @@ export const PlanItemRowSchema = z.object({
   item_id: z.string().uuid().nullable(),
   item_sku_id: z.string().uuid().nullable().default(null),  // Story 3.20 — Snack SKU reference
   ingredients: z.array(z.string().min(1)),
-  paused_at: z.string().datetime().nullable().default(null),  // Story 3.12
+  paused_at: z.string().datetime({ offset: true }).nullable().default(null),  // Story 3.12
   replaced_by_plan_id: z.string().uuid().nullable().default(null),  // Story 3.13 — null = current
-  created_at: z.string().datetime(),
-  updated_at: z.string().datetime(),
+  created_at: z.string().datetime({ offset: true }),
+  updated_at: z.string().datetime({ offset: true }),
 });
 
 // --- Story 3.20 — Snack SKU catalog ---
@@ -331,9 +331,9 @@ export const BriefStateRowSchema = z.object({
   plan_tile_summaries: z.array(PlanTileSummarySchema),
   cleared_allergies: z.array(ClearedAllergyEntrySchema).default([]),
   scaffolding_diff: ScaffoldingDiffSchema.nullable().default(null),
-  generated_at: z.string().datetime(),
+  generated_at: z.string().datetime({ offset: true }),
   plan_revision: z.number().int().min(0),
-  updated_at: z.string().datetime(),
+  updated_at: z.string().datetime({ offset: true }),
 });
 
 // API response for GET /v1/households/:id/brief.
@@ -370,7 +370,7 @@ export const PlanItemSwapSummarySchema = z.object({
   day: z.enum(['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday']),
   slot: z.string().min(1),
   previous_ingredients: z.array(z.string()),
-  replaced_at: z.string().datetime(),
+  replaced_at: z.string().datetime({ offset: true }),
 });
 
 // Story 3.15 — route param schema for GET /v1/plans/:weekId/history.

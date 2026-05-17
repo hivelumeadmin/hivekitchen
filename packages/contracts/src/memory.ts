@@ -10,7 +10,7 @@ export const ForgetCompletedEvent = z.object({
   type: z.literal('memory.forget.completed'),
   node_id: z.string().uuid(),
   mode: z.literal('soft'),
-  completed_at: z.string().datetime(),
+  completed_at: z.string().datetime({ offset: true }),
 });
 
 export const NodeTypeSchema = z.enum([
@@ -39,10 +39,10 @@ export const MemoryNodeSchema = z.object({
   facet: z.string().min(1).max(200),
   subject_child_id: z.string().uuid().nullable(),
   prose_text: z.string().min(1),
-  soft_forget_at: z.string().datetime().nullable(),
+  soft_forget_at: z.string().datetime({ offset: true }).nullable(),
   hard_forgotten: z.boolean(),
-  created_at: z.string().datetime(),
-  updated_at: z.string().datetime(),
+  created_at: z.string().datetime({ offset: true }),
+  updated_at: z.string().datetime({ offset: true }),
 });
 
 export const MemoryProvenanceSchema = z.object({
@@ -50,7 +50,7 @@ export const MemoryProvenanceSchema = z.object({
   memory_node_id: z.string().uuid(),
   source_type: SourceTypeSchema,
   source_ref: z.record(z.string(), z.unknown()),
-  captured_at: z.string().datetime(),
+  captured_at: z.string().datetime({ offset: true }),
   captured_by: z.string().uuid().nullable(),
   confidence: z.number().min(0).max(1),
   superseded_by: z.string().uuid().nullable(),
@@ -67,7 +67,7 @@ export const MemoryNoteInputSchema = z.object({
 
 export const MemoryNoteOutputSchema = z.object({
   node_id: z.string().uuid(),
-  created_at: z.string().datetime(),
+  created_at: z.string().datetime({ offset: true }),
 });
 
 // Story 3.4 — memory.recall (read) tool I/O. Distinct from memory.note (write):

@@ -14,5 +14,5 @@ export const PresenceEvent = z.object({
   thread_id: z.string().uuid(),
   user_id: z.string().uuid(),
   surface: SurfaceKind,
-  expires_at: z.string().datetime(),
+  expires_at: z.string().datetime({ offset: true }),
 });

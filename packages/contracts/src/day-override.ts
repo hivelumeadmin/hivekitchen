@@ -29,10 +29,10 @@ export const DayOverrideSchema = z.object({
   override_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/), // YYYY-MM-DD
   override_type: DayOverrideTypeSchema,
   is_lumi_proposed: z.boolean(),
-  confirmed_at: z.string().datetime().nullable(),
-  reverted_at: z.string().datetime().nullable(),
-  created_at: z.string().datetime(),
-  updated_at: z.string().datetime(),
+  confirmed_at: z.string().datetime({ offset: true }).nullable(),
+  reverted_at: z.string().datetime({ offset: true }).nullable(),
+  created_at: z.string().datetime({ offset: true }),
+  updated_at: z.string().datetime({ offset: true }),
 });
 
 // POST /v1/plans/:planId/items/:itemId/override body.

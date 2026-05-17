@@ -1,8 +1,16 @@
 import { CheckIcon } from '../../../components/icons.js';
-import type { lunchLinkMock } from '../data/mockData.js';
+
+export interface LunchSummaryData {
+  readonly eyebrow: string;
+  readonly name: string;
+  readonly sub: string;
+  readonly imageSrc?: string;
+  readonly imageAlt?: string;
+  readonly safetyBadge: string;
+}
 
 interface Readonly_LunchSummaryProps {
-  readonly lunch: typeof lunchLinkMock.lunch;
+  readonly lunch: LunchSummaryData;
 }
 
 export type LunchSummaryProps = Readonly<Readonly_LunchSummaryProps>;
@@ -11,13 +19,15 @@ export function LunchSummary({ lunch }: LunchSummaryProps) {
   return (
     <section>
       <div className="flex items-center gap-4 rounded-lg border border-border/5 bg-surface p-4">
-        <div className="relative h-16 w-16 flex-shrink-0 overflow-hidden rounded-lg">
-          <img
-            src={lunch.imageSrc}
-            alt={lunch.imageAlt}
-            className="h-full w-full object-cover"
-          />
-        </div>
+        {lunch.imageSrc && (
+          <div className="relative h-16 w-16 flex-shrink-0 overflow-hidden rounded-lg">
+            <img
+              src={lunch.imageSrc}
+              alt={lunch.imageAlt ?? ''}
+              className="h-full w-full object-cover"
+            />
+          </div>
+        )}
         <div className="min-w-0 flex-grow">
           <span className="text-[11px] font-bold uppercase tracking-widest text-lumi-terracotta">
             {lunch.eyebrow}

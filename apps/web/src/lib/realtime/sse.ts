@@ -1,6 +1,7 @@
 // apps/web/src/lib/realtime/sse.ts
 import type { QueryClient } from '@tanstack/react-query';
 import { InvalidationEvent } from '@hivekitchen/contracts';
+import { useAuthStore } from '@/stores/auth.store.js';
 import { QueryKeys } from './query-keys.js';
 import { reportThreadIntegrityAnomaly } from './thread-integrity.js';
 
@@ -215,22 +216,33 @@ export function createSseBridge(queryClient: QueryClient): SseBridge {
     }
 
     const clientId = getOrCreateClientId();
+    const accessToken = useAuthStore.getState().accessToken;
     const apiBase = import.meta.env.VITE_SSE_BASE_URL ?? import.meta.env.VITE_API_BASE_URL ?? '';
-    const url = `${apiBase}/v1/events?client_id=${encodeURIComponent(clientId)}`;
+    const url = new URL(`${apiBase}/v1/events`);
+    url.searchParams.set('client_id', clientId);
+    if (accessToken) url.searchParams.set('token', accessToken);
 
     // Native EventSource automatically sends Last-Event-ID on reconnect
     // when the server set an id: field (architecture §3.3 resume behaviour).
-    es = new EventSource(url);
+    const thisEs = new EventSource(url.toString());
+    es = thisEs;
 
-    es.addEventListener('message', handleMessage);
+    thisEs.addEventListener('message', handleMessage);
 
-    es.addEventListener('open', () => {
-      if (disposed) return;
+    thisEs.addEventListener('open', () => {
+      if (disposed || thisEs !== es) return;
       connected = true;
       attemptIndex = 0; // Reset backoff on successful connection.
     });
 
-    es.addEventListener('error', () => {
+    // Guard: the error event can fire long after this EventSource was replaced
+    // (e.g. React StrictMode closes ES1 while CONNECTING; the browser delays
+    // the error event until the connection attempt times out, ~5 s, by which
+    // time `es` already points to ES2). Without the `thisEs !== es` guard,
+    // the stale error handler would close the live connection.
+    thisEs.addEventListener('error', () => {
+      if (thisEs !== es) return; // Stale error from a superseded EventSource.
+
       connected = false;
       closeEventSource();
 

@@ -69,7 +69,7 @@ export const Turn = z.object({
   id: z.string().uuid(),
   thread_id: z.string().uuid(),
   server_seq: SequenceId,
-  created_at: z.string().datetime(),
+  created_at: z.string().datetime({ offset: true }),
   role: z.enum(['user', 'lumi', 'system']),
   body: TurnBody,
   modality: z.enum(['text', 'voice']).optional(),

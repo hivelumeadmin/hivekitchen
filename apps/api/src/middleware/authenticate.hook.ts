@@ -6,7 +6,9 @@ const SKIP_PREFIXES = ['/v1/internal/', '/v1/webhooks/', '/v1/auth/'];
 // /v1/voice/ws cannot send an Authorization header (browsers do not allow
 // custom headers on WebSocket upgrades) — JWT is validated inside the WS
 // handler from the ?token= query param instead.
-const SKIP_EXACT = new Set(['/v1/voice/ws']);
+// /v1/events is the SSE channel; native EventSource also cannot send
+// custom headers — JWT is validated inside the route from the ?token= param.
+const SKIP_EXACT = new Set(['/v1/voice/ws', '/v1/events']);
 
 interface AccessTokenPayload {
   sub: string;

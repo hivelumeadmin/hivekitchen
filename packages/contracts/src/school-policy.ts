@@ -13,8 +13,8 @@ export const SchoolPolicySchema = z.object({
   policy_description: z.string().max(500).nullable(),
   slot_scope: SlotScopeSchema,
   is_active: z.boolean(),
-  created_at: z.string().datetime(),
-  updated_at: z.string().datetime(),
+  created_at: z.string().datetime({ offset: true }),
+  updated_at: z.string().datetime({ offset: true }),
 });
 
 // PATCH /v1/children/:id/school-policies — body upserts on (child_id, policy_type).

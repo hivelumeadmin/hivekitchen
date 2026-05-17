@@ -18,14 +18,35 @@ import { z } from 'zod';
 
 const EventsQuerystring = z.object({
   client_id: z.string().uuid(),
+  token: z.string().min(1),
 });
+
+interface AccessTokenPayload {
+  sub: string;
+  hh: string;
+  role: 'primary_parent' | 'secondary_caregiver' | 'guest_author' | 'ops';
+}
 
 export const eventsRoutes: FastifyPluginAsync = async (fastify) => {
   fastify.get(
     '/v1/events',
     { schema: { querystring: EventsQuerystring } },
     async (request, reply) => {
-      const { client_id: clientId } = request.query as z.infer<typeof EventsQuerystring>;
+      const { client_id: clientId, token } = request.query as z.infer<typeof EventsQuerystring>;
+
+      // EventSource cannot send Authorization headers — validate JWT from ?token=.
+      let payload: AccessTokenPayload;
+      try {
+        payload = fastify.jwt.verify<AccessTokenPayload>(token);
+      } catch {
+        return reply.status(401).type('application/problem+json').send({
+          type: '/errors/unauthorized',
+          status: 401,
+          title: 'Invalid or missing access token',
+          instance: request.id,
+        });
+      }
+      request.user = { id: payload.sub, household_id: payload.hh, role: payload.role };
 
       fastify.log.info(
         { module: 'events', action: 'sse.connect', clientId },

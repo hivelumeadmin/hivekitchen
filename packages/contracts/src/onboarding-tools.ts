@@ -132,5 +132,5 @@ export const MemoryNoteFromOnboardingInputSchema = z.object({
 
 export const MemoryNoteFromOnboardingOutputSchema = z.object({
   node_id: z.string().uuid(),
-  created_at: z.string().datetime(),
+  created_at: z.string().datetime({ offset: true }),
 });

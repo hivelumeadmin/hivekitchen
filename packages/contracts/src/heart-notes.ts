@@ -38,8 +38,8 @@ export const HeartNoteResponseSchema = z.object({
   content: z.string(),
   status: HeartNoteStatusSchema,
   scheduled_for: z.string().date().nullable(),
-  created_at: z.string().datetime(),
-  updated_at: z.string().datetime(),
+  created_at: z.string().datetime({ offset: true }),
+  updated_at: z.string().datetime({ offset: true }),
 });
 
 // Wrapped envelope shapes — keep callers from juggling a bare row vs null.

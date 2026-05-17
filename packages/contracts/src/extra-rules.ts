@@ -27,7 +27,7 @@ export const UpdateExtraRulesInputSchema = ExtraRulesSchema;
 export const UpdateExtraRulesResponseSchema = z.object({
   child_id: z.string().uuid(),
   extra_rules: ExtraRulesSchema,
-  updated_at: z.string().datetime(),
+  updated_at: z.string().datetime({ offset: true }),
 });
 
 export const ExtraRulesChildIdParamSchema = z.object({ id: z.string().uuid() });
@@ -47,10 +47,10 @@ export const ExtraLibraryItemSchema = z.object({
   description: z.string().nullable(),
   component_type: z.string(),
   is_allergen_free: z.boolean(),
-  archived_at: z.string().datetime().nullable(),
+  archived_at: z.string().datetime({ offset: true }).nullable(),
   created_by: z.string().uuid(),
-  created_at: z.string().datetime(),
-  updated_at: z.string().datetime(),
+  created_at: z.string().datetime({ offset: true }),
+  updated_at: z.string().datetime({ offset: true }),
 });
 
 export const ListExtraLibraryResponseSchema = z.object({

@@ -1,4 +1,5 @@
 // apps/web/src/app.tsx
+import { useEffect } from 'react';
 import { createBrowserRouter, Navigate, RouterProvider } from 'react-router-dom';
 import { QueryProvider } from './providers/query-provider.js';
 import { DevDayDetailPage } from './routes/_dev-day-detail.js';
@@ -77,6 +78,7 @@ const router = createBrowserRouter([
 
 import { useLumiStore } from './stores/lumi.store.js';
 import { useAuthStore } from './stores/auth.store.js';
+import { tryRefreshSession } from './lib/fetch.js';
 
 if (import.meta.env.VITE_E2E && typeof window !== 'undefined') {
   (window as unknown as Record<string, unknown>).__lumiStore = useLumiStore;
@@ -84,6 +86,12 @@ if (import.meta.env.VITE_E2E && typeof window !== 'undefined') {
 }
 
 export function App() {
+  // Restore session from the httpOnly refresh cookie on every page load.
+  // Silent — no loading gate. Routes handle their own unauthenticated states.
+  useEffect(() => {
+    void tryRefreshSession();
+  }, []);
+
   if (
     import.meta.env.DEV &&
     typeof window !== 'undefined' &&

@@ -153,7 +153,7 @@ export const KitchenMapFavouriteRecipeSchema = z.object({
   confidence_score: z.number().int().min(0).max(100),
   is_household_favorite: z.boolean(),
   use_count: z.number().int().min(0),
-  last_used_at: z.string().datetime(),
+  last_used_at: z.string().datetime({ offset: true }),
 });
 
 export const KitchenMapRecipesSchema = z.object({
@@ -166,7 +166,7 @@ export const KitchenMapRecipesSchema = z.object({
 // ---- Meta -----------------------------------------------------------------
 
 export const KitchenMapMetaSchema = z.object({
-  composed_at: z.string().datetime(),
+  composed_at: z.string().datetime({ offset: true }),
   // Mirrors households.kitchen_map_version — the cache-key suffix.
   map_version: z.number().int().nonnegative(),
   // Bumped when the KitchenMapSchema shape itself changes; old-shape cache

@@ -54,7 +54,7 @@ export const UserProfileSchema = z.object({
   auth_providers: z.array(z.string()),
   notification_prefs: NotificationPrefsSchema,
   cultural_language: CulturalLanguageSchema,
-  parental_notice_acknowledged_at: z.string().datetime().nullable(),
+  parental_notice_acknowledged_at: z.string().datetime({ offset: true }).nullable(),
   parental_notice_acknowledged_version: z.string().nullable(),
   // 2-S19: true when (parental_notice_acknowledged_at IS NOT NULL) AND
   // the household has at least one child. Mirrors LoginResponse.is_onboarded.

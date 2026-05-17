@@ -111,8 +111,8 @@ export const RecipeRowSchema = z.object({
   community_rating_count: z.number().int().min(0),
 
   is_active: z.boolean(),
-  created_at: z.string().datetime(),
-  updated_at: z.string().datetime(),
+  created_at: z.string().datetime({ offset: true }),
+  updated_at: z.string().datetime({ offset: true }),
 });
 
 // ---- Household usage row --------------------------------------------------
@@ -132,9 +132,9 @@ export const HouseholdRecipeUsageRowSchema = z.object({
   is_household_favorite: z.boolean(),
   is_household_banned: z.boolean(),
 
-  first_used_at: z.string().datetime(),
-  last_used_at: z.string().datetime(),
-  last_outcome_at: z.string().datetime().nullable(),
+  first_used_at: z.string().datetime({ offset: true }),
+  last_used_at: z.string().datetime({ offset: true }),
+  last_outcome_at: z.string().datetime({ offset: true }).nullable(),
 });
 
 // ---- Comments (public projection — author identity stripped) -------------
@@ -145,7 +145,7 @@ export const RecipeCommentPublicSchema = z.object({
   display_handle: z.string().min(1).max(128),
   rating: z.number().int().min(1).max(5).nullable(),
   prose_text: z.string().nullable(),
-  created_at: z.string().datetime(),
+  created_at: z.string().datetime({ offset: true }),
 });
 
 // ===========================================================================

@@ -9,7 +9,7 @@ export const PantryItemSchema = z.object({
   name: z.string(),
   quantity: z.string(),
   unit: z.string().optional(),
-  expires_at: z.string().datetime().optional(),
+  expires_at: z.string().datetime({ offset: true }).optional(),
   tags: z.array(z.string()),
 });
 

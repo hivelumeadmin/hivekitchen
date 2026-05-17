@@ -15,7 +15,7 @@ export const VpcConsentRequestSchema = z.object({
 
 export const VpcConsentResponseSchema = z.object({
   household_id: z.string().uuid(),
-  signed_at: z.string().datetime(),
+  signed_at: z.string().datetime({ offset: true }),
   mechanism: z.literal('soft_signed_declaration'),
   document_version: z.string(),
 });
@@ -70,7 +70,7 @@ export const AcknowledgeParentalNoticeRequestSchema = z.object({
 });
 
 export const AcknowledgeParentalNoticeResponseSchema = z.object({
-  acknowledged_at: z.string().datetime(),
+  acknowledged_at: z.string().datetime({ offset: true }),
   document_version: z.string().min(1),
 });
 

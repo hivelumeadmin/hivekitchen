@@ -29,8 +29,8 @@ export const AllergenTagRowSchema = z.object({
   description: z.string().nullable(),
   is_active: z.boolean(),
   sort_order: z.number().int(),
-  created_at: z.string().datetime(),
-  updated_at: z.string().datetime(),
+  created_at: z.string().datetime({ offset: true }),
+  updated_at: z.string().datetime({ offset: true }),
 });
 
 // ---- dietary_tags ---------------------------------------------------------
@@ -52,8 +52,8 @@ export const DietaryTagRowSchema = z.object({
   description: z.string().nullable(),
   is_active: z.boolean(),
   sort_order: z.number().int(),
-  created_at: z.string().datetime(),
-  updated_at: z.string().datetime(),
+  created_at: z.string().datetime({ offset: true }),
+  updated_at: z.string().datetime({ offset: true }),
 });
 
 // ---- cultural_tags --------------------------------------------------------
@@ -67,8 +67,8 @@ export const CulturalTagRowSchema = z.object({
   description: z.string().nullable(),
   is_active: z.boolean(),
   sort_order: z.number().int(),
-  created_at: z.string().datetime(),
-  updated_at: z.string().datetime(),
+  created_at: z.string().datetime({ offset: true }),
+  updated_at: z.string().datetime({ offset: true }),
 });
 
 // ---- cuisine_tags ---------------------------------------------------------
@@ -89,8 +89,8 @@ export const CuisineTagRowSchema = z.object({
   description: z.string().nullable(),
   is_active: z.boolean(),
   sort_order: z.number().int(),
-  created_at: z.string().datetime(),
-  updated_at: z.string().datetime(),
+  created_at: z.string().datetime({ offset: true }),
+  updated_at: z.string().datetime({ offset: true }),
 });
 
 // ---- Vocabulary snapshot --------------------------------------------------
@@ -105,5 +105,5 @@ export const VocabularySnapshotSchema = z.object({
   dietary_tags: z.array(DietaryTagRowSchema),
   cultural_tags: z.array(CulturalTagRowSchema),
   cuisine_tags: z.array(CuisineTagRowSchema),
-  loaded_at: z.string().datetime(),
+  loaded_at: z.string().datetime({ offset: true }),
 });
