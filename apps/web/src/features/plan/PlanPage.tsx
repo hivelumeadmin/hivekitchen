@@ -1,13 +1,23 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useScope } from '@hivekitchen/ui';
-import type { GetPlansResponse, PlanItemRow, PlanTileSummary } from '@hivekitchen/types';
+import type {
+  BriefStateRow,
+  ClearedAllergyEntry,
+  GetPlansResponse,
+  PlanItemRow,
+  PlanTileSummary,
+} from '@hivekitchen/types';
 import { useLumiContext } from '@/hooks/useLumiContext.js';
 import { deriveWeekId, getMondayWeeksAgo } from '@/lib/derive-week-id.js';
-import { PageHeader } from '@/components/PageHeader.js';
+import { useAuthStore } from '@/stores/auth.store.js';
 import { FreshnessState } from './FreshnessState.js';
-import { PlanTile } from './PlanTile.js';
+import { PlanTile, type ChildDotColor, type ChildInfo } from './PlanTile.js';
+import { BriefWhyPanel } from './BriefWhyPanel.js';
+import { PlanActionSection } from './PlanActionSection.js';
+import { PlanPageFooter } from './PlanPageFooter.js';
 import { usePlanQuery } from './queries.js';
+import { useBriefStateQuery } from './useBriefStateQuery.js';
 
 // Story 3.14 — FR21 enables the next-week tab on Friday afternoon. UTC for
 // MVP (per Dev Notes); per-timezone enforcement is a future server-side move
@@ -46,13 +56,67 @@ function toPlanTileSummaries(items: PlanItemRow[]): PlanTileSummary[] {
   });
 }
 
-function PlanWeekContent({ data }: { data: GetPlansResponse }) {
+// Build a stable child → color map. Child order is determined by first
+// appearance in planItems; child names are resolved from clearedAllergies
+// (the only source that carries child_name alongside child_id).
+const CHILD_COLORS: readonly ChildDotColor[] = ['foliage', 'lumi-terracotta'];
+
+function buildChildColorMap(
+  planItems: PlanItemRow[],
+  clearedAllergies: ClearedAllergyEntry[],
+): ReadonlyMap<string, ChildInfo> {
+  const map = new Map<string, ChildInfo>();
+  const order: string[] = [];
+  for (const item of planItems) {
+    if (!map.has(item.child_id)) {
+      order.push(item.child_id);
+      map.set(item.child_id, {
+        name: '',
+        color: CHILD_COLORS[Math.min(order.length - 1, CHILD_COLORS.length - 1)]!,
+      });
+    }
+  }
+  for (const entry of clearedAllergies) {
+    const existing = map.get(entry.child_id);
+    if (existing !== undefined) {
+      map.set(entry.child_id, { ...existing, name: entry.child_name });
+    }
+  }
+  return map;
+}
+
+// Format "Mon 11 May – Fri 15 May" from the ISO Monday date string.
+function formatWeekRange(weekOf: string): string {
+  const monday = new Date(weekOf + 'T00:00:00Z');
+  const friday = new Date(monday);
+  friday.setUTCDate(monday.getUTCDate() + 4);
+  const fmt = (d: Date) =>
+    d.toLocaleDateString('en-GB', {
+      weekday: 'short',
+      day: 'numeric',
+      month: 'short',
+      timeZone: 'UTC',
+    });
+  return `${fmt(monday)} – ${fmt(friday)}`;
+}
+
+function PlanWeekContent({
+  data,
+  childColorMap,
+}: {
+  data: GetPlansResponse;
+  childColorMap: ReadonlyMap<string, ChildInfo>;
+}) {
   const summaries = useMemo(() => toPlanTileSummaries(data.plan_items), [data.plan_items]);
   return (
     <div className="flex flex-col gap-4" aria-label="Weekly plan">
-      <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
         {summaries.map((summary) => (
-          <PlanTile key={summary.day} summary={summary} />
+          <PlanTile
+            key={summary.day}
+            summary={summary}
+            childColorMap={childColorMap}
+          />
         ))}
       </div>
       {data.is_draft && (
@@ -71,6 +135,8 @@ export function PlanPage() {
   useScope('app-scope');
   useLumiContext({ surface: 'brief' });
 
+  const householdId = useAuthStore((s) => s.user?.current_household_id ?? null);
+
   const [activeWeek, setActiveWeek] = useState<'current' | 'next'>('current');
   // Recomputed once per minute so a tab switch crossing the Friday 4pm
   // boundary doesn't require a page refresh.
@@ -85,6 +151,18 @@ export function PlanPage() {
   }, [nextAvailable, activeWeek]);
 
   const { data, isLoading, isError } = usePlanQuery(activeWeek);
+  const { data: briefData } = useBriefStateQuery(householdId);
+  const brief: BriefStateRow | null = briefData?.brief ?? null;
+
+  // Build child color map once we have both plan items and allergy data.
+  const childColorMap = useMemo(
+    () =>
+      buildChildColorMap(
+        data?.plan_items ?? [],
+        brief?.cleared_allergies ?? [],
+      ),
+    [data?.plan_items, brief?.cleared_allergies],
+  );
 
   // Story 3.15 — derive a deep link to last week's historical plan view.
   // Async derivation keeps the SubtleCrypto call off the render path; weekId
@@ -106,15 +184,38 @@ export function PlanPage() {
     };
   }, []);
 
-  const eyebrow = activeWeek === 'next' ? "Next week's draft" : "This week's plan";
-  const headline = activeWeek === 'next' ? 'Looking ahead' : 'Your week, ready';
+  // Hero content — prefer live brief data, fall back to static copy.
+  const headline =
+    brief?.moment_headline ??
+    (activeWeek === 'next' ? 'Looking ahead' : 'Your week, ready');
+  const lumiNote = brief?.lumi_note ?? '';
+
+  // Eyebrow — include date range when we have plan data.
+  const weekDateRange =
+    data?.week_of !== undefined ? formatWeekRange(data.week_of) : null;
+  const eyebrowBase =
+    activeWeek === 'next' ? "NEXT WEEK'S DRAFT" : "THIS WEEK'S BRIEF";
+  const eyebrow =
+    weekDateRange !== null ? `${eyebrowBase} · ${weekDateRange}` : eyebrowBase;
 
   return (
-    <main className="mx-auto w-full max-w-7xl flex-grow px-6 pt-12 pb-24">
-      <PageHeader eyebrow={eyebrow} headlineSize="lg" className="mb-8">
-        {headline}
-      </PageHeader>
+    <main className="mx-auto w-full max-w-7xl flex-grow px-8 pb-0">
+      {/* Hero section */}
+      <section className="py-16 mb-0">
+        <p className="font-sans text-xs font-medium uppercase tracking-[0.15em] text-fg-muted mb-4">
+          {eyebrow}
+        </p>
+        <h1 className="font-serif text-[56px] leading-[1.1] text-fg mb-6">
+          {headline}
+        </h1>
+        {lumiNote !== '' && (
+          <p className="font-sans text-base leading-relaxed text-fg-muted max-w-2xl">
+            {lumiNote}
+          </p>
+        )}
+      </section>
 
+      {/* Week tabs */}
       <div role="tablist" aria-label="Week selector" className="mb-8 flex gap-2">
         <button
           type="button"
@@ -140,6 +241,7 @@ export function PlanPage() {
         </button>
       </div>
 
+      {/* Plan grid */}
       {isLoading && <FreshnessState variant="loading" />}
 
       {isError && <FreshnessState variant="failed" />}
@@ -157,7 +259,7 @@ export function PlanPage() {
                 : "Lumi is drafting this week's plan — about 30 seconds"}
             </p>
           ) : (
-            <PlanWeekContent data={data} />
+            <PlanWeekContent data={data} childColorMap={childColorMap} />
           )}
         </>
       )}
@@ -172,6 +274,17 @@ export function PlanPage() {
           </Link>
         </div>
       )}
+
+      {/* Why This Week */}
+      <div className="mt-16">
+        <BriefWhyPanel brief={brief} />
+      </div>
+
+      {/* Actions */}
+      <PlanActionSection />
+
+      {/* Footer */}
+      <PlanPageFooter />
     </main>
   );
 }

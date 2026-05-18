@@ -79,11 +79,12 @@ describe('OnboardingText', () => {
     fireEvent.change(textarea, { target: { value: 'Grandma made dal every Sunday.' } });
     fireEvent.submit(screen.getByRole('button', { name: /send/i }).closest('form')!);
 
-    // Optimistic user turn rendered immediately
+    // Optimistic turn fired: textarea cleared and input disabled while in flight.
+    // User turns are intentionally hidden in focused mode (history-only).
     await waitFor(() => {
-      expect(screen.getByText(/Grandma made dal every Sunday/)).toBeDefined();
+      expect(textarea.value).toBe('');
+      expect(textarea.disabled).toBe(true);
     });
-    expect(textarea.disabled).toBe(true);
 
     // Resolve the fetch with a Lumi reply
     resolveFetch(mockTurnResponse({ lumi_response: "What's a Friday in your house?" }));
@@ -115,8 +116,10 @@ describe('OnboardingText', () => {
     await waitFor(() => {
       expect(screen.getByRole('alert')).toBeDefined();
     });
-    // User turn still rendered
-    expect(screen.getByText(/Sometimes she made roti/)).toBeDefined();
+    // 502 path: draft stays empty (turn was persisted server-side — not restored).
+    // Non-upstream errors restore the draft so the user can re-send without retyping.
+    // User turns are hidden in focused mode (visible via history toggle).
+    expect((screen.getByLabelText(/your message to lumi/i) as HTMLTextAreaElement).value).toBe('');
     // Input re-enabled
     expect((screen.getByLabelText(/your message to lumi/i) as HTMLTextAreaElement).disabled).toBe(false);
   });

@@ -1,18 +1,39 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
-import type { ChildResponse, PlanTileSummary } from '@hivekitchen/types';
+import type { ChildResponse, ClearedAllergyEntry, PlanTileSummary } from '@hivekitchen/types';
 import { useAuthStore } from '@/stores/auth.store.js';
 import { useComplianceStore } from '@/stores/compliance.store.js';
 import { PageHeader } from '@/components/PageHeader.js';
 import { AddChildForm } from '@/features/children/AddChildForm.js';
 import { BagCompositionCard } from '@/features/children/BagCompositionCard.js';
 import { AllergyClearedBadge } from './AllergyClearedBadge.js';
+import { BriefWhyPanel } from './BriefWhyPanel.js';
 import { DisambiguationPicker } from './DisambiguationPicker.js';
 import { FreshnessState } from './FreshnessState.js';
-import { PlanTile, type PlanTileState } from './PlanTile.js';
+import { PlanActionSection } from './PlanActionSection.js';
+import { PlanTile, type PlanTileState, type ChildDotColor, type ChildInfo } from './PlanTile.js';
 import { QuietDiff } from './QuietDiff.js';
 import { useBriefStateQuery } from './useBriefStateQuery.js';
 import { useRequestRegenerationMutation } from './mutations.js';
+
+const CHILD_COLORS: readonly ChildDotColor[] = ['foliage', 'lumi-terracotta'];
+
+function buildChildColorMap(
+  clearedAllergies: ClearedAllergyEntry[],
+): ReadonlyMap<string, ChildInfo> {
+  const map = new Map<string, ChildInfo>();
+  let idx = 0;
+  for (const entry of clearedAllergies) {
+    if (!map.has(entry.child_id)) {
+      map.set(entry.child_id, {
+        name: entry.child_name,
+        color: CHILD_COLORS[idx % CHILD_COLORS.length]!,
+      });
+      idx++;
+    }
+  }
+  return map;
+}
 
 export function BriefCanvas() {
   // AC #3 — dev-mode runtime assertion guards against accidental out-of-scope
@@ -57,6 +78,11 @@ export function BriefCanvas() {
   // Guard: hkFetch returns raw JSON without Zod parsing; cleared_allergies may be
   // absent on a pre-migration cached response. Default to [] to prevent .length crash.
   const clearedAllergies = brief?.cleared_allergies ?? [];
+  const childColorMap = useMemo(
+    () => buildChildColorMap(clearedAllergies),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [JSON.stringify(clearedAllergies)],
+  );
   // brief.plan_id is null on pre-migration rows; swap UI requires it.
   const planId = brief?.plan_id ?? null;
   const canSwap = planId !== null;
@@ -220,18 +246,14 @@ export function BriefCanvas() {
             </div>
           )}
 
-          {brief.moment_headline !== '' ? (
-            <PageHeader
-              eyebrow="This week's brief"
-              headlineSize="lg"
-              description={brief.lumi_note}
-              className="mb-12"
-            >
-              {brief.moment_headline}
-            </PageHeader>
-          ) : (
-            <h1 className="sr-only">Weekly plan</h1>
-          )}
+          <PageHeader
+            eyebrow="This week's brief"
+            headlineSize="lg"
+            description={brief.lumi_note !== '' ? brief.lumi_note : undefined}
+            className="mb-12"
+          >
+            {brief.moment_headline !== '' ? brief.moment_headline : 'Your week, ready'}
+          </PageHeader>
 
           <div
             className={`grid grid-cols-2 ${brief.plan_tile_summaries.length <= 5 ? 'md:grid-cols-5' : 'md:grid-cols-6'} gap-4 mb-8`}
@@ -252,6 +274,7 @@ export function BriefCanvas() {
                   key={summary.day}
                   summary={summary}
                   state={tileState}
+                  childColorMap={childColorMap}
                   onSwapIntent={
                     canSwap && !summary.paused && swappingItemId === null
                       ? () => {
@@ -319,12 +342,25 @@ export function BriefCanvas() {
             </p>
           )}
 
-          <div className="mt-6">
+          <div className="mt-4 mb-10">
             <FreshnessState
               variant={freshnessVariant}
               lastSyncedAt={brief.updated_at}
             />
           </div>
+
+          <BriefWhyPanel brief={brief} />
+
+          <PlanActionSection
+            onSwapDay={
+              canSwap && brief.plan_tile_summaries.length > 0
+                ? () => {
+                    const firstUnpaused = brief.plan_tile_summaries.find((s) => !s.paused);
+                    if (firstUnpaused) setActiveSwapDay(firstUnpaused.day);
+                  }
+                : undefined
+            }
+          />
         </>
       )}
 

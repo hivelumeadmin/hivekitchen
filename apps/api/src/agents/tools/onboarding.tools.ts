@@ -73,10 +73,27 @@ export function createChildUpsertToolSpec(
       // them. undefined means "no update" → service preserves existing.
       // An explicit empty array is a deliberate clear; the validator handles
       // it (no entries to validate, returns []).
-      const declared_allergens =
-        parsed.declared_allergens === undefined
-          ? undefined
-          : deps.vocabularyService.validateAllergens(parsed.declared_allergens);
+      //
+      // Allergens: partition into known (save to declared_allergens) and
+      // unknown (save as memory.note). Unknown allergens must NOT throw —
+      // a thrown error propagates through the agent framework as a tool
+      // failure, causing Lumi to apologise to the user instead of proceeding.
+      const unknownAllergenKeys: string[] = [];
+      let declared_allergens: string[] | undefined = undefined;
+
+      if (parsed.declared_allergens !== undefined) {
+        const known: string[] = [];
+        for (const key of parsed.declared_allergens) {
+          const resolved = deps.vocabularyService.resolveAllergen(key);
+          if (resolved !== undefined && deps.vocabularyService.isActive('allergen', resolved)) {
+            known.push(resolved);
+          } else {
+            unknownAllergenKeys.push(key);
+          }
+        }
+        declared_allergens = [...new Set(known)];
+      }
+
       const cultural_identifiers =
         parsed.cultural_identifiers === undefined
           ? undefined
@@ -104,6 +121,31 @@ export function createChildUpsertToolSpec(
         },
       });
 
+      // Save each unrecognised allergen as a memory.note so the information
+      // is not lost. Fire-and-forget errors are tolerated — the child row is
+      // already committed and a failed provenance note must not roll it back.
+      for (const allergen of unknownAllergenKeys) {
+        ctx.logger.warn(
+          {
+            module: 'onboarding-tools',
+            action: 'child.upsert.unknown_allergen',
+            household_id: ctx.householdId,
+            child_id: result.child.id,
+            allergen,
+          },
+          'unknown allergen tag — saving as memory.note',
+        );
+        await deps.memoryService.noteFromAgent({
+          householdId: ctx.householdId,
+          nodeType: 'allergy',
+          facet: 'allergen',
+          proseText: `${parsed.name} has an allergy or sensitivity to ${allergen}.`,
+          subjectChildId: result.child.id,
+          confidence: 0.85,
+          sourceRef: { tool: 'child.upsert', allergen, reason: 'not_in_vocabulary' },
+        });
+      }
+
       ctx.logger.info(
         {
           module: 'onboarding-tools',
@@ -112,6 +154,7 @@ export function createChildUpsertToolSpec(
           user_id: ctx.userId,
           child_id: result.child.id,
           was_existing: result.was_existing,
+          unknown_allergens: unknownAllergenKeys,
         },
         'child.upsert handled',
       );
@@ -120,6 +163,7 @@ export function createChildUpsertToolSpec(
         child_id: result.child.id,
         name: result.child.name,
         was_existing: result.was_existing,
+        unknown_allergens_noted: unknownAllergenKeys.length > 0 ? unknownAllergenKeys : undefined,
       });
       return output;
     },

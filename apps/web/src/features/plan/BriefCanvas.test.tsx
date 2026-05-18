@@ -137,8 +137,8 @@ describe('BriefCanvas', () => {
       expect(screen.getByLabelText('Weekly plan')).toBeDefined();
     });
     const h1 = screen.getByRole('heading', { level: 1 });
-    expect(h1.className).toContain('sr-only');
-    expect(h1.textContent).toBe('Weekly plan');
+    expect(h1.textContent).toBe('Your week, ready');
+    expect(h1.className).not.toContain('sr-only');
   });
 
   it('each plan_tile_summaries item renders as <article> with day aria-label', async () => {

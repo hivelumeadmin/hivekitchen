@@ -238,16 +238,11 @@ export default function OnboardingPage() {
         content: t.content,
       }));
       return (
-        <div className="flex flex-1 items-start justify-center px-4 py-12">
-          <div className="flex w-full max-w-2xl flex-col gap-6">
-            <h1 className="text-center font-serif text-2xl text-fg">
-              Let&apos;s get to know your family
-            </h1>
-            <OnboardingText
-              onFinalized={() => setMode('consent')}
-              initialTurns={initialTurns}
-            />
-          </div>
+        <div className="flex flex-1 overflow-hidden">
+          <OnboardingText
+            onFinalized={() => setMode('consent')}
+            initialTurns={initialTurns}
+          />
         </div>
       );
     }

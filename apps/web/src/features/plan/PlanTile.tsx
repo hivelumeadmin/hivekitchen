@@ -1,6 +1,7 @@
 import { useRef, useState } from 'react';
 import type { KeyboardEvent as ReactKeyboardEvent } from 'react';
 import type { PlanTileSummary } from '@hivekitchen/types';
+import { PauseCircleIcon } from '@/components/icons.js';
 import { PresenceIndicator } from '../thread/PresenceIndicator.js';
 import { TrustChip, type TrustChipVariant } from './TrustChip.js';
 
@@ -14,16 +15,33 @@ export type PlanTileState =
 
 export type PlanTileVariant = 'today' | 'upcoming' | 'past';
 
+export type ChildDotColor = 'foliage' | 'lumi-terracotta';
+export interface ChildInfo {
+  readonly name: string;
+  readonly color: ChildDotColor;
+}
+
 export interface PlanTileProps {
   summary: PlanTileSummary;
   state?: PlanTileState;
   partnerName?: string;
   trustChips?: ReadonlyArray<{ variant: TrustChipVariant; label: string }>;
+  childColorMap?: ReadonlyMap<string, ChildInfo>;
   onSwapIntent?: () => void;
   // Story 3.15 — historical plan view forces every tile into the past variant
   // regardless of day-of-week. Default behavior (deriveVariant) compares the
   // tile's day to today, which is wrong when rendering a prior week's plan.
   forceVariant?: PlanTileVariant;
+}
+
+function ChildChip({ name, color }: { name: string; color: ChildDotColor }) {
+  const dotClass = color === 'foliage' ? 'bg-foliage' : 'bg-lumi-terracotta';
+  return (
+    <span className="inline-flex items-center gap-1.5 rounded-full border border-border bg-surface-2 px-3 py-1 text-[11px] font-medium text-fg">
+      <span className={`h-2 w-2 flex-shrink-0 rounded-full ${dotClass}`} aria-hidden />
+      {name}
+    </span>
+  );
 }
 
 const DAY_LABELS: Record<PlanTileSummary['day'], string> = {
@@ -70,6 +88,7 @@ export function PlanTile({
   state = 'decided',
   partnerName,
   trustChips,
+  childColorMap,
   onSwapIntent,
   forceVariant,
 }: PlanTileProps) {
@@ -105,12 +124,13 @@ export function PlanTile({
       : 'border border-border';
 
   const articleClasses = [
-    'relative rounded-lg p-4 flex flex-col gap-1 transition-colors',
+    'group relative rounded-lg p-6 flex flex-col h-full transition-colors',
     borderClass,
-    hasMorningTint && !isPaused ? 'bg-amber-warm/10' : 'bg-surface',
-    isPast || isPaused ? 'opacity-60 pointer-events-none' : '',
+    hasMorningTint && !isPaused ? 'bg-amber-warm/10' : 'bg-surface-2',
+    isPaused ? 'opacity-60 pointer-events-none' : '',
+    isPast ? 'opacity-60 pointer-events-none' : '',
     isInteractive
-      ? 'cursor-pointer hover:border-amber-warm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-warm focus-visible:ring-offset-1'
+      ? 'cursor-pointer hover:[border-left-width:2px] hover:border-l-amber-warm hover:[padding-left:calc(1.5rem-2px)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-warm focus-visible:ring-offset-1'
       : '',
   ]
     .filter((c) => c !== '')
@@ -138,19 +158,38 @@ export function PlanTile({
         />
       )}
 
-      <h2 className="text-xs font-medium uppercase tracking-wider text-fg-muted">
+      <h2 className="text-xs uppercase tracking-wider text-fg-muted mb-4">
         {DAY_LABELS[summary.day]}
       </h2>
 
       {dishLine !== '' ? (
-        <p className="font-serif text-2xl leading-[1.25] text-fg">
+        <p className="font-serif text-2xl leading-[1.25] text-fg mb-6 flex-grow">
           {dishLine}
         </p>
       ) : (
-        <p className="text-[15px] leading-[1.4] text-fg-muted/60">
+        <p className="text-[15px] leading-[1.4] text-fg-muted/60 mb-6 flex-grow">
           Plan pending
         </p>
       )}
+
+      {childColorMap !== undefined && childColorMap.size > 0 && (() => {
+        const chips = summary.items
+          .map((item) => childColorMap.get(item.child_id))
+          .filter((info): info is ChildInfo => info !== undefined && info.name !== '');
+        const seen = new Set<string>();
+        const unique = chips.filter((info) => {
+          if (seen.has(info.name)) return false;
+          seen.add(info.name);
+          return true;
+        });
+        return unique.length > 0 ? (
+          <div className="flex flex-wrap gap-1.5 mb-3">
+            {unique.map((info) => (
+              <ChildChip key={info.name} name={info.name} color={info.color} />
+            ))}
+          </div>
+        ) : null;
+      })()}
 
       {trustChips !== undefined && trustChips.length > 0 && (
         <div
@@ -165,9 +204,10 @@ export function PlanTile({
 
       {isPaused && (
         <p
-          className="mt-1 text-xs italic text-fg-muted/70"
+          className="mt-1 flex items-center gap-2 text-xs italic text-fg-muted/70"
           aria-label="Day paused — sick day"
         >
+          <PauseCircleIcon className="h-4 w-4 shrink-0" aria-hidden />
           Paused
         </p>
       )}

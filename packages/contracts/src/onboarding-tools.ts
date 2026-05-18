@@ -64,6 +64,11 @@ export const ChildUpsertOutputSchema = z.object({
   /** True when an existing child row was updated, false when a new row was
    *  inserted. Useful for distinguishing INSERT vs UPDATE in audit logs. */
   was_existing: z.boolean(),
+  /** Allergens the agent passed that are not in the active vocabulary.
+   *  Each has been saved as a memory.note with node_type='allergy' so
+   *  the information is not lost. The agent may acknowledge these naturally
+   *  rather than apologising about a technical failure. */
+  unknown_allergens_noted: z.array(z.string()).optional(),
 });
 
 // ---- cultural.note -------------------------------------------------------
