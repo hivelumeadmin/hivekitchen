@@ -72,6 +72,12 @@ const PlanComposeItemSchema = z.object({
   slot: z.string().min(1).max(SLOT_MAX),
   ingredients: z.array(z.string().min(1).max(INGREDIENT_MAX)).min(1),
   recipe_id: z.string().uuid().optional(),
+  // Story 3-31: when the planner picked this main-slot item via
+  // recipe.discover, the synthetic candidate id is carried through to
+  // plan commit, where it's resolved against Redis to insert a real
+  // recipes row. Mutually exclusive with recipe_id (an item references
+  // EITHER a catalog row OR a yet-to-materialize candidate, never both).
+  recipe_candidate_id: z.string().uuid().optional(),
   item_id: z.string().uuid().optional(),
   item_sku_id: z.string().uuid().optional(),
 }).superRefine((val, ctx) => {
@@ -80,6 +86,12 @@ const PlanComposeItemSchema = z.object({
   }
   if ((val.slot === 'snack' || val.slot === 'extra') && val.recipe_id !== undefined) {
     ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'recipe_id is not valid for snack/extra slots', path: ['recipe_id'] });
+  }
+  if ((val.slot === 'snack' || val.slot === 'extra') && val.recipe_candidate_id !== undefined) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'recipe_candidate_id is not valid for snack/extra slots', path: ['recipe_candidate_id'] });
+  }
+  if (val.recipe_id !== undefined && val.recipe_candidate_id !== undefined) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'recipe_id and recipe_candidate_id are mutually exclusive', path: ['recipe_candidate_id'] });
   }
 });
 export type PlanComposeItem = z.infer<typeof PlanComposeItemSchema>;
@@ -158,6 +170,12 @@ export const PlanItemWriteSchema = z.object({
   day: z.string().min(1).max(SLOT_MAX),
   slot: z.string().min(1).max(SLOT_MAX),
   recipe_id: z.string().uuid().optional(),
+  // Story 3-31: discover-sourced main items carry the synthetic candidate id
+  // through to plan commit, where it's resolved against the Redis-cached
+  // RecipeAgentExtraction and inserted as a real recipes row. Mutually
+  // exclusive with recipe_id (an item references either a catalog row or a
+  // candidate awaiting materialization, never both).
+  recipe_candidate_id: z.string().uuid().optional(),
   item_id: z.string().uuid().optional(),
   item_sku_id: z.string().uuid().optional(),  // Story 3.20 — Snack SKU reference
   ingredients: z.array(z.string().min(1).max(INGREDIENT_MAX)).min(1),
@@ -167,6 +185,12 @@ export const PlanItemWriteSchema = z.object({
   }
   if ((val.slot === 'snack' || val.slot === 'extra') && val.recipe_id !== undefined) {
     ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'recipe_id is not valid for snack/extra slots', path: ['recipe_id'] });
+  }
+  if ((val.slot === 'snack' || val.slot === 'extra') && val.recipe_candidate_id !== undefined) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'recipe_candidate_id is not valid for snack/extra slots', path: ['recipe_candidate_id'] });
+  }
+  if (val.recipe_id !== undefined && val.recipe_candidate_id !== undefined) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'recipe_id and recipe_candidate_id are mutually exclusive', path: ['recipe_candidate_id'] });
   }
 });
 
@@ -178,6 +202,11 @@ export const CommitPlanInputSchema = z.object({
   revision: z.number().int().min(1),
   generated_at: z.string().datetime({ offset: true }),
   prompt_version: z.string().min(1).max(PROMPT_VERSION_MAX),
+  // Story 3-31: planner-run identifier. When set, the commit path looks up
+  // any plan items carrying recipe_candidate_id in Redis under this build
+  // namespace to materialize their cached RecipeAgentExtraction. Optional
+  // for backwards compatibility with paths that don't go through discover.
+  plan_build_id: z.string().min(1).max(128).optional(),
   items: z.array(PlanItemWriteSchema).min(1),
 });
 

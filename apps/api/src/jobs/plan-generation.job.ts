@@ -89,7 +89,7 @@ export function getLocalSixPmUtcMs(timezone: string, referenceDate: Date): numbe
 export function buildCommitInput(
   output: PlanComposeOutput,
   weekId: string,
-  _requestId: string,
+  requestId: string,
 ): CommitPlanInput {
   const items: PlanItemWrite[] = output.days.flatMap((d) =>
     d.items.map((item) => ({
@@ -98,6 +98,9 @@ export function buildCommitInput(
       slot: item.slot,
       ingredients: item.ingredients,
       ...(item.recipe_id !== undefined ? { recipe_id: item.recipe_id } : {}),
+      // Story 3-31: pass through the planner-emitted discover candidate id
+      // so commit can resolve it against Redis and insert a real recipes row.
+      ...(item.recipe_candidate_id !== undefined ? { recipe_candidate_id: item.recipe_candidate_id } : {}),
       ...(item.item_id !== undefined ? { item_id: item.item_id } : {}),
       ...(item.item_sku_id !== undefined ? { item_sku_id: item.item_sku_id } : {}),
     })),
@@ -111,6 +114,10 @@ export function buildCommitInput(
     revision: 1,
     generated_at: new Date().toISOString(),
     prompt_version: output.prompt_version,
+    // Story 3-31: requestId IS the plan_build_id used by recipe.discover's
+    // Redis cache. Threading it through to commit lets the candidate
+    // resolver read those cached extractions under the same namespace.
+    plan_build_id: requestId,
     items,
   };
 }

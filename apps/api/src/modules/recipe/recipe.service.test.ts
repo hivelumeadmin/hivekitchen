@@ -437,3 +437,291 @@ describe('toIngredientKey helper', () => {
     expect(toIngredientKey('123')).toBe('unknown');
   });
 });
+
+// ===========================================================================
+// Story 3-31 — discover / readCandidate / insertFromDiscoverExtraction
+// ===========================================================================
+
+import type { Redis } from 'ioredis';
+import type { RecipeAgent } from '../../agents/recipe-agent.js';
+import type { AuditService } from '../../audit/audit.service.js';
+import type {
+  RecipeAgentExtraction,
+  RecipeDiscoverInput,
+} from '@hivekitchen/types';
+import { hashDiscoverGroup } from './recipe.service.js';
+
+const PLAN_BUILD_ID = 'plan-build-3-31-001';
+const CANDIDATE_ID_1 = '33333333-3333-4333-8333-333333333331';
+const CANDIDATE_ID_2 = '33333333-3333-4333-8333-333333333332';
+
+function buildExtraction(opts: Partial<RecipeAgentExtraction> = {}): RecipeAgentExtraction {
+  return {
+    name: 'Test Dish',
+    source_url: 'https://www.allrecipes.com/recipe/1',
+    source_site: 'allrecipes',
+    cuisine_tags: ['south_asian'],
+    cultural_tags: [],
+    dietary_flags: [],
+    allergen_flags: [],
+    prep_time_minutes: 30,
+    ingredients: [
+      {
+        key: 'chicken',
+        modifier: 'thigh',
+        display: '1 lb chicken thighs',
+        quantity: 1,
+        unit: 'lb',
+        optional: false,
+        substitutes: [],
+      },
+    ],
+    instructions: ['Cook the chicken.'],
+    allergen_info_from_source: null,
+    ...opts,
+  };
+}
+
+function buildDiscoverInput(overrides: Partial<RecipeDiscoverInput> = {}): RecipeDiscoverInput {
+  return {
+    household_id: HOUSEHOLD_ID,
+    plan_build_id: PLAN_BUILD_ID,
+    slot: 'main',
+    count: 2,
+    intent: 'kid-friendly weeknight lunch',
+    constraints: {
+      cuisine_tags: ['south_asian'],
+      cultural_tags: [],
+      dietary_flags: [],
+      allergen_exclusions: [],
+      max_prep_minutes: null,
+    },
+    ...overrides,
+  };
+}
+
+function makeFakeRedis(): { redis: Redis; getMock: ReturnType<typeof vi.fn>; setMock: ReturnType<typeof vi.fn>; store: Map<string, string> } {
+  const store = new Map<string, string>();
+  const getMock = vi.fn(async (key: string) => store.get(key) ?? null);
+  const setMock = vi.fn(async (key: string, value: string) => {
+    store.set(key, value);
+    return 'OK';
+  });
+  return {
+    redis: { get: getMock, set: setMock } as unknown as Redis,
+    getMock,
+    setMock,
+    store,
+  };
+}
+
+function makeFakeAudit(): { audit: AuditService; writeMock: ReturnType<typeof vi.fn> } {
+  const writeMock = vi.fn().mockResolvedValue(undefined);
+  return {
+    audit: { write: writeMock } as unknown as AuditService,
+    writeMock,
+  };
+}
+
+function makeFakeAgent(
+  extractions: RecipeAgentExtraction[],
+  options: { droppedCount?: number } = {},
+): { agent: RecipeAgent; discoverMock: ReturnType<typeof vi.fn> } {
+  const discoverMock = vi.fn().mockResolvedValue({
+    candidates: extractions.map((extraction, i) => ({
+      candidateId: i === 0 ? CANDIDATE_ID_1 : CANDIDATE_ID_2,
+      extraction,
+      preview: {
+        id: i === 0 ? CANDIDATE_ID_1 : CANDIDATE_ID_2,
+        name: extraction.name,
+        primary_ingredient_key: extraction.ingredients[0]?.key ?? null,
+        cuisine_tags: extraction.cuisine_tags,
+        allergen_flags: extraction.allergen_flags,
+        dietary_flags: extraction.dietary_flags,
+        prep_time_minutes: extraction.prep_time_minutes,
+      },
+    })),
+    sourceSites: ['allrecipes'],
+    droppedCount: options.droppedCount ?? 0,
+  });
+  return {
+    agent: { discover: discoverMock } as unknown as RecipeAgent,
+    discoverMock,
+  };
+}
+
+describe('hashDiscoverGroup (Story 3-31)', () => {
+  it('produces the same hash for structurally identical inputs', () => {
+    const a = buildDiscoverInput({ intent: 'Test Intent' });
+    const b = buildDiscoverInput({ intent: 'test intent' }); // case differs
+    // Same hash because intent is lowercased before hashing
+    expect(hashDiscoverGroup(a)).toBe(hashDiscoverGroup(b));
+  });
+
+  it('produces different hashes when constraints differ', () => {
+    const a = buildDiscoverInput();
+    const b = buildDiscoverInput({
+      constraints: {
+        cuisine_tags: ['italian'],
+        cultural_tags: [],
+        dietary_flags: [],
+        allergen_exclusions: [],
+        max_prep_minutes: null,
+      },
+    });
+    expect(hashDiscoverGroup(a)).not.toBe(hashDiscoverGroup(b));
+  });
+
+  it('is insensitive to constraint array order', () => {
+    const a = buildDiscoverInput({
+      constraints: {
+        cuisine_tags: ['italian', 'french'],
+        cultural_tags: [],
+        dietary_flags: [],
+        allergen_exclusions: [],
+        max_prep_minutes: null,
+      },
+    });
+    const b = buildDiscoverInput({
+      constraints: {
+        cuisine_tags: ['french', 'italian'],
+        cultural_tags: [],
+        dietary_flags: [],
+        allergen_exclusions: [],
+        max_prep_minutes: null,
+      },
+    });
+    expect(hashDiscoverGroup(a)).toBe(hashDiscoverGroup(b));
+  });
+});
+
+describe('RecipeService.discover — Story 3-31', () => {
+  it('calls the agent on cache miss and caches the result (AC3)', async () => {
+    const repo = buildRepo();
+    const svc = new RecipeService(repo, buildLogger());
+    const redis = makeFakeRedis();
+    const audit = makeFakeAudit();
+    const { agent, discoverMock } = makeFakeAgent([buildExtraction()]);
+
+    const result = await svc.discover(buildDiscoverInput(), {
+      recipeAgent: agent,
+      redis: redis.redis,
+      audit: audit.audit,
+      requestId: 'req-001',
+    });
+
+    expect(discoverMock).toHaveBeenCalledTimes(1);
+    expect(result.results).toHaveLength(1);
+    // Both per-candidate key + group key written
+    expect(redis.setMock).toHaveBeenCalledTimes(2);
+    expect(audit.writeMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('serves from cache on second identical call WITHOUT invoking the agent (AC13)', async () => {
+    const repo = buildRepo();
+    const svc = new RecipeService(repo, buildLogger());
+    const redis = makeFakeRedis();
+    const audit = makeFakeAudit();
+    const { agent, discoverMock } = makeFakeAgent([buildExtraction()]);
+
+    const input = buildDiscoverInput();
+    await svc.discover(input, {
+      recipeAgent: agent,
+      redis: redis.redis,
+      audit: audit.audit,
+      requestId: 'req-001',
+    });
+
+    // Same input within the same plan_build_id → cache hit
+    const second = await svc.discover(input, {
+      recipeAgent: agent,
+      redis: redis.redis,
+      audit: audit.audit,
+      requestId: 'req-001',
+    });
+
+    expect(discoverMock).toHaveBeenCalledTimes(1);
+    expect(second.results).toHaveLength(1);
+    // No second audit event — Tavily wasn't called
+    expect(audit.writeMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('emits recipe.agent_fetch audit event with allowlisted shape and no PII (AC10)', async () => {
+    const repo = buildRepo();
+    const svc = new RecipeService(repo, buildLogger());
+    const redis = makeFakeRedis();
+    const audit = makeFakeAudit();
+    const { agent } = makeFakeAgent([buildExtraction(), buildExtraction()]);
+
+    await svc.discover(buildDiscoverInput({ count: 2, intent: 'should-not-appear-in-audit' }), {
+      recipeAgent: agent,
+      redis: redis.redis,
+      audit: audit.audit,
+      requestId: 'req-pii-test',
+    });
+
+    expect(audit.writeMock).toHaveBeenCalledTimes(1);
+    const [event] = audit.writeMock.mock.calls[0]!;
+    expect(event.event_type).toBe('recipe.agent_fetch');
+    expect(event.household_id).toBe(HOUSEHOLD_ID);
+    expect(event.request_id).toBe('req-pii-test');
+    // The metadata is allowlisted: slot, count_requested, count_returned,
+    // dropped_count, source_sites, duration_ms. NO intent. NO constraint.
+    expect(event.metadata).toHaveProperty('slot', 'main');
+    expect(event.metadata).toHaveProperty('count_requested', 2);
+    expect(event.metadata).toHaveProperty('count_returned', 2);
+    expect(event.metadata).toHaveProperty('dropped_count', 0);
+    expect(event.metadata).toHaveProperty('source_sites');
+    expect(event.metadata).toHaveProperty('duration_ms');
+    expect(event.metadata).not.toHaveProperty('intent');
+    expect(event.metadata).not.toHaveProperty('constraints');
+    // PII string check — confirm the intent text didn't leak anywhere
+    const json = JSON.stringify(event);
+    expect(json).not.toContain('should-not-appear-in-audit');
+  });
+});
+
+describe('RecipeService.readCandidate / insertFromDiscoverExtraction', () => {
+  it('readCandidate returns null on cache miss', async () => {
+    const repo = buildRepo();
+    const svc = new RecipeService(repo, buildLogger());
+    const redis = makeFakeRedis();
+    const r = await svc.readCandidate(PLAN_BUILD_ID, 'never-cached', redis.redis);
+    expect(r).toBeNull();
+  });
+
+  it('readCandidate returns the cached extraction on hit', async () => {
+    const repo = buildRepo();
+    const svc = new RecipeService(repo, buildLogger());
+    const redis = makeFakeRedis();
+    redis.store.set(
+      `lumi:plan-build:${PLAN_BUILD_ID}:recipe-candidate:${CANDIDATE_ID_1}`,
+      JSON.stringify(buildExtraction()),
+    );
+    const r = await svc.readCandidate(PLAN_BUILD_ID, CANDIDATE_ID_1, redis.redis);
+    expect(r).not.toBeNull();
+    expect(r?.name).toBe('Test Dish');
+  });
+
+  it('insertFromDiscoverExtraction inserts a new row and returns the recipe id', async () => {
+    const repo = buildRepo();
+    const svc = new RecipeService(repo, buildLogger());
+    const recipeId = await svc.insertFromDiscoverExtraction({
+      householdId: HOUSEHOLD_ID,
+      extraction: buildExtraction(),
+    });
+    expect(recipeId).toBe(RECIPE_ID);
+    expect(repo.insertRecipe).toHaveBeenCalledTimes(1);
+  });
+
+  it('insertFromDiscoverExtraction reuses an existing row with the same canonical name', async () => {
+    const repo = buildRepo({ existing: { id: 'existing-id', canonical_name: 'Test Dish' } });
+    const svc = new RecipeService(repo, buildLogger());
+    const recipeId = await svc.insertFromDiscoverExtraction({
+      householdId: HOUSEHOLD_ID,
+      extraction: buildExtraction(),
+    });
+    expect(recipeId).toBe('existing-id');
+    expect(repo.insertRecipe).not.toHaveBeenCalled();
+  });
+});

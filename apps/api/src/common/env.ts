@@ -23,6 +23,11 @@ const EnvSchema = z
     WEB_BASE_URL: z.string().url().default('http://localhost:5173'),
 
     OPENAI_API_KEY: z.string().min(1),
+    // Tavily API key — backs RecipeAgent's web-search path (Story 3-31). The
+    // agent restricts Tavily calls to allrecipes.com + recipetineats.com via
+    // includeDomains. Missing this var crash-fails at boot rather than
+    // surfacing an undefined read inside the planner agent loop.
+    TAVILY_API_KEY: z.string().min(1),
     // When true, OpenAIAdapter calls omit the `OpenAI-Data-Privacy: zero-retention`
     // header so requests appear in the OpenAI dashboard's Activity/Logs panel for
     // debugging. Default false → ZDR stays on (prod-safe; OpenAI retains no

@@ -192,3 +192,84 @@ export const RecipeFetchOutputSchema = RecipeRowSchema;
 // Legacy alias kept so existing imports of `RecipeDetailSchema` continue to
 // resolve. New code should reference `RecipeRowSchema` directly.
 export const RecipeDetailSchema = RecipeRowSchema;
+
+// ===========================================================================
+// Story 3-31 — RecipeAgent extraction + discover tool I/O
+// ===========================================================================
+// The RecipeAgent extracts structured recipe data from a Tavily-fetched
+// webpage. The extraction shape conforms to the existing catalog schema:
+// `ingredients` uses RecipeIngredientSchema (key/modifier/display/quantity/
+// unit/optional/substitutes) — NOT a new shape. The four controlled tag
+// arrays (cuisine/cultural/dietary/allergen) are Zod-validated only as
+// "array of strings" here; the service layer drops unknown vocabulary
+// values via the *_tags table lookup. RecipeService.discover writes each
+// validated extraction to Redis under a synthetic candidate id; plan
+// commit resolves the candidate id and inserts a real recipes row.
+// ===========================================================================
+
+export const RecipeAgentExtractionSchema = z.object({
+  name: z.string().min(1).max(256),
+  source_url: z.string().url(),
+  source_site: z.enum(['allrecipes', 'recipetineats']),
+
+  // Tag arrays — vocabulary enforcement happens in the service layer's
+  // post-pass against the *_tags tables, not here. Empty arrays are valid
+  // (the agent emits empty when no value matches the controlled list).
+  cuisine_tags: z.array(z.string().min(1).max(64)).max(20),
+  cultural_tags: z.array(z.string().min(1).max(64)).max(20),
+  dietary_flags: z.array(z.string().min(1).max(64)).max(20),
+  allergen_flags: z.array(z.string().min(1).max(64)).max(20),
+
+  prep_time_minutes: z.number().int().positive().max(600).nullable(),
+
+  // Ingredients use the SAME shape as the catalog row. The agent prompt
+  // enforces head-noun discipline (key = base food, modifier = variant).
+  ingredients: z.array(RecipeIngredientSchema).min(1).max(40),
+
+  // Instructions: array of imperative steps. The agent rewrites verbatim
+  // source text into functional directives to stay clear of copyright on
+  // creative expression.
+  instructions: z.array(z.string().min(1).max(2000)).min(1).max(40),
+
+  // Verbatim allergen warning printed on the source page (e.g. "Contains:
+  // wheat, soy"). Never inferred. Null when no such text appears.
+  allergen_info_from_source: z.string().max(500).nullable(),
+});
+
+export type RecipeAgentExtraction = z.infer<typeof RecipeAgentExtractionSchema>;
+
+// ---- recipe.discover tool I/O --------------------------------------------
+//
+// Deterministic structured input — no opaque prompts. The planner agent
+// fills these fields from the household profile already in its context
+// (kitchen-map injection). RecipeAgent does not re-fetch the profile.
+
+export const RecipeDiscoverConstraintsSchema = z.object({
+  cuisine_tags: z.array(z.string().min(1).max(64)).max(20),
+  cultural_tags: z.array(z.string().min(1).max(64)).max(20),
+  dietary_flags: z.array(z.string().min(1).max(64)).max(20),
+  allergen_exclusions: z.array(z.string().min(1).max(64)).max(20),
+  max_prep_minutes: z.number().int().positive().max(600).nullable(),
+});
+
+export const RecipeDiscoverInputSchema = z.object({
+  household_id: z.string().uuid(),
+  // The planner's run-level requestId. Used as cache namespace + audit
+  // correlation key. Same ID for every discover call within one planWeek.
+  plan_build_id: z.string().min(1).max(128),
+  slot: RecipeSlotSchema,
+  count: z.number().int().min(1).max(10),
+  intent: z.string().min(1).max(200),
+  constraints: RecipeDiscoverConstraintsSchema,
+});
+
+// Discover returns the SAME shape as recipe.search so the planner agent
+// treats previews uniformly regardless of which surface produced them.
+// The `id` of a discover preview is a synthetic candidate UUID; the full
+// extraction lives in Redis at lumi:plan-build:{plan_build_id}:recipe-
+// candidate:{candidate_id} until plan commit resolves it.
+export const RecipeDiscoverOutputSchema = RecipeSearchOutputSchema;
+
+export type RecipeDiscoverInput = z.infer<typeof RecipeDiscoverInputSchema>;
+export type RecipeDiscoverOutput = z.infer<typeof RecipeDiscoverOutputSchema>;
+export type RecipeDiscoverConstraints = z.infer<typeof RecipeDiscoverConstraintsSchema>;

@@ -13,6 +13,8 @@ import {
   PantryReadOutputSchema,
   PlanComposeInputSchema,
   PlanComposeOutputSchema,
+  RecipeDiscoverInputSchema,
+  RecipeDiscoverOutputSchema,
   RecipeFetchInputSchema,
   RecipeFetchOutputSchema,
   RecipeSearchInputSchema,
@@ -97,6 +99,19 @@ const recipeFetchStubSpec = stubSpec(
   'recipe.fetch not wired — DomainOrchestrator constructor must inject createRecipeFetchSpec(recipeService, redis)',
 );
 
+// Story 3-31 — recipe.discover stub. Higher latency budget than search/fetch
+// because the live wiring fans out to Tavily + LLM extraction. Per-planWeek
+// closure is built in DomainOrchestrator.planWeek (not the constructor) so
+// it can carry the run's requestId for audit correlation.
+const recipeDiscoverStubSpec = stubSpec(
+  'recipe.discover',
+  'Discover candidate recipes from the public web (Allrecipes / RecipeTin Eats) shaped to the household profile. Call ONLY when recipe.search returns too few results.',
+  RecipeDiscoverInputSchema,
+  RecipeDiscoverOutputSchema,
+  8000,
+  'recipe.discover not wired — DomainOrchestrator.planWeek must inject createRecipeDiscoverSpec(recipeService, discoverDeps, redis) per run',
+);
+
 const pantryReadStubSpec = stubSpec(
   'pantry.read',
   'Read current pantry inventory for the household. Used by the planner to prefer ingredients already on hand.',
@@ -130,6 +145,7 @@ export const TOOL_MANIFEST = new Map<string, ToolSpec>([
   ['memory.recall', memoryRecallStubSpec],
   ['recipe.search', recipeSearchStubSpec],
   ['recipe.fetch', recipeFetchStubSpec],
+  ['recipe.discover', recipeDiscoverStubSpec],
   ['pantry.read', pantryReadStubSpec],
   ['plan.compose', planComposeStubSpec],
   ['cultural.lookup', culturalLookupStubSpec],

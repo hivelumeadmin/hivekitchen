@@ -1,5 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type OpenAI from 'openai';
+import type { TavilyClient } from '@tavily/core';
 import type { ElevenLabsClient } from '@elevenlabs/elevenlabs-js';
 import type Stripe from 'stripe';
 import type { MailService } from '@sendgrid/mail';
@@ -28,6 +29,7 @@ declare module 'fastify' {
     env: Env;
     supabase: SupabaseClient;
     openai: OpenAI;
+    tavily: TavilyClient;
     elevenlabs: ElevenLabsClient;
     stripe: Stripe;
     sendgrid: MailService;

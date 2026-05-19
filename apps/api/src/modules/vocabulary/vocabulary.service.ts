@@ -238,6 +238,49 @@ export class VocabularyService {
   }
 
   /**
+   * Story 3-31 — silent-drop filter used by RecipeAgent post-pass.
+   *
+   * Where validate* throws on unknown values (correct for first-party
+   * writes coming from the planner/onboarding/UX flows that should never
+   * emit drift), filterActive instead drops unknown or inactive values
+   * and returns only what survives. Callers log each drop separately so
+   * vocabulary drift is observable without poisoning the insert.
+   *
+   * Used by RecipeService.discover to clean RecipeAgent output before
+   * persisting — the LLM occasionally emits a tag that doesn't exist
+   * in the table; we'd rather store the recipe with one fewer tag than
+   * fail the whole insert.
+   */
+  filterActive(
+    category: VocabularyCategory,
+    keys: readonly string[],
+  ): { kept: string[]; dropped: string[] } {
+    const kept: string[] = [];
+    const dropped: string[] = [];
+    const seen = new Set<string>();
+    for (const k of keys) {
+      if (seen.has(k)) continue;
+      seen.add(k);
+      // Allergens have an alias map; non-allergen categories don't.
+      if (category === 'allergen') {
+        const canonical = this.resolveAllergen(k);
+        if (canonical !== undefined && this.isActive('allergen', canonical)) {
+          if (!kept.includes(canonical)) kept.push(canonical);
+        } else {
+          dropped.push(k);
+        }
+        continue;
+      }
+      if (this.isActive(category, k)) {
+        kept.push(k);
+      } else {
+        dropped.push(k);
+      }
+    }
+    return { kept, dropped };
+  }
+
+  /**
    * Returns the current vocabulary snapshot — used by agent prompt
    * augmentation. Lightweight: just maps over the in-memory caches.
    */

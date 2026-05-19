@@ -8,6 +8,8 @@ import {
   RecipeRowSchema,
   HouseholdRecipeUsageRowSchema,
   RecipeCommentPublicSchema,
+  RecipeAgentExtractionSchema,
+  RecipeDiscoverInputSchema,
 } from './recipe.js';
 
 const UUID1 = '00000000-0000-4000-8000-000000000001';
@@ -393,6 +395,143 @@ describe('RecipeCommentPublicSchema', () => {
       rating: 4,
       prose_text: null,
       created_at: NOW,
+    });
+    expect(r.success).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Story 3-31 — RecipeAgentExtractionSchema
+// ---------------------------------------------------------------------------
+
+describe('RecipeAgentExtractionSchema (Story 3-31)', () => {
+  const validExtraction = {
+    name: 'Chicken Biryani',
+    source_url: 'https://www.recipetineats.com/chicken-biryani/',
+    source_site: 'recipetineats' as const,
+    cuisine_tags: ['north_indian', 'south_asian', 'asian'],
+    cultural_tags: ['halal'],
+    dietary_flags: [],
+    allergen_flags: ['dairy'],
+    prep_time_minutes: 45,
+    ingredients: [
+      {
+        key: 'chicken',
+        modifier: 'thigh',
+        display: '500g boneless chicken thighs, cubed',
+        quantity: 500,
+        unit: 'g' as const,
+        optional: false,
+        substitutes: [],
+      },
+      {
+        key: 'rice',
+        modifier: 'basmati',
+        display: '2 cups basmati rice',
+        quantity: 2,
+        unit: 'cup' as const,
+        optional: false,
+        substitutes: [],
+      },
+    ],
+    instructions: [
+      'Soak rice in cold water for 20 minutes.',
+      'Marinate chicken with yogurt and spices.',
+    ],
+    allergen_info_from_source: null,
+  };
+
+  it('round-trips a valid extraction', () => {
+    const r = RecipeAgentExtractionSchema.safeParse(validExtraction);
+    expect(r.success).toBe(true);
+  });
+
+  it('rejects an empty ingredients array', () => {
+    const r = RecipeAgentExtractionSchema.safeParse({ ...validExtraction, ingredients: [] });
+    expect(r.success).toBe(false);
+  });
+
+  it('rejects an empty instructions array', () => {
+    const r = RecipeAgentExtractionSchema.safeParse({ ...validExtraction, instructions: [] });
+    expect(r.success).toBe(false);
+  });
+
+  it('rejects a source_site outside the allowed enum', () => {
+    const r = RecipeAgentExtractionSchema.safeParse({
+      ...validExtraction,
+      source_site: 'food.com',
+    });
+    expect(r.success).toBe(false);
+  });
+
+  it('rejects a non-URL source_url', () => {
+    const r = RecipeAgentExtractionSchema.safeParse({ ...validExtraction, source_url: 'not-a-url' });
+    expect(r.success).toBe(false);
+  });
+
+  it('accepts a populated allergen_info_from_source string', () => {
+    const r = RecipeAgentExtractionSchema.safeParse({
+      ...validExtraction,
+      allergen_info_from_source: 'Contains: wheat, milk, eggs.',
+    });
+    expect(r.success).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Story 3-31 — RecipeDiscoverInputSchema
+// ---------------------------------------------------------------------------
+
+describe('RecipeDiscoverInputSchema (Story 3-31)', () => {
+  const valid = {
+    household_id: UUID1,
+    plan_build_id: 'req-' + UUID2,
+    slot: 'main' as const,
+    count: 5,
+    intent: 'kid-friendly weeknight lunch',
+    constraints: {
+      cuisine_tags: ['south_asian'],
+      cultural_tags: ['halal'],
+      dietary_flags: ['nut_free'],
+      allergen_exclusions: ['peanut'],
+      max_prep_minutes: 30,
+    },
+  };
+
+  it('round-trips a valid input', () => {
+    const r = RecipeDiscoverInputSchema.safeParse(valid);
+    expect(r.success).toBe(true);
+  });
+
+  it('rejects count below 1', () => {
+    const r = RecipeDiscoverInputSchema.safeParse({ ...valid, count: 0 });
+    expect(r.success).toBe(false);
+  });
+
+  it('rejects count above 10', () => {
+    const r = RecipeDiscoverInputSchema.safeParse({ ...valid, count: 11 });
+    expect(r.success).toBe(false);
+  });
+
+  it('rejects empty intent', () => {
+    const r = RecipeDiscoverInputSchema.safeParse({ ...valid, intent: '' });
+    expect(r.success).toBe(false);
+  });
+
+  it('rejects invalid household_id uuid', () => {
+    const r = RecipeDiscoverInputSchema.safeParse({ ...valid, household_id: 'not-a-uuid' });
+    expect(r.success).toBe(false);
+  });
+
+  it('rejects slot outside the enum', () => {
+    const r = RecipeDiscoverInputSchema.safeParse({ ...valid, slot: 'dessert' });
+    expect(r.success).toBe(false);
+  });
+
+  it('accepts null max_prep_minutes', () => {
+    const r = RecipeDiscoverInputSchema.safeParse({
+      ...valid,
+      constraints: { ...valid.constraints, max_prep_minutes: null },
     });
     expect(r.success).toBe(true);
   });

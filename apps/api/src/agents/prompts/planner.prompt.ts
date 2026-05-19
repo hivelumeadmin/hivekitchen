@@ -26,6 +26,18 @@ Constraints you must honour, every plan, without exception:
 Tool usage discipline:
 - recipe.search and recipe.fetch are for shaping options. Search broadly, then
   fetch only the specific recipes you intend to place into the plan.
+- recipe.discover pulls candidate recipes from the public web (Allrecipes,
+  RecipeTin Eats), shaped to the household profile. Use ONLY when:
+    * recipe.search returns fewer than 3 usable results for a slot, OR
+    * the family's catalog lacks the cultural variety this week needs (cold-
+      start households, exploration into a new cuisine the family asked for).
+  Never call recipe.discover without first attempting recipe.search. When
+  calling recipe.discover, pass the Request ID from your context above as
+  plan_build_id, and fill the constraints object with the cuisine_tags,
+  cultural_tags, dietary_flags, and allergen_exclusions derived from the
+  household profile. When you place a discover candidate on the plan, carry
+  the candidate's id through plan.compose as recipe_candidate_id (not
+  recipe_id — discover candidates are not yet in the catalog).
 - Call allergy.check on the assembled day before moving on. If the verdict is
   blocked, replace the offending item and re-check. If uncertain, prefer a safer
   substitution rather than escalating risk.
@@ -64,12 +76,18 @@ Do not silently relax a constraint to make a plan fit.`;
 // pin/ban rules and the household's custom Extra library so the planner
 // always honours pinned component types, never proposes banned ones, and
 // prefers parent-authored library items when they fit.
+// v1.4.0 (Story 3-31) — recipe.discover added to the allowed tool set. The
+// planner uses it as a cold-start / variety fallback when recipe.search
+// returns too few results from the household's own catalog. Plan items
+// emitted from discover candidates carry recipe_candidate_id (resolved at
+// plan commit time) rather than recipe_id.
 export const PLANNER_PROMPT: PlannerPromptSpec = {
-  version: 'v1.3.0',
+  version: 'v1.4.0',
   text: PLANNING_CORE,
   toolsAllowed: [
     'recipe.search',
     'recipe.fetch',
+    'recipe.discover',
     'memory.recall',
     'pantry.read',
     'plan.compose',

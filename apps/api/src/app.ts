@@ -22,6 +22,7 @@ import { householdScopeHook } from './middleware/household-scope.hook.js';
 import { vaultPlugin } from './plugins/vault.plugin.js';
 import { supabasePlugin } from './plugins/supabase.plugin.js';
 import { openaiPlugin } from './plugins/openai.plugin.js';
+import { tavilyPlugin } from './plugins/tavily.plugin.js';
 import { elevenlabsPlugin } from './plugins/elevenlabs.plugin.js';
 import { stripePlugin } from './plugins/stripe.plugin.js';
 import { sendgridPlugin } from './plugins/sendgrid.plugin.js';
@@ -89,6 +90,7 @@ export async function buildApp(opts: BuildAppOptions) {
 
   await app.register(supabasePlugin);
   await app.register(openaiPlugin);
+  await app.register(tavilyPlugin);
   await app.register(elevenlabsPlugin);
   await app.register(stripePlugin);
   await app.register(sendgridPlugin);

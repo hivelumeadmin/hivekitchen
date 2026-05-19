@@ -1,8 +1,15 @@
 import { describe, it, expect, vi } from 'vitest';
 import { ZodError } from 'zod';
 import type { Redis } from 'ioredis';
-import { createRecipeFetchSpec, createRecipeSearchSpec } from './recipe.tools.js';
-import type { RecipeService } from '../../modules/recipe/recipe.service.js';
+import {
+  createRecipeDiscoverSpec,
+  createRecipeFetchSpec,
+  createRecipeSearchSpec,
+} from './recipe.tools.js';
+import type {
+  RecipeService,
+  RecipeServiceDiscoverDeps,
+} from '../../modules/recipe/recipe.service.js';
 
 const HOUSEHOLD_ID = '11111111-1111-4111-8111-111111111111';
 const RECIPE_ID = '22222222-2222-4222-8222-222222222222';
@@ -158,5 +165,70 @@ describe('createRecipeFetchSpec', () => {
     expect(spec.inputSchema.safeParse({ recipe_id: 'x', household_id: HOUSEHOLD_ID }).success).toBe(
       false,
     );
+  });
+});
+
+// Story 3-31 — recipe.discover spec
+describe('createRecipeDiscoverSpec (Story 3-31)', () => {
+  function buildDiscoverDeps(): RecipeServiceDiscoverDeps {
+    return {
+      recipeAgent: { discover: vi.fn() } as unknown as RecipeServiceDiscoverDeps['recipeAgent'],
+      redis: {} as unknown as RecipeServiceDiscoverDeps['redis'],
+      audit: { write: vi.fn() } as unknown as RecipeServiceDiscoverDeps['audit'],
+      requestId: 'req-test',
+    };
+  }
+
+  it('declares name and the elevated maxLatencyMs (AC11)', () => {
+    const { redis } = buildRedis();
+    const svc = { discover: vi.fn().mockResolvedValue({ results: [] }) } as unknown as RecipeService;
+    const spec = createRecipeDiscoverSpec(svc, buildDiscoverDeps(), redis);
+    expect(spec.name).toBe('recipe.discover');
+    expect(spec.maxLatencyMs).toBe(8000);
+  });
+
+  it('routes parsed input to recipeService.discover', async () => {
+    const { redis } = buildRedis();
+    const svc = {
+      discover: vi.fn().mockResolvedValue({ results: [] }),
+    } as unknown as RecipeService;
+    const deps = buildDiscoverDeps();
+    const spec = createRecipeDiscoverSpec(svc, deps, redis);
+    await spec.fn({
+      household_id: HOUSEHOLD_ID,
+      plan_build_id: 'plan-build-1',
+      slot: 'main',
+      count: 3,
+      intent: 'test intent',
+      constraints: {
+        cuisine_tags: [],
+        cultural_tags: [],
+        dietary_flags: [],
+        allergen_exclusions: [],
+        max_prep_minutes: null,
+      },
+    });
+    expect((svc.discover as unknown as ReturnType<typeof vi.fn>)).toHaveBeenCalledTimes(1);
+  });
+
+  it('inputSchema rejects count > 10', () => {
+    const { redis } = buildRedis();
+    const svc = { discover: vi.fn() } as unknown as RecipeService;
+    const spec = createRecipeDiscoverSpec(svc, buildDiscoverDeps(), redis);
+    const r = spec.inputSchema.safeParse({
+      household_id: HOUSEHOLD_ID,
+      plan_build_id: 'plan-build-1',
+      slot: 'main',
+      count: 11,
+      intent: 'x',
+      constraints: {
+        cuisine_tags: [],
+        cultural_tags: [],
+        dietary_flags: [],
+        allergen_exclusions: [],
+        max_prep_minutes: null,
+      },
+    });
+    expect(r.success).toBe(false);
   });
 });

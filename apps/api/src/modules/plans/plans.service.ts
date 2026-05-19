@@ -475,13 +475,43 @@ export class PlansService {
         items.push(item);
         continue;
       }
-      // Agent may already have supplied a recipe_id (slice D.2 search/fetch
-      // tools, future). Trust it — don't re-materialize.
+      // Agent may already have supplied a recipe_id (Slice D.2 recipe.search
+      // hit on the household's own catalog). Trust it — don't re-materialize.
       if (item.recipe_id !== undefined) {
         items.push(item);
         recordedRecipeIds.push(item.recipe_id);
         continue;
       }
+
+      // Story 3-31 — recipe.discover candidate path. The planner picked this
+      // item from a Tavily-sourced candidate; the full extraction lives in
+      // Redis under the plan_build_id namespace. Resolve, persist, drop the
+      // recipe_candidate_id field, and stamp the new recipe_id.
+      if (item.recipe_candidate_id !== undefined) {
+        if (input.plan_build_id === undefined) {
+          // F-P4: plan_build_id not threaded through — can't resolve the
+          // candidate. Warn so the gap is diagnosable; fall through to
+          // ingredient-based materialization.
+          this.logger.warn(
+            {
+              module: 'recipes',
+              action: 'candidate.plan_build_id_missing',
+              household_id: input.household_id,
+              candidate_id: item.recipe_candidate_id,
+            },
+            'recipe_candidate_id present but plan_build_id absent — falling back to materializeFromPlanItem',
+          );
+        } else {
+          const resolved = await this.resolveDiscoverCandidate(input, item);
+          if (resolved !== null) {
+            items.push(resolved.item);
+            recordedRecipeIds.push(resolved.recipeId);
+            continue;
+          }
+        }
+        // Fall through to the materialize-from-ingredients fallback below.
+      }
+
       const result = await this.recipeService.materializeFromPlanItem({
         householdId: input.household_id,
         ingredients: item.ingredients,
@@ -498,6 +528,71 @@ export class PlansService {
       recordedRecipeIds.push(result.recipeId);
     }
     return { ...input, items };
+  }
+
+  /**
+   * Story 3-31 — resolve a single discover-candidate plan item.
+   *
+   * Reads the cached RecipeAgentExtraction from Redis, maps it to the
+   * RecipesRepository insert shape (mirrors materializeFromPlanItem's
+   * canonical insert), persists the row, bumps household_recipe_usage,
+   * and returns the updated item with recipe_id set.
+   *
+   * Returns null on cache miss (TTL expiry, eviction, or never-cached) so
+   * the caller can fall through to materializeFromPlanItem. Logs a
+   * warning on the miss path so cache-eviction-induced fallbacks are
+   * observable.
+   */
+  private async resolveDiscoverCandidate(
+    input: CommitPlanInput,
+    item: CommitPlanInput['items'][number],
+  ): Promise<{ item: CommitPlanInput['items'][number]; recipeId: string } | null> {
+    if (this.recipeService === null) return null;
+    if (item.recipe_candidate_id === undefined) return null;
+    if (input.plan_build_id === undefined) return null;
+
+    const extraction = await this.recipeService.readCandidate(
+      input.plan_build_id,
+      item.recipe_candidate_id,
+      this.redis,
+    );
+    if (extraction === null) {
+      this.logger.warn(
+        {
+          module: 'recipes',
+          action: 'candidate.cache_miss',
+          household_id: input.household_id,
+          plan_build_id: input.plan_build_id,
+          candidate_id: item.recipe_candidate_id,
+        },
+        'discover candidate not found in Redis at commit time — falling back to materializeFromPlanItem',
+      );
+      // F-P9: emit audit event so cache-miss fallbacks are observable in the
+      // ops dashboard (data-quality degradation, not just a warn log).
+      await this.auditService.write({
+        event_type: 'recipe.candidate.cache_miss',
+        household_id: input.household_id,
+        request_id: input.plan_build_id ?? 'unknown',
+        metadata: {
+          candidate_id: item.recipe_candidate_id,
+          plan_build_id: input.plan_build_id,
+          slot: item.slot,
+        },
+      });
+      return null;
+    }
+
+    const recipeId = await this.recipeService.insertFromDiscoverExtraction({
+      householdId: input.household_id,
+      extraction,
+    });
+    // Drop recipe_candidate_id from the persisted item shape — the candidate
+    // is now a real row, identified by recipe_id.
+    const { recipe_candidate_id: _candidateId, ...rest } = item;
+    return {
+      item: { ...rest, recipe_id: recipeId },
+      recipeId,
+    };
   }
 
   // Story 3.12 — sick-day pause: marks paused_at on all plan_items for the day.

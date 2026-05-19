@@ -124,6 +124,10 @@ import {
   RecipeFetchInputSchema,
   RecipeFetchOutputSchema,
   RecipeIngredientSchema,
+  RecipeAgentExtractionSchema,
+  RecipeDiscoverInputSchema,
+  RecipeDiscoverOutputSchema,
+  RecipeDiscoverConstraintsSchema,
   RecipeDetailSchema,
   RecipeRowSchema,
   RecipeUnitSchema,
@@ -387,6 +391,12 @@ export type RecipeFetchInput = z.infer<typeof RecipeFetchInputSchema>;
 export type RecipeFetchOutput = z.infer<typeof RecipeFetchOutputSchema>;
 export type RecipeIngredient = z.infer<typeof RecipeIngredientSchema>;
 export type RecipeDetail = z.infer<typeof RecipeDetailSchema>;
+
+// Story 3-31 — RecipeAgent discover surface
+export type RecipeAgentExtraction = z.infer<typeof RecipeAgentExtractionSchema>;
+export type RecipeDiscoverInput = z.infer<typeof RecipeDiscoverInputSchema>;
+export type RecipeDiscoverOutput = z.infer<typeof RecipeDiscoverOutputSchema>;
+export type RecipeDiscoverConstraints = z.infer<typeof RecipeDiscoverConstraintsSchema>;
 
 // Slice A0 — Recipes catalog DB row shapes
 export type RecipeRow = z.infer<typeof RecipeRowSchema>;

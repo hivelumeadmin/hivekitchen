@@ -191,6 +191,53 @@ describe('PlanComposeInputSchema (Story 3.7 — per-child/per-slot days)', () =>
     const { prompt_version: _drop, ...rest } = validInput;
     expect(PlanComposeInputSchema.safeParse(rest).success).toBe(false);
   });
+
+  // Story 3-31 — recipe_candidate_id on PlanComposeItem
+  describe('recipe_candidate_id (Story 3-31)', () => {
+    const RECIPE_ID = '00000000-0000-4000-8000-000000000050';
+    const CANDIDATE_ID = '00000000-0000-4000-8000-000000000051';
+    const baseItem = { child_id: UUID2, slot: 'main', ingredients: ['rice', 'lentils'] };
+
+    it('accepts a main-slot item with only recipe_candidate_id set', () => {
+      const r = PlanComposeInputSchema.safeParse({
+        ...validInput,
+        days: [{ day: 'monday', items: [{ ...baseItem, recipe_candidate_id: CANDIDATE_ID }] }],
+      });
+      expect(r.success).toBe(true);
+    });
+
+    it('rejects a main-slot item with both recipe_id AND recipe_candidate_id', () => {
+      const r = PlanComposeInputSchema.safeParse({
+        ...validInput,
+        days: [
+          {
+            day: 'monday',
+            items: [
+              {
+                ...baseItem,
+                recipe_id: RECIPE_ID,
+                recipe_candidate_id: CANDIDATE_ID,
+              },
+            ],
+          },
+        ],
+      });
+      expect(r.success).toBe(false);
+    });
+
+    it('rejects a snack-slot item with recipe_candidate_id set', () => {
+      const r = PlanComposeInputSchema.safeParse({
+        ...validInput,
+        days: [
+          {
+            day: 'monday',
+            items: [{ ...baseItem, slot: 'snack', recipe_candidate_id: CANDIDATE_ID }],
+          },
+        ],
+      });
+      expect(r.success).toBe(false);
+    });
+  });
 });
 
 describe('PlanComposeOutputSchema (Story 3.7 — carries plan_id)', () => {

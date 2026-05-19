@@ -1,5 +1,5 @@
 # generated: 2026-04-23
-# last_updated: 2026-05-17 (Story 4-s2 done)
+# last_updated: 2026-05-18 (3-31 recipe-agent added; recipe seed-data assumption removed)
 # project: hivekitchen
 # project_key: NOKEY
 # tracking_system: file-system
@@ -52,7 +52,7 @@
 # Walls (decision moments) are flagged with `# WALL:` markers.
 
 generated: 2026-04-23
-last_updated: 2026-05-17 (Story 4-s2 done)
+last_updated: 2026-05-18 (3-31 code-reviewed + E2E tests generated → done)
 project: hivekitchen
 project_key: NOKEY
 tracking_system: file-system
@@ -141,6 +141,15 @@ development_status:
   3-20-lunch-bag-composition-modification-snack-vs-main-modeling: done
   3-21-pin-ban-extra-component-types-reusable-extra-library: done
   3-22-passive-bias-from-extra-removals-high-activity-extra-proposal: done
+  # ==========================================================================
+  # ARCHITECTURE DECISION 2026-05-18: Recipe catalog is lazy-populated.
+  # No seed data. RecipeAgent fetches from Allrecipes + RecipeTin Eats via
+  # Tavily on first use → stores in recipes table → reads from DB on reuse.
+  # Story 3-31 must ship BEFORE 3-23 and 3-24 (both depend on structured
+  # ingredient-level allergenConfidence from the Recipe Agent output).
+  # See: _bmad-output/implementation-artifacts/3-31-recipe-agent-tavily-structured-fetch.md
+  # ==========================================================================
+  3-31-recipe-agent-tavily-structured-fetch: done                        # SHIP FIRST — unblocks 3-23, 3-24
   3-23-per-slot-policy-scoping-bag-wide-allergy-rule: ready-for-dev
   3-24-allergy-uncertainty-flagging-safe-substitution: ready-for-dev
   3-25-hard-fail-escalation-no-safe-plan-possible: ready-for-dev

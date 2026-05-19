@@ -80,6 +80,10 @@ export interface InsertRecipeInput {
     optional: boolean;
     substitutes: Array<{ key: string; modifier: string | null }>;
   }>;
+  // F-P12: instruction steps extracted by RecipeAgent (rewritten as functional
+  // imperatives). Optional so the existing materializeFromPlanItem path
+  // (which has no instructions) continues to work unchanged.
+  instructions?: string[];
   ingredient_keys: string[];
   primary_ingredient_key: string | null;
   allergen_flags: string[];
@@ -121,6 +125,7 @@ export class RecipesRepository extends BaseRepository {
       .insert({
         canonical_name: input.canonical_name,
         ingredients: input.ingredients,
+        ...(input.instructions !== undefined ? { instructions: input.instructions } : {}),
         ingredient_keys: input.ingredient_keys,
         primary_ingredient_key: input.primary_ingredient_key,
         allergen_flags: input.allergen_flags,

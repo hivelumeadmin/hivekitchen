@@ -63,6 +63,9 @@ export const AUDIT_EVENT_TYPES = [
   'allergy.check_overridden',
   // agent
   'agent.orchestrator_run',
+  // recipe (Story 3-31)
+  'recipe.agent_fetch',
+  'recipe.candidate.cache_miss',
   // webhook
   'webhook.received',
   'webhook.signature_failed',

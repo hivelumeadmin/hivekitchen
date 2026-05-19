@@ -14,7 +14,12 @@ import type { CulturalPriorService } from '../modules/cultural-priors/cultural-p
 import { TOOL_MANIFEST } from './tools.manifest.js';
 import { createAllergyCheckSpec } from './tools/allergy.tools.js';
 import { createMemoryNoteSpec, createMemoryRecallSpec } from './tools/memory.tools.js';
-import { createRecipeFetchSpec, createRecipeSearchSpec } from './tools/recipe.tools.js';
+import {
+  createRecipeDiscoverSpec,
+  createRecipeFetchSpec,
+  createRecipeSearchSpec,
+} from './tools/recipe.tools.js';
+import type { RecipeAgent } from './recipe-agent.js';
 import { createPantryReadSpec } from './tools/pantry.tools.js';
 import { createPlanComposeSpec } from './tools/plan.tools.js';
 import { createCulturalLookupSpec } from './tools/cultural.tools.js';
@@ -112,6 +117,11 @@ const RECOVERY_MS = 900_000;
 export class DomainOrchestrator {
   private currentProviderIndex = 0;
   private readonly breaker: CircuitBreaker;
+  private readonly services: OrchestratorServices;
+  // Story 3-31: optional so legacy tests (no discover surface exercised) can
+  // construct the orchestrator without mocking a RecipeAgent. planWeek
+  // throws if a discover call is reached without one wired.
+  private readonly recipeAgent: RecipeAgent | null;
 
   constructor(
     private readonly providers: LLMProvider[],
@@ -119,7 +129,10 @@ export class DomainOrchestrator {
     private readonly redis: Redis,
     private readonly auditService: AuditService,
     private readonly logger: FastifyBaseLogger,
+    recipeAgent?: RecipeAgent,
   ) {
+    this.services = services;
+    this.recipeAgent = recipeAgent ?? null;
     if (providers.length === 0) {
       throw new Error('DomainOrchestrator requires at least one LLMProvider');
     }
@@ -244,7 +257,26 @@ export class DomainOrchestrator {
     extraProposals?: readonly PlannerExtraProposal[],  // Story 3.22 — high-activity Extra proposals (FR119)
   ): Promise<PlanComposeOutput> {
     const MAX_PLAN_ITERATIONS = 20;
-    const tools = Array.from(TOOL_MANIFEST.values());
+    // Story 3-31 — recipe.discover needs the per-run requestId in its deps
+    // closure (for audit correlation), so we override the manifest's stub
+    // spec with a per-run live spec. When recipeAgent isn't wired (legacy
+    // test paths), the stub-throwing manifest entry remains and the planner
+    // would surface a NotImplementedError if it actually called discover.
+    const tools = (() => {
+      const base = Array.from(TOOL_MANIFEST.values());
+      if (this.recipeAgent === null) return base;
+      const discoverSpec = createRecipeDiscoverSpec(
+        this.services.recipe,
+        {
+          recipeAgent: this.recipeAgent,
+          redis: this.redis,
+          audit: this.auditService,
+          requestId,
+        },
+        this.redis,
+      );
+      return base.map((t) => (t.name === 'recipe.discover' ? discoverSpec : t));
+    })();
 
     const culturalLines = buildCulturalContextLines(culturalContext);
     const bagCompositionLines = buildBagCompositionLines(bagCompositions);

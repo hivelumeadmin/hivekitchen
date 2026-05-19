@@ -1,16 +1,39 @@
+import { createHash } from 'node:crypto';
 import type { FastifyBaseLogger } from 'fastify';
+import type { Redis } from 'ioredis';
 import type {
+  RecipeAgentExtraction,
+  RecipeDiscoverInput,
+  RecipeDiscoverOutput,
   RecipeFetchInput,
   RecipeFetchOutput,
+  RecipePreview,
   RecipeSearchInput,
   RecipeSearchOutput,
 } from '@hivekitchen/types';
+import { RecipeAgentExtractionSchema } from '@hivekitchen/contracts';
 import { NotFoundError } from '../../common/errors.js';
+import type { RecipeAgent } from '../../agents/recipe-agent.js';
+import type { AuditService } from '../../audit/audit.service.js';
 import type {
   HouseholdUsageScore,
   RecipePreviewRow,
   RecipesRepository,
 } from './recipes.repository.js';
+
+// Story 3-31 — Redis keys for the discover candidate cache.
+const CANDIDATE_TTL_SECONDS = 30 * 60;
+const candidateKey = (planBuildId: string, candidateId: string): string =>
+  `lumi:plan-build:${planBuildId}:recipe-candidate:${candidateId}`;
+const candidateGroupKey = (planBuildId: string, groupHash: string): string =>
+  `lumi:plan-build:${planBuildId}:recipe-candidate-group:${groupHash}`;
+
+export interface RecipeServiceDiscoverDeps {
+  readonly recipeAgent: RecipeAgent;
+  readonly redis: Redis;
+  readonly audit: AuditService;
+  readonly requestId: string;
+}
 
 // ===========================================================================
 // Slice D — Recipe catalog service
@@ -135,6 +158,263 @@ export class RecipeService {
     // tool boundary in recipe.tools.ts, not here, so we don't pay the
     // zod-parse cost twice on the hot path.
     return row as unknown as RecipeFetchOutput;
+  }
+
+  // ---- Story 3-31 — agent-discover read path -----------------------------
+
+  /**
+   * Discover N candidate recipes from the public web for the planner.
+   *
+   * Pipeline:
+   *   1. Hash (slot, constraints, intent) into a group key. Look up Redis
+   *      under lumi:plan-build:{planBuildId}:recipe-candidate-group:{hash}.
+   *      A hit means the planner already called discover with this exact
+   *      shape during the current planWeek run — reuse the cached IDs.
+   *   2. On miss, invoke RecipeAgent.discover which calls Tavily + LLM.
+   *      Write each extraction to Redis at the per-candidate key with
+   *      a 30-minute TTL. Write the group key listing the candidate IDs.
+   *   3. Emit ONE recipe.agent_fetch audit event per Tavily call (not
+   *      one per candidate). Payload is allowlisted — no intent text,
+   *      no constraint contents, no PII.
+   *   4. Return previews to the planner.
+   *
+   * Plan commit reads candidates back via {@link readCandidate} and inserts
+   * a real recipes row.
+   */
+  async discover(
+    input: RecipeDiscoverInput,
+    deps: RecipeServiceDiscoverDeps,
+  ): Promise<RecipeDiscoverOutput> {
+    const groupHash = hashDiscoverGroup(input);
+    const groupKey = candidateGroupKey(input.plan_build_id, groupHash);
+
+    // Cache hit path — same shape within the same plan-build session.
+    const cached = await deps.redis.get(groupKey);
+    if (cached !== null) {
+      const cachedIds = parseCandidateIdList(cached);
+      const previews: RecipePreview[] = [];
+      for (const id of cachedIds) {
+        const payload = await deps.redis.get(candidateKey(input.plan_build_id, id));
+        if (payload === null) continue;
+        try {
+          // F-P2: validate shape from Redis — a stale/corrupt entry should be
+          // treated as a miss for this candidate, not a crash at commit time.
+          const parsed: unknown = JSON.parse(payload);
+          const schemaResult = RecipeAgentExtractionSchema.safeParse(parsed);
+          if (!schemaResult.success) {
+            this.logger?.debug(
+              {
+                module: 'recipes',
+                action: 'discover.cache_schema_mismatch',
+                household_id: input.household_id,
+                candidate_id: id,
+              },
+              'cached candidate failed schema validation — skipping',
+            );
+            continue;
+          }
+          previews.push(previewFromCachedExtraction(id, schemaResult.data));
+        } catch {
+          this.logger?.debug(
+            {
+              module: 'recipes',
+              action: 'discover.cache_parse_failed',
+              household_id: input.household_id,
+              candidate_id: id,
+            },
+            'cached candidate payload failed JSON.parse',
+          );
+        }
+      }
+      if (previews.length > 0) {
+        this.logger?.debug(
+          {
+            module: 'recipes',
+            action: 'discover.cache_hit',
+            household_id: input.household_id,
+            plan_build_id: input.plan_build_id,
+            count: previews.length,
+          },
+          'recipe.discover served from cache',
+        );
+        return { results: previews };
+      }
+      // F-P3: all per-candidate keys evicted while group key survived. Delete
+      // the stale group key so the next call triggers a fresh Tavily fetch
+      // rather than looping on the same stale group key indefinitely.
+      try {
+        await deps.redis.del(groupKey);
+      } catch {
+        // Non-fatal — worst case the stale key expires naturally.
+      }
+    }
+
+    // Cache miss — call the agent. Time the call for audit + observability.
+    const startedAt = Date.now();
+    const result = await deps.recipeAgent.discover(input);
+    const durationMs = Date.now() - startedAt;
+
+    // Write each candidate payload concurrently (Redis ops are independent).
+    // F-P1: derive candidateIds from result.candidates AFTER Promise.all so
+    // the group key always encodes the same order as the agent returned.
+    // F-P6: wrap each write individually so a single Redis failure doesn't
+    // crash the whole discover call — the affected candidate simply won't
+    // be resolvable at commit time (cache-miss fallback handles it).
+    await Promise.all(
+      result.candidates.map(async (c) => {
+        try {
+          await deps.redis.set(
+            candidateKey(input.plan_build_id, c.candidateId),
+            JSON.stringify(c.extraction),
+            'EX',
+            CANDIDATE_TTL_SECONDS,
+          );
+        } catch {
+          this.logger?.warn(
+            { module: 'recipes', action: 'discover.redis_candidate_write_failed', candidate_id: c.candidateId },
+            'failed to cache discover candidate; commit will fall back to materializeFromPlanItem',
+          );
+        }
+      }),
+    );
+    // Group key written after per-candidate writes so a partial cache
+    // (group missing, some candidates present) is treated as a miss.
+    const candidateIds = result.candidates.map((c) => c.candidateId);
+    try {
+      await deps.redis.set(
+        groupKey,
+        JSON.stringify(candidateIds),
+        'EX',
+        CANDIDATE_TTL_SECONDS,
+      );
+    } catch {
+      this.logger?.warn(
+        { module: 'recipes', action: 'discover.redis_group_write_failed' },
+        'failed to cache discover group key; next discover call will re-invoke Tavily',
+      );
+    }
+
+    // Audit event — allowlisted shape. No intent, no constraint contents.
+    // count_requested vs count_returned reveals when Tavily / parse drops
+    // shrunk the batch.
+    await deps.audit.write({
+      event_type: 'recipe.agent_fetch',
+      household_id: input.household_id,
+      request_id: deps.requestId,
+      metadata: {
+        slot: input.slot,
+        count_requested: input.count,
+        count_returned: result.candidates.length,
+        dropped_count: result.droppedCount,
+        source_sites: result.sourceSites,
+        duration_ms: durationMs,
+      },
+    });
+
+    return {
+      results: result.candidates.map((c) => c.preview),
+    };
+  }
+
+  /**
+   * Read a previously-cached candidate extraction from Redis. Used by the
+   * plan-commit candidate resolver. Returns null on cache miss (TTL
+   * expiry, eviction, or a candidate_id that was never written).
+   */
+  async readCandidate(
+    planBuildId: string,
+    candidateId: string,
+    redis: Redis,
+  ): Promise<RecipeAgentExtraction | null> {
+    const raw = await redis.get(candidateKey(planBuildId, candidateId));
+    if (raw === null) return null;
+    try {
+      const parsed: unknown = JSON.parse(raw);
+      // F-P2: validate shape — a stale schema (e.g. from a previous deploy) or
+      // a corrupted entry returns null so the commit falls back gracefully.
+      const result = RecipeAgentExtractionSchema.safeParse(parsed);
+      return result.success ? result.data : null;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Story 3-31 — at plan commit, insert a discover-sourced extraction as a
+   * real recipes row. Maps the agent's extraction shape onto the
+   * RecipesRepository.insertRecipe input shape, derives ingredient_keys
+   * from the (already head-noun-disciplined) ingredients, and returns the
+   * new recipe id.
+   *
+   * Idempotency: if the household already has a recipes row with the same
+   * canonical_name, reuse it (mirrors materializeFromPlanItem's idempotency
+   * guarantee — repeated discover of the same dish doesn't duplicate rows).
+   */
+  async insertFromDiscoverExtraction(input: {
+    householdId: string;
+    extraction: RecipeAgentExtraction;
+  }): Promise<string> {
+    const repo = this.requireRepository('insertFromDiscoverExtraction');
+    const canonicalName = input.extraction.name;
+
+    // Idempotency check — same household + same canonical_name → reuse.
+    const existing = await repo.findByHouseholdAndName(
+      input.householdId,
+      canonicalName,
+    );
+    if (existing !== null) {
+      return existing.id;
+    }
+
+    const ingredientKeys = deduplicate(
+      input.extraction.ingredients.map((i) => i.key),
+    );
+    const primaryIngredientKey = ingredientKeys[0] ?? null;
+
+    const inserted = await repo.insertRecipe({
+      canonical_name: canonicalName,
+      ingredients: input.extraction.ingredients.map((i) => ({
+        key: i.key,
+        modifier: i.modifier,
+        display: i.display,
+        quantity: i.quantity,
+        unit: i.unit,
+        optional: i.optional,
+        substitutes: i.substitutes,
+      })),
+      // F-P12: persist extraction instructions so recipe cards + voice step-
+      // through have content. Steps are already rewritten as functional
+      // imperatives by the RecipeAgent prompt (copyright-safe form).
+      instructions: input.extraction.instructions,
+      ingredient_keys: ingredientKeys,
+      primary_ingredient_key: primaryIngredientKey,
+      // Tag arrays already filtered through VocabularyService.filterActive
+      // by RecipeAgent's post-pass — every value here is a live vocabulary
+      // row. No re-validation needed at insert time.
+      allergen_flags: input.extraction.allergen_flags,
+      dietary_flags: input.extraction.dietary_flags,
+      cultural_tags: input.extraction.cultural_tags,
+      cuisine_tags: input.extraction.cuisine_tags,
+      applicable_slots: ['main'],
+      prep_time_minutes: input.extraction.prep_time_minutes,
+      source: 'agent_generated',
+      created_by_household_id: input.householdId,
+      visibility: 'private',
+    });
+
+    this.logger?.debug(
+      {
+        module: 'recipes',
+        action: 'recipe.materialized_from_discover',
+        household_id: input.householdId,
+        recipe_id: inserted.id,
+        source_url: input.extraction.source_url,
+        source_site: input.extraction.source_site,
+      },
+      'recipe materialized from discover candidate',
+    );
+
+    return inserted.id;
   }
 
   private requireRepository(method: string): RecipesRepository {
@@ -352,3 +632,55 @@ function capitaliseFirst(s: string): string {
 function deduplicate<T>(arr: T[]): T[] {
   return [...new Set(arr)];
 }
+
+// ---------------------------------------------------------------------------
+// Story 3-31 — discover helpers (exported for tests)
+// ---------------------------------------------------------------------------
+
+/**
+ * Stable hash of the discover input fields that determine cache identity:
+ * slot, constraints (sorted), and intent. Household + plan_build_id are
+ * carried in the Redis key, not in the hash. Two structurally-identical
+ * discover calls in the same planWeek run produce the same hash and reuse
+ * the same candidates.
+ */
+export function hashDiscoverGroup(input: RecipeDiscoverInput): string {
+  const canonical = JSON.stringify({
+    slot: input.slot,
+    intent: input.intent.trim().toLowerCase(),
+    constraints: {
+      cuisine_tags: [...input.constraints.cuisine_tags].sort(),
+      cultural_tags: [...input.constraints.cultural_tags].sort(),
+      dietary_flags: [...input.constraints.dietary_flags].sort(),
+      allergen_exclusions: [...input.constraints.allergen_exclusions].sort(),
+      max_prep_minutes: input.constraints.max_prep_minutes,
+    },
+  });
+  return createHash('sha256').update(canonical).digest('hex').slice(0, 32);
+}
+
+function parseCandidateIdList(raw: string): string[] {
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter((v): v is string => typeof v === 'string');
+  } catch {
+    return [];
+  }
+}
+
+function previewFromCachedExtraction(
+  candidateId: string,
+  extraction: RecipeAgentExtraction,
+): RecipePreview {
+  return {
+    id: candidateId,
+    name: extraction.name,
+    primary_ingredient_key: extraction.ingredients[0]?.key ?? null,
+    cuisine_tags: extraction.cuisine_tags,
+    allergen_flags: extraction.allergen_flags,
+    dietary_flags: extraction.dietary_flags,
+    prep_time_minutes: extraction.prep_time_minutes,
+  };
+}
+

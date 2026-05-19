@@ -13,10 +13,12 @@ import type { BriefStateRepository } from './brief-state.repository.js';
 import type { BriefStateComposer } from './brief-state.composer.js';
 import type { AllergyGuardrailService } from '../allergy-guardrail/allergy-guardrail.service.js';
 import type { AuditService } from '../../audit/audit.service.js';
+import type { RecipeService } from '../recipe/recipe.service.js';
 import type {
   CommitPlanInput,
   GuardrailResult,
   PlanComposeInput,
+  RecipeAgentExtraction,
 } from '@hivekitchen/types';
 import {
   GuardrailRejectionError,
@@ -504,6 +506,194 @@ describe('PlansService.commit', () => {
     expect((logger.error as ReturnType<typeof vi.fn>)).toHaveBeenCalledWith(
       expect.objectContaining({ plan_id: PLAN_ID }),
       expect.stringContaining('audit write failed'),
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Story 3-31 — PlansService.commit: resolveDiscoverCandidate (AC7)
+// ---------------------------------------------------------------------------
+
+const CANDIDATE_ID_AC7 = 'cc000000-cc00-4cc0-8cc0-cc0000000001';
+const PLAN_BUILD_ID_AC7 = 'build-3-31-test-0001';
+const RESOLVED_RECIPE_ID = 'ee000000-ee00-4ee0-8ee0-ee0000000001';
+
+function buildMinimalExtraction(): RecipeAgentExtraction {
+  return {
+    name: 'Chicken Rice',
+    source_url: 'https://www.allrecipes.com/recipe/1',
+    source_site: 'allrecipes',
+    cuisine_tags: [],
+    cultural_tags: [],
+    dietary_flags: [],
+    allergen_flags: [],
+    prep_time_minutes: 25,
+    ingredients: [
+      { key: 'chicken', modifier: null, display: '1 lb chicken', quantity: 1, unit: 'lb', optional: false, substitutes: [] },
+    ],
+    instructions: ['Cook the chicken.', 'Add rice and water.', 'Simmer 20 minutes.'],
+    allergen_info_from_source: null,
+  };
+}
+
+function buildRecipeServiceMock(opts: {
+  candidateResult?: RecipeAgentExtraction | null;
+  insertResult?: string;
+} = {}): RecipeService {
+  return {
+    readCandidate: vi.fn().mockResolvedValue(opts.candidateResult !== undefined ? opts.candidateResult : null),
+    insertFromDiscoverExtraction: vi.fn().mockResolvedValue(opts.insertResult ?? RESOLVED_RECIPE_ID),
+    materializeFromPlanItem: vi.fn().mockResolvedValue({ recipeId: RESOLVED_RECIPE_ID, wasExisting: false }),
+    recordUse: vi.fn().mockResolvedValue(undefined),
+  } as unknown as RecipeService;
+}
+
+describe('PlansService.commit — discover candidate resolution (Story 3-31, AC7)', () => {
+  it('AC7 happy path: resolves candidate from Redis, inserts recipe row, stamps recipe_id on the item', async () => {
+    const repo = buildRepo();
+    const guardrail = buildGuardrail([{ verdict: 'cleared', conflicts: [] }]);
+    const audit = buildAudit();
+    const recipeService = buildRecipeServiceMock({ candidateResult: buildMinimalExtraction() });
+
+    const service = new PlansService({
+      repository: repo,
+      briefStateRepository: buildBriefStateRepo(),
+      briefStateComposer: buildBriefStateComposer(),
+      allergyGuardrail: guardrail,
+      auditService: audit,
+      logger: buildLogger(),
+      redis: buildRedis(),
+      regenQueue: buildRegenQueue(),
+      recipeService,
+    });
+
+    const input = makeInput({
+      plan_build_id: PLAN_BUILD_ID_AC7,
+      items: [
+        {
+          child_id: CHILD_ID,
+          day: 'monday',
+          slot: 'main',
+          recipe_candidate_id: CANDIDATE_ID_AC7,
+          ingredients: ['chicken', 'rice'],
+        },
+      ],
+    });
+    await service.commit(input, REQUEST_ID, vi.fn());
+
+    // readCandidate called with the correct plan_build_id + candidate_id
+    expect((recipeService.readCandidate as ReturnType<typeof vi.fn>)).toHaveBeenCalledWith(
+      PLAN_BUILD_ID_AC7,
+      CANDIDATE_ID_AC7,
+      expect.anything(),
+    );
+    // insertFromDiscoverExtraction called with the extraction
+    expect((recipeService.insertFromDiscoverExtraction as ReturnType<typeof vi.fn>)).toHaveBeenCalledTimes(1);
+    // materializeFromPlanItem NOT called — the candidate path handled it
+    expect((recipeService.materializeFromPlanItem as ReturnType<typeof vi.fn>)).not.toHaveBeenCalled();
+    // The item committed to the repo has recipe_id set to the resolved value
+    const committedItems: CommitPlanInput['items'] = repo.commit.mock.calls[0]?.[0]?.items ?? [];
+    expect(committedItems).toHaveLength(1);
+    expect(committedItems[0]).toMatchObject({ recipe_id: RESOLVED_RECIPE_ID, slot: 'main' });
+    expect(committedItems[0]).not.toHaveProperty('recipe_candidate_id');
+  });
+
+  it('AC7 cache miss: falls back to materializeFromPlanItem and emits recipe.candidate.cache_miss audit event', async () => {
+    const repo = buildRepo();
+    const guardrail = buildGuardrail([{ verdict: 'cleared', conflicts: [] }]);
+    const audit = buildAudit();
+    // readCandidate returns null → cache miss
+    const recipeService = buildRecipeServiceMock({ candidateResult: null });
+
+    const service = new PlansService({
+      repository: repo,
+      briefStateRepository: buildBriefStateRepo(),
+      briefStateComposer: buildBriefStateComposer(),
+      allergyGuardrail: guardrail,
+      auditService: audit,
+      logger: buildLogger(),
+      redis: buildRedis(),
+      regenQueue: buildRegenQueue(),
+      recipeService,
+    });
+
+    const input = makeInput({
+      plan_build_id: PLAN_BUILD_ID_AC7,
+      items: [
+        {
+          child_id: CHILD_ID,
+          day: 'monday',
+          slot: 'main',
+          recipe_candidate_id: CANDIDATE_ID_AC7,
+          ingredients: ['chicken', 'rice'],
+        },
+      ],
+    });
+    await service.commit(input, REQUEST_ID, vi.fn());
+
+    // Falls back to ingredient-based materialization
+    expect((recipeService.materializeFromPlanItem as ReturnType<typeof vi.fn>)).toHaveBeenCalledTimes(1);
+    // insertFromDiscoverExtraction NOT called — candidate was not in Redis
+    expect((recipeService.insertFromDiscoverExtraction as ReturnType<typeof vi.fn>)).not.toHaveBeenCalled();
+
+    // recipe.candidate.cache_miss audit event emitted (F-P9)
+    const cacheMissEvent = (audit.write as ReturnType<typeof vi.fn>).mock.calls.find(
+      ([e]: [{ event_type: string }]) => e.event_type === 'recipe.candidate.cache_miss',
+    );
+    expect(cacheMissEvent).toBeDefined();
+    const [event] = cacheMissEvent!;
+    expect(event).toMatchObject({
+      event_type: 'recipe.candidate.cache_miss',
+      household_id: HOUSEHOLD_ID,
+      metadata: expect.objectContaining({
+        candidate_id: CANDIDATE_ID_AC7,
+        plan_build_id: PLAN_BUILD_ID_AC7,
+        slot: 'main',
+      }),
+    });
+  });
+
+  it('F-P4: logs candidate.plan_build_id_missing warning and falls back when plan_build_id is absent', async () => {
+    const repo = buildRepo();
+    const guardrail = buildGuardrail([{ verdict: 'cleared', conflicts: [] }]);
+    const audit = buildAudit();
+    const recipeService = buildRecipeServiceMock();
+    const logger = buildLogger();
+
+    const service = new PlansService({
+      repository: repo,
+      briefStateRepository: buildBriefStateRepo(),
+      briefStateComposer: buildBriefStateComposer(),
+      allergyGuardrail: guardrail,
+      auditService: audit,
+      logger,
+      redis: buildRedis(),
+      regenQueue: buildRegenQueue(),
+      recipeService,
+    });
+
+    // No plan_build_id in this input
+    const input = makeInput({
+      items: [
+        {
+          child_id: CHILD_ID,
+          day: 'monday',
+          slot: 'main',
+          recipe_candidate_id: CANDIDATE_ID_AC7,
+          ingredients: ['chicken', 'rice'],
+        },
+      ],
+    });
+    await service.commit(input, REQUEST_ID, vi.fn());
+
+    // readCandidate never called — plan_build_id was missing
+    expect((recipeService.readCandidate as ReturnType<typeof vi.fn>)).not.toHaveBeenCalled();
+    // Falls back to ingredient-based materialization
+    expect((recipeService.materializeFromPlanItem as ReturnType<typeof vi.fn>)).toHaveBeenCalledTimes(1);
+    // Warning logged with the correct action
+    expect((logger.warn as ReturnType<typeof vi.fn>)).toHaveBeenCalledWith(
+      expect.objectContaining({ action: 'candidate.plan_build_id_missing', candidate_id: CANDIDATE_ID_AC7 }),
+      expect.any(String),
     );
   });
 });

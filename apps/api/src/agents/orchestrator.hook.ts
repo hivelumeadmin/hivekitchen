@@ -1,6 +1,7 @@
 import fp from 'fastify-plugin';
 import type { FastifyPluginAsync } from 'fastify';
 import { OnboardingAgent } from './onboarding.agent.js';
+import { RecipeAgent } from './recipe-agent.js';
 import { CulturalPriorRepository } from '../modules/cultural-priors/cultural-prior.repository.js';
 import { CulturalPriorService } from '../modules/cultural-priors/cultural-prior.service.js';
 import { ThreadRepository } from '../modules/threads/thread.repository.js';
@@ -35,6 +36,14 @@ const orchestratorHookPlugin: FastifyPluginAsync = async (fastify) => {
   }
   if (!fastify.plansService) {
     throw new Error('orchestratorHook requires plansService decorator — register plansHook first');
+  }
+  if (!fastify.tavily) {
+    throw new Error('orchestratorHook requires tavily decorator — register tavilyPlugin first');
+  }
+  if (!fastify.vocabularyService) {
+    throw new Error(
+      'orchestratorHook requires vocabularyService decorator — register vocabularyPlugin first',
+    );
   }
 
   // Story 3.4: cultural.lookup tool needs CulturalPriorService.listByHousehold().
@@ -81,12 +90,22 @@ const orchestratorHookPlugin: FastifyPluginAsync = async (fastify) => {
     tracesEnabled: openaiTracesEnabled,
   });
   const anthropicAdapter = new AnthropicAdapter();
+  // Story 3-31 — RecipeAgent wires Tavily + OpenAI + vocabulary. Stateless
+  // across requests; constructed once and shared.
+  const recipeAgent = new RecipeAgent({
+    tavily: fastify.tavily,
+    openai: fastify.openai,
+    vocabulary: fastify.vocabularyService,
+    logger: fastify.log,
+  });
+
   const orchestrator = new DomainOrchestrator(
     [openaiAdapter, anthropicAdapter],
     services,
     fastify.redis,
     fastify.auditService,
     fastify.log,
+    recipeAgent,
   );
   fastify.decorate('orchestrator', orchestrator);
   fastify.addHook('onClose', () => { orchestrator.dispose(); });
