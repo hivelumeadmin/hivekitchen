@@ -12,6 +12,13 @@ import { DevKitchenProfilePage } from './routes/_dev-kitchen-profile.js';
 import { DevLoginPage } from './routes/_dev-login.js';
 import { DevLunchLinkPage } from './routes/_dev-lunch-link.js';
 import { DevOnboardingPage } from './routes/_dev-onboarding.js';
+import { DevOnboardingMockupsPage } from './routes/_dev-onboarding-mockups.js';
+import { DevOnboardingMoment1Page } from './routes/_dev-onboarding-moment-1.js';
+import { DevOnboardingMoment2Page } from './routes/_dev-onboarding-moment-2.js';
+import { DevOnboardingMoment3Page } from './routes/_dev-onboarding-moment-3.js';
+import { DevOnboardingMoment4Page } from './routes/_dev-onboarding-moment-4.js';
+import { DevOnboardingMoment5Page } from './routes/_dev-onboarding-moment-5.js';
+import { DevOnboardingMoment6Page } from './routes/_dev-onboarding-moment-6.js';
 import { DevTokensPage } from './routes/_dev-tokens.js';
 import { DevWeeklyPlanPage } from './routes/_dev-weekly-plan.js';
 import LoginPage from './routes/auth/login.js';
@@ -133,6 +140,55 @@ export function App() {
     window.location.pathname === '/_dev-onboarding'
   ) {
     return <DevOnboardingPage />;
+  }
+  if (
+    import.meta.env.DEV &&
+    typeof window !== 'undefined' &&
+    window.location.pathname === '/_dev-onboarding-mockups'
+  ) {
+    return <DevOnboardingMockupsPage />;
+  }
+  if (
+    import.meta.env.DEV &&
+    typeof window !== 'undefined' &&
+    window.location.pathname === '/_dev-onboarding-moment-1'
+  ) {
+    return <DevOnboardingMoment1Page />;
+  }
+  if (
+    import.meta.env.DEV &&
+    typeof window !== 'undefined' &&
+    window.location.pathname === '/_dev-onboarding-moment-2'
+  ) {
+    return <DevOnboardingMoment2Page />;
+  }
+  if (
+    import.meta.env.DEV &&
+    typeof window !== 'undefined' &&
+    window.location.pathname === '/_dev-onboarding-moment-3'
+  ) {
+    return <DevOnboardingMoment3Page />;
+  }
+  if (
+    import.meta.env.DEV &&
+    typeof window !== 'undefined' &&
+    window.location.pathname === '/_dev-onboarding-moment-4'
+  ) {
+    return <DevOnboardingMoment4Page />;
+  }
+  if (
+    import.meta.env.DEV &&
+    typeof window !== 'undefined' &&
+    window.location.pathname === '/_dev-onboarding-moment-5'
+  ) {
+    return <DevOnboardingMoment5Page />;
+  }
+  if (
+    import.meta.env.DEV &&
+    typeof window !== 'undefined' &&
+    window.location.pathname === '/_dev-onboarding-moment-6'
+  ) {
+    return <DevOnboardingMoment6Page />;
   }
   if (
     import.meta.env.DEV &&
