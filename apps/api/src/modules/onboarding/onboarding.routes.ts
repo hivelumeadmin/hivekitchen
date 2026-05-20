@@ -6,6 +6,7 @@ import {
   TextOnboardingTurnRequestSchema,
   TextOnboardingTurnResponseSchema,
   TextOnboardingFinalizeResponseSchema,
+  type TextOnboardingTurnRequest,
 } from '@hivekitchen/contracts';
 import { ThreadRepository } from '../threads/thread.repository.js';
 import { OnboardingAgent } from '../../agents/onboarding.agent.js';
@@ -89,11 +90,24 @@ const onboardingRoutesPlugin: FastifyPluginAsync = async (fastify) => {
       },
     },
     async (request) => {
-      const body = request.body as { message: string };
+      // Slice 2.5-s3 — discriminate text vs chip turn. Body is the Zod-parsed
+      // union; chip turns are serialized to a natural-language string the
+      // agent can read. The OnboardingService signature is unchanged — it
+      // receives a single `message` string regardless of origin. The
+      // `[Chips selected: ...]` prefix is the contract the agent prompt in
+      // 2.5-s4 will be taught to recognize.
+      const body = request.body as TextOnboardingTurnRequest;
+      const agentMessage =
+        'chip_selections' in body
+          ? `[Chips selected: ${body.chip_selections.join(', ')}]${
+              body.text !== undefined && body.text.length > 0 ? ` ${body.text}` : ''
+            }`
+          : body.message;
+
       const result = await service.submitTextTurn({
         userId: request.user.id,
         householdId: request.user.household_id,
-        message: body.message,
+        message: agentMessage,
       });
       request.log.info(
         {
@@ -102,10 +116,11 @@ const onboardingRoutesPlugin: FastifyPluginAsync = async (fastify) => {
           user_id: request.user.id,
           household_id: request.user.household_id,
           thread_id: result.thread_id,
-          message_chars: body.message.length,
+          message_chars: agentMessage.length,
           response_chars: result.lumi_response.length,
           is_complete: result.is_complete,
           was_resumed: result._was_resumed,
+          turn_kind: 'chip_selections' in body ? 'chip' : 'text',
         },
         'onboarding text turn served',
       );
@@ -134,7 +149,10 @@ const onboardingRoutesPlugin: FastifyPluginAsync = async (fastify) => {
           });
       }
 
-      return result;
+      // Slice 2.5-s3 — chip_config is always null in this slice. The agent
+      // gains the ability to emit chip configs in 2.5-s4 alongside the
+      // chaptered-conversation prompt.
+      return { ...result, chip_config: null };
     },
   );
 

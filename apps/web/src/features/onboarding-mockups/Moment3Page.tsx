@@ -1,9 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
-import { ChoiceChip } from './components/ChoiceChip.js';
-import { type ChipOption } from './components/ChoiceChipGroup.js';
-import { HintChip } from './components/HintChip.js';
+import { ChoiceChip } from '@/features/onboarding/components/ChoiceChip.js';
+import { type ChipOption } from '@/features/onboarding/components/ChoiceChipGroup.js';
+import { HintChip } from '@/features/onboarding/components/HintChip.js';
 import { HistoryView } from './components/HistoryView.js';
-import { SkipChip } from './components/SkipChip.js';
+import { SkipChip } from '@/features/onboarding/components/SkipChip.js';
 import {
   MOMENT_3_LUMI,
   PRIOR_HISTORY_MOMENT_3,

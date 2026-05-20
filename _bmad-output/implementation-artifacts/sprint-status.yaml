@@ -1,5 +1,5 @@
 # generated: 2026-04-23
-# last_updated: 2026-05-18 (3-31 recipe-agent added; recipe seed-data assumption removed)
+# last_updated: 2026-05-20 (2.5-s3 → done; 5 review patches applied)
 # project: hivekitchen
 # project_key: NOKEY
 # tracking_system: file-system
@@ -52,7 +52,7 @@
 # Walls (decision moments) are flagged with `# WALL:` markers.
 
 generated: 2026-04-23
-last_updated: 2026-05-18 (3-31 code-reviewed + E2E tests generated → done)
+last_updated: 2026-05-20 (2.5-s3 → done; 5 review patches applied)
 project: hivekitchen
 project_key: NOKEY
 tracking_system: file-system
@@ -117,6 +117,37 @@ development_status:
   2-s27-household-vs-child-scoping: done                                      # Done 2026-05-16. Review pass 2: advisory lock on addAllergens (race fix), decryptArrayColumn fail-closed, backfill pagination + cache bump, TAG_MAX_LEN aligned to 64, audit log fixed, declared_allergens_add tested.
   epic-2-retrospective: optional
 
+  # ==========================================================================
+  # Epic 2.5: Onboarding Robustness & Kitchen Map Completion
+  # Surfaced 2026-05-19 by PM-led requirements review (Course-Correct workflow).
+  # Refocuses onboarding so 100% of required Kitchen Map data is captured at
+  # end of onboarding. Adds enforcement-strength contract, chip turn UX,
+  # chaptered conversation, 10-favorite-lunches cold-start seed, required-set
+  # completion gate. See:
+  # - _bmad-output/planning-artifacts/sprint-change-proposal-2026-05-19.md
+  # - _bmad-output/planning-artifacts/epic-2.5-onboarding-robustness.md (to be authored)
+  # PRD additions: FR121–FR130 (Family Profile & Onboarding section).
+  # MOCK-REF: every UI-touching slice must reference the in-repo mock screens at
+  # apps/web/src/routes/_dev-onboarding-mockups.tsx and
+  # apps/web/src/features/onboarding-mockups/ as the design foundation.
+  # Only pause to confirm with user if it is not 100% clear which mock screen
+  # to use as the basis for the slice. (Stitch is retired — see
+  # mock-screen-reference-check memory.)
+  # ==========================================================================
+  epic-2.5: in-progress
+  2.5-s1-foundation-enforcement-contracts-db-schema: done                    # contracts + migrations only; no user-facing change
+  2.5-s2-memory-note-narrowing-backfill: done                                 # data migration; existing memory_nodes rows with removed types → structured tables
+  2.5-s3-chip-turn-ux-primitive: done                                         # WALL: chip UX wall — gates moment slices; MOCK-REF
+  2.5-s4-agent-prompt-v2-required-set-tracker: backlog                        # agent state-awareness contract; chaptered conversation prompt
+  2.5-s5-moment-1-whos-at-the-table: backlog                                  # household name + children + age bands; MOCK-REF
+  2.5-s6-moment-2-what-i-need-to-keep-safe: backlog                           # WALL: safety wall — allergens explicit response gate; MOCK-REF
+  2.5-s7-moment-3-how-your-kitchen-tastes: backlog                            # cultural & religious identity + dietary + cuisine + food preferences; MOCK-REF
+  2.5-s8-moment-4-what-goes-in-the-bag: backlog                               # bag composition per child; MOCK-REF
+  2.5-s9-moment-5-a-starting-line-for-lumi: backlog                           # 10 favorite lunches cold-start seed; MOCK-REF
+  2.5-s10-summary-and-finalize-gate: backlog                                  # WALL: EPIC MVP WALL — required-set complete, is_onboarded=true; MOCK-REF
+  2.5-s11-kitchen-profile-read-live-data: backlog                             # unblocks Epic 7 7-s1; MOCK-REF
+  epic-2.5-retrospective: optional
+
   # Epic 3: Weekly Plan & Ready-Answer Open (unchanged — done / in-flight stories kept as-is)
   epic-3: in-progress
   3-1-allergy-guardrail-service-deterministic-authoritative-outside-agent-boundary: done
@@ -150,14 +181,14 @@ development_status:
   # See: _bmad-output/implementation-artifacts/3-31-recipe-agent-tavily-structured-fetch.md
   # ==========================================================================
   3-31-recipe-agent-tavily-structured-fetch: done                        # SHIP FIRST — unblocks 3-23, 3-24
-  3-23-per-slot-policy-scoping-bag-wide-allergy-rule: ready-for-dev
-  3-24-allergy-uncertainty-flagging-safe-substitution: ready-for-dev
-  3-25-hard-fail-escalation-no-safe-plan-possible: ready-for-dev
-  3-26-graceful-degradation-state-ux: ready-for-dev
-  3-27-variant-preparation-active-learning-visible-to-parent-before-delivery: ready-for-dev
-  3-28-pause-lunch-link-for-child-on-day-without-altering-plan: ready-for-dev
-  3-29-degraded-propose-state-with-try-alternating-sovereignty-toggle: ready-for-dev
-  3-30-llm-provider-failover-circuit-breaker-audit: ready-for-dev
+  3-23-per-slot-policy-scoping-bag-wide-allergy-rule: backlog                 # PAUSED 2026-05-19 pending Epic 2.5 enforcement contract; depends on child_allergens table + enforcement_level enum
+  3-24-allergy-uncertainty-flagging-safe-substitution: backlog                # PAUSED 2026-05-19 pending FR122 (allergens-without-severity) contract
+  3-25-hard-fail-escalation-no-safe-plan-possible: backlog                    # PAUSED 2026-05-19 pending conflict precedence rules + enforcement gradient
+  3-26-graceful-degradation-state-ux: backlog                                 # PAUSED 2026-05-19 pending enforcement strength data being populated
+  3-27-variant-preparation-active-learning-visible-to-parent-before-delivery: backlog  # PAUSED 2026-05-19 pending food_preferences + enforcement data
+  3-28-pause-lunch-link-for-child-on-day-without-altering-plan: ready-for-dev # CONTINUES IN PARALLEL — infrastructure, no contract dependency
+  3-29-degraded-propose-state-with-try-alternating-sovereignty-toggle: backlog  # PAUSED 2026-05-19 pending tight-constraints set knowledge
+  3-30-llm-provider-failover-circuit-breaker-audit: ready-for-dev             # CONTINUES IN PARALLEL — infrastructure, no contract dependency
   epic-3-retrospective: optional
 
   # ==========================================================================

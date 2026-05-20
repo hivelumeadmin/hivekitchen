@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
-import { ChoiceChip } from './components/ChoiceChip.js';
-import { type ChipOption } from './components/ChoiceChipGroup.js';
+import { ChoiceChip } from '@/features/onboarding/components/ChoiceChip.js';
+import { type ChipOption } from '@/features/onboarding/components/ChoiceChipGroup.js';
 import { HistoryView } from './components/HistoryView.js';
 import {
   MOMENT_4_LUMI,

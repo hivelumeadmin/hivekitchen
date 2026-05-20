@@ -12,8 +12,42 @@ export const OPENING_GREETING =
   "Hi, I'm Lumi. I'll help learn your kitchen so HiveKitchen can plan school lunches that are safe, realistic, and actually get eaten. Let's start simple — who am I planning lunches for?";
 
 // POST /v1/onboarding/text/turn — request body
-export const TextOnboardingTurnRequestSchema = z.object({
+//
+// Slice 2.5-s3 introduces a chip-turn shape alongside the original text turn.
+// The route handler discriminates on which keys are present (no shared
+// `kind` field — Zod tries each branch in order). See `_bmad-output/
+// implementation-artifacts/2.5-s3-chip-turn-ux-primitive.md` for context.
+
+// Text-only turn (existing — unchanged).
+export const TextTurnBodySchema = z.object({
   message: z.string().trim().min(1).max(4000),
+});
+
+// Chip turn — at least one selection. `text` is an optional free-text
+// addendum the parent can attach while chips remain primary.
+export const ChipTurnBodySchema = z.object({
+  chip_selections: z.array(z.string().min(1).max(64)).min(1).max(20),
+  text: z.string().trim().max(4000).optional(),
+});
+
+export const TextOnboardingTurnRequestSchema = z.union([
+  TextTurnBodySchema,
+  ChipTurnBodySchema,
+]);
+
+// Chip config returned by the agent to tell the client which chips to render
+// alongside Lumi's next question. `chip_config: null` (or absent) means the
+// client should render text-only input.
+//
+// `mode` taxonomy (see `chip-taxonomy-three-types` memory):
+//  - 'hint'   — non-selectable illustrative examples; `hints` populated
+//  - 'action' — single-select; `options` populated
+//  - 'choice' — multi-select; `options` populated
+export const ChipConfigSchema = z.object({
+  mode: z.enum(['hint', 'action', 'choice']),
+  options: z.array(z.object({ key: z.string(), label: z.string() })).optional(),
+  hints: z.array(z.string()).optional(),
+  skip_label: z.string().optional(),
 });
 
 // POST /v1/onboarding/text/turn — response
@@ -23,6 +57,7 @@ export const TextOnboardingTurnResponseSchema = z.object({
   lumi_turn_id: z.string().uuid(),
   lumi_response: z.string(),
   is_complete: z.boolean(),
+  chip_config: ChipConfigSchema.nullable().optional(),
 });
 
 // POST /v1/onboarding/text/finalize — response (no request body)
@@ -52,6 +87,9 @@ export const TileRetryRequestSchema = z.object({
     }),
 });
 
+export type TextTurnBody = z.infer<typeof TextTurnBodySchema>;
+export type ChipTurnBody = z.infer<typeof ChipTurnBodySchema>;
+export type ChipConfig = z.infer<typeof ChipConfigSchema>;
 export type TextOnboardingTurnRequest = z.infer<typeof TextOnboardingTurnRequestSchema>;
 export type TextOnboardingTurnResponse = z.infer<typeof TextOnboardingTurnResponseSchema>;
 export type TextOnboardingFinalizeResponse = z.infer<typeof TextOnboardingFinalizeResponseSchema>;

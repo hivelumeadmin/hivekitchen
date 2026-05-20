@@ -4,8 +4,12 @@ import {
   OPENING_GREETING,
   TextOnboardingTurnResponseSchema,
   TextOnboardingFinalizeResponseSchema,
+  type ChipConfig,
 } from '@hivekitchen/contracts';
 import { hkFetch, HkApiError } from '@/lib/fetch.js';
+import { ChoiceChip } from './components/ChoiceChip.js';
+import { HintChip } from './components/HintChip.js';
+import { SkipChip } from './components/SkipChip.js';
 
 type Turn = { id: string; role: 'lumi' | 'user'; content: string };
 const GREETING_TURN_ID = 'greeting';
@@ -623,6 +627,14 @@ export function OnboardingText({ onFinalized, initialTurns }: OnboardingTextProp
   const [finalizing, setFinalizing] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
+  // Slice 2.5-s3 — chip turn UX primitive. `chipConfig` holds the latest
+  // Lumi-emitted chip suggestion (null when text-only). `chipSelections`
+  // tracks the parent's current tap state; it is sent alongside the
+  // textarea draft on the next turn and cleared on every successful
+  // submission. Backend hardcodes `chip_config: null` until 2.5-s4 ships
+  // the agent prompt that emits configs.
+  const [chipConfig, setChipConfig] = useState<ChipConfig | null>(null);
+  const [chipSelections, setChipSelections] = useState<string[]>([]);
   const abortRef = useRef<AbortController | null>(null);
   const conversationEndRef = useRef<HTMLDivElement | null>(null);
 
@@ -657,23 +669,58 @@ export function OnboardingText({ onFinalized, initialTurns }: OnboardingTextProp
     async (e: React.FormEvent) => {
       e.preventDefault();
       const trimmed = draft.trim();
-      if (trimmed.length === 0 || pending) return;
+      const hasChipSelections = chipSelections.length > 0;
+      if (trimmed.length === 0 && !hasChipSelections) return;
+      if (pending) return;
 
       setError(null);
       setPending(true);
 
-      const optimisticUserTurn: Turn = { id: `local-${Date.now()}`, role: 'user', content: trimmed };
+      // Optimistic transcript — when chips are present, render them as a
+      // prefix on the user turn so the in-page history reflects what the
+      // backend will see. Mirrors the server-side serializer in
+      // apps/api/src/modules/onboarding/onboarding.routes.ts.
+      const chipPrefix = hasChipSelections
+        ? `[Chips selected: ${chipSelections.join(', ')}]`
+        : '';
+      const optimisticContent = hasChipSelections
+        ? trimmed.length > 0
+          ? `${chipPrefix} ${trimmed}`
+          : chipPrefix
+        : trimmed;
+      const optimisticUserTurn: Turn = {
+        id: `local-${Date.now()}`,
+        role: 'user',
+        content: optimisticContent,
+      };
       setTurns((prev) => [...prev, optimisticUserTurn]);
+
+      // Snapshot for failure rollback.
+      const draftSnapshot = trimmed;
+      const chipSelectionsSnapshot = chipSelections;
       setDraft('');
+      setChipSelections([]);
 
       abortRef.current?.abort();
       const controller = new AbortController();
       abortRef.current = controller;
 
+      // Slice 2.5-s3 — discriminate body shape on whether chips are active.
+      // When chipConfig is null OR no chips are selected, send the text-turn
+      // body (existing wire shape, unchanged). When chips are selected, send
+      // the chip-turn body; the optional `text` carries any extra freeform
+      // context the parent typed alongside the chips.
+      const body: { message: string } | { chip_selections: string[]; text?: string } =
+        hasChipSelections
+          ? trimmed.length > 0
+            ? { chip_selections: chipSelectionsSnapshot, text: trimmed }
+            : { chip_selections: chipSelectionsSnapshot }
+          : { message: trimmed };
+
       try {
         const raw = await hkFetch<unknown>('/v1/onboarding/text/turn', {
           method: 'POST',
-          body: { message: trimmed },
+          body,
           signal: controller.signal,
         });
         if (controller.signal.aborted) return;
@@ -683,6 +730,9 @@ export function OnboardingText({ onFinalized, initialTurns }: OnboardingTextProp
           { id: parsed.lumi_turn_id, role: 'lumi', content: parsed.lumi_response },
         ]);
         setIsComplete(parsed.is_complete);
+        // Update chip slot from response. `parsed.chip_config` is null in this
+        // slice (backend hardcoded); 2.5-s4 will populate it.
+        setChipConfig(parsed.chip_config ?? null);
       } catch (err) {
         if (controller.signal.aborted) return;
         if (err instanceof DOMException && err.name === 'AbortError') return;
@@ -695,11 +745,12 @@ export function OnboardingText({ onFinalized, initialTurns }: OnboardingTextProp
         setError(message);
         // F11/F12 — only the 502 path leaves the user turn persisted server-side
         // (AC7). For every other failure the server did NOT save the message,
-        // so roll back the optimistic render and put the text back in the draft
-        // so the user can re-send (or edit) without retyping from scratch.
+        // so roll back the optimistic render and restore both the draft text
+        // and the chip selections so the user can re-send without re-tapping.
         if (!isUpstream) {
           setTurns((prev) => prev.filter((t) => t.id !== optimisticUserTurn.id));
-          setDraft(trimmed);
+          setDraft(draftSnapshot);
+          setChipSelections(chipSelectionsSnapshot);
         }
       } finally {
         if (!controller.signal.aborted) {
@@ -707,7 +758,7 @@ export function OnboardingText({ onFinalized, initialTurns }: OnboardingTextProp
         }
       }
     },
-    [draft, pending],
+    [draft, pending, chipSelections],
   );
 
   const handleFinalize = useCallback(async () => {
@@ -828,6 +879,82 @@ export function OnboardingText({ onFinalized, initialTurns }: OnboardingTextProp
                       <p className="font-serif text-2xl md:text-[28px] leading-snug text-fg">
                         {lumiTurn?.content ?? ''}
                       </p>
+
+                      {/* Slice 2.5-s3 — chip slot. Renders below Lumi's prose
+                          and above the input bar. Hint chips are illustrative
+                          (no click); action/choice are interactive. The skip
+                          chip only renders when the agent flagged this moment
+                          as skippable. See chip-taxonomy-three-types memory. */}
+                      {chipConfig &&
+                        (
+                          (chipConfig.mode === 'hint' && (chipConfig.hints?.length ?? 0) > 0) ||
+                          ((chipConfig.mode === 'action' || chipConfig.mode === 'choice') &&
+                            (chipConfig.options?.length ?? 0) > 0) ||
+                          !!chipConfig.skip_label
+                        ) && (
+                        <div className="flex w-full flex-col items-center gap-2 pt-1">
+                          {chipConfig.mode === 'hint' && chipConfig.hints && chipConfig.hints.length > 0 && (
+                            <>
+                              <p className="font-sans text-[10px] uppercase tracking-[0.18em] text-memory-provenance-500">
+                                Something like
+                              </p>
+                              <div className="flex flex-wrap justify-center gap-2">
+                                {chipConfig.hints.map((hint) => (
+                                  <HintChip key={hint} text={hint} />
+                                ))}
+                              </div>
+                            </>
+                          )}
+
+                          {(chipConfig.mode === 'action' || chipConfig.mode === 'choice') &&
+                            chipConfig.options && chipConfig.options.length > 0 && (
+                              <>
+                                <p className="font-sans text-[10px] uppercase tracking-[0.18em] text-memory-provenance-500">
+                                  {chipConfig.mode === 'action' ? 'Tap one' : 'Tap any that apply'}
+                                </p>
+                                <div
+                                  role={chipConfig.mode === 'action' ? 'radiogroup' : 'group'}
+                                  aria-label="Suggested replies"
+                                  className="flex flex-wrap justify-center gap-2"
+                                >
+                                  {chipConfig.options.map((opt) => (
+                                    <ChoiceChip
+                                      key={opt.key}
+                                      label={opt.label}
+                                      mode={chipConfig.mode === 'action' ? 'single' : 'multi'}
+                                      selected={chipSelections.includes(opt.key)}
+                                      onClick={() => {
+                                        if (chipConfig.mode === 'action') {
+                                          setChipSelections([opt.key]);
+                                        } else {
+                                          setChipSelections((prev) =>
+                                            prev.includes(opt.key)
+                                              ? prev.filter((k) => k !== opt.key)
+                                              : [...prev, opt.key],
+                                          );
+                                        }
+                                      }}
+                                    />
+                                  ))}
+                                </div>
+                              </>
+                            )}
+
+                          {chipConfig.skip_label && (
+                            <div className="pt-1">
+                              <SkipChip
+                                label={chipConfig.skip_label}
+                                onClick={() => {
+                                  // Slice 2.5-s3 — skip behavior lives in
+                                  // 2.5-s4's prompt. Stub: clear local chips
+                                  // so the next turn doesn't re-send them.
+                                  setChipSelections([]);
+                                }}
+                              />
+                            </div>
+                          )}
+                        </div>
+                      )}
                     </div>
                   );
                 })()}
@@ -885,7 +1012,10 @@ export function OnboardingText({ onFinalized, initialTurns }: OnboardingTextProp
                   onChange={(e) => setDraft(e.target.value)}
                   rows={1}
                   maxLength={4000}
-                  placeholder="Type your answer..."
+                  // Slice 2.5-s3 — placeholder dims when chips are present so
+                  // they read as primary input; textarea becomes the optional
+                  // "add a note" channel.
+                  placeholder={chipConfig ? 'Add a note…' : 'Type your answer...'}
                   disabled={pending}
                   onKeyDown={(e) => {
                     if (e.key === 'Enter' && !e.shiftKey) {
@@ -897,7 +1027,9 @@ export function OnboardingText({ onFinalized, initialTurns }: OnboardingTextProp
                 />
                 <button
                   type="submit"
-                  disabled={pending || draft.trim().length === 0}
+                  disabled={
+                    pending || (draft.trim().length === 0 && chipSelections.length === 0)
+                  }
                   className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-amber text-bg shadow-md hover:bg-amber-warm disabled:cursor-not-allowed disabled:opacity-50 transition-colors"
                   aria-label="Send"
                 >
@@ -908,6 +1040,16 @@ export function OnboardingText({ onFinalized, initialTurns }: OnboardingTextProp
                   )}
                 </button>
               </div>
+              {/* Slice 2.5-s3 — micro-confirmation below the pill form. Copy
+                  matches Moment1Page.tsx so the live onboarding surface and
+                  the mockup read identically once 2.5-s4 lights up chips. */}
+              {chipSelections.length > 0 && (
+                <p className="mt-2 text-center font-sans text-xs italic text-foliage">
+                  {chipSelections.length === 1
+                    ? '1 selection will be sent with your message'
+                    : `${chipSelections.length} selections will be sent with your message`}
+                </p>
+              )}
               {/* Visible send label for screen-readers / tests */}
               <span className="sr-only">Send</span>
             </form>

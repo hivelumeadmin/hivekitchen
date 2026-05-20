@@ -1,12 +1,14 @@
 import { useState } from 'react';
+import { TextOnboardingTurnResponseSchema } from '@hivekitchen/contracts';
 import { PrimaryButton } from '../../components/PrimaryButton.js';
 import { SendIcon } from '../../components/icons.js';
 import { StickyBottomBar } from '../../components/StickyBottomBar.js';
-import { ChoiceChip } from './components/ChoiceChip.js';
-import { ChoiceChipGroup, type ChipOption } from './components/ChoiceChipGroup.js';
-import { FreetypeInput } from './components/FreetypeInput.js';
-import { MomentProgress } from './components/MomentProgress.js';
-import { SkipChip } from './components/SkipChip.js';
+import { hkFetch, HkApiError } from '@/lib/fetch.js';
+import { ChoiceChip } from '@/features/onboarding/components/ChoiceChip.js';
+import { ChoiceChipGroup, type ChipOption } from '@/features/onboarding/components/ChoiceChipGroup.js';
+import { FreetypeInput } from '@/features/onboarding/components/FreetypeInput.js';
+import { MomentProgress } from '@/features/onboarding/components/MomentProgress.js';
+import { SkipChip } from '@/features/onboarding/components/SkipChip.js';
 
 const ageBandOptions: ChipOption[] = [
   { key: '0-3', label: '0–3' },
@@ -51,7 +53,45 @@ export function ChipPrimitivePage() {
   const [freetext, setFreetext] = useState('');
   const [skipped, setSkipped] = useState(false);
 
+  // Slice 2.5-s3 — Section E demo is the only place a real API call lives
+  // inside a mockup. Proves the chip-turn body round-trips end-to-end.
+  const [demoPending, setDemoPending] = useState(false);
+  const [demoResponse, setDemoResponse] = useState<string | null>(null);
+  const [demoError, setDemoError] = useState<string | null>(null);
+
   const moment2HasResponse = allergens.length > 0 || freetext.trim().length > 0;
+
+  async function handleDemoSend() {
+    if (demoPending || !moment2HasResponse) return;
+    setDemoPending(true);
+    setDemoError(null);
+    setDemoResponse(null);
+    try {
+      const trimmed = freetext.trim();
+      // When no allergens are selected (only freetext), fall back to a plain
+      // text turn so we don't send chip_selections: [] which fails .min(1).
+      const body: { chip_selections: string[]; text?: string } | { message: string } =
+        allergens.length > 0
+          ? trimmed.length > 0
+            ? { chip_selections: allergens, text: trimmed }
+            : { chip_selections: allergens }
+          : { message: trimmed };
+      const raw = await hkFetch<unknown>('/v1/onboarding/text/turn', {
+        method: 'POST',
+        body,
+      });
+      const parsed = TextOnboardingTurnResponseSchema.parse(raw);
+      setDemoResponse(parsed.lumi_response);
+    } catch (err) {
+      setDemoError(
+        err instanceof HkApiError
+          ? `API error ${err.status}: ${err.message}`
+          : 'Request failed.',
+      );
+    } finally {
+      setDemoPending(false);
+    }
+  }
 
   return (
     <>
@@ -254,6 +294,23 @@ export function ChipPrimitivePage() {
                 </p>
               )}
             </div>
+
+            {/* Slice 2.5-s3 — live response from /v1/onboarding/text/turn. */}
+            {demoResponse !== null && (
+              <div className="mt-8 rounded-md border border-foliage/40 bg-foliage-soft/40 p-4">
+                <p className="font-sans text-[10px] uppercase tracking-[0.18em] text-memory-provenance-500">
+                  Lumi replied
+                </p>
+                <p className="mt-2 font-serif text-base leading-relaxed text-fg">
+                  {demoResponse}
+                </p>
+              </div>
+            )}
+            {demoError !== null && (
+              <p className="mt-6 font-sans text-xs text-red-400" role="alert">
+                {demoError}
+              </p>
+            )}
           </div>
 
           <aside className="mt-6 border-l-2 border-foliage/60 pl-5">
@@ -285,11 +342,11 @@ export function ChipPrimitivePage() {
         <div className="flex w-full items-center justify-end">
           <PrimaryButton
             icon={<SendIcon />}
-            disabled={!moment2HasResponse}
-            onClick={() => {}}
+            disabled={!moment2HasResponse || demoPending}
+            onClick={() => void handleDemoSend()}
             ariaLabel="Send turn"
           >
-            Send
+            {demoPending ? 'Sending…' : 'Send'}
           </PrimaryButton>
         </div>
       </StickyBottomBar>
