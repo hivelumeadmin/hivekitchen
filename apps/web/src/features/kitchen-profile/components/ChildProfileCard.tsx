@@ -1,17 +1,40 @@
+import { ShieldIcon } from '../../../components/icons.js';
+import type { Allergen, ChildProfile } from '../data/mockData.js';
 import {
-  AlertTriangleIcon,
-  InfoIcon,
-} from '../../../components/icons.js';
-import type { Allergy, ChildProfile } from '../data/mockData.js';
+  ChildEditConversation,
+  type ChildEditValue,
+} from './ChildEditConversation.js';
+import { EmptyMomentPlaceholder } from './EmptyMomentPlaceholder.js';
 
 interface Readonly_ChildProfileCardProps {
   readonly child: ChildProfile;
+  readonly suggestedAllergens?: readonly Allergen[];
+  readonly isEditing?: boolean;
   readonly onEdit?: () => void;
+  readonly onSendComposite?: (composite: string, nextValue: ChildEditValue) => void;
+  readonly onDone?: () => void;
 }
 
 export type ChildProfileCardProps = Readonly<Readonly_ChildProfileCardProps>;
 
-export function ChildProfileCard({ child, onEdit }: ChildProfileCardProps) {
+export function ChildProfileCard({
+  child,
+  suggestedAllergens = [],
+  isEditing = false,
+  onEdit,
+  onSendComposite,
+  onDone,
+}: ChildProfileCardProps) {
+  if (isEditing) {
+    return (
+      <ChildEditConversation
+        child={child}
+        suggestedAllergens={suggestedAllergens}
+        onSendComposite={(composite, next) => onSendComposite?.(composite, next)}
+        onDone={() => onDone?.()}
+      />
+    );
+  }
   return (
     <div className="relative overflow-hidden rounded-lg border border-border/20 bg-surface p-8">
       <div className="absolute bottom-0 left-0 top-0 w-1 bg-amber-warm/20" />
@@ -44,7 +67,11 @@ export function ChildProfileCard({ child, onEdit }: ChildProfileCardProps) {
             ))}
           </div>
           <div className="mt-6 grid grid-cols-1 gap-8 md:grid-cols-2">
-            <AllergiesColumn allergies={child.allergies} />
+            <SafetyAndBagColumn
+              allergens={child.allergens}
+              bagComposition={child.bagComposition}
+              childName={child.name}
+            />
             <LumiLearningColumn
               loves={child.loves}
               avoids={child.avoids}
@@ -67,34 +94,63 @@ function ChildAvatar({ initial }: Readonly<{ readonly initial: string }>) {
   );
 }
 
-function AllergiesColumn({ allergies }: Readonly<{ readonly allergies: readonly Allergy[] }>) {
+function SafetyAndBagColumn({
+  allergens,
+  bagComposition,
+  childName,
+}: Readonly<{
+  readonly allergens: readonly Allergen[];
+  readonly bagComposition: string | null;
+  readonly childName: string;
+}>) {
   return (
-    <div>
-      <p className="mb-3 text-xs font-bold uppercase tracking-wider text-safety-red">Allergies</p>
-      <div className="space-y-2">
-        {allergies.map((a) => (
-          <AllergyRow key={a.name} allergy={a} />
-        ))}
+    <div className="flex flex-col gap-6">
+      <div>
+        <p className="mb-3 text-xs font-bold uppercase tracking-wider text-safety-cleared">
+          Allergens
+        </p>
+        {allergens.length === 0 ? (
+          <p className="text-[13px] italic text-fg-muted">No known allergens.</p>
+        ) : (
+          <div className="space-y-2">
+            {allergens.map((a) => (
+              <AllergenRow key={a.name} allergen={a} />
+            ))}
+          </div>
+        )}
+      </div>
+      <div>
+        <p className="mb-3 text-xs font-bold uppercase tracking-wider text-amber-warm/80">
+          Lunch bag
+        </p>
+        {bagComposition ? (
+          <span className="inline-block rounded-md border border-foliage/60 bg-foliage-soft px-3 py-1.5 font-sans text-sm text-fg">
+            {bagComposition}
+          </span>
+        ) : (
+          <EmptyMomentPlaceholder
+            label="Bag composition not set"
+            note={`We never landed on the shape of ${childName}'s lunch bag.`}
+          />
+        )}
       </div>
     </div>
   );
 }
 
-function AllergyRow({ allergy }: Readonly<{ readonly allergy: Allergy }>) {
-  if (allergy.severity === 'life-threatening') {
-    return (
-      <div className="flex items-center gap-2 text-safety-red">
-        <AlertTriangleIcon className="h-[18px] w-[18px] flex-shrink-0" />
-        <span className="text-[15px] font-medium">
-          {allergy.name} — life-threatening
-        </span>
-      </div>
-    );
-  }
+/**
+ * Uniform allergen rendering — no severity tiers, no red alarm color.
+ * Medical allergens get a small "medical" tag; non-medical (religious /
+ * lifestyle) render the same shield + label without the tag.
+ */
+function AllergenRow({ allergen }: Readonly<{ readonly allergen: Allergen }>) {
   return (
-    <div className="flex items-center gap-2 text-fg-muted">
-      <InfoIcon className="h-[18px] w-[18px] flex-shrink-0" />
-      <span className="text-[15px] font-medium">{allergy.name} — caution</span>
+    <div className="flex items-center gap-2 text-safety-cleared">
+      <ShieldIcon className="h-[18px] w-[18px] flex-shrink-0" />
+      <span className="text-[15px] font-medium">{allergen.name}</span>
+      {allergen.medical && (
+        <span className="text-[11px] uppercase tracking-wide text-fg-muted">· medical</span>
+      )}
     </div>
   );
 }
@@ -111,7 +167,7 @@ function LumiLearningColumn({
   return (
     <div>
       <p className="mb-3 text-xs font-bold uppercase tracking-wider text-amber-warm">
-        Lumi Learning
+        Lumi learning
       </p>
       <div className="space-y-3 text-fg-muted">
         <p className="text-sm">

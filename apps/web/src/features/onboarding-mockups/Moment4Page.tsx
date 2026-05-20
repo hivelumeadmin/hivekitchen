@@ -318,6 +318,11 @@ export function Moment4Page() {
                 id="onboarding-message"
                 value={draft}
                 onChange={(e) => setDraft(e.target.value)}
+                onInput={(e) => {
+                  const el = e.currentTarget;
+                  el.style.height = 'auto';
+                  el.style.height = `${el.scrollHeight}px`;
+                }}
                 rows={1}
                 maxLength={400}
                 placeholder={placeholder}

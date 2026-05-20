@@ -43,7 +43,7 @@ export function HistoryView({ turns, emphasizeLatest = true }: HistoryViewProps)
               >
                 <div
                   className={[
-                    'max-w-[85%] rounded-2xl px-4 py-3 text-base leading-relaxed',
+                    'max-w-[85%] whitespace-pre-line rounded-2xl px-4 py-3 text-base leading-relaxed',
                     turn.role === 'lumi'
                       ? isLatestLumi
                         ? 'bg-surface-2 font-serif text-fg rounded-tl-sm shadow-sm ring-1 ring-amber/30'
