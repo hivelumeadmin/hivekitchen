@@ -291,6 +291,34 @@ describe('createChildUpsertToolSpec', () => {
       }),
     );
   });
+
+  // Slice 2.5-s8 — Moment 4 wire-through: ChildUpsertInputSchema accepts
+  // bag_composition_pattern (added in 2.5-s1); the tool spec must forward it
+  // into the UpsertByNameBody passed to ChildrenService.upsertByName().
+  it('forwards bag_composition_pattern to the service (Slice 2.5-s8)', async () => {
+    await spec.fn({
+      name: 'Layla',
+      age_band: 'child',
+      bag_composition_pattern: 'main_plus_snack',
+    });
+    expect(deps.childrenService.upsertByName).toHaveBeenCalledWith(
+      expect.objectContaining({
+        body: expect.objectContaining({
+          name: 'Layla',
+          bag_composition_pattern: 'main_plus_snack',
+        }),
+      }),
+    );
+  });
+
+  it('omits bag_composition_pattern when not supplied so PATCH preserves existing (Slice 2.5-s8)', async () => {
+    await spec.fn({ name: 'Layla', age_band: 'child' });
+    expect(deps.childrenService.upsertByName).toHaveBeenCalledWith(
+      expect.objectContaining({
+        body: expect.objectContaining({ bag_composition_pattern: undefined }),
+      }),
+    );
+  });
 });
 
 // ---------------------------------------------------------------------------

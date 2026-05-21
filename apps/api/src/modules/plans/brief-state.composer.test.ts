@@ -141,6 +141,7 @@ function makeChild(overrides: Partial<DecryptedChildRow> = {}): DecryptedChildRo
     dietary_preferences: [],
     allergen_rule_version: '1.0.0',
     bag_composition: { main: true, snack: true, extra: true },
+    bag_composition_pattern: null,
     created_at: '2026-05-02T11:00:00.000Z',
     ...overrides,
   };

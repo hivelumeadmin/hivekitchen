@@ -1,6 +1,7 @@
 import type {
   AddChildBody,
   BagComposition,
+  BagCompositionPattern,
   ChildResponse,
   SetBagCompositionBody,
 } from '@hivekitchen/types';
@@ -26,6 +27,9 @@ export interface UpsertByNameBody {
   declared_allergens?: AddChildBody['declared_allergens'] | undefined;
   cultural_identifiers?: AddChildBody['cultural_identifiers'] | undefined;
   dietary_preferences?: AddChildBody['dietary_preferences'] | undefined;
+  // Slice 2.5-s8 — parent-stated bag composition pattern captured in Moment 4.
+  // PATCH semantics: undefined preserves existing; explicit null clears.
+  bag_composition_pattern?: BagCompositionPattern | null | undefined;
 }
 
 export interface UpsertByNameInput {
@@ -100,6 +104,9 @@ export class ChildrenService {
       // PATCH merge: undefined fields preserve existing values; explicit
       // arrays (including []) overwrite. school_policy_notes follows the
       // same rule (undefined preserves; null explicitly clears).
+      // bag_composition_pattern (2.5-s8) follows the same rule: undefined
+      // skips the column entirely, null clears, value writes. The repository
+      // omits the column from the UPDATE statement when undefined is passed.
       const row = await this.repository.updateProfile({
         id: target.id,
         household_id: input.householdId,
@@ -112,6 +119,7 @@ export class ChildrenService {
         declared_allergens: input.body.declared_allergens ?? target.declared_allergens,
         cultural_identifiers: input.body.cultural_identifiers ?? target.cultural_identifiers,
         dietary_preferences: input.body.dietary_preferences ?? target.dietary_preferences,
+        bag_composition_pattern: input.body.bag_composition_pattern,
       });
       if (row === null) {
         // Race: the matched row was deleted between find and update.
@@ -124,6 +132,7 @@ export class ChildrenService {
           declared_allergens: input.body.declared_allergens ?? [],
           cultural_identifiers: input.body.cultural_identifiers ?? [],
           dietary_preferences: input.body.dietary_preferences ?? [],
+          bag_composition_pattern: input.body.bag_composition_pattern,
         });
         return { child: toChildResponse(inserted), was_existing: false };
       }
@@ -140,6 +149,7 @@ export class ChildrenService {
       declared_allergens: input.body.declared_allergens ?? [],
       cultural_identifiers: input.body.cultural_identifiers ?? [],
       dietary_preferences: input.body.dietary_preferences ?? [],
+      bag_composition_pattern: input.body.bag_composition_pattern,
     });
     return { child: toChildResponse(inserted), was_existing: false };
   }

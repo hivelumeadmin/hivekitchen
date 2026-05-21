@@ -6,6 +6,7 @@ import {
   TextOnboardingFinalizeResponseSchema,
   type ChipConfig,
 } from '@hivekitchen/contracts';
+import type { BagCompositionPattern } from '@hivekitchen/types';
 import { hkFetch, HkApiError } from '@/lib/fetch.js';
 import { ChoiceChip } from './components/ChoiceChip.js';
 import { HintChip } from './components/HintChip.js';
@@ -33,6 +34,17 @@ type M3TasteCaptureState =
   | { state: 'capturing' }
   | { state: 'skipped' }
   | { state: 'partial' };
+
+// Slice 2.5-s8 — M4 bag capture state. M4 is a required-response gate (no
+// skip variant). The captured state carries the parent's selection mode so
+// future surfaces can distinguish a single chip-tap ("same for both kids")
+// from prose-driven per-child variation. Full structured display reads from
+// KitchenMapSchema in 2.5-s11; this card keeps a lean confirmation.
+type M4BagCaptureState =
+  | { state: 'none' }
+  | { state: 'capturing' }
+  | { state: 'captured'; mode: 'household'; pattern: BagCompositionPattern }
+  | { state: 'captured'; mode: 'per-child'; children: Array<{ name: string; pattern: BagCompositionPattern }> };
 
 // Slice 2.5-s5 — Moment header config. The text path knows all 7 moments the
 // agent can emit; pre_start / finalized produce number=0 so the header falls
@@ -119,6 +131,13 @@ function IcoHome({ cls }: { cls: string }) {
         strokeLinejoin="round"
         d="M2.25 12l8.954-8.955a1.5 1.5 0 012.122 0L22.28 12M4.5 9.75v10.125a1.125 1.125 0 001.125 1.125H9.75v-4.875c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125V21h4.125a1.125 1.125 0 001.125-1.125V9.75"
       />
+    </svg>
+  );
+}
+function IcoLunchBag({ cls }: { cls: string }) {
+  return (
+    <svg className={cls} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+      <path strokeLinecap="round" strokeLinejoin="round" d="M21 11.25v8.25a1.5 1.5 0 01-1.5 1.5H5.25a1.5 1.5 0 01-1.5-1.5v-8.25M12 4.875A2.625 2.625 0 109.375 7.5H12m0-2.625V7.5m0-2.625A2.625 2.625 0 1114.625 7.5H12m0 0V21m-8.625-9.75h18c.621 0 1.125-.504 1.125-1.125v-1.5c0-.621-.504-1.125-1.125-1.125h-18c-.621 0-1.125.504-1.125 1.125v1.5c0 .621.504 1.125 1.125 1.125z" />
     </svg>
   );
 }
@@ -421,11 +440,13 @@ function KitchenProfilePanel({
   currentMomentKey,
   m2AllergenCapture,
   m3TasteCapture,
+  m4BagCapture,
 }: {
   turns: Turn[];
   currentMomentKey: string | null;
   m2AllergenCapture: M2CaptureState;
   m3TasteCapture: M3TasteCaptureState;
+  m4BagCapture: M4BagCaptureState;
 }) {
   const topics = detectTopics(turns);
   const children = extractChildren(turns);
@@ -781,6 +802,53 @@ function KitchenProfilePanel({
             )}
           </div>
         ) : null}
+
+        {/* Slice 2.5-s8 — M4 bag composition card. Lean by design: the
+            structured per-child pattern read against KitchenMapSchema lives
+            in 2.5-s11. This card acknowledges that the parent answered
+            Moment 4 without re-introducing transcript heuristics. */}
+        {m4BagCapture.state !== 'none' ? (
+          <div
+            key="m4-bag"
+            data-testid="m4-bag-card"
+            className={
+              m4BagCapture.state === 'capturing'
+                ? 'rounded-xl p-4 flex items-center gap-3.5'
+                : 'rounded-xl p-5'
+            }
+            style={{
+              background:
+                m4BagCapture.state === 'capturing'
+                  ? 'var(--surface)'
+                  : 'var(--surface-2, var(--surface))',
+            }}
+          >
+            {m4BagCapture.state === 'capturing' ? (
+              <>
+                <div
+                  className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full"
+                  style={{ background: 'color-mix(in srgb, var(--amber) 12%, transparent)' }}
+                >
+                  <IcoLunchBag cls="h-[15px] w-[15px] text-amber/50" />
+                </div>
+                <div>
+                  <p className="font-sans text-sm font-medium text-fg/55">What goes in the bag</p>
+                  <p className="font-sans text-[11px] mt-0.5 text-fg-muted/40">Still listening…</p>
+                </div>
+              </>
+            ) : (
+              <>
+                <div className="flex items-center gap-2 mb-3">
+                  <IcoLunchBag cls="h-4 w-4 shrink-0 text-amber-soft" />
+                  <h3 className="font-serif text-base text-fg">What goes in the bag</h3>
+                </div>
+                <p className="font-sans text-xs italic text-foliage">
+                  Saved — Lumi knows how lunch travels.
+                </p>
+              </>
+            )}
+          </div>
+        ) : null}
       </div>
 
       {/* Progress footer */}
@@ -851,6 +919,10 @@ export function OnboardingText({ onFinalized, initialTurns }: OnboardingTextProp
   // taste" card. Lean by design: the rich data-bound rendering belongs in
   // 2.5-s11's Kitchen Profile read against KitchenMapSchema.
   const [m3TasteCapture, setM3TasteCapture] = useState<M3TasteCaptureState>({ state: 'none' });
+  // Slice 2.5-s8 — Moment 4 bag composition state for the "What goes in the
+  // bag" card. Same lean approach as M3; structured per-child read lives in
+  // 2.5-s11. Required-response gate, so no 'skipped' variant.
+  const [m4BagCapture, setM4BagCapture] = useState<M4BagCaptureState>({ state: 'none' });
   const abortRef = useRef<AbortController | null>(null);
   const conversationEndRef = useRef<HTMLDivElement | null>(null);
 
@@ -901,6 +973,16 @@ export function OnboardingText({ onFinalized, initialTurns }: OnboardingTextProp
       setM3TasteCapture({ state: 'capturing' });
     }
   }, [currentMomentKey, m3TasteCapture.state]);
+
+  // Slice 2.5-s8 — when the agent advances into m4_bag for the first time,
+  // flip the bag card from 'none' to 'capturing'. The 'captured' transition
+  // is driven from submitTurn once the agent advances out of m4_bag (i.e.
+  // moment_key becomes m5_starting_line or summary).
+  useEffect(() => {
+    if (currentMomentKey === 'm4_bag' && m4BagCapture.state === 'none') {
+      setM4BagCapture({ state: 'capturing' });
+    }
+  }, [currentMomentKey, m4BagCapture.state]);
 
   // Slice 2.5-s5 — extracted from handleSubmit so the form submit and the
   // SkipChip onClick share the same POST + optimistic-render + rollback path.
@@ -989,6 +1071,26 @@ export function OnboardingText({ onFinalized, initialTurns }: OnboardingTextProp
             parsed.moment_key !== 'm3_taste'
           ) {
             setM3TasteCapture((prev) => (prev.state === 'partial' ? prev : { state: 'partial' }));
+          }
+        }
+        // Slice 2.5-s8 — M4 bag card transitions to 'captured' when the agent
+        // advances out of m4_bag. The captured snapshot prefers the parent's
+        // chip selection (single-tap "same for every kid" path) and falls
+        // back to per-child mode with an empty children list when the parent
+        // free-typed prose — the structured per-child data is held in the
+        // children rows and surfaced by 2.5-s11's Kitchen Profile live read.
+        if (currentMomentKey === 'm4_bag') {
+          const advancedOutOfM4 =
+            parsed.moment_key !== null &&
+            parsed.moment_key !== undefined &&
+            parsed.moment_key !== 'm4_bag';
+          if (advancedOutOfM4) {
+            const chipPattern = chipSelectionsSnapshot[0];
+            if (chipPattern !== undefined && chipSelectionsSnapshot.length === 1) {
+              setM4BagCapture({ state: 'captured', mode: 'household', pattern: chipPattern as BagCompositionPattern });
+            } else {
+              setM4BagCapture({ state: 'captured', mode: 'per-child', children: [] });
+            }
           }
         }
         setChipConfig(parsed.chip_config ?? null);
@@ -1421,6 +1523,7 @@ export function OnboardingText({ onFinalized, initialTurns }: OnboardingTextProp
               currentMomentKey={currentMomentKey}
               m2AllergenCapture={m2AllergenCapture}
               m3TasteCapture={m3TasteCapture}
+              m4BagCapture={m4BagCapture}
             />
           </div>
         </section>
@@ -1465,6 +1568,7 @@ export function OnboardingText({ onFinalized, initialTurns }: OnboardingTextProp
               currentMomentKey={currentMomentKey}
               m2AllergenCapture={m2AllergenCapture}
               m3TasteCapture={m3TasteCapture}
+              m4BagCapture={m4BagCapture}
             />
           </div>
         </div>

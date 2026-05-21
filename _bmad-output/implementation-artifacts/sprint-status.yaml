@@ -1,5 +1,5 @@
 # generated: 2026-04-23
-# last_updated: 2026-05-21 (2.5-s7 → done, 3.28 → done)
+# last_updated: 2026-05-21 (2.5-s8 → done)
 # project: hivekitchen
 # project_key: NOKEY
 # tracking_system: file-system
@@ -52,7 +52,7 @@
 # Walls (decision moments) are flagged with `# WALL:` markers.
 
 generated: 2026-04-23
-last_updated: 2026-05-21 (2.5-s7 → done, 3.28 → done)
+last_updated: 2026-05-21 (2.5-s8 → done)
 project: hivekitchen
 project_key: NOKEY
 tracking_system: file-system
@@ -142,7 +142,7 @@ development_status:
   2.5-s5-moment-1-whos-at-the-table: done                                    # household name + children + age bands; MOCK-REF
   2.5-s6-moment-2-what-i-need-to-keep-safe: done                              # WALL: safety wall — allergens explicit response gate; MOCK-REF
   2.5-s7-moment-3-how-your-kitchen-tastes: done                               # cultural & religious identity + dietary + cuisine + food preferences; MOCK-REF
-  2.5-s8-moment-4-what-goes-in-the-bag: backlog                               # bag composition per child; MOCK-REF
+  2.5-s8-moment-4-what-goes-in-the-bag: done                                # bag composition per child; MOCK-REF
   2.5-s9-moment-5-a-starting-line-for-lumi: backlog                           # 10 favorite lunches cold-start seed; MOCK-REF
   2.5-s10-summary-and-finalize-gate: backlog                                  # WALL: EPIC MVP WALL — required-set complete, is_onboarded=true; MOCK-REF
   2.5-s11-kitchen-profile-read-live-data: backlog                             # unblocks Epic 7 7-s1; MOCK-REF

@@ -1,5 +1,6 @@
 import type { Buffer } from 'node:buffer';
 import type { SupabaseClient } from '@supabase/supabase-js';
+import type { BagCompositionPattern } from '@hivekitchen/types';
 import { BaseRepository } from '../../repository/base.repository.js';
 import { decryptField, encryptField } from '../../lib/envelope-encryption.js';
 import { getHouseholdDek, getOrCreateHouseholdDek } from '../../lib/household-key.js';
@@ -12,6 +13,7 @@ export interface InsertChildParams {
   declared_allergens: string[];
   cultural_identifiers: string[];
   dietary_preferences: string[];
+  bag_composition_pattern?: BagCompositionPattern | null | undefined;
 }
 
 export interface BagComposition {
@@ -31,6 +33,7 @@ export interface DecryptedChildRow {
   dietary_preferences: string[];
   allergen_rule_version: string;
   bag_composition: BagComposition;
+  bag_composition_pattern: BagCompositionPattern | null;
   created_at: string;
 }
 
@@ -54,11 +57,12 @@ interface ChildRow {
   dietary_preferences: string;
   allergen_rule_version: string;
   bag_composition: RawBagComposition;
+  bag_composition_pattern: string | null;
   created_at: string;
 }
 
 const CHILD_COLUMNS =
-  'id, household_id, name, age_band, school_policy_notes, declared_allergens, cultural_identifiers, dietary_preferences, allergen_rule_version, bag_composition, created_at';
+  'id, household_id, name, age_band, school_policy_notes, declared_allergens, cultural_identifiers, dietary_preferences, allergen_rule_version, bag_composition, bag_composition_pattern, created_at';
 
 interface RepositoryLogger {
   error: (obj: Record<string, unknown>, msg: string) => void;
@@ -83,7 +87,7 @@ export class ChildrenRepository extends BaseRepository {
 
   async insert(params: InsertChildParams): Promise<DecryptedChildRow> {
     const dek = await this.getOrCreateHouseholdDek(params.household_id);
-    const insertRow = {
+    const insertRow: Record<string, unknown> = {
       household_id: params.household_id,
       name: params.name,
       age_band: params.age_band,
@@ -92,6 +96,9 @@ export class ChildrenRepository extends BaseRepository {
       cultural_identifiers: encryptField(params.cultural_identifiers, dek),
       dietary_preferences: encryptField(params.dietary_preferences, dek),
     };
+    if (params.bag_composition_pattern !== undefined) {
+      insertRow.bag_composition_pattern = params.bag_composition_pattern;
+    }
     const { data, error } = await this.client
       .from('children')
       .insert(insertRow)
@@ -161,6 +168,13 @@ export class ChildrenRepository extends BaseRepository {
    * Mirrors insert()'s encryption discipline. Used by ChildrenService.upsertByName
    * for the onboarding agent's idempotent child.upsert tool. Returns null
    * when no row matched (id + household_id pair was wrong).
+   *
+   * Slice 2.5-s8 — bag_composition_pattern is PATCH-merged into the row only
+   * when explicitly provided. undefined keeps the column out of the UPDATE
+   * statement entirely (preserves the existing value); an explicit value (or
+   * null) writes the column. The (id, household_id) WHERE clause is the
+   * cross-household safety guard — a token from a different household cannot
+   * overwrite this row.
    */
   async updateProfile(params: {
     id: string;
@@ -171,9 +185,10 @@ export class ChildrenRepository extends BaseRepository {
     declared_allergens: string[];
     cultural_identifiers: string[];
     dietary_preferences: string[];
+    bag_composition_pattern?: BagCompositionPattern | null | undefined;
   }): Promise<DecryptedChildRow | null> {
     const dek = await this.getHouseholdDek(params.household_id);
-    const updateRow = {
+    const updateRow: Record<string, unknown> = {
       name: params.name,
       age_band: params.age_band,
       school_policy_notes: params.school_policy_notes,
@@ -182,6 +197,9 @@ export class ChildrenRepository extends BaseRepository {
       dietary_preferences: encryptField(params.dietary_preferences, dek),
       updated_at: new Date().toISOString(),
     };
+    if (params.bag_composition_pattern !== undefined) {
+      updateRow.bag_composition_pattern = params.bag_composition_pattern;
+    }
     const { data, error } = await this.client
       .from('children')
       .update(updateRow)
@@ -232,6 +250,7 @@ export class ChildrenRepository extends BaseRepository {
       dietary_preferences: decryptArrayField(row.dietary_preferences, dek),
       allergen_rule_version: row.allergen_rule_version,
       bag_composition: parseBagComposition(row.bag_composition),
+      bag_composition_pattern: (row.bag_composition_pattern as BagCompositionPattern | null) ?? null,
       created_at: row.created_at,
     };
   }

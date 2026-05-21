@@ -147,6 +147,11 @@ export function createChildUpsertToolSpec(
           declared_allergens,
           cultural_identifiers,
           dietary_preferences,
+          // Slice 2.5-s8 — Moment 4 bag composition pattern. PATCH semantics
+          // preserved end-to-end: undefined skips the column entirely so the
+          // agent can mention a child mid-conversation without clobbering an
+          // earlier-stated pattern.
+          bag_composition_pattern: parsed.bag_composition_pattern,
         },
       });
 

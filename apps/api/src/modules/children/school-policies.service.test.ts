@@ -35,6 +35,7 @@ function buildChild(): DecryptedChildRow {
     dietary_preferences: [],
     allergen_rule_version: 'v1',
     bag_composition: { main: true, snack: true, extra: true },
+    bag_composition_pattern: null,
     created_at: '2026-04-28T10:00:00.000Z',
   };
 }

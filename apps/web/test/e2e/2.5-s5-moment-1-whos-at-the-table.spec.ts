@@ -171,7 +171,7 @@ test.describe('Slice 2.5-s5: Moment 1 — Who\'s at the table', () => {
     // Profile panel footer on desktop shows "Moment 5 of 5 complete".
     // The panel is in the right column (hidden on mobile viewport — use a wider viewport).
     await page.setViewportSize({ width: 1280, height: 800 });
-    await expect(page.getByText(/moment 5 of 5 complete/i)).toBeVisible();
+    await expect(page.getByText(/moment 5 of 5 complete/i).first()).toBeVisible();
   });
 
   // parseMomentKey guard — a stale or malicious directive of 'pre_start' must
@@ -204,12 +204,14 @@ test.describe('Slice 2.5-s5: Moment 1 — Who\'s at the table', () => {
     await page.getByLabel(/your message to lumi/i).fill('Second message');
     await page.getByRole('button', { name: /^send$/i }).click();
 
-    // Header should NOT revert to step/pre_start — moment_key 'pre_start' is
-    // rejected by parseMomentKey; the UI stays on the last known moment or
-    // falls back to the legacy step counter (not "pre_start" mode).
-    await expect(page.getByText(/step \d+ of ~8/i).or(page.getByText(/moment \d+ of 5/i))).toBeVisible();
+    // Scope to <header> to avoid strict-mode violations: the profile panel
+    // footers (desktop + mobile — both in the DOM) also match /moment \d+ of 5/i.
+    // pre_start has number=0 so the UI falls to the step counter ("Step 3 of ~8").
+    const headerSubtitle = page.locator('header').getByText(/step \d+ of ~8/i)
+      .or(page.locator('header').getByText(/moment \d+ of 5/i));
+    await expect(headerSubtitle).toBeVisible();
     // Must NOT be showing "Step 1 of ~8" which would imply a regression to
     // initial state; we've already had 2 user turns so step count is > 1.
-    await expect(page.getByText(/step 1 of ~8/i)).not.toBeVisible();
+    await expect(page.locator('header').getByText(/step 1 of ~8/i)).not.toBeVisible();
   });
 });

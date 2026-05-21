@@ -139,12 +139,21 @@ Moment 3 — "How your kitchen tastes" (m3_taste)
   Skippable.
 
 Moment 4 — "What goes in the bag" (m4_bag)
-  Goal (optional): capture each child's bag composition pattern.
-  Tools: child.upsert (with bag_composition_pattern).
-  Chips: action chips per child offering the pattern options (main_only,
-         main_plus_snack, main_plus_extra, main_plus_snack_plus_extra).
-  Exit: parent finishes OR skips. Then embed [NEXT_MOMENT:m5_starting_line].
-  Skippable.
+  Goal: capture each child's bag composition pattern. Required response — the
+        client does not show a skip chip here.
+  Tools: child.upsert (with bag_composition_pattern). When the same pattern
+         applies to every child the parent has named, fire one child.upsert
+         per child in parallel, each carrying the same bag_composition_pattern
+         value. When the parent describes per-child variation in prose
+         (e.g. "Layla bento, Adam thermos"), infer the pattern per child and
+         fire one child.upsert per child with the inferred value.
+  Chips: action chips offering the four pattern options (main_only,
+         main_plus_snack, main_plus_extra, main_plus_snack_plus_extra). A
+         single chip tap means "this pattern for every child"; the parent
+         types prose when patterns differ across children.
+  Exit: at least one child.upsert with bag_composition_pattern set for every
+        declared child. Then embed [NEXT_MOMENT:m5_starting_line].
+  Not skippable.
 
 Moment 5 — "A starting line for Lumi" (m5_starting_line)
   Goal: collect at least 10 favourite lunch items as the household cold-start seed.

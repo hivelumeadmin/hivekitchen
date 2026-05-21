@@ -257,7 +257,20 @@ export function momentToChipConfig(moment: CurrentMoment): ChipConfig | null {
         skip_label: 'Skip this moment',
       };
     case 'm4_bag':
-      return null; // 2.5-s8 will fill this
+      // Slice 2.5-s8 — M4 is a required-response gate (no skip_label) that
+      // captures the parent's bag composition pattern. The 4 chip keys mirror
+      // BagCompositionPatternSchema exactly so the agent can pass the
+      // selection straight into child.upsert without re-mapping. Single-
+      // select (mode: 'action').
+      return {
+        mode: 'action',
+        options: [
+          { key: 'main_only', label: 'Main only' },
+          { key: 'main_plus_snack', label: 'Main + snack' },
+          { key: 'main_plus_extra', label: 'Main + sides' },
+          { key: 'main_plus_snack_plus_extra', label: 'Full bag' },
+        ],
+      };
     case 'm5_starting_line':
       return null; // 2.5-s9 will fill this
     case 'pre_start':

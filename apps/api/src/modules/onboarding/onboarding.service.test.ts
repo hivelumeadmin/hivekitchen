@@ -166,11 +166,28 @@ describe('momentToChipConfig', () => {
   });
 
   it('returns null for moments not yet populated', () => {
-    expect(momentToChipConfig('m4_bag')).toBeNull();
     expect(momentToChipConfig('m5_starting_line')).toBeNull();
     expect(momentToChipConfig('pre_start')).toBeNull();
     expect(momentToChipConfig('summary')).toBeNull();
     expect(momentToChipConfig('finalized')).toBeNull();
+  });
+
+  it('returns 4 single-select chips for m4_bag matching BagCompositionPattern (Slice 2.5-s8)', () => {
+    const config = momentToChipConfig('m4_bag');
+    expect(config).not.toBeNull();
+    expect(config?.mode).toBe('action');
+    expect(config?.options).toHaveLength(4);
+    // Chip keys MUST match BagCompositionPatternSchema exactly so the agent
+    // can hand them to child.upsert without translation.
+    expect(config?.options?.map((o) => o.key)).toEqual([
+      'main_only',
+      'main_plus_snack',
+      'main_plus_extra',
+      'main_plus_snack_plus_extra',
+    ]);
+    // M4 is a required-response gate — NOT skippable.
+    expect(config?.skip_label).toBeUndefined();
+    expect(config?.hints).toBeUndefined();
   });
 
   it('returns 10 multi-select chips for m2_safe with "No known allergens" first (Slice 2.5-s6)', () => {
@@ -329,10 +346,9 @@ describe('OnboardingService.submitTextTurn — directive stripping', () => {
 describe('OnboardingService.submitTextTurn — chip_config passthrough', () => {
   it('returns chip_config: null for moments that have not yet been populated', async () => {
     // Slice 2.5-s5 filled m1_table; 2.5-s6 filled m2_safe; 2.5-s7 filled
-    // m3_taste. Remaining null-returning moments are 2.5-s8 (m4_bag),
-    // 2.5-s9 (m5_starting_line), and the system summary moment.
+    // m3_taste; 2.5-s8 filled m4_bag. Remaining null-returning moments are
+    // 2.5-s9 (m5_starting_line) and the system summary moment.
     const moments: Array<MomentState['current_moment']> = [
-      'm4_bag',
       'm5_starting_line',
       'summary',
     ];

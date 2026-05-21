@@ -661,4 +661,89 @@ describe('OnboardingText', () => {
       expect(sendBtn.disabled).toBe(false);
     });
   });
+
+  // -------------------------------------------------------------------------
+  // Slice 2.5-s8 — Moment 4 ("What goes in the bag")
+  // -------------------------------------------------------------------------
+
+  const M4_BAG_CHIP_CONFIG = {
+    mode: 'action',
+    options: [
+      { key: 'main_only', label: 'Main only' },
+      { key: 'main_plus_snack', label: 'Main + snack' },
+      { key: 'main_plus_extra', label: 'Main + sides' },
+      { key: 'main_plus_snack_plus_extra', label: 'Full bag' },
+    ],
+  };
+
+  it('renders the M4 bag card in "capturing" state when the agent advances into m4_bag', async () => {
+    globalThis.fetch = vi.fn().mockResolvedValueOnce(
+      mockTurnResponse({
+        lumi_response: 'What goes in their bag?',
+        moment_key: 'm4_bag',
+        chip_config: M4_BAG_CHIP_CONFIG,
+      }),
+    ) as unknown as typeof fetch;
+
+    render(
+      <MemoryRouter>
+        <OnboardingText />
+      </MemoryRouter>,
+    );
+
+    fireEvent.change(screen.getByLabelText(/your message to lumi/i), {
+      target: { value: 'Halal household.' },
+    });
+    fireEvent.submit(screen.getByRole('button', { name: /send/i }).closest('form')!);
+
+    await waitFor(() => {
+      const cards = screen.getAllByTestId('m4-bag-card');
+      expect(cards.length).toBeGreaterThan(0);
+      expect(cards[0]!.textContent).toMatch(/Still listening/);
+    });
+  });
+
+  it('renders the M4 bag card in "captured" state once the agent advances out of m4_bag', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(
+        mockTurnResponse({
+          lumi_response: 'What goes in their bag?',
+          moment_key: 'm4_bag',
+          chip_config: M4_BAG_CHIP_CONFIG,
+        }),
+      )
+      .mockResolvedValueOnce(
+        mockTurnResponse({
+          lumi_response: "Got it — let's pick favourites.",
+          moment_key: 'm5_starting_line',
+          chip_config: null,
+        }),
+      );
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    render(
+      <MemoryRouter>
+        <OnboardingText />
+      </MemoryRouter>,
+    );
+
+    // 1st turn → arrive at m4_bag (card flips to "capturing")
+    fireEvent.change(screen.getByLabelText(/your message to lumi/i), {
+      target: { value: 'Halal household.' },
+    });
+    fireEvent.submit(screen.getByRole('button', { name: /send/i }).closest('form')!);
+    await waitFor(() => {
+      expect(screen.getByText(/What goes in their bag/i)).toBeDefined();
+    });
+
+    // 2nd turn — tap a bag chip; backend response advances past m4_bag,
+    // flipping the card to "captured".
+    fireEvent.click(screen.getByText('Main + snack'));
+    fireEvent.submit(screen.getByRole('button', { name: /send/i }).closest('form')!);
+
+    await waitFor(() => {
+      const cards = screen.getAllByTestId('m4-bag-card');
+      expect(cards[0]!.textContent).toMatch(/Saved/);
+    });
+  });
 });
