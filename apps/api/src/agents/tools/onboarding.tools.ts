@@ -28,6 +28,8 @@ import type { ChildAllergensRepository } from '../../modules/children/child-alle
 import type { ChildrenService } from '../../modules/children/children.service.js';
 import type { CulturalPriorRepository } from '../../modules/cultural-priors/cultural-prior.repository.js';
 import type { DietaryPreferencesRepository } from '../../modules/dietary-preferences/dietary-preferences.repository.js';
+import type { FoodPreferencesRepository } from '../../modules/food-preferences/food-preferences.repository.js';
+import type { HouseholdRulesRepository, RuleType } from '../../modules/household-rules/household-rules.repository.js';
 import type { HouseholdsService } from '../../modules/households/households.service.js';
 import type { MemoryService } from '../../modules/memory/memory.service.js';
 import type { VocabularyService } from '../../modules/vocabulary/vocabulary.service.js';
@@ -68,6 +70,11 @@ export interface OnboardingToolDeps {
   // at runtime if these are not provided.
   childAllergensRepository: ChildAllergensRepository;
   dietaryPreferencesRepository: DietaryPreferencesRepository;
+  // Slice 2.5-s7 — structured food-preference + rule writers for
+  // food_preference.declare / rule.set. Cuisine.declare reuses
+  // culturalPriorRepository (shared cultural_priors table).
+  foodPreferencesRepository: FoodPreferencesRepository;
+  householdRulesRepository: HouseholdRulesRepository;
 }
 
 // ---- child.upsert --------------------------------------------------------
@@ -222,6 +229,10 @@ export function createCulturalNoteToolSpec(
         label: parsed.label,
         confidence: parsed.confidence,
         presence: parsed.presence,
+        // Slice 2.5-s7 — persist parent-language-derived enforcement strength.
+        // Schema defaults to 'just_for_context'; M3 elevation chip flow can
+        // raise this to 'strong' or 'non_negotiable'.
+        enforcement: parsed.enforcement,
       });
 
       ctx.logger.info(
@@ -231,6 +242,7 @@ export function createCulturalNoteToolSpec(
           household_id: ctx.householdId,
           user_id: ctx.userId,
           key: parsed.key,
+          enforcement: parsed.enforcement,
           prior_id: result.id,
           was_existing: result.was_existing,
         },
@@ -597,7 +609,7 @@ export function createDietaryDeclareToolSpec(
 
 export function createCuisineDeclareToolSpec(
   ctx: OnboardingToolContext,
-  _deps: OnboardingToolDeps,
+  deps: OnboardingToolDeps,
 ): ToolSpec {
   return {
     name: 'cuisine.declare',
@@ -609,23 +621,42 @@ export function createCuisineDeclareToolSpec(
       "'just_for_context' for cuisine preferences (advisory, not gating).",
     inputSchema: CuisineDeclareInputSchema,
     outputSchema: CuisineDeclareOutputSchema,
-    maxLatencyMs: 100,
+    // Slice 2.5-s7 — bumped from 100 (stub) to cover real cultural_priors
+    // upsert + the cuisine-tags vocabulary validation.
+    maxLatencyMs: 600,
     fn: async (input: unknown) => {
       const parsed = CuisineDeclareInputSchema.parse(input);
+
+      // Vocabulary gate — throws on unknown key. The agent recovers by
+      // retrying with a vocabulary-valid cuisine key; the error message
+      // includes the unknown key so the agent can self-correct.
+      deps.vocabularyService.validateCuisine([parsed.key]);
+
+      const result = await deps.culturalPriorRepository.noteSuggested(ctx.householdId, {
+        key: parsed.key,
+        label: parsed.label,
+        confidence: parsed.confidence,
+        presence: parsed.presence,
+        enforcement: parsed.enforcement,
+      });
+
       ctx.logger.info(
         {
           module: 'onboarding-tools',
-          action: 'cuisine.declare.stub',
+          action: 'cuisine.declare',
           household_id: ctx.householdId,
           user_id: ctx.userId,
           key: parsed.key,
           enforcement: parsed.enforcement,
+          prior_id: result.id,
+          was_existing: result.was_existing,
         },
-        'cuisine.declare STUB — registered for slice 2.5-s4 wiring',
+        'cuisine.declare handled',
       );
+
       return CuisineDeclareOutputSchema.parse({
-        prior_id: randomUUID(),
-        was_existing: false,
+        prior_id: result.id,
+        was_existing: result.was_existing,
       });
     },
   };
@@ -635,7 +666,7 @@ export function createCuisineDeclareToolSpec(
 
 export function createFoodPreferenceDeclareToolSpec(
   ctx: OnboardingToolContext,
-  _deps: OnboardingToolDeps,
+  deps: OnboardingToolDeps,
 ): ToolSpec {
   return {
     name: 'food_preference.declare',
@@ -648,25 +679,69 @@ export function createFoodPreferenceDeclareToolSpec(
       'medical-only).',
     inputSchema: FoodPreferenceDeclareInputSchema,
     outputSchema: FoodPreferenceDeclareOutputSchema,
-    maxLatencyMs: 120,
+    // Slice 2.5-s7 — bumped from 120 (stub) to cover DEK fetch + encrypt +
+    // upsert (+ 42P10 fallback in the worst case).
+    maxLatencyMs: 800,
     fn: async (input: unknown) => {
       const parsed = FoodPreferenceDeclareInputSchema.parse(input);
+
+      // Resolve child_id: schema allows BOTH null (household-scoped is valid).
+      // When child_id is supplied: verify cross-household safety via getChild.
+      // When only child_name is supplied: case-insensitive lookup; throws if
+      // not found so the agent re-routes through child.upsert first.
+      let resolvedChildId: string | null = null;
+      const hasId = parsed.child_id !== null && parsed.child_id !== undefined;
+      const hasName = parsed.child_name !== null && parsed.child_name !== undefined;
+      if (hasId) {
+        await deps.childrenService.getChild({
+          householdId: ctx.householdId,
+          childId: parsed.child_id as string,
+        });
+        resolvedChildId = parsed.child_id as string;
+      } else if (hasName) {
+        const resolved = await deps.childrenService.findChildIdByName(
+          ctx.householdId,
+          parsed.child_name as string,
+        );
+        if (resolved === null) {
+          throw new Error(
+            `food_preference.declare: child "${parsed.child_name as string}" not found in household ${ctx.householdId} — ` +
+              'call child.upsert first to register the child, then declare their preference',
+          );
+        }
+        resolvedChildId = resolved;
+      }
+      // else: both null → household-wide preference (null child_id is valid)
+
+      const result = await deps.foodPreferencesRepository.declare(
+        ctx.householdId,
+        resolvedChildId,
+        parsed.item,
+        parsed.valence,
+        parsed.enforcement,
+        parsed.source,
+      );
+
+      // Guardrail — `item` is encrypted at rest under household DEK. The
+      // plaintext item may be culturally specific; keep it out of Pino logs.
       ctx.logger.info(
         {
           module: 'onboarding-tools',
-          action: 'food_preference.declare.stub',
+          action: 'food_preference.declare',
           household_id: ctx.householdId,
           user_id: ctx.userId,
-          has_child_id: parsed.child_id !== null && parsed.child_id !== undefined,
-          has_child_name: parsed.child_name !== null && parsed.child_name !== undefined,
+          child_scoped: resolvedChildId !== null,
           valence: parsed.valence,
           enforcement: parsed.enforcement,
+          was_existing: result.was_existing,
+          item: 'REDACTED',
         },
-        'food_preference.declare STUB — registered for slice 2.5-s4 wiring',
+        'food_preference.declare handled',
       );
+
       return FoodPreferenceDeclareOutputSchema.parse({
-        food_preference_id: randomUUID(),
-        was_existing: false,
+        food_preference_id: result.food_preference_id,
+        was_existing: result.was_existing,
       });
     },
   };
@@ -713,7 +788,7 @@ export function createFavoriteLunchAddToolSpec(
 
 export function createRuleSetToolSpec(
   ctx: OnboardingToolContext,
-  _deps: OnboardingToolDeps,
+  deps: OnboardingToolDeps,
 ): ToolSpec {
   return {
     name: 'rule.set',
@@ -725,23 +800,43 @@ export function createRuleSetToolSpec(
       '(non-custom); one row per unique custom_label per household.',
     inputSchema: RuleSetInputSchema,
     outputSchema: RuleSetOutputSchema,
-    maxLatencyMs: 100,
+    // Slice 2.5-s7 — bumped from 100 (stub) to cover DEK fetch (custom path)
+    // + upsert.
+    maxLatencyMs: 600,
     fn: async (input: unknown) => {
       const parsed = RuleSetInputSchema.parse(input);
+
+      // RuleSetInputSchema's .refine already enforces custom_label xor
+      // non-custom at the input boundary; the repository enforces it again
+      // as defence-in-depth.
+      const result = await deps.householdRulesRepository.declare(
+        ctx.householdId,
+        parsed.rule_type as RuleType,
+        parsed.custom_label ?? null,
+        parsed.enforcement,
+        parsed.source,
+      );
+
+      // Custom labels may be culturally specific (e.g. "no sattvic-violating
+      // foods on Tuesdays") — do NOT log the plaintext. Non-custom rule_type
+      // is structured and safe to log.
       ctx.logger.info(
         {
           module: 'onboarding-tools',
-          action: 'rule.set.stub',
+          action: 'rule.set',
           household_id: ctx.householdId,
           user_id: ctx.userId,
           rule_type: parsed.rule_type,
           enforcement: parsed.enforcement,
+          custom_label: parsed.rule_type === 'custom' ? 'REDACTED' : null,
+          was_existing: result.was_existing,
         },
-        'rule.set STUB — registered for slice 2.5-s4 wiring',
+        'rule.set handled',
       );
+
       return RuleSetOutputSchema.parse({
-        household_rule_id: randomUUID(),
-        was_existing: false,
+        household_rule_id: result.household_rule_id,
+        was_existing: result.was_existing,
       });
     },
   };

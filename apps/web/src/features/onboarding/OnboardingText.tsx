@@ -24,6 +24,16 @@ type M2CaptureState =
   | { state: 'all-clear' }
   | { state: 'declared'; chips: Array<{ key: string; label: string }> };
 
+// Slice 2.5-s7 — M3 taste capture state. M3 is OPTIONAL; 'skipped' is the
+// terminal state when the parent taps the Skip chip. 'partial' is set when
+// the agent advances past M3 (we don't track per-tool capture in this slice;
+// the canonical surface is 2.5-s11's Kitchen Profile live-data card).
+type M3TasteCaptureState =
+  | { state: 'none' }
+  | { state: 'capturing' }
+  | { state: 'skipped' }
+  | { state: 'partial' };
+
 // Slice 2.5-s5 — Moment header config. The text path knows all 7 moments the
 // agent can emit; pre_start / finalized produce number=0 so the header falls
 // back to the legacy "Step N of ~8" subtitle on the very first mount.
@@ -410,10 +420,12 @@ function KitchenProfilePanel({
   turns,
   currentMomentKey,
   m2AllergenCapture,
+  m3TasteCapture,
 }: {
   turns: Turn[];
   currentMomentKey: string | null;
   m2AllergenCapture: M2CaptureState;
+  m3TasteCapture: M3TasteCaptureState;
 }) {
   const topics = detectTopics(turns);
   const children = extractChildren(turns);
@@ -735,6 +747,40 @@ function KitchenProfilePanel({
             </div>
           );
         })}
+
+        {/* Slice 2.5-s7 — M3 taste card. Intentionally lean: rich rendering
+            (cultural badges with enforcement borders, cuisine pills, dietary
+            chips, food-pref counts) lands in 2.5-s11 when the Kitchen Profile
+            reads from KitchenMapSchema live. This card acknowledges M3
+            progress without re-introducing fragile transcript-heuristics. */}
+        {m3TasteCapture.state !== 'none' ? (
+          <div
+            key="m3-taste"
+            data-testid="m3-taste-card"
+            className="rounded-xl p-5"
+            style={{ background: 'var(--surface-2, var(--surface))' }}
+          >
+            <div className="flex items-center gap-2 mb-3">
+              <IcoGlobe cls="h-4 w-4 shrink-0 text-amber-soft" />
+              <h3 className="font-serif text-base text-fg">Your kitchen&apos;s taste</h3>
+            </div>
+            {m3TasteCapture.state === 'capturing' && (
+              <p className="font-sans text-xs italic text-fg-muted">
+                Waiting on your response…
+              </p>
+            )}
+            {m3TasteCapture.state === 'skipped' && (
+              <p className="font-sans text-xs italic text-fg-muted">
+                Skipped for now — you can tell Lumi anytime later.
+              </p>
+            )}
+            {m3TasteCapture.state === 'partial' && (
+              <p className="font-sans text-xs italic text-foliage">
+                Noted — Lumi is building this in the background.
+              </p>
+            )}
+          </div>
+        ) : null}
       </div>
 
       {/* Progress footer */}
@@ -801,6 +847,10 @@ export function OnboardingText({ onFinalized, initialTurns }: OnboardingTextProp
   // Held outside the panel so the chip-level info (labels chosen) survives
   // moments after the parent advances past M2.
   const [m2AllergenCapture, setM2AllergenCapture] = useState<M2CaptureState>({ state: 'none' });
+  // Slice 2.5-s7 — Moment 3 taste capture state for the panel "Your kitchen's
+  // taste" card. Lean by design: the rich data-bound rendering belongs in
+  // 2.5-s11's Kitchen Profile read against KitchenMapSchema.
+  const [m3TasteCapture, setM3TasteCapture] = useState<M3TasteCaptureState>({ state: 'none' });
   const abortRef = useRef<AbortController | null>(null);
   const conversationEndRef = useRef<HTMLDivElement | null>(null);
 
@@ -841,6 +891,16 @@ export function OnboardingText({ onFinalized, initialTurns }: OnboardingTextProp
       setM2AllergenCapture({ state: 'capturing' });
     }
   }, [currentMomentKey, m2AllergenCapture.state]);
+
+  // Slice 2.5-s7 — when the agent advances into m3_taste for the first time,
+  // flip the taste card from 'none' (hidden) to 'capturing' (visible waiting
+  // card). Subsequent moments do not roll back; the skip and advance-out
+  // transitions are driven from submitTurn.
+  useEffect(() => {
+    if (currentMomentKey === 'm3_taste' && m3TasteCapture.state === 'none') {
+      setM3TasteCapture({ state: 'capturing' });
+    }
+  }, [currentMomentKey, m3TasteCapture.state]);
 
   // Slice 2.5-s5 — extracted from handleSubmit so the form submit and the
   // SkipChip onClick share the same POST + optimistic-render + rollback path.
@@ -915,6 +975,20 @@ export function OnboardingText({ onFinalized, initialTurns }: OnboardingTextProp
               return { key, label };
             });
             setM2AllergenCapture({ state: 'declared', chips: labeled });
+          }
+        }
+        // Slice 2.5-s7 — M3 taste card transitions. Skip chip → 'skipped'.
+        // Agent advanced OUT of M3 → 'partial' (the actual capture lives in
+        // the structured tables; this card just acknowledges progress).
+        if (currentMomentKey === 'm3_taste') {
+          if (chipSelectionsSnapshot.includes('skip')) {
+            setM3TasteCapture({ state: 'skipped' });
+          } else if (
+            parsed.moment_key !== null &&
+            parsed.moment_key !== undefined &&
+            parsed.moment_key !== 'm3_taste'
+          ) {
+            setM3TasteCapture((prev) => (prev.state === 'partial' ? prev : { state: 'partial' }));
           }
         }
         setChipConfig(parsed.chip_config ?? null);
@@ -1346,6 +1420,7 @@ export function OnboardingText({ onFinalized, initialTurns }: OnboardingTextProp
               turns={turns}
               currentMomentKey={currentMomentKey}
               m2AllergenCapture={m2AllergenCapture}
+              m3TasteCapture={m3TasteCapture}
             />
           </div>
         </section>
@@ -1389,6 +1464,7 @@ export function OnboardingText({ onFinalized, initialTurns }: OnboardingTextProp
               turns={turns}
               currentMomentKey={currentMomentKey}
               m2AllergenCapture={m2AllergenCapture}
+              m3TasteCapture={m3TasteCapture}
             />
           </div>
         </div>

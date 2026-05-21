@@ -1,5 +1,6 @@
 import type { FastifyBaseLogger } from 'fastify';
 import type {
+  CulturalKey,
   CulturalPrior,
   RatifyAction,
   TemplateState,
@@ -79,9 +80,14 @@ export class CulturalPriorService {
       role: 'lumi',
       body: {
         type: 'ratification_prompt',
+        // Slice 2.5-s7 — CulturalPriorRow.key is now `string` after the CHECK
+        // drop (cuisine.declare shares this table), but the inferred-priors
+        // flow only produces the 6 CulturalKey enum values. The cast preserves
+        // the thread-body contract (key: CulturalKeySchema) without widening
+        // it.
         priors: inserted.map((p) => ({
           prior_id: p.id,
-          key: p.key,
+          key: p.key as CulturalKey,
           label: p.label,
         })),
       },
@@ -261,7 +267,11 @@ function toCulturalPrior(row: CulturalPriorRow): CulturalPrior {
   return {
     id: row.id,
     household_id: row.household_id,
-    key: row.key,
+    // Slice 2.5-s7 — CulturalPriorRow.key widened to `string`; the CulturalPrior
+    // contract is still the 6-value CulturalKey enum. Only cultural template
+    // rows reach this projection (cuisine rows project via
+    // KitchenMapCulturalPriorSchema which already accepts free strings).
+    key: row.key as CulturalKey,
     label: row.label,
     tier: row.tier,
     state: row.state,

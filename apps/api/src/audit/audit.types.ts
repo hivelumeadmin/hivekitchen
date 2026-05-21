@@ -29,6 +29,8 @@ export const AUDIT_EVENT_TYPES = [
   'lunch_link.opened',
   'lunch_link.rated',
   'lunch_link.expired',
+  'lunch_link.suppressed',    // Story 3.28: parent paused Lunch Link for (child, date)
+  'lunch_link.unsuppressed',  // Story 3.28: parent resumed Lunch Link for (child, date)
   // voice
   'voice.session_started',
   'voice.session_ended',

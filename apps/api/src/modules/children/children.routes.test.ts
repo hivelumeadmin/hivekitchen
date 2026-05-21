@@ -10,6 +10,7 @@ import { isDomainError } from '../../common/errors.js';
 import { childrenRoutes } from './children.routes.js';
 import { PlansRepository } from '../plans/plans.repository.js';
 import { PlanAdjustmentService } from '../plans/plan-adjustment.service.js';
+import type { LunchLinkSessionRepository } from '../plans/lunch-link-session.repository.js';
 
 const SAMPLE_USER_ID = '11111111-1111-4111-8111-111111111111';
 const SAMPLE_HOUSEHOLD_ID = '22222222-2222-4222-8222-222222222222';
@@ -53,6 +54,12 @@ interface PlanRowForPropagation {
   guardrail_cleared_at: string | null;
 }
 
+// Story 3.28 — in-memory store for lunch_link_sessions mock repository.
+interface LunchLinkSession {
+  suppressed_at: string | null;
+  suppressed_by_user_id: string | null;
+}
+
 interface MockDbState {
   children: ChildRowDb[];
   ackedUserIds: Set<string>;
@@ -60,6 +67,8 @@ interface MockDbState {
   // Story 3.16
   schoolPolicies: SchoolPolicyRowDb[];
   plans: PlanRowForPropagation[];
+  // Story 3.28
+  lunchLinkSessions: Map<string, LunchLinkSession>;  // key: `${childId}:${date}`
 }
 
 // In-memory Supabase mock — children + users (for parental_notice gate).
@@ -377,6 +386,12 @@ async function buildTestApp(opts: BuildAppOpts): Promise<FastifyInstance> {
     new PlanAdjustmentService(planAdjustmentDeps) as unknown as FastifyInstance['planAdjustmentService'],
   );
 
+  // Story 3.28 — childrenRoutes checks for this decorator at registration time.
+  app.decorate(
+    'lunchLinkSessionRepository',
+    buildMockLunchLinkRepo(opts.state) as unknown as FastifyInstance['lunchLinkSessionRepository'],
+  );
+
   await app.register(jwt, { secret: JWT_SECRET, sign: { expiresIn: '15m' } });
   await app.register(authenticateHook);
 
@@ -449,7 +464,33 @@ function emptyState(opts: {
     insertSpy: opts.insertSpy,
     plans: opts.plans ?? [],
     schoolPolicies: opts.schoolPolicies ?? [],
+    lunchLinkSessions: new Map(),
   };
+}
+
+// Story 3.28 — build a mock LunchLinkSessionRepository backed by the state map.
+function buildMockLunchLinkRepo(state: MockDbState): LunchLinkSessionRepository {
+  return {
+    suppress: vi.fn().mockImplementation(async (opts: { childId: string; date: string; userId: string }) => {
+      state.lunchLinkSessions.set(`${opts.childId}:${opts.date}`, {
+        suppressed_at: new Date().toISOString(),
+        suppressed_by_user_id: opts.userId,
+      });
+    }),
+    unsuppress: vi.fn().mockImplementation(async (opts: { childId: string; date: string }) => {
+      const existing = state.lunchLinkSessions.get(`${opts.childId}:${opts.date}`);
+      if (existing) {
+        existing.suppressed_at = null;
+        existing.suppressed_by_user_id = null;
+      }
+    }),
+    findByChildAndDate: vi.fn().mockImplementation(async (_householdId: string, childId: string, date: string) => {
+      return state.lunchLinkSessions.get(`${childId}:${date}`) ?? null;
+    }),
+    findSuppressedForDate: vi.fn().mockResolvedValue([]),
+    findSuppressedDatesInRange: vi.fn().mockResolvedValue(new Set<string>()),
+    findSuppressedChildrenInRange: vi.fn().mockResolvedValue(new Map<string, string[]>()),
+  } as unknown as LunchLinkSessionRepository;
 }
 
 function signPrimaryParentToken(app: FastifyInstance, householdId = SAMPLE_HOUSEHOLD_ID): string {
@@ -1505,5 +1546,143 @@ describe('GET /v1/children/:id/extra-rules', () => {
     });
 
     expect(res.statusCode).toBe(401);
+  });
+});
+
+
+// ─── Story 3.28 — POST /v1/children/:childId/lunch-link-pause ────────────────
+
+describe('POST /v1/children/:childId/lunch-link-pause', () => {
+  let app: FastifyInstance;
+  const DATE = '2026-06-09';
+
+  afterEach(async () => {
+    if (app) await app.close();
+  });
+
+  async function createChild(token: string): Promise<string> {
+    const res = await app.inject({
+      method: 'POST',
+      url: `/v1/households/${SAMPLE_HOUSEHOLD_ID}/children`,
+      headers: { authorization: `Bearer ${token}` },
+      payload: VALID_BODY,
+    });
+    expect(res.statusCode).toBe(201);
+    return (JSON.parse(res.body) as { child: { id: string } }).child.id;
+  }
+
+  it('primary_parent can suppress — 200, suppressed:true', async () => {
+    const state = emptyState({ acked: [SAMPLE_USER_ID] });
+    const auditWriteSpy = vi.fn().mockResolvedValue(undefined);
+    app = await buildTestApp({ state, auditWriteSpy });
+    const token = signPrimaryParentToken(app);
+    const childId = await createChild(token);
+
+    const res = await app.inject({
+      method: 'POST',
+      url: `/v1/children/${childId}/lunch-link-pause`,
+      headers: { authorization: `Bearer ${token}` },
+      payload: { date: DATE, suppress: true },
+    });
+
+    expect(res.statusCode).toBe(200);
+    const body = JSON.parse(res.body) as {
+      child_id: string;
+      date: string;
+      suppressed: boolean;
+      suppressed_at: string | null;
+    };
+    expect(body.child_id).toBe(childId);
+    expect(body.date).toBe(DATE);
+    expect(body.suppressed).toBe(true);
+    expect(body.suppressed_at).toBeTruthy();
+    expect(auditWriteSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ event_type: 'lunch_link.suppressed' }),
+    );
+  });
+
+  it('secondary_caregiver can suppress (requireMember)', async () => {
+    const state = emptyState({ acked: [SAMPLE_USER_ID] });
+    app = await buildTestApp({ state });
+    const primary = signPrimaryParentToken(app);
+    const childId = await createChild(primary);
+
+    const secondary = signSecondaryCaregiverToken(app);
+    const res = await app.inject({
+      method: 'POST',
+      url: `/v1/children/${childId}/lunch-link-pause`,
+      headers: { authorization: `Bearer ${secondary}` },
+      payload: { date: DATE, suppress: true },
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect((JSON.parse(res.body) as { suppressed: boolean }).suppressed).toBe(true);
+  });
+
+  it('suppress:false — 200, suppressed:false, audit unsuppressed', async () => {
+    const state = emptyState({ acked: [SAMPLE_USER_ID] });
+    const auditWriteSpy = vi.fn().mockResolvedValue(undefined);
+    app = await buildTestApp({ state, auditWriteSpy });
+    const token = signPrimaryParentToken(app);
+    const childId = await createChild(token);
+
+    const res = await app.inject({
+      method: 'POST',
+      url: `/v1/children/${childId}/lunch-link-pause`,
+      headers: { authorization: `Bearer ${token}` },
+      payload: { date: DATE, suppress: false },
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect((JSON.parse(res.body) as { suppressed: boolean }).suppressed).toBe(false);
+    expect(auditWriteSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ event_type: 'lunch_link.unsuppressed' }),
+    );
+  });
+
+  it('child from different household — 404', async () => {
+    const state = emptyState({ acked: [SAMPLE_USER_ID] });
+    app = await buildTestApp({ state });
+    const tokenA = signPrimaryParentToken(app, SAMPLE_HOUSEHOLD_ID);
+    const childId = await createChild(tokenA);
+
+    const tokenB = signPrimaryParentToken(app, OTHER_HOUSEHOLD_ID);
+    const res = await app.inject({
+      method: 'POST',
+      url: `/v1/children/${childId}/lunch-link-pause`,
+      headers: { authorization: `Bearer ${tokenB}` },
+      payload: { date: DATE, suppress: true },
+    });
+
+    expect(res.statusCode).toBe(404);
+  });
+
+  it('unauthenticated — 401', async () => {
+    const state = emptyState();
+    app = await buildTestApp({ state });
+
+    const res = await app.inject({
+      method: 'POST',
+      url: `/v1/children/${randomUUID()}/lunch-link-pause`,
+      payload: { date: DATE, suppress: true },
+    });
+
+    expect(res.statusCode).toBe(401);
+  });
+
+  it('missing date field — 400 validation error', async () => {
+    const state = emptyState({ acked: [SAMPLE_USER_ID] });
+    app = await buildTestApp({ state });
+    const token = signPrimaryParentToken(app);
+    const childId = await createChild(token);
+
+    const res = await app.inject({
+      method: 'POST',
+      url: `/v1/children/${childId}/lunch-link-pause`,
+      headers: { authorization: `Bearer ${token}` },
+      payload: { suppress: true },
+    });
+
+    expect(res.statusCode).toBe(400);
   });
 });

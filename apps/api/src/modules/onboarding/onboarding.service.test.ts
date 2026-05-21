@@ -166,7 +166,6 @@ describe('momentToChipConfig', () => {
   });
 
   it('returns null for moments not yet populated', () => {
-    expect(momentToChipConfig('m3_taste')).toBeNull();
     expect(momentToChipConfig('m4_bag')).toBeNull();
     expect(momentToChipConfig('m5_starting_line')).toBeNull();
     expect(momentToChipConfig('pre_start')).toBeNull();
@@ -183,6 +182,17 @@ describe('momentToChipConfig', () => {
     // M2 is the safety wall — NOT skippable and NOT hint-mode.
     expect(config?.skip_label).toBeUndefined();
     expect(config?.hints).toBeUndefined();
+  });
+
+  it('returns hint chips with first-class Skip for m3_taste (Slice 2.5-s7)', () => {
+    const config = momentToChipConfig('m3_taste');
+    expect(config).not.toBeNull();
+    expect(config?.mode).toBe('hint');
+    expect(config?.hints).toHaveLength(3);
+    // M3 is OPTIONAL — skip is first-class.
+    expect(config?.skip_label).toBe('Skip this moment');
+    // M3 is broad-hint, NOT choice/action mode.
+    expect(config?.options).toBeUndefined();
   });
 });
 
@@ -318,15 +328,10 @@ describe('OnboardingService.submitTextTurn — directive stripping', () => {
 
 describe('OnboardingService.submitTextTurn — chip_config passthrough', () => {
   it('returns chip_config: null for moments that have not yet been populated', async () => {
-    // Slice 2.5-s5 filled m1_table; later slices will fill m2–m5. Until then,
-    // those moments remain null. Note: pre_start is excluded because the
-    // bootstrap logic advances it to m1_table on the first turn (which now
-    // surfaces M1 hint chips).
-    // Slice 2.5-s6 — m2_safe is now populated (10 choice chips); the moments
-    // remaining as null-returning are the three later un-shipped slices plus
-    // the system summary moment.
+    // Slice 2.5-s5 filled m1_table; 2.5-s6 filled m2_safe; 2.5-s7 filled
+    // m3_taste. Remaining null-returning moments are 2.5-s8 (m4_bag),
+    // 2.5-s9 (m5_starting_line), and the system summary moment.
     const moments: Array<MomentState['current_moment']> = [
-      'm3_taste',
       'm4_bag',
       'm5_starting_line',
       'summary',
@@ -599,5 +604,139 @@ describe('OnboardingService.submitTextTurn — moment state advance', () => {
     expect(rss?.m1_child_declared).toBe(false);
     expect(rss?.m2_allergen_response).toBe(false);
     expect(rss?.m5_complete).toBe(false);
+  });
+});
+
+// ===========================================================================
+// Slice 2.5-s7 — [CHIP_PROMPT:elevation:...] directive parser + chip override
+// ===========================================================================
+
+describe('OnboardingService.submitTextTurn — elevation directive (Slice 2.5-s7)', () => {
+  const m3State: MomentState = {
+    current_moment: 'm3_taste',
+    required_set_status: {
+      m1_household_name: true,
+      m1_child_declared: true,
+      m2_allergen_response: true,
+      m5_favorite_count: 0,
+      m5_complete: false,
+    },
+  };
+
+  it('strips both [CHIP_PROMPT:elevation:...] and [NEXT_MOMENT:m3_taste] from the persisted prose', async () => {
+    const { service, threads } = buildService({
+      agentText:
+        "Got it — 'strictly Halal.' Should I treat that as a hard rule or more like a preference? [CHIP_PROMPT:elevation:halal:Halal] [NEXT_MOMENT:m3_taste]",
+      preTurnMomentState: m3State,
+    });
+
+    await service.submitTextTurn({
+      userId: USER_ID,
+      householdId: HOUSEHOLD_ID,
+      message: "We're strictly Halal.",
+    });
+
+    const lumiAppend = threads.appendTurnNext.mock.calls.find(
+      (c) => (c[0] as { role?: string }).role === 'lumi',
+    );
+    const body = lumiAppend?.[0].body as { type: string; content: string };
+    expect(body.content).not.toContain('[CHIP_PROMPT:');
+    expect(body.content).not.toContain('[NEXT_MOMENT:');
+    expect(body.content).toContain("'strictly Halal.'");
+  });
+
+  it('overrides chip_config to action with 3 elevation options when CHIP_PROMPT is present', async () => {
+    const { service } = buildService({
+      agentText:
+        "Got it. Should I treat that as a hard rule or more like a preference? [CHIP_PROMPT:elevation:halal:Halal] [NEXT_MOMENT:m3_taste]",
+      preTurnMomentState: m3State,
+    });
+
+    const result = await service.submitTextTurn({
+      userId: USER_ID,
+      householdId: HOUSEHOLD_ID,
+      message: "We're strictly Halal.",
+    });
+
+    expect(result.chip_config).not.toBeNull();
+    expect(result.chip_config?.mode).toBe('action');
+    expect(result.chip_config?.options).toHaveLength(3);
+    const keys = result.chip_config?.options?.map((o) => o.key) ?? [];
+    expect(keys).toEqual(['always-respect', 'prefer', 'just-context']);
+    // Elevation prompt has NO skip — the parent must pick one (just-context is
+    // the soft path).
+    expect(result.chip_config?.skip_label).toBeUndefined();
+  });
+
+  it('keeps moment at m3_taste when only [CHIP_PROMPT:] is emitted (no [NEXT_MOMENT:])', async () => {
+    const { service, momentRepository } = buildService({
+      agentText: 'Should I treat that as a hard rule? [CHIP_PROMPT:elevation:halal:Halal]',
+      preTurnMomentState: m3State,
+      countsOverride: { household_name_set: true, child_count: 1, child_allergen_count: 1 },
+    });
+
+    const result = await service.submitTextTurn({
+      userId: USER_ID,
+      householdId: HOUSEHOLD_ID,
+      message: 'x',
+    });
+
+    expect(result.chip_config?.mode).toBe('action');
+    expect(momentRepository.upsertState).toHaveBeenCalledWith(
+      HOUSEHOLD_ID,
+      expect.objectContaining({ current_moment: 'm3_taste' }),
+    );
+  });
+
+  it('without CHIP_PROMPT: falls through to the default M3 hint chip config', async () => {
+    const { service } = buildService({
+      agentText: 'Tell me about your kitchen. [NEXT_MOMENT:m3_taste]',
+      preTurnMomentState: m3State,
+    });
+
+    const result = await service.submitTextTurn({
+      userId: USER_ID,
+      householdId: HOUSEHOLD_ID,
+      message: 'x',
+    });
+
+    expect(result.chip_config?.mode).toBe('hint');
+    expect(result.chip_config?.hints).toHaveLength(3);
+    expect(result.chip_config?.skip_label).toBe('Skip this moment');
+  });
+
+  it('handles CHIP_PROMPT before NEXT_MOMENT in either order', async () => {
+    const { service } = buildService({
+      agentText:
+        '[NEXT_MOMENT:m3_taste] Got it. [CHIP_PROMPT:elevation:south_indian:South Indian]',
+      preTurnMomentState: m3State,
+    });
+
+    const result = await service.submitTextTurn({
+      userId: USER_ID,
+      householdId: HOUSEHOLD_ID,
+      message: 'x',
+    });
+
+    expect(result.chip_config?.mode).toBe('action');
+  });
+
+  it('ignores malformed CHIP_PROMPT (missing label) and falls through to default chip_config', async () => {
+    const { service } = buildService({
+      // Missing the label after the colon — regex requires `key:label`. The
+      // malformed directive is left in the prose (we should ideally strip it
+      // too, but a noisy passthrough is safer than a silent override). The
+      // chip_config falls through to the M3 default.
+      agentText: 'Got it. [CHIP_PROMPT:elevation:halal] [NEXT_MOMENT:m3_taste]',
+      preTurnMomentState: m3State,
+    });
+
+    const result = await service.submitTextTurn({
+      userId: USER_ID,
+      householdId: HOUSEHOLD_ID,
+      message: 'x',
+    });
+
+    expect(result.chip_config?.mode).toBe('hint');
   });
 });

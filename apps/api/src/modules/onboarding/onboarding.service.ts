@@ -10,6 +10,8 @@ import type { ChildrenService } from '../children/children.service.js';
 import type { CulturalPriorRepository } from '../cultural-priors/cultural-prior.repository.js';
 import type { CulturalPriorService } from '../cultural-priors/cultural-prior.service.js';
 import type { DietaryPreferencesRepository } from '../dietary-preferences/dietary-preferences.repository.js';
+import type { FoodPreferencesRepository } from '../food-preferences/food-preferences.repository.js';
+import type { HouseholdRulesRepository } from '../household-rules/household-rules.repository.js';
 import type { HouseholdsService } from '../households/households.service.js';
 import type { KitchenMapService } from '../kitchen-map/kitchen-map.service.js';
 import type { MemoryService } from '../memory/memory.service.js';
@@ -55,6 +57,11 @@ export interface OnboardingServiceDeps {
   // deps that don't construct the tool loop still compile.
   childAllergensRepository?: ChildAllergensRepository;
   dietaryPreferencesRepository?: DietaryPreferencesRepository;
+  // Slice 2.5-s7 — structured food-preference + household-rule writers for
+  // food_preference.declare / rule.set. Same optionality + run-time guarding
+  // pattern as the 2.5-s6 deps above.
+  foodPreferencesRepository?: FoodPreferencesRepository;
+  householdRulesRepository?: HouseholdRulesRepository;
 }
 
 export interface SubmitTextTurnInput {
@@ -128,6 +135,33 @@ const TEXT_MODALITY = 'text' as const;
 // the directive) and duplicate directives in one pass. The captured group from
 // the last occurrence becomes the next current_moment value.
 const NEXT_MOMENT_STRIP_RE = /\[NEXT_MOMENT:[a-z0-9_]+\]/g;
+
+interface ElevationPrompt {
+  tag_key: string;
+  tag_label: string;
+}
+
+// Slice 2.5-s7 — optional M3-only elevation directive emitted alongside the
+// regular [NEXT_MOMENT:] when the parent's language signals strong enforcement
+// and the agent wants explicit ratification. Format:
+//   [CHIP_PROMPT:elevation:<tag_key>:<tag_label>]
+// Regex is created inside the function (not module-scope) to avoid /g flag
+// lastIndex statefulness if exec/test were ever added to the call path.
+function extractElevationPrompt(text: string): {
+  cleaned: string;
+  prompt: ElevationPrompt | null;
+} {
+  const re = /\[CHIP_PROMPT:elevation:([a-z0-9_]+):([^\]]+)\]/g;
+  const matches = [...text.matchAll(re)];
+  if (matches.length === 0) return { cleaned: text, prompt: null };
+  // Last directive wins when duplicates leak — matches the [NEXT_MOMENT:] policy.
+  const last = matches[matches.length - 1]!;
+  const cleaned = text.replace(re, '').trimEnd();
+  return {
+    cleaned,
+    prompt: { tag_key: last[1]!, tag_label: last[2]!.trim() },
+  };
+}
 
 const VALID_MOMENT_KEYS: ReadonlySet<CurrentMoment> = new Set<CurrentMoment>([
   'pre_start',
@@ -207,7 +241,21 @@ export function momentToChipConfig(moment: CurrentMoment): ChipConfig | null {
         ],
       };
     case 'm3_taste':
-      return null; // 2.5-s7 will fill this
+      // Slice 2.5-s7 — M3 is the densest moment: a broad open question
+      // capturing cultural / religious identity, dietary, cuisine, and food
+      // preferences in ONE rich free-text response. Hint chips are
+      // illustrative (non-selectable); the parent free-types. M3 is OPTIONAL,
+      // so the Skip chip is first-class via skip_label. Copy verbatim from
+      // Moment3Page.tsx scenario 'broad-hint'.
+      return {
+        mode: 'hint',
+        hints: [
+          'Halal Punjabi household, mostly home-cooked Indian',
+          'Italian heritage, kids love pasta — dairy-light for the youngest',
+          'Hindu vegetarian — South Indian for me, Mexican for them',
+        ],
+        skip_label: 'Skip this moment',
+      };
     case 'm4_bag':
       return null; // 2.5-s8 will fill this
     case 'm5_starting_line':
@@ -248,6 +296,9 @@ export class OnboardingService {
   // Slice 2.5-s6
   private readonly childAllergensRepository?: ChildAllergensRepository;
   private readonly dietaryPreferencesRepository?: DietaryPreferencesRepository;
+  // Slice 2.5-s7
+  private readonly foodPreferencesRepository?: FoodPreferencesRepository;
+  private readonly householdRulesRepository?: HouseholdRulesRepository;
 
   constructor(deps: OnboardingServiceDeps) {
     this.threads = deps.threads;
@@ -264,6 +315,8 @@ export class OnboardingService {
     this.momentRepository = deps.momentRepository;
     this.childAllergensRepository = deps.childAllergensRepository;
     this.dietaryPreferencesRepository = deps.dietaryPreferencesRepository;
+    this.foodPreferencesRepository = deps.foodPreferencesRepository;
+    this.householdRulesRepository = deps.householdRulesRepository;
   }
 
   /**
@@ -280,7 +333,9 @@ export class OnboardingService {
       this.vocabularyService !== undefined &&
       this.memoryService !== undefined &&
       this.childAllergensRepository !== undefined &&
-      this.dietaryPreferencesRepository !== undefined
+      this.dietaryPreferencesRepository !== undefined &&
+      this.foodPreferencesRepository !== undefined &&
+      this.householdRulesRepository !== undefined
     );
   }
 
@@ -362,7 +417,10 @@ export class OnboardingService {
     // P6: strip any [NEXT_MOMENT:...] directives injected by a crafted client
     // before the message reaches the agent or the thread store. The directive
     // protocol is server→agent only; user input must never carry it.
-    const userMessage = input.message.replace(/\[NEXT_MOMENT:[a-z0-9_]+\]/g, '').trim();
+    const userMessage = input.message
+      .replace(/\[NEXT_MOMENT:[a-z0-9_]+\]/g, '')
+      .replace(/\[CHIP_PROMPT:elevation:[a-z0-9_]+:[^\]]+\]/g, '')
+      .trim();
 
     const lastTurn: TurnRow | undefined = existingTurns[existingTurns.length - 1];
     const isOrphanedUserTurn =
@@ -464,7 +522,9 @@ export class OnboardingService {
         this.vocabularyService !== undefined &&
         this.memoryService !== undefined &&
         this.childAllergensRepository !== undefined &&
-        this.dietaryPreferencesRepository !== undefined
+        this.dietaryPreferencesRepository !== undefined &&
+        this.foodPreferencesRepository !== undefined &&
+        this.householdRulesRepository !== undefined
       ) {
         const map = await this.kitchenMapService.get(input.householdId);
         const toolSpecs = createOnboardingToolSpecs(
@@ -477,6 +537,8 @@ export class OnboardingService {
             vocabularyService: this.vocabularyService,
             childAllergensRepository: this.childAllergensRepository,
             dietaryPreferencesRepository: this.dietaryPreferencesRepository,
+            foodPreferencesRepository: this.foodPreferencesRepository,
+            householdRulesRepository: this.householdRulesRepository,
           },
         );
         const reply = await this.agent.respond(agentInput, {
@@ -556,7 +618,13 @@ export class OnboardingService {
       allDirectiveMatches.length > 0
         ? (allDirectiveMatches[allDirectiveMatches.length - 1]?.[1] ?? null)
         : null;
-    const lumiTextWithoutDirective = lumiText.replace(NEXT_MOMENT_STRIP_RE, '').trimEnd();
+    // Slice 2.5-s7 — extract optional elevation prompt before stripping; the
+    // returned `cleaned` text has neither directive remaining. Order with
+    // NEXT_MOMENT_STRIP_RE does not matter — both regexes are independent.
+    const elevation = extractElevationPrompt(lumiText);
+    const lumiTextWithoutDirective = elevation.cleaned
+      .replace(NEXT_MOMENT_STRIP_RE, '')
+      .trimEnd();
 
     // R2-P8 — defense-in-depth: TEXT_RULES instructs the model not to emit
     // expression tags, but rule-adherence is ~95%. Strip [warmly]/[pause]/etc.
@@ -655,7 +723,21 @@ export class OnboardingService {
       }
     }
 
-    const chip_config = momentToChipConfig(nextCurrentMoment);
+    // Slice 2.5-s7 — when the agent emitted an elevation prompt, override the
+    // default chip_config with the 3-option action chip set (no skip — the
+    // parent must pick one; the soft path is 'just-context'). tag_label is
+    // already echoed by the agent in the prose; here we only ship the keys.
+    let chip_config: ChipConfig | null = momentToChipConfig(nextCurrentMoment);
+    if (elevation.prompt !== null) {
+      chip_config = {
+        mode: 'action',
+        options: [
+          { key: 'always-respect', label: 'Always respect' },
+          { key: 'prefer', label: 'Prefer when possible' },
+          { key: 'just-context', label: 'Just for context' },
+        ],
+      };
+    }
 
     // 7. F10 / R2-P9 — only spend an OpenAI roundtrip on the summary classifier
     //    once the conversation has plausibly reached the summary turn (3

@@ -16,12 +16,15 @@ import {
   UpdateExtraRulesResponseSchema,
   GetExtraRulesResponseSchema,
   ExtraRulesChildIdParamSchema,
+  LunchLinkPauseInputSchema,
+  LunchLinkPauseResponseSchema,
 } from '@hivekitchen/contracts';
 import type {
   AddChildBody,
   SetBagCompositionBody,
   UpdateSchoolPolicyInput,
   UpdateExtraRulesInput,
+  LunchLinkPauseInput,
 } from '@hivekitchen/types';
 import { authorize } from '../../middleware/authorize.hook.js';
 import { ForbiddenError, NotFoundError } from '../../common/errors.js';
@@ -65,6 +68,15 @@ const childrenRoutesPlugin: FastifyPluginAsync = async (fastify) => {
 
   // Story 3.21 — extra-rules repository. PII-free; no encryption needed.
   const extraRulesRepository = new ExtraRulesRepository(fastify.supabase);
+
+  // Story 3.28 — lunch link suppression. Decorated by plansHook; children-routes
+  // depends on it so plansHook must be registered before childrenRoutes.
+  if (!fastify.lunchLinkSessionRepository) {
+    throw new Error(
+      'childrenRoutes requires lunchLinkSessionRepository decorator — register plansHook first',
+    );
+  }
+  const lunchLinkSessionRepository = fastify.lunchLinkSessionRepository;
 
   const requirePrimaryParent = authorize(['primary_parent']);
   const requireMember = authorize(['primary_parent', 'secondary_caregiver']);
@@ -309,6 +321,61 @@ const childrenRoutesPlugin: FastifyPluginAsync = async (fastify) => {
       }
 
       return reply.status(200).send({ child_id: childId, extra_rules });
+    },
+  );
+
+  // Story 3.28 — POST /v1/children/:childId/lunch-link-pause
+  // Both caregivers can suppress/resume — the pickup parent often knows about
+  // sick days before the primary parent updates the app.
+  // The underlying plan_item is unchanged; only the delivery session is affected.
+  fastify.post(
+    '/v1/children/:childId/lunch-link-pause',
+    {
+      preHandler: requireMember,
+      schema: {
+        body: LunchLinkPauseInputSchema,
+        response: { 200: LunchLinkPauseResponseSchema },
+      },
+    },
+    async (request, reply) => {
+      const { childId } = request.params as { childId: string };
+      const householdId = request.user.household_id;
+      const body = request.body as LunchLinkPauseInput;
+
+      // Ownership: verify child belongs to this household.
+      const child = await childrenRepository.findById(householdId, childId);
+      if (!child) throw new NotFoundError(`child not found: ${childId}`);
+
+      if (body.suppress) {
+        await lunchLinkSessionRepository.suppress({
+          householdId,
+          childId,
+          date: body.date,
+          userId: request.user.id,
+        });
+      } else {
+        await lunchLinkSessionRepository.unsuppress({ householdId, childId, date: body.date });
+      }
+
+      try {
+        await fastify.auditService.write({
+          event_type: body.suppress ? 'lunch_link.suppressed' : 'lunch_link.unsuppressed',
+          household_id: householdId,
+          user_id: request.user.id,
+          request_id: request.id,
+          metadata: { child_id: childId, date: body.date },
+        });
+      } catch (err) {
+        request.log.error({ err }, 'audit write failed for lunch_link suppression');
+      }
+
+      const session = await lunchLinkSessionRepository.findByChildAndDate(householdId, childId, body.date);
+      return reply.send({
+        child_id: childId,
+        date: body.date,
+        suppressed: session?.suppressed_at != null,
+        suppressed_at: session?.suppressed_at ?? null,
+      });
     },
   );
 };

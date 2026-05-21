@@ -67,6 +67,26 @@ describe('getOnboardingSystemPrompt("text") — v2', () => {
     expect(prompt).toContain('[NEXT_MOMENT:<key>]');
     expect(prompt.toLowerCase()).toContain('end of your response');
   });
+
+  // ---- Slice 2.5-s7: elevation directive --------------------------------
+
+  it('teaches the [CHIP_PROMPT:elevation:<tag_key>:<tag_label>] directive (Slice 2.5-s7)', () => {
+    expect(prompt).toContain('[CHIP_PROMPT:elevation:');
+  });
+
+  it('scopes the elevation directive to M3 only', () => {
+    expect(prompt).toMatch(/M3 only|M3-only/);
+  });
+
+  it('documents the three elevation chip keys and their enforcement mapping', () => {
+    expect(prompt).toContain('always-respect');
+    expect(prompt).toContain('prefer');
+    expect(prompt).toContain('just-context');
+    // The non_negotiable / strong / just_for_context mapping appears in the
+    // directive doc. Assert at least the non-negotiable mapping line.
+    expect(prompt).toContain("enforcement='non_negotiable'");
+    expect(prompt).toContain("enforcement='just_for_context'");
+  });
 });
 
 describe('getOnboardingSystemPrompt("voice") — unchanged', () => {
@@ -83,6 +103,10 @@ describe('getOnboardingSystemPrompt("voice") — unchanged', () => {
 
   it('still includes the SESSION_COMPLETE sentinel rule', () => {
     expect(prompt).toContain('[SESSION_COMPLETE]');
+  });
+
+  it('does not carry the Slice 2.5-s7 elevation CHIP_PROMPT directive', () => {
+    expect(prompt).not.toContain('[CHIP_PROMPT:');
   });
 });
 

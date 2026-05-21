@@ -12,6 +12,7 @@ import type {
   PlannerExtraProposal,
   PlannerExtraRules,
 } from '../agents/orchestrator.js';
+import type { CulturalTemplateKey } from '../services/cultural-calendar.service.js';
 
 export async function loadBagCompositionsForHousehold(
   householdId: string,
@@ -120,7 +121,12 @@ export async function loadCulturalContextForHousehold(
   culturalCalendarService: CulturalCalendarService,
   memoryContextService: MemoryContextService,
 ): Promise<PlannerCulturalContext> {
-  const culturalTemplates = await culturalPriorRepository.findOptInTemplateKeys(householdId);
+  // Slice 2.5-s7 — findOptInTemplateKeys returns string[] now (cultural_priors.key
+  // CHECK was dropped to make room for cuisine rows). Only ratified cultural
+  // template keys reach state='opt_in_confirmed', so the cast is safe.
+  const culturalTemplates = (await culturalPriorRepository.findOptInTemplateKeys(
+    householdId,
+  )) as CulturalTemplateKey[];
   const [observances, memoryContext] = await Promise.all([
     culturalCalendarService.getUpcomingObservances({ weekOf, culturalTemplates }),
     memoryContextService.getContextForPlanning(householdId),

@@ -4,13 +4,10 @@ import { BaseRepository } from '../../repository/base.repository.js';
 export interface CulturalPriorRow {
   id: string;
   household_id: string;
-  key:
-    | 'halal'
-    | 'kosher'
-    | 'hindu_vegetarian'
-    | 'south_asian'
-    | 'east_african'
-    | 'caribbean';
+  // Slice 2.5-s7 — widened from a 6-value union to string. The DB CHECK was
+  // dropped in migration 20260906000000; service-layer vocabulary validation
+  // (cultural_tags + cuisine_tags) is now the canonical constraint at write.
+  key: string;
   label: string;
   tier: Tier;
   state: TemplateState;
@@ -24,13 +21,7 @@ export interface CulturalPriorRow {
 }
 
 export interface InferredPrior {
-  key:
-    | 'halal'
-    | 'kosher'
-    | 'hindu_vegetarian'
-    | 'south_asian'
-    | 'east_african'
-    | 'caribbean';
+  key: string;
   label: string;
   confidence: number;
   presence: number;
@@ -99,7 +90,16 @@ export class CulturalPriorRepository extends BaseRepository {
    */
   async noteSuggested(
     householdId: string,
-    input: { key: string; label: string; confidence: number; presence: number },
+    input: {
+      key: string;
+      label: string;
+      confidence: number;
+      presence: number;
+      // Slice 2.5-s7 — optional enforcement strength. Omitted → DB default
+      // ('just_for_context' per migration 20260903000700). cuisine.declare and
+      // cultural.note both pass parent-language-derived strength through.
+      enforcement?: string;
+    },
   ): Promise<{ id: string; was_existing: boolean }> {
     const { data, error } = await this.client
       .from('cultural_priors')
@@ -112,6 +112,7 @@ export class CulturalPriorRepository extends BaseRepository {
           state: 'suggested',
           presence: input.presence,
           confidence: input.confidence,
+          ...(input.enforcement !== undefined ? { enforcement: input.enforcement } : {}),
         },
         { onConflict: 'household_id,key', ignoreDuplicates: true },
       )
@@ -136,6 +137,16 @@ export class CulturalPriorRepository extends BaseRepository {
         `cultural_priors upsert conflict for (${householdId}, ${input.key}) but no row found on follow-up SELECT`,
       );
     }
+    // D2-B: update enforcement on the existing row so elevation chip escalation
+    // takes effect after re-declaration. State/tier are intentionally left
+    // untouched — a row at opt_in_confirmed must not be reset to suggested.
+    if (input.enforcement !== undefined) {
+      const { error: updateErr } = await this.client
+        .from('cultural_priors')
+        .update({ enforcement: input.enforcement, updated_at: new Date().toISOString() })
+        .eq('id', (existing as { id: string }).id);
+      if (updateErr) throw updateErr;
+    }
     return { id: (existing as { id: string }).id, was_existing: true };
   }
 
@@ -153,14 +164,14 @@ export class CulturalPriorRepository extends BaseRepository {
   // Used by the plan-generation job to decide which cultural calendar
   // observances apply. Empty result → silence-mode household → no cultural
   // context injected into the planner prompt.
-  async findOptInTemplateKeys(householdId: string): Promise<CulturalPriorRow['key'][]> {
+  async findOptInTemplateKeys(householdId: string): Promise<string[]> {
     const { data, error } = await this.client
       .from('cultural_priors')
       .select('key')
       .eq('household_id', householdId)
       .eq('state', 'opt_in_confirmed');
     if (error) throw error;
-    const rows = (data as Array<{ key: CulturalPriorRow['key'] }> | null) ?? [];
+    const rows = (data as Array<{ key: string }> | null) ?? [];
     return rows.map((r) => r.key);
   }
 

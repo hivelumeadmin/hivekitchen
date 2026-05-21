@@ -17,6 +17,8 @@ import { ChildrenService } from '../children/children.service.js';
 import { CulturalPriorRepository } from '../cultural-priors/cultural-prior.repository.js';
 import { CulturalPriorService } from '../cultural-priors/cultural-prior.service.js';
 import { DietaryPreferencesRepository } from '../dietary-preferences/dietary-preferences.repository.js';
+import { FoodPreferencesRepository } from '../food-preferences/food-preferences.repository.js';
+import { HouseholdRulesRepository } from '../household-rules/household-rules.repository.js';
 import { HouseholdsRepository } from '../households/households.repository.js';
 import { HouseholdsService } from '../households/households.service.js';
 import { AuditRepository } from '../../audit/audit.repository.js';
@@ -66,6 +68,11 @@ const onboardingRoutesPlugin: FastifyPluginAsync = async (fastify) => {
   const childAllergensRepository = new ChildAllergensRepository(fastify.supabase, kek);
   const dietaryPreferencesRepository = new DietaryPreferencesRepository(fastify.supabase);
 
+  // Slice 2.5-s7 — food-preferences + household-rules repositories for the
+  // wired food_preference.declare / rule.set onboarding tools (Moment 3).
+  const foodPreferencesRepository = new FoodPreferencesRepository(fastify.supabase, kek);
+  const householdRulesRepository = new HouseholdRulesRepository(fastify.supabase, kek);
+
   const service = new OnboardingService({
     threads,
     agent,
@@ -81,6 +88,8 @@ const onboardingRoutesPlugin: FastifyPluginAsync = async (fastify) => {
     momentRepository,
     childAllergensRepository,
     dietaryPreferencesRepository,
+    foodPreferencesRepository,
+    householdRulesRepository,
   });
 
   // Slice 2-S26 — fire-and-forget audit writer for resume / reset events.

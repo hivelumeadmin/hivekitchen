@@ -449,4 +449,216 @@ describe('OnboardingText', () => {
       expect(navigateMock).toHaveBeenCalledWith('/app');
     });
   });
+
+  // -------------------------------------------------------------------------
+  // Slice 2.5-s7 — Moment 3 ("How your kitchen tastes")
+  // -------------------------------------------------------------------------
+
+  const M3_HINT_CHIP_CONFIG = {
+    mode: 'hint',
+    hints: [
+      'Halal Punjabi household, mostly home-cooked Indian',
+      'Italian heritage, kids love pasta — dairy-light for the youngest',
+      'Hindu vegetarian — South Indian for me, Mexican for them',
+    ],
+    skip_label: 'Skip this moment',
+  };
+
+  const M3_ELEVATION_CHIP_CONFIG = {
+    mode: 'action',
+    options: [
+      { key: 'always-respect', label: 'Always respect' },
+      { key: 'prefer', label: 'Prefer when possible' },
+      { key: 'just-context', label: 'Just for context' },
+    ],
+  };
+
+  async function arriveAtM3(): Promise<void> {
+    globalThis.fetch = vi.fn().mockResolvedValueOnce(
+      mockTurnResponse({
+        lumi_response: 'Tell me how your kitchen tastes.',
+        moment_key: 'm3_taste',
+        chip_config: M3_HINT_CHIP_CONFIG,
+      }),
+    ) as unknown as typeof fetch;
+
+    render(
+      <MemoryRouter>
+        <OnboardingText />
+      </MemoryRouter>,
+    );
+
+    fireEvent.change(screen.getByLabelText(/your message to lumi/i), {
+      target: { value: 'No allergens for Layla.' },
+    });
+    fireEvent.submit(screen.getByRole('button', { name: /send/i }).closest('form')!);
+
+    await waitFor(() => {
+      expect(screen.getByText(/Tell me how your kitchen tastes/i)).toBeDefined();
+    });
+  }
+
+  it('renders the M3 taste card in "capturing" state when the moment is reached', async () => {
+    await arriveAtM3();
+
+    await waitFor(() => {
+      const cards = screen.getAllByTestId('m3-taste-card');
+      expect(cards.length).toBeGreaterThan(0);
+      expect(cards[0]!.textContent).toMatch(/Waiting on your response/);
+    });
+  });
+
+  it('renders "Skipped for now" copy after the Skip chip is tapped', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(
+        mockTurnResponse({
+          lumi_response: 'Tell me how your kitchen tastes.',
+          moment_key: 'm3_taste',
+          chip_config: M3_HINT_CHIP_CONFIG,
+        }),
+      )
+      .mockResolvedValueOnce(
+        mockTurnResponse({
+          lumi_response: 'Of course, we can fill that in anytime.',
+          moment_key: 'm4_bag',
+          chip_config: null,
+        }),
+      );
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    render(
+      <MemoryRouter>
+        <OnboardingText />
+      </MemoryRouter>,
+    );
+
+    fireEvent.change(screen.getByLabelText(/your message to lumi/i), {
+      target: { value: 'No allergens for Layla.' },
+    });
+    fireEvent.submit(screen.getByRole('button', { name: /send/i }).closest('form')!);
+
+    await waitFor(() => {
+      expect(screen.getByText(/Tell me how your kitchen tastes/i)).toBeDefined();
+    });
+
+    // Tap the Skip chip (skip_label) — this submits ['skip'] as chip selections.
+    fireEvent.click(screen.getByText('Skip this moment'));
+
+    await waitFor(() => {
+      const cards = screen.getAllByTestId('m3-taste-card');
+      expect(cards[0]!.textContent).toMatch(/Skipped for now/);
+    });
+  });
+
+  it('renders "Noted" copy when the agent advances out of M3 to M4', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(
+        mockTurnResponse({
+          lumi_response: 'Tell me how your kitchen tastes.',
+          moment_key: 'm3_taste',
+          chip_config: M3_HINT_CHIP_CONFIG,
+        }),
+      )
+      .mockResolvedValueOnce(
+        mockTurnResponse({
+          lumi_response: 'Noted — what goes in the bag?',
+          moment_key: 'm4_bag',
+          chip_config: null,
+        }),
+      );
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    render(
+      <MemoryRouter>
+        <OnboardingText />
+      </MemoryRouter>,
+    );
+
+    // 1st turn → arrive at M3
+    fireEvent.change(screen.getByLabelText(/your message to lumi/i), {
+      target: { value: 'No allergens.' },
+    });
+    fireEvent.submit(screen.getByRole('button', { name: /send/i }).closest('form')!);
+    await waitFor(() => {
+      expect(screen.getByText(/Tell me how your kitchen tastes/i)).toBeDefined();
+    });
+
+    // 2nd turn — free-text M3 response that advances to M4
+    fireEvent.change(screen.getByLabelText(/your message to lumi/i), {
+      target: { value: "We're a Halal Punjabi household." },
+    });
+    fireEvent.submit(screen.getByRole('button', { name: /send/i }).closest('form')!);
+
+    await waitFor(() => {
+      const cards = screen.getAllByTestId('m3-taste-card');
+      expect(cards[0]!.textContent).toMatch(/Noted/);
+    });
+  });
+
+  it('does NOT render the M3 taste card before M3 is reached', async () => {
+    globalThis.fetch = vi.fn().mockResolvedValueOnce(
+      mockTurnResponse({
+        lumi_response: 'Tell me about your household.',
+        moment_key: 'm1_table',
+      }),
+    ) as unknown as typeof fetch;
+
+    render(
+      <MemoryRouter>
+        <OnboardingText />
+      </MemoryRouter>,
+    );
+
+    fireEvent.change(screen.getByLabelText(/your message to lumi/i), {
+      target: { value: 'Hi.' },
+    });
+    fireEvent.submit(screen.getByRole('button', { name: /send/i }).closest('form')!);
+
+    await waitFor(() => {
+      expect(screen.getByText(/Tell me about your household/i)).toBeDefined();
+    });
+    expect(screen.queryAllByTestId('m3-taste-card')).toHaveLength(0);
+  });
+
+  it('renders the three elevation action chips with single-select behaviour (AC12)', async () => {
+    globalThis.fetch = vi.fn().mockResolvedValueOnce(
+      mockTurnResponse({
+        lumi_response:
+          "Got it — 'strictly Halal.' Should I treat that as a hard rule or more like a preference?",
+        moment_key: 'm3_taste',
+        chip_config: M3_ELEVATION_CHIP_CONFIG,
+      }),
+    ) as unknown as typeof fetch;
+
+    render(
+      <MemoryRouter>
+        <OnboardingText />
+      </MemoryRouter>,
+    );
+
+    fireEvent.change(screen.getByLabelText(/your message to lumi/i), {
+      target: { value: "We're strictly Halal." },
+    });
+    fireEvent.submit(screen.getByRole('button', { name: /send/i }).closest('form')!);
+
+    await waitFor(() => {
+      expect(screen.getByText(/strictly Halal/)).toBeDefined();
+    });
+
+    expect(screen.getByText('Always respect')).toBeDefined();
+    expect(screen.getByText('Prefer when possible')).toBeDefined();
+    expect(screen.getByText('Just for context')).toBeDefined();
+
+    // Action mode has no skip option (no skip_label in M3 elevation config).
+    expect(screen.queryByText('Skip this moment')).toBeNull();
+
+    // Send is disabled until one is selected.
+    const sendBtn = screen.getByRole('button', { name: /send/i }) as HTMLButtonElement;
+    expect(sendBtn.disabled).toBe(true);
+
+    fireEvent.click(screen.getByText('Always respect'));
+    await waitFor(() => {
+      expect(sendBtn.disabled).toBe(false);
+    });
+  });
 });

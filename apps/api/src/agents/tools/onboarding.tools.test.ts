@@ -45,6 +45,8 @@ function makeCtx(): OnboardingToolContext {
 
 const ALLERGEN_ROW_ID = '66666666-6666-4666-8666-666666666666';
 const DIETARY_ROW_ID = '77777777-7777-4777-8777-777777777777';
+const FOOD_PREF_ROW_ID = '88888888-8888-4888-8888-888888888888';
+const RULE_ROW_ID = '99999999-9999-4999-9999-999999999999';
 
 function makeDeps(overrides: Partial<OnboardingToolDeps> = {}): OnboardingToolDeps {
   return {
@@ -91,6 +93,7 @@ function makeDeps(overrides: Partial<OnboardingToolDeps> = {}): OnboardingToolDe
       validateAllergens: vi.fn((keys: string[]) => [...new Set(keys)]),
       validateCultural: vi.fn((keys: string[]) => [...new Set(keys)]),
       validateDietary: vi.fn((keys: string[]) => [...new Set(keys)]),
+      validateCuisine: vi.fn((keys: string[]) => [...new Set(keys)]),
       expandImpliesClosure: vi.fn((keys: string[]) => keys),
     } as unknown as OnboardingToolDeps['vocabularyService'],
     childAllergensRepository: {
@@ -105,6 +108,18 @@ function makeDeps(overrides: Partial<OnboardingToolDeps> = {}): OnboardingToolDe
         was_existing: false,
       }),
     } as unknown as OnboardingToolDeps['dietaryPreferencesRepository'],
+    foodPreferencesRepository: {
+      declare: vi.fn().mockResolvedValue({
+        food_preference_id: FOOD_PREF_ROW_ID,
+        was_existing: false,
+      }),
+    } as unknown as OnboardingToolDeps['foodPreferencesRepository'],
+    householdRulesRepository: {
+      declare: vi.fn().mockResolvedValue({
+        household_rule_id: RULE_ROW_ID,
+        was_existing: false,
+      }),
+    } as unknown as OnboardingToolDeps['householdRulesRepository'],
     ...overrides,
   };
 }
@@ -291,7 +306,7 @@ describe('createCulturalNoteToolSpec', () => {
     spec = createCulturalNoteToolSpec(makeCtx(), deps);
   });
 
-  it('happy path: persists a suggested prior', async () => {
+  it('happy path: persists a suggested prior with enforcement defaulted to just_for_context', async () => {
     const result = await spec.fn({
       key: 'south_asian',
       label: 'South Asian',
@@ -299,12 +314,29 @@ describe('createCulturalNoteToolSpec', () => {
       presence: 70,
     });
     expect(result).toEqual({ prior_id: PRIOR_ID, was_existing: false });
+    // Slice 2.5-s7 — schema defaults enforcement to 'just_for_context' and the
+    // tool now passes it through to noteSuggested.
     expect(deps.culturalPriorRepository.noteSuggested).toHaveBeenCalledWith(HOUSEHOLD_ID, {
       key: 'south_asian',
       label: 'South Asian',
       confidence: 80,
       presence: 70,
+      enforcement: 'just_for_context',
     });
+  });
+
+  it('passes parent-language-derived enforcement through to repo (Slice 2.5-s7)', async () => {
+    await spec.fn({
+      key: 'halal',
+      label: 'Halal',
+      confidence: 95,
+      presence: 90,
+      enforcement: 'non_negotiable',
+    });
+    expect(deps.culturalPriorRepository.noteSuggested).toHaveBeenCalledWith(
+      HOUSEHOLD_ID,
+      expect.objectContaining({ enforcement: 'non_negotiable' }),
+    );
   });
 
   it('validates the key against cultural_tags vocabulary', async () => {
@@ -733,32 +765,175 @@ describe('createDietaryDeclareToolSpec (2.5-s6 wired)', () => {
   });
 });
 
-describe('createCuisineDeclareToolSpec (2.5-s1 stub)', () => {
-  it('happy path: defaults enforcement, returns prior_id', async () => {
-    const spec = createCuisineDeclareToolSpec(makeCtx(), makeDeps());
+describe('createCuisineDeclareToolSpec (2.5-s7 wired)', () => {
+  it('validates key against vocabularyService.validateCuisine', async () => {
+    const deps = makeDeps();
+    const spec = createCuisineDeclareToolSpec(makeCtx(), deps);
     expect(spec.name).toBe('cuisine.declare');
+    await spec.fn({
+      key: 'south_indian',
+      label: 'South Indian',
+      confidence: 80,
+      presence: 70,
+    });
+    expect(deps.vocabularyService.validateCuisine).toHaveBeenCalledWith(['south_indian']);
+  });
+
+  it('writes via culturalPriorRepository.noteSuggested with enforcement passthrough', async () => {
+    const deps = makeDeps();
+    const spec = createCuisineDeclareToolSpec(makeCtx(), deps);
     const result = (await spec.fn({
       key: 'south_indian',
       label: 'South Indian',
       confidence: 80,
       presence: 70,
+      enforcement: 'strong',
     })) as { prior_id: string; was_existing: boolean };
-    expect(result.prior_id).toMatch(UUID_REGEX);
+
+    expect(result.prior_id).toBe(PRIOR_ID);
+    expect(result.was_existing).toBe(false);
+    expect(deps.culturalPriorRepository.noteSuggested).toHaveBeenCalledWith(HOUSEHOLD_ID, {
+      key: 'south_indian',
+      label: 'South Indian',
+      confidence: 80,
+      presence: 70,
+      enforcement: 'strong',
+    });
+  });
+
+  it('rejects unknown cuisine key (vocabulary validation throws)', async () => {
+    const deps = makeDeps();
+    vi.mocked(deps.vocabularyService.validateCuisine).mockImplementationOnce(() => {
+      throw new Error('Unknown cuisine key: bogus');
+    });
+    const spec = createCuisineDeclareToolSpec(makeCtx(), deps);
+    await expect(
+      spec.fn({ key: 'bogus', label: 'Bogus', confidence: 50, presence: 50 }),
+    ).rejects.toThrow(/Unknown cuisine key/);
+    expect(deps.culturalPriorRepository.noteSuggested).not.toHaveBeenCalled();
+  });
+
+  it('returns was_existing passthrough', async () => {
+    const deps = makeDeps();
+    vi.mocked(deps.culturalPriorRepository.noteSuggested).mockResolvedValueOnce({
+      id: PRIOR_ID,
+      was_existing: true,
+    });
+    const spec = createCuisineDeclareToolSpec(makeCtx(), deps);
+    const result = (await spec.fn({
+      key: 'south_indian',
+      label: 'South Indian',
+      confidence: 80,
+      presence: 70,
+    })) as { was_existing: boolean };
+    expect(result.was_existing).toBe(true);
   });
 });
 
-describe('createFoodPreferenceDeclareToolSpec (2.5-s1 stub)', () => {
-  it('happy path: household-wide preference (no child) with refuses valence', async () => {
-    const spec = createFoodPreferenceDeclareToolSpec(makeCtx(), makeDeps());
+describe('createFoodPreferenceDeclareToolSpec (2.5-s7 wired)', () => {
+  it('household-scoped: child_id and child_name both null → repo called with null', async () => {
+    const deps = makeDeps();
+    const spec = createFoodPreferenceDeclareToolSpec(makeCtx(), deps);
     expect(spec.name).toBe('food_preference.declare');
     const result = (await spec.fn({
       item: 'cilantro',
       valence: 'refuses',
     })) as { food_preference_id: string };
-    expect(result.food_preference_id).toMatch(UUID_REGEX);
+    expect(result.food_preference_id).toBe(FOOD_PREF_ROW_ID);
+    expect(deps.foodPreferencesRepository.declare).toHaveBeenCalledWith(
+      HOUSEHOLD_ID,
+      null,
+      'cilantro',
+      'refuses',
+      'soft',
+      'onboarding_declared',
+    );
+    expect(deps.childrenService.getChild).not.toHaveBeenCalled();
+    expect(deps.childrenService.findChildIdByName).not.toHaveBeenCalled();
   });
 
-  it('rejects unknown valence', async () => {
+  it('with child_id: calls getChild for cross-household guard, then repo', async () => {
+    const deps = makeDeps();
+    const spec = createFoodPreferenceDeclareToolSpec(makeCtx(), deps);
+    await spec.fn({
+      child_id: CHILD_ID,
+      item: 'mushrooms',
+      valence: 'dislikes',
+    });
+    expect(deps.childrenService.getChild).toHaveBeenCalledWith({
+      householdId: HOUSEHOLD_ID,
+      childId: CHILD_ID,
+    });
+    expect(deps.foodPreferencesRepository.declare).toHaveBeenCalledWith(
+      HOUSEHOLD_ID,
+      CHILD_ID,
+      'mushrooms',
+      'dislikes',
+      'soft',
+      'onboarding_declared',
+    );
+  });
+
+  it('with child_name: resolves via findChildIdByName, then repo', async () => {
+    const deps = makeDeps();
+    const spec = createFoodPreferenceDeclareToolSpec(makeCtx(), deps);
+    await spec.fn({
+      child_name: 'Layla',
+      item: 'ras malai',
+      valence: 'loves',
+    });
+    expect(deps.childrenService.findChildIdByName).toHaveBeenCalledWith(HOUSEHOLD_ID, 'Layla');
+    expect(deps.foodPreferencesRepository.declare).toHaveBeenCalledWith(
+      HOUSEHOLD_ID,
+      CHILD_ID,
+      'ras malai',
+      'loves',
+      'soft',
+      'onboarding_declared',
+    );
+  });
+
+  it('throws when child_name is not found in household', async () => {
+    const deps = makeDeps();
+    vi.mocked(deps.childrenService.findChildIdByName).mockResolvedValueOnce(null);
+    const spec = createFoodPreferenceDeclareToolSpec(makeCtx(), deps);
+    await expect(
+      spec.fn({ child_name: 'Ghost', item: 'ras malai', valence: 'loves' }),
+    ).rejects.toThrow(/child "Ghost" not found/);
+    expect(deps.foodPreferencesRepository.declare).not.toHaveBeenCalled();
+  });
+
+  it('does NOT log item plaintext (item: REDACTED in log payload)', async () => {
+    const logger = makeLogger();
+    const ctx = { householdId: HOUSEHOLD_ID, userId: USER_ID, logger };
+    const deps = makeDeps();
+    const spec = createFoodPreferenceDeclareToolSpec(ctx, deps);
+    await spec.fn({ item: 'ras malai', valence: 'loves' });
+
+    const calls = vi.mocked(logger.info).mock.calls as unknown as Array<[unknown, string]>;
+    const declareCall = calls.find(
+      (c) => (c[0] as { action?: string }).action === 'food_preference.declare',
+    );
+    expect(declareCall).toBeDefined();
+    expect((declareCall?.[0] as { item: string }).item).toBe('REDACTED');
+    expect(JSON.stringify(declareCall?.[0])).not.toContain('ras malai');
+  });
+
+  it('was_existing passthrough from repo', async () => {
+    const deps = makeDeps();
+    vi.mocked(deps.foodPreferencesRepository.declare).mockResolvedValueOnce({
+      food_preference_id: FOOD_PREF_ROW_ID,
+      was_existing: true,
+    });
+    const spec = createFoodPreferenceDeclareToolSpec(makeCtx(), deps);
+    const result = (await spec.fn({
+      item: 'cilantro',
+      valence: 'refuses',
+    })) as { was_existing: boolean };
+    expect(result.was_existing).toBe(true);
+  });
+
+  it('rejects unknown valence at the schema layer', async () => {
     const spec = createFoodPreferenceDeclareToolSpec(makeCtx(), makeDeps());
     await expect(spec.fn({ item: 'cilantro', valence: 'hates' })).rejects.toThrow();
   });
@@ -783,37 +958,96 @@ describe('createFavoriteLunchAddToolSpec (2.5-s1 stub)', () => {
   });
 });
 
-describe('createRuleSetToolSpec (2.5-s1 stub)', () => {
-  it('happy path: non-custom rule returns household_rule_id', async () => {
-    const spec = createRuleSetToolSpec(makeCtx(), makeDeps());
+describe('createRuleSetToolSpec (2.5-s7 wired)', () => {
+  it('non-custom rule_type calls repo with customLabel=null', async () => {
+    const deps = makeDeps();
+    const spec = createRuleSetToolSpec(makeCtx(), deps);
     expect(spec.name).toBe('rule.set');
     const result = (await spec.fn({ rule_type: 'no_pork' })) as {
       household_rule_id: string;
       was_existing: boolean;
     };
-    expect(result.household_rule_id).toMatch(UUID_REGEX);
+    expect(result.household_rule_id).toBe(RULE_ROW_ID);
     expect(result.was_existing).toBe(false);
+    expect(deps.householdRulesRepository.declare).toHaveBeenCalledWith(
+      HOUSEHOLD_ID,
+      'no_pork',
+      null,
+      'strong',
+      'onboarding_declared',
+    );
   });
 
-  it('custom rule requires custom_label', async () => {
+  it('custom rule_type calls repo with the label string', async () => {
+    const deps = makeDeps();
+    const spec = createRuleSetToolSpec(makeCtx(), deps);
+    await spec.fn({ rule_type: 'custom', custom_label: 'no peanut butter on Fridays' });
+    expect(deps.householdRulesRepository.declare).toHaveBeenCalledWith(
+      HOUSEHOLD_ID,
+      'custom',
+      'no peanut butter on Fridays',
+      'strong',
+      'onboarding_declared',
+    );
+  });
+
+  it('custom rule without label is rejected at the schema layer', async () => {
     const spec = createRuleSetToolSpec(makeCtx(), makeDeps());
     await expect(spec.fn({ rule_type: 'custom' })).rejects.toThrow();
   });
 
-  it('custom rule with custom_label is valid', async () => {
+  it('non-custom rule with custom_label is rejected at the schema layer', async () => {
     const spec = createRuleSetToolSpec(makeCtx(), makeDeps());
-    const result = (await spec.fn({
-      rule_type: 'custom',
-      custom_label: 'no peanut butter on Fridays',
-    })) as { household_rule_id: string };
-    expect(result.household_rule_id).toMatch(UUID_REGEX);
-  });
-
-  it('non-custom rule with custom_label is rejected', async () => {
-    const spec = createRuleSetToolSpec(makeCtx(), makeDeps());
+    // Schema layer should reject — confirm via .refine signal. The repo also
+    // rejects this defensively (covered in household-rules.repository.test).
+    // Either layer can reject; this asserts at least one does.
+    // (DBG: 2.5-s1 had the schema-level refine, kept active here.)
+    // No assertion on which layer — just that the call fails.
     await expect(
       spec.fn({ rule_type: 'no_pork', custom_label: 'foo' }),
     ).rejects.toThrow();
+  });
+
+  it('does NOT log custom_label plaintext for custom rules', async () => {
+    const logger = makeLogger();
+    const ctx = { householdId: HOUSEHOLD_ID, userId: USER_ID, logger };
+    const deps = makeDeps();
+    const spec = createRuleSetToolSpec(ctx, deps);
+    await spec.fn({
+      rule_type: 'custom',
+      custom_label: 'no sattvic-violating foods on Tuesdays',
+    });
+    const calls = vi.mocked(logger.info).mock.calls as unknown as Array<[unknown, string]>;
+    const declareCall = calls.find(
+      (c) => (c[0] as { action?: string }).action === 'rule.set',
+    );
+    expect(declareCall).toBeDefined();
+    expect((declareCall?.[0] as { custom_label: string }).custom_label).toBe('REDACTED');
+    expect(JSON.stringify(declareCall?.[0])).not.toContain('sattvic');
+  });
+
+  it('does NOT redact for non-custom rules (rule_type is structured)', async () => {
+    const logger = makeLogger();
+    const ctx = { householdId: HOUSEHOLD_ID, userId: USER_ID, logger };
+    const deps = makeDeps();
+    const spec = createRuleSetToolSpec(ctx, deps);
+    await spec.fn({ rule_type: 'no_pork' });
+    const calls = vi.mocked(logger.info).mock.calls as unknown as Array<[unknown, string]>;
+    const declareCall = calls.find(
+      (c) => (c[0] as { action?: string }).action === 'rule.set',
+    );
+    expect((declareCall?.[0] as { custom_label: string | null }).custom_label).toBeNull();
+  });
+
+  it('was_existing passthrough', async () => {
+    const deps = makeDeps();
+    vi.mocked(deps.householdRulesRepository.declare).mockResolvedValueOnce({
+      household_rule_id: RULE_ROW_ID,
+      was_existing: true,
+    });
+    const spec = createRuleSetToolSpec(makeCtx(), deps);
+    const result = (await spec.fn({ rule_type: 'no_pork' })) as { was_existing: boolean };
+    expect(result.was_existing).toBe(true);
   });
 });
 
