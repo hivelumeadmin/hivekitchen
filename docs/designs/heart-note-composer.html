@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+
+<html class="dark" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>Heart Note Composer — HiveKitchen</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&amp;family=Inter:wght@300;400;500;600;700&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    colors: {
+                        "on-tertiary-fixed-variant": "#334c3b",
+                        "lumi-terracotta-warmed": "#C88A6E",
+                        "secondary-fixed-dim": "#ffb59a",
+                        "inverse-primary": "#8a5100",
+                        "on-error": "#690005",
+                        "warm-neutral-900": "#1C1A17",
+                        "inverse-surface": "#e7e1dc",
+                        "on-primary": "#4a2900",
+                        "on-secondary-fixed-variant": "#72351d",
+                        "lumi-terracotta": "#B46A4E",
+                        "background": "#151310",
+                        "surface-dim": "#151310",
+                        "surface-variant": "#373431",
+                        "on-tertiary-fixed": "#062012",
+                        "on-secondary-fixed": "#380d00",
+                        "safety-red": "#C65A4E",
+                        "on-primary-container": "#522e00",
+                        "surface-container-high": "#2c2a26",
+                        "surface-container-low": "#1d1b18",
+                        "on-tertiary": "#1c3625",
+                        "surface-container-lowest": "#100e0b",
+                        "outline": "#a08d7e",
+                        "warm-neutral-400": "#7B7668",
+                        "surface-bright": "#3b3935",
+                        "primary-fixed-dim": "#ffb86f",
+                        "on-error-container": "#ffdad6",
+                        "surface": "#151310",
+                        "tertiary-fixed-dim": "#b0ceb7",
+                        "warm-neutral-700": "#2F2D27",
+                        "on-secondary": "#552009",
+                        "primary": "#ffb86f",
+                        "on-surface": "#e7e1dc",
+                        "honey-accent": "#E69A3D",
+                        "outline-variant": "#524437",
+                        "warm-neutral-800": "#262420",
+                        "warm-neutral-50": "#FAF7F2",
+                        "tertiary-container": "#8aa690",
+                        "on-primary-fixed-variant": "#693c00",
+                        "amber-warm": "#E69A3D",
+                        "error-container": "#93000a",
+                        "on-background": "#e7e1dc",
+                        "on-primary-fixed": "#2c1600",
+                        "sacred-plum": "#8A5F72",
+                        "tertiary": "#b0ceb7",
+                        "secondary-container": "#72351d",
+                        "on-surface-variant": "#d7c3b2",
+                        "primary-container": "#d98f3c",
+                        "inverse-on-surface": "#32302d",
+                        "secondary": "#ffb59a",
+                        "error": "#ffb4ab",
+                        "surface-container": "#211f1c",
+                        "safety-cleared-teal": "#5A9C8B",
+                        "on-secondary-container": "#f5a081",
+                        "foliage": "#7A9681",
+                        "on-tertiary-container": "#223c2b",
+                        "tertiary-fixed": "#ccead2",
+                        "primary-fixed": "#ffdcbd",
+                        "surface-container-highest": "#373431",
+                        "surface-tint": "#ffb86f",
+                        "secondary-fixed": "#ffdbcf",
+                        "sage-500": "#67C6CC",
+                        "destructive-300": "#E8A09A",
+                    },
+                    borderRadius: {
+                        "DEFAULT": "0.5rem",
+                        "lg": "1rem",
+                        "xl": "1.5rem",
+                        "full": "9999px"
+                    },
+                    fontFamily: {
+                        "headline": ["Instrument Serif", "serif"],
+                        "display": ["Instrument Serif", "serif"],
+                        "body": ["Inter", "sans-serif"],
+                        "label": ["Inter", "sans-serif"]
+                    }
+                },
+            },
+        }
+    </script>
+<style>
+        .writing-lines {
+            background-image: linear-gradient(rgba(160, 141, 126, 0.08) 1px, transparent 1px);
+            background-size: 100% 36px;
+            line-height: 36px !important;
+        }
+        .material-symbols-outlined {
+            font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+            vertical-align: middle;
+        }
+    </style>
+</head>
+<body class="bg-warm-neutral-900 text-warm-neutral-50 font-body min-h-screen flex flex-col">
+<!-- Top Navigation Shell (Shared Component Mapping) -->
+<header class="border-b border-outline/20 bg-warm-neutral-900">
+<div class="flex justify-between items-center w-full px-6 py-4 max-w-7xl mx-auto">
+<!-- Brand Logo -->
+<div class="flex items-center gap-2">
+<span class="font-headline text-2xl italic text-sacred-plum">HiveKitchen</span>
+</div>
+<!-- Multimedia/Status Icons -->
+<div class="flex items-center gap-6 text-warm-neutral-400">
+<button aria-label="Notifications" class="hover:text-sacred-plum transition-colors">
+<span class="material-symbols-outlined text-[22px]">notifications</span>
+</button>
+<button aria-label="User Profile" class="hover:text-sacred-plum transition-colors">
+<span class="material-symbols-outlined text-[22px]">account_circle</span>
+</button>
+</div>
+</div>
+</header>
+<main class="flex-grow flex justify-center py-16 px-6">
+<div class="max-w-[1040px] w-full flex flex-col md:flex-row gap-10 items-start">
+<!-- Composer Area -->
+<div class="w-full max-w-[720px] flex flex-col">
+<div class="mb-8">
+<p class="font-label text-[11px] tracking-[0.15em] uppercase text-warm-neutral-400 mb-3">TUESDAY MORNING · 12 MAY · A NOTE FOR LAYLA</p>
+<h1 class="font-display text-[40px] leading-tight text-warm-neutral-50">A few words for <span class="text-sacred-plum">Layla</span> today.</h1>
+</div>
+<!-- Stationery Card -->
+<div class="bg-warm-neutral-800 border border-outline/30 rounded-[12px] overflow-hidden">
+<div class="px-8 py-4 border-b border-outline/10 flex justify-between items-center">
+<span class="font-label text-[12px] font-medium text-warm-neutral-400/70 tracking-wider">TO <span class="text-sacred-plum">LAYLA</span> · DELIVERED 12:15</span>
+<div class="flex items-center gap-1.5">
+<span class="material-symbols-outlined text-[14px] text-sage-500">schedule</span>
+<span class="font-label text-[11px] text-warm-neutral-400/60 uppercase">Scheduled</span>
+</div>
+</div>
+<div class="p-8 relative">
+<textarea class="w-full bg-transparent border-none focus:ring-0 font-display italic text-[22px] text-warm-neutral-50/90 writing-lines resize-none min-h-[360px] placeholder:text-warm-neutral-50/20" placeholder="Hope today is a calm one — I packed your favourite carrot ribbons..."></textarea>
+</div>
+<div class="px-8 py-5 border-t border-outline/10 flex justify-between items-center bg-warm-neutral-900/30">
+<span class="font-label text-[13px] text-warm-neutral-400/60">127 / 280 characters</span>
+<div class="flex items-center gap-2 text-sage-500">
+<span class="material-symbols-outlined text-[18px]">check_circle</span>
+<span class="font-label text-[13px]">Saved a moment ago</span>
+</div>
+</div>
+</div>
+<!-- Primary Actions -->
+<div class="mt-8 flex items-center justify-between">
+<div class="flex items-center gap-6">
+<button class="bg-sacred-plum hover:bg-sacred-plum/90 text-warm-neutral-50 font-label font-bold px-8 py-3.5 rounded-lg transition-all active:scale-95 shadow-lg shadow-sacred-plum/10">
+                            Save the note
+                        </button>
+<button class="text-warm-neutral-400 hover:text-warm-neutral-50 font-label font-medium px-4 py-3.5 transition-all">
+                            Skip today
+                        </button>
+</div>
+<button class="flex items-center gap-2 text-lumi-terracotta hover:text-lumi-terracotta-warmed font-label font-medium transition-all group">
+<span class="material-symbols-outlined text-[20px] group-hover:rotate-12 transition-transform">auto_awesome</span>
+<span>Use a Lumi suggestion</span>
+</button>
+</div>
+</div>
+<!-- Side Rail -->
+<aside class="w-full md:w-[280px] flex flex-col gap-8 pt-20">
+<!-- Today's Meal -->
+<div class="space-y-4">
+<h3 class="font-label text-[11px] tracking-[0.15em] uppercase text-warm-neutral-400">What <span class="text-sacred-plum">Layla</span> is having today</h3>
+<div class="bg-warm-neutral-800 rounded-lg border border-outline/10 overflow-hidden group">
+<img alt="Cumin Chicken Pita" class="w-full h-32 object-cover transition-transform duration-500 group-hover:scale-105" data-alt="A warm, overhead food photography shot of a whole-wheat cumin chicken pita wrap stuffed with fresh greens, purple cabbage, and a drizzle of tahini sauce. The lighting is soft and ambient, casting gentle shadows on a dark wooden surface. The aesthetic is editorial and wholesome, reflecting a modern, healthy school lunch." src="https://lh3.googleusercontent.com/aida-public/AB6AXuBAGuB5KW10QbpL37WqWxZxg3EQOa5BTjTuktHA9yk9a-9ZxlXq4sOvElWkWWmlagp56P8BxWi7DNRbKY700m-uC6QWqKRxKT6UVsanm0SW_GZLSvljAv8GB9yO1ZibBy802nnphcKhoRQlHI_gJXhb0hDGPHk-2PSUP27vAy5pPWkPROZelgi4ecQRpNJJOEu-u4eR3LQFtSETEjQ0RWMsYVOrQ6UyaTpcyXWoXA4Ol4yVdnCaakWX7UYYCb4aJ10u3u-oXb2OFhg"/>
+<div class="p-4">
+<p class="font-headline text-lg text-warm-neutral-50 mb-2">Cumin Chicken Pita</p>
+<div class="flex flex-wrap gap-2">
+<span class="bg-destructive-300/10 text-destructive-300 text-[11px] font-bold px-2 py-0.5 rounded uppercase border border-destructive-300/20">Gluten</span>
+<span class="bg-destructive-300/10 text-destructive-300 text-[11px] font-bold px-2 py-0.5 rounded uppercase border border-destructive-300/20">Sesame</span>
+</div>
+</div>
+</div>
+</div>
+<!-- History -->
+<div class="space-y-4">
+<h3 class="font-label text-[11px] tracking-[0.15em] uppercase text-warm-neutral-400">Yesterday's reaction</h3>
+<div class="bg-warm-neutral-800 p-5 rounded-lg border border-outline/10 flex items-center gap-4">
+<span class="text-3xl">🥰</span>
+<div>
+<p class="font-body text-body-md text-warm-neutral-50">"loved it"</p>
+<p class="font-label text-[12px] text-warm-neutral-400">Mon 11 May</p>
+</div>
+</div>
+</div>
+<!-- Lumi Presence -->
+<div class="bg-lumi-terracotta/10 p-6 rounded-lg border border-lumi-terracotta/20 flex flex-col gap-3">
+<div class="flex items-center gap-2">
+<span class="w-2 h-2 rounded-full bg-lumi-terracotta"></span>
+<span class="font-label text-[11px] uppercase tracking-widest text-lumi-terracotta-warmed">Lumi Presence</span>
+</div>
+<p class="font-body text-sm italic text-warm-neutral-400">"<span class="text-sacred-plum">Layla</span> mentioned she loved the texture of the pita yesterday. Maybe mention her big swim meet today?"</p>
+</div>
+</aside>
+</div>
+</main>
+<!-- Footer Shell (Shared Component Mapping) -->
+<footer class="mt-auto border-t border-outline/10 bg-warm-neutral-900 py-12">
+<div class="max-w-7xl mx-auto px-8 flex flex-col md:flex-row justify-between items-center gap-8">
+<div class="text-warm-neutral-400 font-body text-[11px] uppercase tracking-widest">
+      (C) 2026 HIVELUME LLC
+    </div>
+<div class="flex gap-8 text-warm-neutral-400 font-body text-[11px] uppercase tracking-widest">
+<a class="hover:text-sacred-plum transition-colors" href="#">Privacy Policy</a>
+<a class="hover:text-sacred-plum transition-colors" href="#">Terms of Service</a>
+<a class="hover:text-sacred-plum transition-colors" href="#">Help Center</a>
+</div>
+</div>
+</footer>
+</body></html>

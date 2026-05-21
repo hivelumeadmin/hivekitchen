@@ -1,23 +1,33 @@
 import { z } from 'zod';
 import { AgeBandSchema } from './children.js';
+import { EnforcementLevelSchema } from './enforcement.js';
+import { BagCompositionPatternSchema } from './kitchen-map.js';
 
 // ===========================================================================
-// Slice C — Onboarding agent tool I/O
+// Onboarding agent tool I/O
 // ===========================================================================
-// Three tools the OnboardingAgent invokes during the text-mode interview
-// to build the kitchen map progressively:
+// Slice C (Epic 2) — three foundational tools:
+//   child.upsert       — create/update a child row by case-insensitive name
+//   cultural.note      — register a cultural prior with state='suggested'
+//   memory.note        — write a memory node + provenance
 //
-//   child.upsert   — create/update a child row by case-insensitive name
-//   cultural.note  — register a cultural prior with state='suggested'
-//   memory.note    — write a memory node + provenance
+// Slice 2-s27 — household-level food identity:
+//   household.upsert   — household-scoped cultural/dietary/declared_allergens
+//
+// Slice 2.5-s1 — seven new structured tools (registered as stubs; wired in
+// 2.5-s4 alongside the agent prompt v2 that knows how to call them):
+//   household.set_name        — Moment 1 household label
+//   allergen.declare          — per-row child allergen (one row per call)
+//   dietary.declare           — structured dietary identity (per-child or hh)
+//   cuisine.declare           — cuisine identifier via cultural_priors
+//   food_preference.declare   — open-vocab likes/dislikes/refuses
+//   favorite_lunch.add        — Moment 5 cold-start seed
+//   rule.set                  — household_rules row
 //
 // Tag arrays in these schemas are loosely constrained ("array of short
 // strings") — strict vocabulary validation lives in VocabularyService at
 // the handler boundary so the agent gets a clear error message when it
 // emits an unknown tag, rather than a Zod refusal-to-parse.
-//
-// The agent receives the vocabulary snapshot as part of its system prompt
-// (slice A0.5), so well-behaved tool calls should already be valid.
 // ===========================================================================
 
 // ---- Shared --------------------------------------------------------------
@@ -55,6 +65,12 @@ export const ChildUpsertInputSchema = z.object({
    *  closure is expanded server-side, the agent emits the narrowest tag.
    *  PATCH SEMANTICS: see declared_allergens. */
   dietary_preferences: TagArraySchema.optional(),
+
+  /** Slice 2.5-s1 — parent-stated bag composition pattern captured in
+   *  Moment 4. The four-way enum mirrors the schema in kitchen-map.ts.
+   *  Omitted on update means "preserve existing". Coexists with the legacy
+   *  per-slot booleans (which remain the planner-facing source of truth). */
+  bag_composition_pattern: BagCompositionPatternSchema.nullish(),
 });
 
 export const ChildUpsertOutputSchema = z.object({
@@ -91,6 +107,11 @@ export const CulturalNoteInputSchema = z.object({
   /** 0–100. How often signals for this template appeared in the
    *  conversation. NOT zero-sum across templates. */
   presence: z.number().int().min(0).max(100),
+
+  /** Slice 2.5-s1 — enforcement strength. Defaults to 'just_for_context'
+   *  to preserve backwards-compatibility with agent versions that don't
+   *  emit it (matches today's shipped advisory-only behaviour). */
+  enforcement: EnforcementLevelSchema.default('just_for_context'),
 });
 
 export const CulturalNoteOutputSchema = z.object({
@@ -101,14 +122,15 @@ export const CulturalNoteOutputSchema = z.object({
 
 // ---- memory.note ---------------------------------------------------------
 
-// Mirrors memory_nodes.node_type enum from migration 20260601000000.
+// Mirrors memory_nodes.node_type enum (narrowed in slice 2.5-s2 migration
+// 20260904000300). The four removed types ('preference', 'cultural_rhythm',
+// 'allergy', 'school_policy') are now routed through the structured tools
+// (food_preference.declare, cultural.note + cuisine.declare with
+// enforcement, allergen.declare). All pre-existing rows were backfilled and
+// soft-forgotten in migration 20260904000100.
 export const MemoryNoteFromOnboardingNodeTypeSchema = z.enum([
-  'preference',
   'rhythm',
-  'cultural_rhythm',
-  'allergy',
   'child_obsession',
-  'school_policy',
   'other',
 ]);
 
@@ -139,3 +161,184 @@ export const MemoryNoteFromOnboardingOutputSchema = z.object({
   node_id: z.string().uuid(),
   created_at: z.string().datetime({ offset: true }),
 });
+
+// ===========================================================================
+// Slice 2.5-s1 — seven new structured tools
+// ===========================================================================
+
+// ---- household.set_name --------------------------------------------------
+
+export const HouseholdSetNameInputSchema = z.object({
+  display_name: z.string().trim().min(1).max(120),
+});
+
+export const HouseholdSetNameOutputSchema = z.object({
+  household_id: z.string().uuid(),
+});
+
+// ---- allergen.declare ----------------------------------------------------
+//
+// One allergen per call. Lets the agent fire parallel calls (one per
+// allergen the parent named), keeps each audit row crisp, and makes
+// idempotency trivial at the DB layer (unique on (child_id, allergen_hash)).
+// Exactly one of child_id / child_name must be present.
+
+export const AllergenDeclareInputSchema = z
+  .object({
+    child_id: z.string().uuid().nullish(),
+    child_name: z.string().trim().min(1).max(100).nullish(),
+    allergen: z.string().trim().min(1).max(64),
+    source: z
+      .enum(['onboarding_declared', 'parent_edited'])
+      .default('onboarding_declared'),
+  })
+  .refine(
+    (v) => {
+      const hasId = v.child_id !== null && v.child_id !== undefined;
+      const hasName = v.child_name !== null && v.child_name !== undefined;
+      return hasId !== hasName; // XOR — exactly one, not both, not neither
+    },
+    {
+      message:
+        'provide exactly one of child_id (UUID from a prior child.upsert) or child_name (string) — not both, not neither',
+      path: ['child_id'],
+    },
+  );
+
+export const AllergenDeclareOutputSchema = z.object({
+  child_allergen_id: z.string().uuid(),
+  was_existing: z.boolean(),
+});
+
+// ---- dietary.declare -----------------------------------------------------
+
+export const DietaryDeclareInputSchema = z.object({
+  /** Null = household-scoped (the default post-Epic-2.5). */
+  child_id: z.string().uuid().nullish(),
+  /** Validated against dietary_tags vocabulary at handler boundary. */
+  tag: z.string().trim().min(1).max(64),
+  enforcement: EnforcementLevelSchema,
+  source: z
+    .enum(['onboarding_declared', 'parent_edited'])
+    .default('onboarding_declared'),
+});
+
+export const DietaryDeclareOutputSchema = z.object({
+  dietary_id: z.string().uuid(),
+  was_existing: z.boolean(),
+});
+
+// ---- cuisine.declare -----------------------------------------------------
+//
+// Shares the underlying cultural_priors row with cultural.note — both write
+// to the same table. cultural.note is for cultural/religious identity;
+// cuisine.declare is for cuisine preferences (e.g. 'south_indian',
+// 'levantine'). The agent picks the right tool based on the prompt
+// (decision lives in 2.5-s4's prompt, not the contract).
+
+export const CuisineDeclareInputSchema = z.object({
+  key: z.string().min(1).max(64),
+  label: z.string().min(1).max(128),
+  confidence: z.number().int().min(0).max(100),
+  presence: z.number().int().min(0).max(100),
+  enforcement: EnforcementLevelSchema.default('just_for_context'),
+});
+
+export const CuisineDeclareOutputSchema = z.object({
+  prior_id: z.string().uuid(),
+  was_existing: z.boolean(),
+});
+
+// ---- food_preference.declare ---------------------------------------------
+//
+// Open-vocab item (the agent may emit any free-text food name). child_id
+// null = household-wide preference. At least one of child_id / child_name
+// is allowed but both null is also valid (household-scoped).
+
+export const FoodPreferenceDeclareInputSchema = z.object({
+  child_id: z.string().uuid().nullish(),
+  child_name: z.string().trim().min(1).max(100).nullish(),
+  item: z.string().trim().min(1).max(128),
+  valence: z.enum(['loves', 'likes', 'neutral', 'dislikes', 'refuses']),
+  enforcement: EnforcementLevelSchema.default('soft'),
+  source: z
+    .enum(['onboarding_declared', 'memory_promoted', 'parent_edited'])
+    .default('onboarding_declared'),
+});
+
+export const FoodPreferenceDeclareOutputSchema = z.object({
+  food_preference_id: z.string().uuid(),
+  was_existing: z.boolean(),
+});
+
+// ---- favorite_lunch.add --------------------------------------------------
+//
+// Household-scoped cold-start seed (FR124). Idempotency on
+// (household_id, lower(decrypted_item)) at the DB layer.
+
+export const FavoriteLunchAddInputSchema = z.object({
+  item: z.string().trim().min(1).max(128),
+  /** Display ordering. Omit to append at the end of the current list. */
+  position: z.number().int().nonnegative().optional(),
+});
+
+export const FavoriteLunchAddOutputSchema = z.object({
+  favorite_lunch_id: z.string().uuid(),
+  position: z.number().int().nonnegative(),
+});
+
+// ---- rule.set ------------------------------------------------------------
+//
+// custom_label is required iff rule_type='custom'. Enforced via .refine().
+
+export const RuleSetInputSchema = z
+  .object({
+    rule_type: z.enum([
+      'no_pork',
+      'no_alcohol',
+      'no_beef',
+      'no_overnight_leftovers',
+      'no_microwave_at_school',
+      'custom',
+    ]),
+    custom_label: z.string().trim().min(1).max(120).nullish(),
+    enforcement: EnforcementLevelSchema.default('strong'),
+    source: z
+      .enum(['onboarding_declared', 'parent_edited'])
+      .default('onboarding_declared'),
+  })
+  .refine(
+    (v) =>
+      !(
+        v.rule_type === 'custom' &&
+        (v.custom_label === null || v.custom_label === undefined || v.custom_label.length === 0)
+      ),
+    {
+      message: "custom_label is required when rule_type='custom'",
+      path: ['custom_label'],
+    },
+  )
+  .refine(
+    (v) =>
+      !(
+        v.rule_type !== 'custom' &&
+        v.custom_label !== null &&
+        v.custom_label !== undefined
+      ),
+    {
+      message: "custom_label must be omitted (or null) when rule_type is not 'custom'",
+      path: ['custom_label'],
+    },
+  );
+
+export const RuleSetOutputSchema = z.object({
+  household_rule_id: z.string().uuid(),
+  was_existing: z.boolean(),
+});
+
+// ===========================================================================
+// NOTE: HouseholdUpsertInputSchema / HouseholdUpsertOutputSchema live in
+// household-profile.ts (introduced by slice 2-s27). The household.upsert
+// tool factory in apps/api/.../onboarding.tools.ts imports them from there
+// via the @hivekitchen/contracts barrel.
+// ===========================================================================

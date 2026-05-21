@@ -1,0 +1,319 @@
+<!DOCTYPE html>
+
+<html class="dark" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<link href="https://fonts.googleapis.com/css2?family=Libre+Caslon+Text:ital,wght@0,400;0,700;1,400&amp;family=Inter:wght@400;500;600;700&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<script id="tailwind-config">
+  tailwind.config = {
+    darkMode: "class",
+    theme: {
+      extend: {
+        "colors": {
+                "warm-neutral-900": "#1C1A17",
+                "warm-neutral-700": "#2F2D27",
+                "outline": "#a08d7e",
+                "secondary": "#ffb59a",
+                "on-tertiary-container": "#223c2b",
+                "on-surface": "#e7e1dc",
+                "sacred-plum": "#8A5F72",
+                "on-secondary-fixed-variant": "#72351d",
+                "primary": "#ffb86f",
+                "surface-bright": "#3b3935",
+                "border-radius-lg": "16px",
+                "surface-container-lowest": "#100e0b",
+                "on-tertiary-fixed-variant": "#334c3b",
+                "inverse-on-surface": "#32302d",
+                "surface-variant": "#373431",
+                "surface-container": "#211f1c",
+                "lumi-terracotta-warmed": "#C88A6E",
+                "border-radius-xl": "24px",
+                "safety-red": "#C65A4E",
+                "warm-neutral-400": "#7B7668",
+                "on-secondary-fixed": "#380d00",
+                "surface-container-highest": "#373431",
+                "outline-variant": "#524437",
+                "on-primary-fixed": "#2c1600",
+                "on-secondary-container": "#f5a081",
+                "on-error-container": "#ffdad6",
+                "safety-cleared-teal": "#5A9C8B",
+                "on-tertiary": "#1c3625",
+                "amber-warm": "#E69A3D",
+                "secondary-fixed-dim": "#ffb59a",
+                "secondary-container": "#72351d",
+                "on-surface-variant": "#d7c3b2",
+                "on-secondary": "#552009",
+                "border-radius-md": "10px",
+                "surface": "#151310",
+                "on-primary": "#4a2900",
+                "border-radius-sm": "6px",
+                "surface-dim": "#151310",
+                "tertiary-fixed": "#ccead2",
+                "warm-neutral-50": "#FAF7F2",
+                "foliage": "#7A9681",
+                "on-primary-container": "#522e00",
+                "surface-container-low": "#1d1b18",
+                "primary-fixed": "#ffdcbd",
+                "on-error": "#690005",
+                "primary-fixed-dim": "#ffb86f",
+                "lumi-terracotta": "#B46A4E",
+                "warm-neutral-800": "#262420",
+                "tertiary-fixed-dim": "#b0ceb7",
+                "tertiary-container": "#8aa690",
+                "surface-container-high": "#2c2a26",
+                "error": "#ffb4ab",
+                "inverse-primary": "#8a5100",
+                "on-background": "#e7e1dc",
+                "on-tertiary-fixed": "#062012",
+                "background": "#151310",
+                "surface-tint": "#ffb86f",
+                "primary-container": "#d98f3c",
+                "on-primary-fixed-variant": "#693c00",
+                "inverse-surface": "#e7e1dc",
+                "honey-accent": "#E69A3D",
+                "error-container": "#93000a",
+                "tertiary": "#b0ceb7",
+                "secondary-fixed": "#ffdbcf"
+        },
+        "borderRadius": {
+                "DEFAULT": "0.25rem",
+                "lg": "0.5rem",
+                "xl": "0.75rem",
+                "full": "9999px"
+        },
+        "spacing": {
+                "container-margin": "32px",
+                "unit": "4px",
+                "section-gap": "80px",
+                "brief-padding": "48px",
+                "card-padding": "24px",
+                "gutter": "20px"
+        },
+        "fontFamily": {
+                "headline-display": [
+                        "Libre Caslon Text"
+                ],
+                "meta": [
+                        "Inter"
+                ],
+                "headline-display-mobile": [
+                        "Libre Caslon Text"
+                ],
+                "brief-moment": [
+                        "Libre Caslon Text"
+                ],
+                "body-main": [
+                        "Inter"
+                ],
+                "section-label": [
+                        "Inter"
+                ],
+                "heart-note": [
+                        "Libre Caslon Text"
+                ]
+        },
+        "fontSize": {
+                "headline-display": [
+                        "40px",
+                        {
+                                "lineHeight": "1.1",
+                                "letterSpacing": "0px",
+                                "fontWeight": "400"
+                        }
+                ],
+                "meta": [
+                        "12px",
+                        {
+                                "lineHeight": "1.4",
+                                "fontWeight": "400"
+                        }
+                ],
+                "headline-display-mobile": [
+                        "32px",
+                        {
+                                "lineHeight": "1.1",
+                                "fontWeight": "400"
+                        }
+                ],
+                "brief-moment": [
+                        "34px",
+                        {
+                                "lineHeight": "1.18",
+                                "fontWeight": "400"
+                        }
+                ],
+                "body-main": [
+                        "15px",
+                        {
+                                "lineHeight": "1.6",
+                                "fontWeight": "400"
+                        }
+                ],
+                "section-label": [
+                        "11px",
+                        {
+                                "lineHeight": "1.2",
+                                "letterSpacing": "0.16em",
+                                "fontWeight": "500"
+                        }
+                ],
+                "heart-note": [
+                        "26px",
+                        {
+                                "lineHeight": "1.35",
+                                "fontWeight": "400"
+                        }
+                ]
+        }
+},
+    },
+  }
+</script>
+<style>
+        .thread-spine {
+            position: relative;
+        }
+        .thread-spine::before {
+            content: '';
+            position: absolute;
+            left: 0;
+            top: 0;
+            bottom: 0;
+            width: 2px;
+            background: theme('colors.outline-variant');
+            opacity: 0.3;
+        }
+        .turn-indent {
+            padding-left: 24px;
+            border-left: 2px solid transparent;
+        }
+        .turn-indent.user { border-left-color: theme('colors.outline'); }
+        .turn-indent.lumi { border-left-color: theme('colors.lumi-terracotta'); }
+        .turn-indent.sacred { border-left-color: theme('colors.sacred-plum'); }
+    </style>
+</head>
+<body class="bg-background text-on-surface font-body-main selection:bg-lumi-terracotta selection:text-white">
+<!-- TopAppBar -->
+<header class="border-b border-outline/20 bg-surface">
+<div class="flex justify-between items-center w-full px-6 py-4 max-w-7xl mx-auto">
+<!-- Brand Logo -->
+<div class="flex items-center gap-2">
+<span class="font-headline text-2xl italic text-honey-500">HiveKitchen</span>
+</div>
+<!-- Multimedia/Status Icons -->
+<div class="flex items-center gap-6 text-on-surface-variant">
+<button aria-label="Notifications" class="hover:text-honey-500 transition-colors">
+<span class="material-symbols-outlined text-[22px]">notifications</span>
+</button>
+<button aria-label="User Profile" class="hover:text-honey-500 transition-colors">
+<span class="material-symbols-outlined text-[22px]">account_circle</span>
+</button>
+</div>
+</div>
+</header>
+<main class="pt-24 pb-32 px-gutter max-w-3xl mx-auto min-h-screen">
+<!-- Thread Header -->
+<div class="mb-section-gap">
+<h2 class="font-brief-moment text-brief-moment text-on-surface mb-2">Evening Check-in</h2>
+<p class="font-meta text-meta text-on-surface-variant uppercase tracking-widest">Tuesday, Oct 24 • Finalizing Tomorrow's Plan</p>
+</div>
+<!-- Conversation Spine -->
+<div class="space-y-10 thread-spine">
+<!-- User Turn -->
+<div class="turn-indent user flex flex-col gap-2">
+<div class="flex items-center gap-2">
+<span class="font-section-label text-section-label text-on-surface-variant">YOU • 18:42</span>
+</div>
+<p class="font-body-main text-body-main text-on-surface leading-relaxed">
+                    Can we swap Wednesday? Sarah is staying late at the clinic, so I need something I can prep solo in under 20 minutes.
+                </p>
+</div>
+<!-- Lumi Turn -->
+<div class="turn-indent lumi flex flex-col gap-3">
+<div class="flex items-center gap-2">
+<span class="font-section-label text-section-label text-lumi-terracotta">LUMI • 18:43</span>
+</div>
+<div class="bg-surface-container-low p-card-padding rounded-xl border border-outline-variant">
+<p class="font-body-main text-body-main text-on-surface mb-4">
+                        Understood. I've pulled the <span class="text-lumi-terracotta">Cashew Butter Soba</span> forward from Thursday. It’s a one-pot assembly—mostly fresh scallions and cold noodles.
+                    </p>
+<div class="flex items-center gap-4">
+<img class="w-16 h-16 rounded-lg object-cover border border-outline-variant" data-alt="A close-up, high-angle shot of a ceramic bowl containing cold soba noodles dressed in a creamy cashew butter sauce. Freshly sliced scallions, crushed cashews, and a drizzle of chili oil decorate the top. The lighting is warm and domestic, emphasizing the tactile texture of the sauce and the earthy tones of the noodles, set against a dark wooden kitchen counter." src="https://lh3.googleusercontent.com/aida-public/AB6AXuCI10lHWYbYN-hXzZBFe2tZ6abRHt4l8rXu9UcCaz3o3PWg1ajhnjpDML5JMEdnlwt0HfRqTVSDHa3GolFw1wpGJ_pulMyxgCJjdKt8pk-izHdbM4F18z2A0lS0sfhA_cOu4XMypvLgX0Ol4g4_UXRnUOeVByMoCMb6tWkMe20kdrwHd-wDyjAMxmsoCxyLVwKcINIcjfvfxgiaUBcXo5G4fz2US9vWiXaROg5yQJH2c38sAnp7knnWy8FSRaOHB92f9mloQojqNKk"/>
+<div>
+<span class="block font-section-label text-section-label text-on-surface-variant mb-1">PROPOSAL</span>
+<span class="block font-body-main text-body-main font-semibold">Cashew Butter Soba</span>
+<span class="block font-meta text-meta text-foliage flex items-center gap-1">
+<span class="material-symbols-outlined text-[14px]">timer</span> 18 min prep
+                            </span>
+</div>
+</div>
+</div>
+</div>
+<!-- System Turn (Plan Update Diff) -->
+<div class="flex justify-center my-6">
+<div class="bg-surface-container-high/50 px-6 py-3 rounded-full border border-dashed border-outline-variant flex items-center gap-3">
+<span class="material-symbols-outlined text-foliage text-[18px]">sync_alt</span>
+<span class="font-meta text-meta text-on-surface-variant">
+<span class="line-through opacity-50">Wed: Roasted Chicken</span> → <span class="text-on-surface">Wed: Cashew Soba</span>
+</span>
+<span class="font-meta text-meta text-safety-cleared-teal flex items-center gap-1">
+<span class="material-symbols-outlined text-[14px]">check_circle</span> Plan Updated
+                    </span>
+</div>
+</div>
+<!-- Cultural Proposal Turn (Sacred Plum) -->
+<div class="turn-indent sacred flex flex-col gap-4">
+<div class="flex items-center gap-2">
+<span class="font-section-label text-section-label text-sacred-plum">LUMI • CULTURAL NOTE</span>
+<span class="material-symbols-outlined text-sacred-plum text-[14px]">auto_awesome</span>
+</div>
+<div class="bg-sacred-plum/10 p-card-padding rounded-xl border border-sacred-plum/30">
+<p class="font-heart-note text-heart-note italic text-on-surface mb-6">
+                        "Since Sarah is working late, this soba reminds me of the 'late-shift comfort' her mother used to mention. Would you like me to add a quick note to the recipe about the toasted sesame oil ratio she prefers?"
+                    </p>
+<div class="flex flex-wrap gap-3">
+<button class="px-6 py-2 rounded-full border border-sacred-plum text-sacred-plum font-section-label text-section-label hover:bg-sacred-plum hover:text-white transition-all active:scale-95">
+                            Yes, keep it going
+                        </button>
+<button class="px-6 py-2 rounded-full border border-outline-variant text-on-surface-variant font-section-label text-section-label hover:bg-surface-container-highest transition-all active:scale-95">
+                            Tell Lumi more
+                        </button>
+</div>
+</div>
+</div>
+</div>
+</main>
+<!-- Bottom Modality Composer -->
+<div class="fixed bottom-16 md:bottom-0 left-0 w-full bg-surface-container/95 backdrop-blur-md border-t border-outline-variant/30">
+<div class="max-w-3xl mx-auto p-4 flex items-end gap-3">
+<div class="flex-grow bg-surface-container-highest rounded-2xl border border-outline-variant p-1 flex flex-col">
+<textarea class="w-full bg-transparent border-none focus:ring-0 text-on-surface placeholder:text-on-surface-variant/50 font-body-main p-3 resize-none h-12 min-h-[48px]" placeholder="Type a heart note or plan update..."></textarea>
+<div class="flex justify-between items-center px-3 pb-2">
+<div class="flex gap-2">
+<button class="material-symbols-outlined text-on-surface-variant hover:text-lumi-terracotta transition-colors">image</button>
+<button class="material-symbols-outlined text-on-surface-variant hover:text-lumi-terracotta transition-colors">calendar_today</button>
+</div>
+<span class="font-meta text-meta text-on-surface-variant/30">0 / 280</span>
+</div>
+</div>
+<button class="w-14 h-14 rounded-full bg-sacred-plum text-white flex items-center justify-center shadow-lg active:scale-90 transition-transform group">
+<span class="material-symbols-outlined group-hover:scale-110 transition-transform" style="font-variation-settings: 'FILL' 1;">mic</span>
+</button>
+</div>
+</div>
+<!-- BottomNavBar (Mobile Only) -->
+<footer class="mt-auto border-t border-outline/10 bg-surface py-12">
+<div class="max-w-7xl mx-auto px-8 flex flex-col md:flex-row justify-between items-center gap-8">
+<div class="text-on-surface-variant font-body text-caption uppercase tracking-widest">
+      (C) 2026 HIVELUME LLC
+    </div>
+<div class="flex gap-8 text-on-surface-variant font-body text-caption uppercase tracking-widest">
+<a class="hover:text-honey-500 transition-colors" href="#">Privacy Policy</a>
+<a class="hover:text-honey-500 transition-colors" href="#">Terms of Service</a>
+<a class="hover:text-honey-500 transition-colors" href="#">Help Center</a>
+</div>
+</div>
+</footer>
+</body></html>

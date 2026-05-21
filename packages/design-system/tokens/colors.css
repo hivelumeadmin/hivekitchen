@@ -14,7 +14,7 @@
 
    This convention is the OPPOSITE of Stitch v2.0's raw `warm-neutral-X`
    scale in ux-design-directions.html (which treats 50 as text-like).
-   See `.stitch/DESIGN.md` §6 for the v2.0 → repo translation rule.
+   See `docs/DESIGN.md` §6 for the v2.0 → repo translation rule.
    ============================================================ */
 
 /* Light-mode (reciprocal — derived from dark-mode-first)

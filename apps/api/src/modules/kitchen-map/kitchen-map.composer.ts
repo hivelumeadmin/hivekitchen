@@ -1,26 +1,41 @@
 import type {
+  BagCompositionPattern,
   KitchenMap,
+  KitchenMapAllergen,
   KitchenMapCaregiver,
   KitchenMapChild,
   KitchenMapCultural,
   KitchenMapCulturalPrior,
   KitchenMapCulturalPriorState,
+  KitchenMapDietary,
+  KitchenMapFavoriteLunch,
   KitchenMapFavouriteRecipe,
+  KitchenMapFoodPreference,
   KitchenMapMemoryNode,
   KitchenMapMemoryNodeType,
   KitchenMapRecipes,
+  KitchenMapRule,
 } from '@hivekitchen/types';
+import { ENFORCEMENT_LEVEL_VALUES, type EnforcementLevel } from '@hivekitchen/contracts';
 import type {
+  RawAllergenRow,
   RawCaregiverRow,
   RawChildRow,
   RawCulturalPriorRow,
+  RawDietaryRow,
+  RawFavoriteLunchRow,
   RawFavouriteRecipeRow,
+  RawFoodPreferenceRow,
   RawKitchenMapData,
   RawMemoryNodeRow,
+  RawRuleRow,
   RawSchoolPolicyRow,
 } from './kitchen-map.repository.js';
 
-const SCHEMA_VERSION = '1.0.0' as const;
+// Slice 2.5-s1 — schema 1.0.0 → 1.1.0. Added: household.display_name,
+// child.bag_composition_pattern (derived), cultural prior enforcement,
+// five new top-level arrays, meta.required_set_complete.
+const SCHEMA_VERSION = '1.1.0' as const;
 
 // Confidence threshold above which a recipe surfaces as a "favourite" even
 // without the explicit is_household_favorite flag. Tuned to be conservative
@@ -43,15 +58,16 @@ const VALID_PRIOR_STATES = new Set<KitchenMapCulturalPriorState>([
   'forgotten',
 ]);
 
+// Slice 2.5-s2 — narrowed alongside the contract / DB enum. Memory_node
+// rows with the removed types are soft-forgotten in 20260904000100; the
+// filter is purely defensive against unexpected rogue data.
 const VALID_MEMORY_NODE_TYPES = new Set<KitchenMapMemoryNodeType>([
-  'preference',
   'rhythm',
-  'cultural_rhythm',
-  'allergy',
   'child_obsession',
-  'school_policy',
   'other',
 ]);
+
+const VALID_ENFORCEMENT_LEVELS = new Set<EnforcementLevel>(ENFORCEMENT_LEVEL_VALUES);
 
 /**
  * Slice A0.5 — pure function: raw source rows → KitchenMap projection.
@@ -59,6 +75,11 @@ const VALID_MEMORY_NODE_TYPES = new Set<KitchenMapMemoryNodeType>([
  * The composer makes the bucketing / filtering / shape-mapping decisions
  * that depend only on the data. Nothing in here touches the DB, Redis, or
  * the logger; that's why it's trivially unit-testable.
+ *
+ * Slice 2.5-s1 — extended with five new top-level arrays (allergens,
+ * dietary, food_preferences, favorite_lunches, rules) and the
+ * meta.required_set_complete flag. New arrays are empty for every existing
+ * household until the moment slices (2.5-s5+) populate them.
  */
 export function composeKitchenMap(raw: RawKitchenMapData): KitchenMap {
   const schoolPoliciesByChild = groupSchoolPoliciesByChild(raw.school_policies);
@@ -70,10 +91,11 @@ export function composeKitchenMap(raw: RawKitchenMapData): KitchenMap {
       tier: raw.household.tier,
       tier_variant: raw.household.tier_variant,
       timezone: raw.household.timezone,
-      // Slice 2-s27 — household-level food identity. Cultural / dietary live
-      // here (moved up from per-child). declared_allergens carries household-
-      // wide allergen rules (religious "no pork", etc.); per-child medical
-      // allergens remain on the children projection below.
+      // Slice 2.5-s1 — parent-chosen household label. Existing pre-Epic-2.5
+      // households got a deterministic placeholder via migration backfill;
+      // mid-onboarding households (no row yet) project as null.
+      display_name: raw.household.display_name,
+      // Slice 2-s27 — household-level food identity.
       cultural_identifiers: raw.household.cultural_identifiers,
       dietary_preferences: raw.household.dietary_preferences,
       declared_allergens: raw.household.declared_allergens,
@@ -90,11 +112,26 @@ export function composeKitchenMap(raw: RawKitchenMapData): KitchenMap {
       })),
     },
     recipes: projectRecipes(raw.recipe_usage),
+    // Slice 2.5-s1 — five new top-level arrays. Existing repositories
+    // return [] for households that haven't been through Epic 2.5 moments;
+    // newly-onboarded households start populating these as slices 2.5-s5
+    // through 2.5-s9 ship.
+    allergens: projectAllergens(raw.allergens),
+    dietary: projectDietary(raw.dietary),
+    food_preferences: projectFoodPreferences(raw.food_preferences),
+    favorite_lunches: projectFavoriteLunches(raw.favorite_lunches),
+    rules: projectRules(raw.rules),
     meta: {
       composed_at: new Date().toISOString(),
       map_version: raw.household.kitchen_map_version,
       schema_version: SCHEMA_VERSION,
       is_complete: deriveIsComplete(children, raw.cultural_priors),
+      // Slice 2.5-s1 — stub `false` for every existing household. The real
+      // computation (based on the required-set definition from 2.5-s4 and
+      // the finalize gate in 2.5-s10) lands in those slices. Until then the
+      // contract field is present but always false; downstream UIs treat
+      // false as "still onboarding" (matches today's is_complete heuristic).
+      required_set_complete: false,
     },
   };
 }
@@ -131,6 +168,23 @@ function groupSchoolPoliciesByChild(rows: RawSchoolPolicyRow[]): Map<string, str
   return out;
 }
 
+// Slice 2.5-s1 — derive the four-way bag composition pattern from the
+// existing per-slot booleans. The pattern is the parent's mental model;
+// the booleans are the planner-facing source of truth. Children.main is
+// constrained to true by the children_bag_main_true CHECK, so the four
+// possible (snack, extra) combinations map cleanly to the four pattern
+// enum values. Accepts null to match the schema's nullable contract —
+// returns null for any child row whose bag_composition is absent.
+function deriveBagCompositionPattern(
+  b: { snack: boolean; extra: boolean } | null,
+): BagCompositionPattern | null {
+  if (b === null) return null;
+  if (b.snack && b.extra) return 'main_plus_snack_plus_extra';
+  if (b.snack) return 'main_plus_snack';
+  if (b.extra) return 'main_plus_extra';
+  return 'main_only';
+}
+
 function projectChild(
   row: RawChildRow,
   schoolPoliciesByChild: Map<string, string[]>,
@@ -149,6 +203,7 @@ function projectChild(
       snack: row.bag_composition.snack,
       extra: row.bag_composition.extra,
     },
+    bag_composition_pattern: deriveBagCompositionPattern(row.bag_composition),
     school_policies: schoolPoliciesByChild.get(row.id) ?? [],
     extra_rules: {
       pinned: row.extra_rules.pins,
@@ -168,6 +223,15 @@ function projectCultural(rows: RawCulturalPriorRow[]): KitchenMapCultural {
       ? (r.state as KitchenMapCulturalPriorState)
       : 'suggested';
 
+    // Slice 2.5-s1 — enforcement defaults to 'just_for_context' for any row
+    // that doesn't have a recognised value (defensive against rogue DB data
+    // and pre-migration rows during deployment).
+    const enforcement: EnforcementLevel = VALID_ENFORCEMENT_LEVELS.has(
+      r.enforcement as EnforcementLevel,
+    )
+      ? (r.enforcement as EnforcementLevel)
+      : 'just_for_context';
+
     const projected: KitchenMapCulturalPrior = {
       key: r.key,
       label: r.label,
@@ -175,6 +239,7 @@ function projectCultural(rows: RawCulturalPriorRow[]): KitchenMapCultural {
       tier: r.tier,
       confidence: r.confidence,
       presence: r.presence,
+      enforcement,
     };
 
     if (ACTIVE_PRIOR_STATES.has(r.state)) {
@@ -235,6 +300,60 @@ function projectRecipes(rows: RawFavouriteRecipeRow[]): KitchenMapRecipes {
     favourites: favourites.slice(0, FAVOURITES_LIMIT),
     banned,
   };
+}
+
+// Slice 2.5-s1 — projection helpers for the five new top-level arrays.
+// Each pass-through is a simple shape map; defensive coercion happens at
+// the source CHECK constraints in the migration.
+
+function projectAllergens(rows: RawAllergenRow[]): KitchenMapAllergen[] {
+  return rows.map((r) => ({
+    child_id: r.child_id,
+    allergen: r.allergen,
+    source: r.source,
+  }));
+}
+
+function projectDietary(rows: RawDietaryRow[]): KitchenMapDietary[] {
+  return rows.map((r) => ({
+    child_id: r.child_id,
+    tag: r.tag,
+    enforcement: VALID_ENFORCEMENT_LEVELS.has(r.enforcement as EnforcementLevel)
+      ? (r.enforcement as EnforcementLevel)
+      : 'just_for_context',
+    source: r.source,
+  }));
+}
+
+function projectFoodPreferences(rows: RawFoodPreferenceRow[]): KitchenMapFoodPreference[] {
+  return rows.map((r) => ({
+    child_id: r.child_id,
+    item: r.item,
+    valence: r.valence,
+    enforcement: VALID_ENFORCEMENT_LEVELS.has(r.enforcement as EnforcementLevel)
+      ? (r.enforcement as EnforcementLevel)
+      : 'soft',
+    source: r.source,
+  }));
+}
+
+function projectFavoriteLunches(rows: RawFavoriteLunchRow[]): KitchenMapFavoriteLunch[] {
+  return rows.map((r) => ({
+    item: r.item,
+    provenance: r.provenance,
+    position: r.position,
+  }));
+}
+
+function projectRules(rows: RawRuleRow[]): KitchenMapRule[] {
+  return rows.map((r) => ({
+    rule_type: r.rule_type,
+    custom_label: r.custom_label,
+    enforcement: VALID_ENFORCEMENT_LEVELS.has(r.enforcement as EnforcementLevel)
+      ? (r.enforcement as EnforcementLevel)
+      : 'strong',
+    source: r.source,
+  }));
 }
 
 function deriveIsComplete(

@@ -55,7 +55,7 @@ The slice doc (`epic-2-onboarding-integration.md` §Slice 2-s26 "Layers" section
    - Eyebrow: `"Welcome back, {first_name}."`
    - Headline: `"You started a {modality} interview {relative_time_phrase}. Pick up where you left off?"` (e.g., "yesterday", "2 days ago" — use the existing relative-time formatter if one exists; otherwise inline a simple one)
    - Two primitives: `<PrimaryButton>Continue</PrimaryButton>` + `<SecondaryButton>Start over</SecondaryButton>`
-   - All token-compliant per `.stitch/DESIGN.md` Editorial Hearth v2.0 (warm-neutral, lumi-terracotta, sacred-plum) — mirror the auth pages re-toked in 2-s19
+   - All token-compliant per `docs/DESIGN.md` Editorial Hearth v2.0 (warm-neutral, lumi-terracotta, sacred-plum) — mirror the auth pages re-toked in 2-s19
 
 5. **AC5 — Continue path re-hydrates turns.** Tapping Continue:
    - For text modality: mounts `OnboardingText` with prior turns prepended (new optional `initialTurns?: Turn[]` prop on the component); the next message the user sends goes to `POST /v1/onboarding/text/turn` and joins the existing thread (the service already reuses the active thread per `onboarding.service.ts:118`).
@@ -248,7 +248,7 @@ The slice doc (`epic-2-onboarding-integration.md` §Slice 2-s26 "Layers" section
 - [Source: packages/contracts/src/auth.ts, src/users.ts] — schemas to extend
 - [Source: apps/api/src/audit/audit.types.ts] — audit_type literal union
 - [Source: CLAUDE.md] — backend-as-sole-DB-owner invariant
-- [Source: .stitch/DESIGN.md] — Editorial Hearth v2.0 token reference
+- [Source: docs/DESIGN.md] — Editorial Hearth v2.0 token reference
 - [Source: specs/Technical Architecture.md] — system architecture invariants
 
 ---

@@ -11,14 +11,17 @@ import {
 import { ThreadRepository } from '../threads/thread.repository.js';
 import { OnboardingAgent } from '../../agents/onboarding.agent.js';
 import { authorize } from '../../middleware/authorize.hook.js';
+import { ChildAllergensRepository } from '../children/child-allergens.repository.js';
 import { ChildrenRepository } from '../children/children.repository.js';
 import { ChildrenService } from '../children/children.service.js';
 import { CulturalPriorRepository } from '../cultural-priors/cultural-prior.repository.js';
 import { CulturalPriorService } from '../cultural-priors/cultural-prior.service.js';
+import { DietaryPreferencesRepository } from '../dietary-preferences/dietary-preferences.repository.js';
 import { HouseholdsRepository } from '../households/households.repository.js';
 import { HouseholdsService } from '../households/households.service.js';
 import { AuditRepository } from '../../audit/audit.repository.js';
 import { AuditService } from '../../audit/audit.service.js';
+import { OnboardingMomentRepository } from './onboarding-moment.repository.js';
 import { OnboardingService } from './onboarding.service.js';
 
 const onboardingRoutesPlugin: FastifyPluginAsync = async (fastify) => {
@@ -53,6 +56,16 @@ const onboardingRoutesPlugin: FastifyPluginAsync = async (fastify) => {
     logger: fastify.log,
   });
 
+  // Slice 2.5-s4 — moment-state tracker for the chaptered conversation.
+  // Sidecar to thread/turn; one row per household_id keyed in
+  // onboarding_moment_state.
+  const momentRepository = new OnboardingMomentRepository(fastify.supabase);
+
+  // Slice 2.5-s6 — structured allergen + dietary repositories for the wired
+  // allergen.declare / dietary.declare onboarding tools (Moment 2).
+  const childAllergensRepository = new ChildAllergensRepository(fastify.supabase, kek);
+  const dietaryPreferencesRepository = new DietaryPreferencesRepository(fastify.supabase);
+
   const service = new OnboardingService({
     threads,
     agent,
@@ -65,6 +78,9 @@ const onboardingRoutesPlugin: FastifyPluginAsync = async (fastify) => {
     kitchenMapService: fastify.kitchenMapService,
     vocabularyService: fastify.vocabularyService,
     agentToolsEnabled: fastify.env.ONBOARDING_AGENT_TOOLS_ENABLED,
+    momentRepository,
+    childAllergensRepository,
+    dietaryPreferencesRepository,
   });
 
   // Slice 2-S26 — fire-and-forget audit writer for resume / reset events.
@@ -149,10 +165,10 @@ const onboardingRoutesPlugin: FastifyPluginAsync = async (fastify) => {
           });
       }
 
-      // Slice 2.5-s3 — chip_config is always null in this slice. The agent
-      // gains the ability to emit chip configs in 2.5-s4 alongside the
-      // chaptered-conversation prompt.
-      return { ...result, chip_config: null };
+      // Slice 2.5-s4 — chip_config now flows from the service (computed
+      // from the post-turn current_moment). Always null in this slice;
+      // moment slices 2.5-s5 through 2.5-s9 fill their respective branches.
+      return result;
     },
   );
 

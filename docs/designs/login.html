@@ -1,0 +1,213 @@
+<!DOCTYPE html>
+<html class="dark" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>HiveKitchen Login</title>
+<link href="https://fonts.googleapis.com" rel="preconnect"/>
+<link crossorigin="" href="https://fonts.gstatic.com" rel="preconnect"/>
+<link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&amp;family=Inter:wght@400;500;600&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    "colors": {
+                        "surface-tint": "#ffb86f",
+                        "sacred-plum": "#8A5F72",
+                        "surface-container-highest": "#3b332c",
+                        "surface": "#18120c",
+                        "primary-fixed-dim": "#ffb86f",
+                        "warm-neutral-900": "#1C1A17",
+                        "background": "#18120c",
+                        "on-surface-variant": "#d7c3b2",
+                        "secondary-container": "#72351d",
+                        "on-error": "#690005",
+                        "on-primary-fixed": "#2c1600",
+                        "on-secondary-fixed": "#380d00",
+                        "on-surface": "#eee0d6",
+                        "on-tertiary-container": "#223c2b",
+                        "tertiary": "#b0ceb7",
+                        "surface-container": "#251e18",
+                        "surface-container-high": "#302922",
+                        "warm-neutral-800": "#262420",
+                        "on-background": "#eee0d6",
+                        "tertiary-fixed-dim": "#b0ceb7",
+                        "outline-variant": "#524437",
+                        "surface-dim": "#18120c",
+                        "primary-container": "#d98f3c",
+                        "surface-container-lowest": "#130d08",
+                        "tertiary-container": "#8aa690",
+                        "on-secondary-container": "#f5a081",
+                        "secondary-fixed": "#ffdbcf",
+                        "on-tertiary-fixed-variant": "#334c3b",
+                        "on-primary": "#4a2900",
+                        "honey-accent": "#E69A3D",
+                        "safety-red": "#C65A4E",
+                        "lumi-terracotta-warmed": "#C88A6E",
+                        "error": "#ffb4ab",
+                        "on-secondary": "#552009",
+                        "amber": "#D98F3C",
+                        "on-primary-fixed-variant": "#693c00",
+                        "on-primary-container": "#522e00",
+                        "surface-variant": "#3b332c",
+                        "tertiary-fixed": "#ccead2",
+                        "on-tertiary": "#1c3625",
+                        "secondary": "#ffb59a",
+                        "inverse-on-surface": "#372f28",
+                        "foliage": "#7A9681",
+                        "on-tertiary-fixed": "#062012",
+                        "secondary-fixed-dim": "#ffb59a",
+                        "primary-fixed": "#ffdcbd",
+                        "primary": "#ffb86f",
+                        "on-secondary-fixed-variant": "#72351d",
+                        "inverse-surface": "#eee0d6",
+                        "on-error-container": "#ffdad6",
+                        "inverse-primary": "#8a5100",
+                        "error-container": "#93000a",
+                        "outline": "#a08d7e",
+                        "safety-cleared-teal": "#5A9C8B",
+                        "lumi-terracotta": "#B46A4E",
+                        "surface-bright": "#403831",
+                        "warm-neutral-50": "#FAF7F2",
+                        "surface-container-low": "#211a14"
+                    },
+                    "borderRadius": {
+                        "DEFAULT": "0.25rem",
+                        "lg": "0.5rem",
+                        "xl": "0.75rem",
+                        "full": "9999px"
+                    },
+                    "spacing": {
+                        "grid-gap": "20px",
+                        "container-max": "1280px",
+                        "tile-gap": "12px",
+                        "card-padding": "24px",
+                        "section-gap": "80px",
+                        "brief-padding": "48px"
+                    },
+                    "fontFamily": {
+                        "label-caps": ["Inter", "sans-serif"],
+                        "meta-sm": ["Inter", "sans-serif"],
+                        "heart-note": ["Instrument Serif", "serif"],
+                        "brief-headline": ["Instrument Serif", "serif"],
+                        "display-serif": ["Instrument Serif", "serif"],
+                        "body-main": ["Inter", "sans-serif"]
+                    },
+                    "fontSize": {
+                        "label-caps": ["11px", { "lineHeight": "1", "letterSpacing": "0.16em", "fontWeight": "500" }],
+                        "meta-sm": ["12px", { "lineHeight": "1.2", "fontWeight": "400" }],
+                        "heart-note": ["26px", { "lineHeight": "1.35", "fontWeight": "400" }],
+                        "brief-headline": ["34px", { "lineHeight": "1.18", "fontWeight": "400" }],
+                        "display-serif": ["40px", { "lineHeight": "1.1", "fontWeight": "400" }],
+                        "body-main": ["15px", { "lineHeight": "1.55", "fontWeight": "400" }]
+                    }
+                }
+            }
+        }
+    </script>
+<style>
+        .material-symbols-outlined {
+            font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+        }
+        .material-symbols-outlined.fill {
+            font-variation-settings: 'FILL' 1, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+        }
+    </style>
+</head>
+<body class="bg-background text-on-background min-h-screen flex flex-col antialiased"><header class="border-b border-outline/20 bg-surface">
+<div class="flex justify-between items-center w-full px-6 py-4 max-w-7xl mx-auto">
+<!-- Brand Logo -->
+<div class="flex items-center gap-2">
+<span class="font-display-serif text-2xl italic text-honey-accent">HiveKitchen</span>
+</div>
+<!-- Multimedia/Status Icons -->
+<div class="flex items-center gap-6 text-on-surface-variant">
+<button aria-label="Notifications" class="hover:text-honey-accent transition-colors">
+<span class="material-symbols-outlined text-[22px]">notifications</span>
+</button>
+<button aria-label="User Profile" class="hover:text-honey-accent transition-colors">
+<span class="material-symbols-outlined text-[22px]">account_circle</span>
+</button>
+</div>
+</div>
+</header>
+<main class="flex-1 flex flex-col md:flex-row">
+<div class="relative w-full md:w-3/5 h-[40vh] md:h-auto flex-shrink-0">
+<img alt="Father and daughter cooking" class="absolute inset-0 w-full h-full object-cover" src="https://lh3.googleusercontent.com/aida-public/AB6AXuDoWFuGZDWoGRirpMIanjRFhjbkJvgYNrwUAcD2DUOHSLnC9Jwm0rAtxvhloiZ3uPWu-QnIJQXpHVX0t_BDPhIzXxfxpO1LDxGyNd4dw0h9ncOsWOACVbExJytZBsv4kvtF_OtNcjTJ7225qoFCV3nvStoNP-xoLmZBVGzNa4bXUkZEQmxrdibv4WqNazWpOeXL6Cg61knNmaVGUpVd677k-kjjj3CvmCzRWVNcEHuSASf3OXsFHEuY1GI1IJY8B4s_DPk26QKJ3p4"/>
+<div class="absolute inset-0 bg-gradient-to-t md:bg-gradient-to-r from-background via-background/80 to-transparent"></div>
+</div>
+<div class="relative w-full md:w-2/5 flex flex-col justify-center px-8 md:px-16 lg:px-24 py-12 md:py-24 bg-background md:bg-transparent z-10">
+<div class="max-w-md w-full mx-auto flex flex-col gap-8">
+<div class="space-y-4">
+<p class="font-label-caps text-label-caps text-honey-accent uppercase tracking-widest">Welcome Home</p>
+<h1 class="font-display-serif text-display-serif text-on-surface leading-tight">
+          What are you cooking for them this week?
+        </h1>
+<p class="font-body-main text-body-main text-on-surface-variant max-w-sm mt-4">
+          Sign in to access your family's weekly briefs, relational memories, and trusted recipes.
+        </p>
+</div>
+<div class="flex flex-col gap-6">
+<button class="w-full min-h-[56px] bg-surface-container border border-outline-variant hover:border-outline text-on-surface font-label-caps text-label-caps uppercase tracking-widest rounded-lg flex items-center justify-center gap-3 transition-colors" type="button">
+<svg class="w-5 h-5" viewbox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+<path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4"></path>
+<path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853"></path>
+<path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l3.66-2.84z" fill="#FBBC05"></path>
+<path d="M12 5.38c1.62 0 3.06.56 4.21 1.66l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill="#EA4335"></path>
+</svg>
+<span class="">Continue with Google</span>
+</button>
+<div class="flex items-center gap-4">
+<div class="flex-1 h-px bg-outline-variant"></div>
+<span class="font-label-caps text-[10px] text-outline tracking-[0.2em] uppercase">Or use email</span>
+<div class="flex-1 h-px bg-outline-variant"></div>
+</div>
+</div>
+<form class="flex flex-col gap-6 mt-6" onsubmit="event.preventDefault();">
+<div class="flex flex-col gap-4">
+<div class="relative flex flex-col">
+<label class="font-label-caps text-label-caps text-on-surface-variant mb-2 ml-1" for="email">Email Address</label>
+<div class="relative flex items-center">
+<span class="material-symbols-outlined absolute left-4 text-outline-variant">mail</span>
+<input class="w-full bg-surface-container border border-outline-variant rounded-lg py-3 pl-12 pr-4 font-body-main text-body-main text-on-surface placeholder:text-outline focus:outline-none focus:border-honey-accent focus:ring-1 focus:ring-honey-accent transition-colors bg-opacity-80 backdrop-blur-sm" id="email" placeholder="you@example.com" type="email"/>
+</div>
+</div>
+<div class="relative flex flex-col">
+<label class="font-label-caps text-label-caps text-on-surface-variant mb-2 ml-1" for="password">Password</label>
+<div class="relative flex items-center">
+<span class="material-symbols-outlined absolute left-4 text-outline-variant">lock</span>
+<input class="w-full bg-surface-container border border-outline-variant rounded-lg py-3 pl-12 pr-12 font-body-main text-body-main text-on-surface placeholder:text-outline focus:outline-none focus:border-honey-accent focus:ring-1 focus:ring-honey-accent transition-colors bg-opacity-80 backdrop-blur-sm" id="password" placeholder="••••••••" type="password"/>
+<button class="absolute right-4 text-outline-variant hover:text-on-surface transition-colors flex items-center justify-center" type="button">
+<span class="material-symbols-outlined text-[20px]">visibility</span>
+</button>
+</div>
+</div>
+</div>
+<div class="flex flex-col gap-4 mt-2">
+<button class="w-full min-h-[56px] bg-honey-accent hover:bg-amber text-warm-neutral-900 font-label-caps text-label-caps uppercase tracking-widest rounded-lg flex items-center justify-center gap-2 transition-colors" type="submit">
+<span class="">Enter Kitchen</span>
+<span class="material-symbols-outlined text-[18px]">arrow_forward</span>
+</button>
+<button class="w-full min-h-[44px] bg-transparent border border-outline-variant hover:border-outline text-on-surface font-label-caps text-label-caps uppercase tracking-widest rounded-lg transition-colors" type="button">
+            Create Account
+          </button>
+</div>
+</form>
+</div>
+</div>
+</main>
+<footer class="mt-auto border-t border-outline/10 bg-surface py-12">
+<div class="max-w-7xl mx-auto px-8 flex flex-col md:flex-row justify-between items-center gap-8">
+<div class="text-on-surface-variant font-body-main text-meta-sm uppercase tracking-widest">
+      (C) 2026 HIVELUME LLC
+    </div>
+<div class="flex gap-8 text-on-surface-variant font-body-main text-meta-sm uppercase tracking-widest">
+<a class="hover:text-honey-accent transition-colors" href="#">Privacy Policy</a>
+<a class="hover:text-honey-accent transition-colors" href="#">Terms of Service</a>
+<a class="hover:text-honey-accent transition-colors" href="#">Help Center</a>
+</div>
+</div>
+</footer></body></html>

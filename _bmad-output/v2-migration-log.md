@@ -34,7 +34,7 @@ what changed after.
 | `MomentHeadline` | `PageHeader` (`headlineSize="lg"`, eyebrow="This week's brief") | BriefCanvas, PlanPage, PlanHistoryPage, AccountPage, DayDetail, HeartNote |
 | `LumiNote` | `PageHeader`'s `description` prop | BriefCanvas |
 | bespoke `<header><h1>` blocks | `PageHeader` primitive | All production routes |
-| custom v1 buttons | `PrimaryButton` / `SecondaryButton` primitives (icon-left required, per `.stitch/DESIGN.md` §7) | Sticky bars, page CTAs |
+| custom v1 buttons | `PrimaryButton` / `SecondaryButton` primitives (icon-left required, per `docs/DESIGN.md` §7) | Sticky bars, page CTAs |
 | custom sticky bottom CTAs | `StickyBottomBar` + button primitives | HeartNoteActions, MessageComposer, BottomActionBar |
 | route-owned AppHeader/AppFooter (in `_dev-*` pages) | AppLayout owns the chrome for `/app/*` and `/lunch/*` | All production routes |
 
@@ -97,7 +97,7 @@ render their own `<main>`, sticky bottom bars (position:fixed), and PageHeader.
 |---|---|
 | Production component shape | `apps/web/src/features/**/<Component>.tsx` |
 | Production route composition | `apps/web/src/routes/(app)/<route>.tsx` |
-| v2.0 design rules | `.stitch/DESIGN.md` (§7 for production patterns) |
+| v2.0 design rules | `docs/DESIGN.md` (§7 for production patterns) |
 | Token values | `packages/design-system/tokens/colors.css`, `radius.css`, `typography.css` |
 | Tailwind preset bindings | `packages/design-system/src/tokens/index.ts` |
 | Test coverage of token migration | `apps/web/src/features/plan/*.test.tsx` |

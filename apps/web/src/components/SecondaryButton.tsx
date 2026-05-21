@@ -21,7 +21,7 @@ export type SecondaryButtonProps = Readonly<Readonly_SecondaryButtonProps>;
  * font-medium`, `text-fg-muted` resolving to `text-amber-warm` on hover.
  * Standard padding `px-4 py-3` on every surface.
  *
- * Honors the design rule documented in `.stitch/DESIGN.md` §7 — secondary
+ * Honors the design rule documented in `docs/DESIGN.md` §7 — secondary
  * actions never compete visually with the primary CTA (no fill, muted text).
  */
 export function SecondaryButton({

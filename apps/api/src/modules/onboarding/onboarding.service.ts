@@ -1,13 +1,15 @@
 import type { FastifyBaseLogger } from 'fastify';
-import { OPENING_GREETING } from '@hivekitchen/contracts';
+import { OPENING_GREETING, type ChipConfig } from '@hivekitchen/contracts';
 import type { KitchenMap } from '@hivekitchen/types';
 import { ConflictError, UpstreamError } from '../../common/errors.js';
 import { stripExpressionTags } from '../../common/strip-expression-tags.js';
 import type { OnboardingAgent, LlmMessage } from '../../agents/onboarding.agent.js';
 import { createOnboardingToolSpecs } from '../../agents/tools/onboarding.tools.js';
+import type { ChildAllergensRepository } from '../children/child-allergens.repository.js';
 import type { ChildrenService } from '../children/children.service.js';
 import type { CulturalPriorRepository } from '../cultural-priors/cultural-prior.repository.js';
 import type { CulturalPriorService } from '../cultural-priors/cultural-prior.service.js';
+import type { DietaryPreferencesRepository } from '../dietary-preferences/dietary-preferences.repository.js';
 import type { HouseholdsService } from '../households/households.service.js';
 import type { KitchenMapService } from '../kitchen-map/kitchen-map.service.js';
 import type { MemoryService } from '../memory/memory.service.js';
@@ -18,6 +20,12 @@ import {
   type ThreadRow,
   type TurnRow,
 } from '../threads/thread.repository.js';
+import type {
+  CurrentMoment,
+  MomentState,
+  OnboardingMomentRepository,
+  RequiredSetStatus,
+} from './onboarding-moment.repository.js';
 
 export interface OnboardingServiceDeps {
   threads: ThreadRepository;
@@ -35,6 +43,18 @@ export interface OnboardingServiceDeps {
   kitchenMapService?: KitchenMapService;
   vocabularyService?: VocabularyService;
   agentToolsEnabled?: boolean;
+  // Slice 2.5-s4 — chaptered-conversation moment tracker. Optional for
+  // backward compatibility with existing unit-test deps; when absent the
+  // service falls back to a null moment state (agent treats as pre_start)
+  // and skips the post-turn upsert. When present, drives the moment-advance
+  // protocol and chip_config emission.
+  momentRepository?: OnboardingMomentRepository;
+  // Slice 2.5-s6 — structured per-child allergen + (household-or-child)
+  // dietary writers. Required when the tool loop runs; the wired tool specs
+  // throw at call time if absent. Optional on the type so legacy unit-test
+  // deps that don't construct the tool loop still compile.
+  childAllergensRepository?: ChildAllergensRepository;
+  dietaryPreferencesRepository?: DietaryPreferencesRepository;
 }
 
 export interface SubmitTextTurnInput {
@@ -49,6 +69,14 @@ export interface SubmitTextTurnResult {
   lumi_turn_id: string;
   lumi_response: string;
   is_complete: boolean;
+  // Slice 2.5-s4 — chip-config the client should render alongside Lumi's
+  // next question. Derived from the moment the agent transitioned INTO this
+  // turn (i.e. the moment the parent's NEXT turn will operate within).
+  chip_config: ChipConfig | null;
+  // Slice 2.5-s5 — current moment after this turn. Client renders the
+  // "Moment X of 5 · <name>" header from this. Defaults to 'm1_table' on
+  // the first turn when the agent emits no [NEXT_MOMENT:] directive.
+  moment_key: string | null;
   // Slice 2-S26 — internal signal for the route handler's audit emission.
   // Stripped by the response Zod schema before serialization (the wire shape
   // is TextOnboardingTurnResponseSchema, which excludes this field).
@@ -95,6 +123,103 @@ const ONBOARDING_THREAD_TYPE = 'onboarding';
 const SUMMARY_EVENT = 'onboarding.summary';
 const TEXT_MODALITY = 'text' as const;
 
+// Slice 2.5-s4 — strips ALL [NEXT_MOMENT:<key>] occurrences from agent text.
+// Using a global regex handles both mid-prose directives (epilogue prose after
+// the directive) and duplicate directives in one pass. The captured group from
+// the last occurrence becomes the next current_moment value.
+const NEXT_MOMENT_STRIP_RE = /\[NEXT_MOMENT:[a-z0-9_]+\]/g;
+
+const VALID_MOMENT_KEYS: ReadonlySet<CurrentMoment> = new Set<CurrentMoment>([
+  'pre_start',
+  'm1_table',
+  'm2_safe',
+  'm3_taste',
+  'm4_bag',
+  'm5_starting_line',
+  'summary',
+  'finalized',
+]);
+
+// Forward-only transition enforcement: the agent may only advance to a moment
+// that is equal to or later in the sequence. Backward directives (e.g.
+// [NEXT_MOMENT:pre_start] mid-interview) are silently rejected — current_moment
+// is preserved and the agent re-reads the same moment on the next turn.
+const MOMENT_ORDER: Readonly<Record<CurrentMoment, number>> = {
+  pre_start: 0,
+  m1_table: 1,
+  m2_safe: 2,
+  m3_taste: 3,
+  m4_bag: 4,
+  m5_starting_line: 5,
+  summary: 6,
+  finalized: 7,
+};
+
+function parseMomentKey(value: string | null, fromMoment?: CurrentMoment): CurrentMoment | null {
+  if (value === null) return null;
+  if (!(VALID_MOMENT_KEYS as ReadonlySet<string>).has(value)) return null;
+  const candidate = value as CurrentMoment;
+  // pre_start is an internal bootstrap state — not a valid agent-emittable
+  // directive. Accepting it would bypass the pre_start → m1_table promotion
+  // and anchor the conversation permanently at pre_start.
+  if (candidate === 'pre_start') return null;
+  if (fromMoment !== undefined && MOMENT_ORDER[candidate] < MOMENT_ORDER[fromMoment]) {
+    return null; // reject backward transition
+  }
+  return candidate;
+}
+
+// Slice 2.5-s4 — chip_config per current_moment. All moments return null in
+// this slice. Slices 2.5-s5 through 2.5-s9 each replace their respective
+// branch with the real chip set. Kept as a switch so the moment slices'
+// diffs are tiny and self-contained.
+export function momentToChipConfig(moment: CurrentMoment): ChipConfig | null {
+  switch (moment) {
+    case 'm1_table':
+      // Slice 2.5-s5 — M1 is a broad open question; hint chips are illustrative
+      // examples (non-selectable). Copy verbatim from Moment1Page.tsx mock.
+      return {
+        mode: 'hint',
+        hints: [
+          'Khan-Patel family kitchen — two kids, Layla 10 and Adam 12',
+          'Sharma kitchen — three girls aged 5, 7, and 11',
+          'Just my son Aarav, 8 years old',
+        ],
+      };
+    case 'm2_safe':
+      // Slice 2.5-s6 — M2 is the safety wall: multi-select allergen chips
+      // with an explicit "No known allergens" exclusive option. Labels copied
+      // verbatim from Moment2Page.tsx; the client enforces 'none' mutual
+      // exclusion. NO skip_label — M2 is REQUIRED.
+      return {
+        mode: 'choice',
+        options: [
+          { key: 'none', label: 'No known allergens' },
+          { key: 'peanut', label: 'Peanut' },
+          { key: 'tree-nuts', label: 'Tree nuts' },
+          { key: 'dairy', label: 'Dairy' },
+          { key: 'eggs', label: 'Eggs' },
+          { key: 'soy', label: 'Soy' },
+          { key: 'wheat', label: 'Wheat / gluten' },
+          { key: 'fish', label: 'Fish' },
+          { key: 'shellfish', label: 'Shellfish' },
+          { key: 'sesame', label: 'Sesame' },
+        ],
+      };
+    case 'm3_taste':
+      return null; // 2.5-s7 will fill this
+    case 'm4_bag':
+      return null; // 2.5-s8 will fill this
+    case 'm5_starting_line':
+      return null; // 2.5-s9 will fill this
+    case 'pre_start':
+    case 'summary':
+    case 'finalized':
+    default:
+      return null;
+  }
+}
+
 // F10 — three signal questions × user/lumi pair = 6 LLM messages minimum
 // before the summary turn is plausible (the synthetic greeting prepended to
 // agentInput on first turn counts toward this). Below this we skip the
@@ -119,6 +244,10 @@ export class OnboardingService {
   private readonly kitchenMapService?: KitchenMapService;
   private readonly vocabularyService?: VocabularyService;
   private readonly agentToolsEnabled: boolean;
+  private readonly momentRepository?: OnboardingMomentRepository;
+  // Slice 2.5-s6
+  private readonly childAllergensRepository?: ChildAllergensRepository;
+  private readonly dietaryPreferencesRepository?: DietaryPreferencesRepository;
 
   constructor(deps: OnboardingServiceDeps) {
     this.threads = deps.threads;
@@ -132,6 +261,9 @@ export class OnboardingService {
     this.kitchenMapService = deps.kitchenMapService;
     this.vocabularyService = deps.vocabularyService;
     this.agentToolsEnabled = deps.agentToolsEnabled ?? false;
+    this.momentRepository = deps.momentRepository;
+    this.childAllergensRepository = deps.childAllergensRepository;
+    this.dietaryPreferencesRepository = deps.dietaryPreferencesRepository;
   }
 
   /**
@@ -146,7 +278,9 @@ export class OnboardingService {
       this.householdsService !== undefined &&
       this.kitchenMapService !== undefined &&
       this.vocabularyService !== undefined &&
-      this.memoryService !== undefined
+      this.memoryService !== undefined &&
+      this.childAllergensRepository !== undefined &&
+      this.dietaryPreferencesRepository !== undefined
     );
   }
 
@@ -225,12 +359,17 @@ export class OnboardingService {
     //   sending a different (possibly edited) message, in which case we
     //   append a fresh user turn so the agent sees what the user actually
     //   sent and the returned turn_id matches the optimistic UI.
+    // P6: strip any [NEXT_MOMENT:...] directives injected by a crafted client
+    // before the message reaches the agent or the thread store. The directive
+    // protocol is server→agent only; user input must never carry it.
+    const userMessage = input.message.replace(/\[NEXT_MOMENT:[a-z0-9_]+\]/g, '').trim();
+
     const lastTurn: TurnRow | undefined = existingTurns[existingTurns.length - 1];
     const isOrphanedUserTurn =
       lastTurn !== undefined &&
       lastTurn.role === 'user' &&
       lastTurn.body.type === 'message' &&
-      lastTurn.body.content === input.message;
+      lastTurn.body.content === userMessage;
 
     let userTurn: TurnRow;
     let agentInput: LlmMessage[];
@@ -252,10 +391,10 @@ export class OnboardingService {
       userTurn = await this.threads.appendTurnNext({
         threadId: thread.id,
         role: 'user',
-        body: { type: 'message', content: input.message },
+        body: { type: 'message', content: userMessage },
         modality: TEXT_MODALITY,
       });
-      agentInput = [...history, { role: 'user', content: input.message }];
+      agentInput = [...history, { role: 'user', content: userMessage }];
     }
 
     // R2-P5 — first text turn has no agent-side history of the opening
@@ -292,6 +431,29 @@ export class OnboardingService {
           iterations: number;
         }
       | undefined;
+    // Slice 2.5-s4 — read moment state BEFORE the agent runs so the system
+    // prompt can carry current_moment + required_set_status. Null = no row
+    // yet (pre_start). Captured outside the try so the post-turn upsert can
+    // diff against it.
+    let preTurnMomentState: MomentState | null = null;
+    if (this.momentRepository !== undefined) {
+      try {
+        preTurnMomentState = await this.momentRepository.getState(input.householdId);
+      } catch (err) {
+        // Defensive: a read failure should not fail the turn — the agent
+        // will see pre_start defaults and the post-turn upsert may still
+        // succeed. Log and proceed.
+        this.logger.warn(
+          {
+            err,
+            module: 'onboarding',
+            action: 'onboarding.moment_state_read_failed',
+            household_id: input.householdId,
+          },
+          'moment state read failed — defaulting to pre_start',
+        );
+      }
+    }
     try {
       if (
         this.toolLoopAvailable &&
@@ -300,7 +462,9 @@ export class OnboardingService {
         this.householdsService !== undefined &&
         this.kitchenMapService !== undefined &&
         this.vocabularyService !== undefined &&
-        this.memoryService !== undefined
+        this.memoryService !== undefined &&
+        this.childAllergensRepository !== undefined &&
+        this.dietaryPreferencesRepository !== undefined
       ) {
         const map = await this.kitchenMapService.get(input.householdId);
         const toolSpecs = createOnboardingToolSpecs(
@@ -311,12 +475,15 @@ export class OnboardingService {
             householdsService: this.householdsService,
             memoryService: this.memoryService,
             vocabularyService: this.vocabularyService,
+            childAllergensRepository: this.childAllergensRepository,
+            dietaryPreferencesRepository: this.dietaryPreferencesRepository,
           },
         );
         const reply = await this.agent.respond(agentInput, {
           modality: TEXT_MODALITY,
           tools: toolSpecs,
           kitchenMapBlock: renderKitchenMapBlock(map),
+          momentStateBlock: renderMomentStateBlock(preTurnMomentState),
           vocabularyBlock: renderVocabularyBlock(this.vocabularyService),
         });
         lumiText = reply.text;
@@ -381,11 +548,21 @@ export class OnboardingService {
       );
     }
 
+    // Slice 2.5-s4 — strip ALL [NEXT_MOMENT:<key>] directives BEFORE the
+    // expression-tag sanitiser runs. Last occurrence wins for the advance key
+    // (handles duplicate directives and epilogue-prose-after-directive cases).
+    const allDirectiveMatches = [...lumiText.matchAll(/\[NEXT_MOMENT:([a-z0-9_]+)\]/g)];
+    const advanceToMoment =
+      allDirectiveMatches.length > 0
+        ? (allDirectiveMatches[allDirectiveMatches.length - 1]?.[1] ?? null)
+        : null;
+    const lumiTextWithoutDirective = lumiText.replace(NEXT_MOMENT_STRIP_RE, '').trimEnd();
+
     // R2-P8 — defense-in-depth: TEXT_RULES instructs the model not to emit
     // expression tags, but rule-adherence is ~95%. Strip [warmly]/[pause]/etc.
     // before persisting and returning so a leak never surfaces literally to
     // the user.
-    const sanitizedLumiText = stripExpressionTags(lumiText);
+    const sanitizedLumiText = stripExpressionTags(lumiTextWithoutDirective);
 
     // 6. Persist Lumi's reply.
     const lumiTurn = await this.threads.appendTurnNext({
@@ -394,6 +571,91 @@ export class OnboardingService {
       body: { type: 'message', content: sanitizedLumiText },
       modality: TEXT_MODALITY,
     });
+
+    // Slice 2.5-s4 — post-turn: compute the new moment state and write it
+    // back. Best-effort: failures here log a warn and the turn still
+    // returns successfully (the conversation can recover next turn).
+    let nextCurrentMoment: CurrentMoment =
+      preTurnMomentState?.current_moment ?? 'pre_start';
+    if (this.momentRepository !== undefined) {
+      try {
+        const counts = await this.momentRepository.countRequiredSetSources(
+          input.householdId,
+        );
+        const previousMoment: CurrentMoment =
+          preTurnMomentState?.current_moment ?? 'pre_start';
+        const advancedKey = parseMomentKey(advanceToMoment, previousMoment);
+        // The agent's directive is authoritative for current_moment when
+        // valid. When absent or invalid, current_moment is preserved
+        // (pre_start → m1_table on the very first agent turn so a fresh
+        // signup doesn't permanently stick at pre_start).
+        if (advancedKey !== null) {
+          nextCurrentMoment = advancedKey;
+        } else if (previousMoment === 'pre_start') {
+          nextCurrentMoment = 'm1_table';
+        } else {
+          nextCurrentMoment = previousMoment;
+        }
+        // DO NOT advance past summary in this slice — finalized is the
+        // finalize endpoint's responsibility (2.5-s10).
+        if (nextCurrentMoment === 'finalized') {
+          nextCurrentMoment = 'summary';
+        }
+
+        const advancedOutOfM2 =
+          nextCurrentMoment !== 'm2_safe' &&
+          previousMoment === 'm2_safe';
+        const m2_allergen_response =
+          counts.child_allergen_count > 0 ||
+          preTurnMomentState?.required_set_status.m2_allergen_response === true ||
+          advancedOutOfM2;
+
+        const requiredSetStatus: RequiredSetStatus = {
+          m1_household_name: counts.household_name_set,
+          m1_child_declared: counts.child_count > 0,
+          m2_allergen_response,
+          m5_favorite_count: counts.favorite_lunch_count,
+          m5_complete: counts.favorite_lunch_count >= 10,
+        };
+
+        await this.momentRepository.upsertState(input.householdId, {
+          current_moment: nextCurrentMoment,
+          required_set_status: requiredSetStatus,
+        });
+
+        this.logger.info(
+          {
+            module: 'onboarding',
+            action: 'onboarding.moment_state_updated',
+            household_id: input.householdId,
+            thread_id: thread.id,
+            from_moment: previousMoment,
+            to_moment: nextCurrentMoment,
+            directive_present: advanceToMoment !== null,
+            directive_valid: advancedKey !== null,
+            required_set_complete:
+              requiredSetStatus.m1_household_name &&
+              requiredSetStatus.m1_child_declared &&
+              requiredSetStatus.m2_allergen_response &&
+              requiredSetStatus.m5_complete,
+          },
+          'onboarding moment state updated',
+        );
+      } catch (err) {
+        this.logger.warn(
+          {
+            err,
+            module: 'onboarding',
+            action: 'onboarding.moment_state_write_failed',
+            household_id: input.householdId,
+            thread_id: thread.id,
+          },
+          'moment state upsert failed — turn returns without state advance',
+        );
+      }
+    }
+
+    const chip_config = momentToChipConfig(nextCurrentMoment);
 
     // 7. F10 / R2-P9 — only spend an OpenAI roundtrip on the summary classifier
     //    once the conversation has plausibly reached the summary turn (3
@@ -428,6 +690,8 @@ export class OnboardingService {
       lumi_turn_id: lumiTurn.id,
       lumi_response: sanitizedLumiText,
       is_complete: isComplete,
+      chip_config,
+      moment_key: nextCurrentMoment,
       _was_resumed: wasResumed,
     };
   }
@@ -825,12 +1089,14 @@ function renderKitchenMapBlock(map: KitchenMap): string {
   // only needs current state, not row metadata.
   //
   // Slice 2-s27 — household-level food identity (cultural / dietary /
-  // household-wide allergens) is projected at the top level, mirroring the
-  // new data model. Per-child arrays remain on each child for the
-  // override path (typically empty after this slice) PLUS per-child
-  // medical allergens.
+  // household-wide allergens) is projected at the top level.
+  // Slice 2.5-s4 — extended with the new top-level structured signal
+  // arrays from 2.5-s1 (allergens, dietary, food_preferences,
+  // favorite_lunches, rules) plus household.display_name,
+  // child.bag_composition_pattern, and meta.required_set_complete.
   const trimmed = {
     household: {
+      display_name: map.household.display_name,
       tier: map.household.tier,
       timezone: map.household.timezone,
       cultural_identifiers: map.household.cultural_identifiers,
@@ -846,6 +1112,7 @@ function renderKitchenMapBlock(map: KitchenMap): string {
       id: c.id,
       name: c.name,
       age_band: c.age_band,
+      bag_composition_pattern: c.bag_composition_pattern,
       declared_allergens: c.declared_allergens,
       cultural_identifiers: c.cultural_identifiers,
       dietary_preferences: c.dietary_preferences,
@@ -861,9 +1128,70 @@ function renderKitchenMapBlock(map: KitchenMap): string {
       text: n.prose_text,
       child_id: n.subject_child_id,
     })),
-    is_complete: map.meta.is_complete,
+    allergens: map.allergens.map((a) => ({
+      child_id: a.child_id,
+      allergen: a.allergen,
+      source: a.source,
+    })),
+    dietary: map.dietary.map((d) => ({
+      child_id: d.child_id,
+      tag: d.tag,
+      enforcement: d.enforcement,
+    })),
+    food_preferences: map.food_preferences.map((fp) => ({
+      child_id: fp.child_id,
+      item: fp.item,
+      valence: fp.valence,
+      enforcement: fp.enforcement,
+    })),
+    favorite_lunches: map.favorite_lunches.map((fl) => ({
+      item: fl.item,
+      position: fl.position,
+    })),
+    rules: map.rules.map((r) => ({
+      rule_type: r.rule_type,
+      custom_label: r.custom_label,
+      enforcement: r.enforcement,
+    })),
+    meta: {
+      is_complete: map.meta.is_complete,
+      required_set_complete: map.meta.required_set_complete,
+    },
   };
   return '```json\n' + JSON.stringify(trimmed, null, 2) + '\n```';
+}
+
+// Slice 2.5-s4 — render the moment-state block injected into the system
+// prompt on every text-mode turn. Small (~15 lines); the agent reads
+// current_moment + required_set_status to decide which moment to work
+// within and whether the finalize gate is satisfied.
+export function renderMomentStateBlock(state: MomentState | null): string {
+  if (state === null) {
+    return `CURRENT ONBOARDING STATE
+current_moment: pre_start
+required_set:
+  m1_household_name: false
+  m1_child_declared: false
+  m2_allergen_response: false
+  m5_favorite_count: 0
+  m5_complete: false
+required_set_complete: false`;
+  }
+  const rss = state.required_set_status;
+  const complete =
+    rss.m1_household_name &&
+    rss.m1_child_declared &&
+    rss.m2_allergen_response &&
+    rss.m5_complete;
+  return `CURRENT ONBOARDING STATE
+current_moment: ${state.current_moment}
+required_set:
+  m1_household_name: ${rss.m1_household_name}
+  m1_child_declared: ${rss.m1_child_declared}
+  m2_allergen_response: ${rss.m2_allergen_response}
+  m5_favorite_count: ${rss.m5_favorite_count}
+  m5_complete: ${rss.m5_complete}
+required_set_complete: ${complete}`;
 }
 
 function renderVocabularyBlock(vocab: VocabularyService): string {

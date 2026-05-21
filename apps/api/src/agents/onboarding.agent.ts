@@ -54,6 +54,11 @@ export interface RespondOptions {
   kitchenMapBlock?: string;
   /** Pre-rendered vocabulary snapshot block (cache-friendly placement). */
   vocabularyBlock?: string;
+  /** Slice 2.5-s4 — pre-rendered moment-state block (current_moment +
+   *  required_set_status). Injected between kitchenMapBlock and
+   *  vocabularyBlock so the stable kitchen-map prefix stays cache-hot.
+   *  Text path only — voice mode bypasses the tool loop entirely. */
+  momentStateBlock?: string;
 }
 
 const SESSION_COMPLETE_SENTINEL = '[SESSION_COMPLETE]';
@@ -327,14 +332,24 @@ export class OnboardingAgent {
     const base = getOnboardingSystemPrompt('text');
     const parts: string[] = [base];
 
-    if (opts.vocabularyBlock !== undefined) {
-      parts.push('\n# Tag vocabulary\n');
-      parts.push(opts.vocabularyBlock);
-    }
-
+    // Cache-friendly ordering:
+    //   1. base prompt (stable)
+    //   2. kitchen-map block (stable per kitchen_map_version)
+    //   3. moment-state block (changes per turn — narrow and short)
+    //   4. vocabulary block (semi-stable; tags change rarely)
     if (opts.kitchenMapBlock !== undefined) {
       parts.push('\n# Current household state (Kitchen Map)\n');
       parts.push(opts.kitchenMapBlock);
+    }
+
+    if (opts.momentStateBlock !== undefined) {
+      parts.push('\n# Onboarding moment state\n');
+      parts.push(opts.momentStateBlock);
+    }
+
+    if (opts.vocabularyBlock !== undefined) {
+      parts.push('\n# Tag vocabulary\n');
+      parts.push(opts.vocabularyBlock);
     }
 
     return parts.join('\n');

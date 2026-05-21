@@ -134,7 +134,7 @@ The code review surfaced that **`/auth/reset-password`, `/auth/callback`, and `/
 2. Switched to `projects/3502098255450050819` ("HiveKitchen3"), confirmed as the canonical project — its DESIGN.md ("Editorial Hearth v2.0") + tokens (warm-neutral, lumi-terracotta, sacred-plum, foliage, amber, honey-accent) match the codebase exactly.
 3. Generated `aba9a04cd4884aefab68bf1fd4278c96` "Welcome Back — Reset Password v2.0" in HK3.
 4. Compared the Stitch design against the shipped code. Stitch's design treats reset-password as a visually *distinct* moment (floating transparent header, surface-toned form panel, underline-only input, `justify-between` CTA). Shipped code treats reset-password as a *sibling* of login (standard `AppHeader`, full-bordered `TextField`, icon-left `PrimaryButton`).
-5. **Decision recorded:** keep the shipped composition (sibling-of-login pattern) for consistency across all auth pages and to preserve the icon-left button convention from `.stitch/DESIGN.md` §7. The HK3 Stitch screen remains as a design-alternative reference in the project; it is not binding for the implementation.
+5. **Decision recorded:** keep the shipped composition (sibling-of-login pattern) for consistency across all auth pages and to preserve the icon-left button convention from `docs/DESIGN.md` §7. The HK3 Stitch screen remains as a design-alternative reference in the project; it is not binding for the implementation.
 
 **Files retoked (Tier 1 entry pages):**
 - `apps/web/src/routes/auth/reset-password.tsx` — full v2.0 rewrite with `AppHeader`/`AppFooter`/`LoginHero`/`TextField`/`PrimaryButton` primitives; preserves `useForm` + `zodResolver` + recovery-token parsing + 2-S19 onboarding-aware navigation

@@ -1,11 +1,26 @@
 import { Buffer } from 'node:buffer';
-import { createCipheriv, createDecipheriv, randomBytes } from 'node:crypto';
+import { createCipheriv, createDecipheriv, createHash, randomBytes } from 'node:crypto';
 
 const ALGORITHM = 'aes-256-gcm';
 const NONCE_BYTES = 12;
 const AUTH_TAG_BYTES = 16;
 const DEK_BYTES = 32;
 const NOOP_PREFIX = 'NOOP:';
+
+// Stable dedupe hash for encrypted free-text columns (e.g. child_allergens.
+// allergen). AES-GCM uses a random nonce per encryptField call, so the
+// ciphertext cannot serve as a uniqueness key. The hash is computed over
+// the normalized plaintext (lowercased + trimmed) and stored unencrypted
+// alongside the ciphertext; a unique index on (scope_key, hash) gives the
+// idempotency guarantee.
+//
+// SHA-256 is overkill for collision-resistance at the scale of one
+// household's allergen list, but it's stdlib, deterministic across runtimes,
+// and the hash output is short enough to store comfortably as text.
+export function normalizedHash(value: string): string {
+  const normalized = value.trim().toLowerCase();
+  return createHash('sha256').update(normalized, 'utf8').digest('hex');
+}
 
 export function generateDek(): Buffer {
   return randomBytes(DEK_BYTES);

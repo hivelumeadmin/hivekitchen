@@ -209,6 +209,29 @@ import {
   HouseholdProfilePatchBodySchema,
   HouseholdProfileResponseSchema,
   HouseholdIdParamSchema,
+  // Slice 2.5-s1 — enforcement gradient + KitchenMap extensions + 7 new tools
+  ENFORCEMENT_LEVEL_VALUES,
+  EnforcementLevelSchema,
+  BagCompositionPatternSchema,
+  KitchenMapAllergenSchema,
+  KitchenMapDietarySchema,
+  KitchenMapFoodPreferenceSchema,
+  KitchenMapFavoriteLunchSchema,
+  KitchenMapRuleSchema,
+  HouseholdSetNameInputSchema,
+  HouseholdSetNameOutputSchema,
+  AllergenDeclareInputSchema,
+  AllergenDeclareOutputSchema,
+  DietaryDeclareInputSchema,
+  DietaryDeclareOutputSchema,
+  CuisineDeclareInputSchema,
+  CuisineDeclareOutputSchema,
+  FoodPreferenceDeclareInputSchema,
+  FoodPreferenceDeclareOutputSchema,
+  FavoriteLunchAddInputSchema,
+  FavoriteLunchAddOutputSchema,
+  RuleSetInputSchema,
+  RuleSetOutputSchema,
 } from '@hivekitchen/contracts';
 
 // Auth
@@ -512,3 +535,30 @@ export type HouseholdUpsertOutput = z.infer<typeof HouseholdUpsertOutputSchema>;
 export type HouseholdProfilePatchBody = z.infer<typeof HouseholdProfilePatchBodySchema>;
 export type HouseholdProfileResponse = z.infer<typeof HouseholdProfileResponseSchema>;
 export type HouseholdIdParam = z.infer<typeof HouseholdIdParamSchema>;
+
+// Slice 2.5-s1 — enforcement gradient + KitchenMap structured signal arrays
+export { ENFORCEMENT_LEVEL_VALUES };
+export type EnforcementLevel = z.infer<typeof EnforcementLevelSchema>;
+export type BagCompositionPattern = z.infer<typeof BagCompositionPatternSchema>;
+export type KitchenMapAllergen = z.infer<typeof KitchenMapAllergenSchema>;
+export type KitchenMapDietary = z.infer<typeof KitchenMapDietarySchema>;
+export type KitchenMapFoodPreference = z.infer<typeof KitchenMapFoodPreferenceSchema>;
+export type KitchenMapFavoriteLunch = z.infer<typeof KitchenMapFavoriteLunchSchema>;
+export type KitchenMapRule = z.infer<typeof KitchenMapRuleSchema>;
+
+// Slice 2.5-s1 — seven new structured onboarding tool I/O contracts (stubs;
+// wired in slice 2.5-s4)
+export type HouseholdSetNameInput = z.infer<typeof HouseholdSetNameInputSchema>;
+export type HouseholdSetNameOutput = z.infer<typeof HouseholdSetNameOutputSchema>;
+export type AllergenDeclareInput = z.infer<typeof AllergenDeclareInputSchema>;
+export type AllergenDeclareOutput = z.infer<typeof AllergenDeclareOutputSchema>;
+export type DietaryDeclareInput = z.infer<typeof DietaryDeclareInputSchema>;
+export type DietaryDeclareOutput = z.infer<typeof DietaryDeclareOutputSchema>;
+export type CuisineDeclareInput = z.infer<typeof CuisineDeclareInputSchema>;
+export type CuisineDeclareOutput = z.infer<typeof CuisineDeclareOutputSchema>;
+export type FoodPreferenceDeclareInput = z.infer<typeof FoodPreferenceDeclareInputSchema>;
+export type FoodPreferenceDeclareOutput = z.infer<typeof FoodPreferenceDeclareOutputSchema>;
+export type FavoriteLunchAddInput = z.infer<typeof FavoriteLunchAddInputSchema>;
+export type FavoriteLunchAddOutput = z.infer<typeof FavoriteLunchAddOutputSchema>;
+export type RuleSetInput = z.infer<typeof RuleSetInputSchema>;
+export type RuleSetOutput = z.infer<typeof RuleSetOutputSchema>;

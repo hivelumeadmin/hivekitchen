@@ -1,10 +1,18 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { FastifyBaseLogger } from 'fastify';
 import {
+  createAllergenDeclareToolSpec,
   createChildUpsertToolSpec,
+  createCuisineDeclareToolSpec,
   createCulturalNoteToolSpec,
+  createDietaryDeclareToolSpec,
+  createFavoriteLunchAddToolSpec,
+  createFoodPreferenceDeclareToolSpec,
+  createHouseholdSetNameToolSpec,
   createHouseholdUpsertToolSpec,
   createMemoryNoteToolSpec,
+  createOnboardingToolSpecs,
+  createRuleSetToolSpec,
   type OnboardingToolContext,
   type OnboardingToolDeps,
 } from './onboarding.tools.js';
@@ -35,6 +43,9 @@ function makeCtx(): OnboardingToolContext {
   return { householdId: HOUSEHOLD_ID, userId: USER_ID, logger: makeLogger() };
 }
 
+const ALLERGEN_ROW_ID = '66666666-6666-4666-8666-666666666666';
+const DIETARY_ROW_ID = '77777777-7777-4777-8777-777777777777';
+
 function makeDeps(overrides: Partial<OnboardingToolDeps> = {}): OnboardingToolDeps {
   return {
     childrenService: {
@@ -43,6 +54,7 @@ function makeDeps(overrides: Partial<OnboardingToolDeps> = {}): OnboardingToolDe
         was_existing: false,
       }),
       findChildIdByName: vi.fn().mockResolvedValue(CHILD_ID),
+      getChild: vi.fn().mockResolvedValue({ id: CHILD_ID }),
     } as unknown as OnboardingToolDeps['childrenService'],
     culturalPriorRepository: {
       noteSuggested: vi
@@ -73,6 +85,7 @@ function makeDeps(overrides: Partial<OnboardingToolDeps> = {}): OnboardingToolDe
         dietary_preferences: [],
         declared_allergens: [],
       }),
+      setDisplayName: vi.fn().mockResolvedValue(undefined),
     } as unknown as OnboardingToolDeps['householdsService'],
     vocabularyService: {
       validateAllergens: vi.fn((keys: string[]) => [...new Set(keys)]),
@@ -80,6 +93,18 @@ function makeDeps(overrides: Partial<OnboardingToolDeps> = {}): OnboardingToolDe
       validateDietary: vi.fn((keys: string[]) => [...new Set(keys)]),
       expandImpliesClosure: vi.fn((keys: string[]) => keys),
     } as unknown as OnboardingToolDeps['vocabularyService'],
+    childAllergensRepository: {
+      declare: vi.fn().mockResolvedValue({
+        child_allergen_id: ALLERGEN_ROW_ID,
+        was_existing: false,
+      }),
+    } as unknown as OnboardingToolDeps['childAllergensRepository'],
+    dietaryPreferencesRepository: {
+      declare: vi.fn().mockResolvedValue({
+        dietary_id: DIETARY_ROW_ID,
+        was_existing: false,
+      }),
+    } as unknown as OnboardingToolDeps['dietaryPreferencesRepository'],
     ...overrides,
   };
 }
@@ -338,9 +363,9 @@ describe('createMemoryNoteToolSpec', () => {
 
   it('passes subject_child_id through for child-scoped notes', async () => {
     await spec.fn({
-      node_type: 'allergy',
-      facet: 'declared_allergen',
-      prose_text: 'Layla is peanut-allergic.',
+      node_type: 'child_obsession',
+      facet: 'fixation',
+      prose_text: 'Layla only wants pasta this month.',
       subject_child_id: CHILD_ID,
     });
     expect(deps.memoryService.noteFromAgent).toHaveBeenCalledWith(
@@ -350,9 +375,9 @@ describe('createMemoryNoteToolSpec', () => {
 
   it('resolves subject_child_name to child_id via ChildrenService', async () => {
     await spec.fn({
-      node_type: 'preference',
-      facet: 'refusal',
-      prose_text: "Layla won't touch mushrooms.",
+      node_type: 'child_obsession',
+      facet: 'fixation',
+      prose_text: "Layla won't eat anything but pasta.",
       subject_child_name: 'Layla',
     });
     expect(deps.childrenService.findChildIdByName).toHaveBeenCalledWith(
@@ -367,9 +392,9 @@ describe('createMemoryNoteToolSpec', () => {
   it('falls back to household-wide when subject_child_name does not resolve', async () => {
     vi.mocked(deps.childrenService.findChildIdByName).mockResolvedValueOnce(null);
     await spec.fn({
-      node_type: 'preference',
-      facet: 'refusal',
-      prose_text: "Phantom kid won't touch mushrooms.",
+      node_type: 'child_obsession',
+      facet: 'fixation',
+      prose_text: 'Phantom kid only eats pasta.',
       subject_child_name: 'PhantomKid',
     });
     expect(deps.memoryService.noteFromAgent).toHaveBeenCalledWith(
@@ -379,9 +404,9 @@ describe('createMemoryNoteToolSpec', () => {
 
   it('prefers subject_child_id when both id and name are provided', async () => {
     await spec.fn({
-      node_type: 'preference',
-      facet: 'refusal',
-      prose_text: "Layla won't touch mushrooms.",
+      node_type: 'child_obsession',
+      facet: 'fixation',
+      prose_text: "Layla won't eat anything but pasta.",
       subject_child_id: CHILD_ID,
       subject_child_name: 'Layla',
     });
@@ -394,8 +419,8 @@ describe('createMemoryNoteToolSpec', () => {
 
   it('uses the agent-provided confidence when set', async () => {
     await spec.fn({
-      node_type: 'preference',
-      facet: 'palate',
+      node_type: 'other',
+      facet: 'note',
       prose_text: 'Kids love yogurt.',
       confidence: 0.95,
     });
@@ -418,8 +443,8 @@ describe('createMemoryNoteToolSpec', () => {
 
   it('stamps source_type=onboarding_turn on the provenance', async () => {
     await spec.fn({
-      node_type: 'preference',
-      facet: 'palate',
+      node_type: 'other',
+      facet: 'note',
       prose_text: 'Loves rice.',
     });
     expect(deps.memoryService.noteFromAgent).toHaveBeenCalledWith(
@@ -542,5 +567,308 @@ describe('createHouseholdUpsertToolSpec', () => {
     ).rejects.toThrow(/mutually exclusive/);
     expect(deps.householdsService.patchProfile).not.toHaveBeenCalled();
     expect(deps.householdsService.addAllergens).not.toHaveBeenCalled();
+  });
+});
+
+// ===========================================================================
+// Slice 2.5-s1 — seven new structured tools (stub factories)
+// ===========================================================================
+// Each factory is a deterministic-shaped success stub. The contract is the
+// real test surface; these tests assert the factories register with the
+// right name, validate input via Zod, and return a contract-valid shape.
+
+const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+describe('createHouseholdSetNameToolSpec (2.5-s5 wired)', () => {
+  it('happy path: parses input, calls householdsService.setDisplayName, returns household_id', async () => {
+    const deps = makeDeps();
+    const spec = createHouseholdSetNameToolSpec(makeCtx(), deps);
+    expect(spec.name).toBe('household.set_name');
+    const result = await spec.fn({ display_name: 'The Menons' });
+    expect(result).toEqual({ household_id: HOUSEHOLD_ID });
+    expect(deps.householdsService.setDisplayName).toHaveBeenCalledWith(
+      HOUSEHOLD_ID,
+      'The Menons',
+    );
+  });
+
+  it('rejects empty display_name and does not call setDisplayName', async () => {
+    const deps = makeDeps();
+    const spec = createHouseholdSetNameToolSpec(makeCtx(), deps);
+    await expect(spec.fn({ display_name: '' })).rejects.toThrow();
+    expect(deps.householdsService.setDisplayName).not.toHaveBeenCalled();
+  });
+});
+
+describe('createAllergenDeclareToolSpec (2.5-s6 wired)', () => {
+  it('child_id path: verifies household membership via getChild then declares', async () => {
+    const deps = makeDeps();
+    const spec = createAllergenDeclareToolSpec(makeCtx(), deps);
+    expect(spec.name).toBe('allergen.declare');
+    const result = (await spec.fn({
+      child_id: CHILD_ID,
+      allergen: 'peanut',
+    })) as { child_allergen_id: string; was_existing: boolean };
+
+    expect(deps.childrenService.getChild).toHaveBeenCalledWith({
+      householdId: HOUSEHOLD_ID,
+      childId: CHILD_ID,
+    });
+    expect(deps.childAllergensRepository.declare).toHaveBeenCalledWith(
+      HOUSEHOLD_ID,
+      CHILD_ID,
+      'peanut',
+      'onboarding_declared',
+    );
+    expect(deps.childrenService.findChildIdByName).not.toHaveBeenCalled();
+    expect(result.child_allergen_id).toBe(ALLERGEN_ROW_ID);
+    expect(result.was_existing).toBe(false);
+  });
+
+  it('child_id path rejects when getChild throws (child not in this household)', async () => {
+    const deps = makeDeps();
+    vi.mocked(deps.childrenService.getChild).mockRejectedValueOnce(
+      new Error('Child not found'),
+    );
+    const spec = createAllergenDeclareToolSpec(makeCtx(), deps);
+    await expect(
+      spec.fn({ child_id: CHILD_ID, allergen: 'peanut' }),
+    ).rejects.toThrow(/Child not found/);
+    expect(deps.childAllergensRepository.declare).not.toHaveBeenCalled();
+  });
+
+  it('child_name path: resolves via findChildIdByName then declares', async () => {
+    const deps = makeDeps();
+    const spec = createAllergenDeclareToolSpec(makeCtx(), deps);
+    await spec.fn({ child_name: 'Layla', allergen: 'peanut' });
+
+    expect(deps.childrenService.findChildIdByName).toHaveBeenCalledWith(
+      HOUSEHOLD_ID,
+      'Layla',
+    );
+    expect(deps.childAllergensRepository.declare).toHaveBeenCalledWith(
+      HOUSEHOLD_ID,
+      CHILD_ID,
+      'peanut',
+      'onboarding_declared',
+    );
+  });
+
+  it('throws when child_name does not match any child in the household', async () => {
+    const deps = makeDeps();
+    vi.mocked(deps.childrenService.findChildIdByName).mockResolvedValueOnce(null);
+    const spec = createAllergenDeclareToolSpec(makeCtx(), deps);
+    await expect(
+      spec.fn({ child_name: 'Ghost', allergen: 'peanut' }),
+    ).rejects.toThrow(/child "Ghost" not found/);
+    expect(deps.childAllergensRepository.declare).not.toHaveBeenCalled();
+  });
+
+  it('passes was_existing through from the repo', async () => {
+    const deps = makeDeps();
+    vi.mocked(deps.childAllergensRepository.declare).mockResolvedValueOnce({
+      child_allergen_id: ALLERGEN_ROW_ID,
+      was_existing: true,
+    });
+    const spec = createAllergenDeclareToolSpec(makeCtx(), deps);
+    const result = (await spec.fn({
+      child_id: CHILD_ID,
+      allergen: 'peanut',
+    })) as { was_existing: boolean };
+    expect(result.was_existing).toBe(true);
+  });
+});
+
+describe('createDietaryDeclareToolSpec (2.5-s6 wired)', () => {
+  it('household-scoped: calls repo with child_id=null', async () => {
+    const deps = makeDeps();
+    const spec = createDietaryDeclareToolSpec(makeCtx(), deps);
+    expect(spec.name).toBe('dietary.declare');
+    const result = (await spec.fn({
+      child_id: null,
+      tag: 'halal',
+      enforcement: 'non_negotiable',
+    })) as { dietary_id: string; was_existing: boolean };
+
+    expect(deps.dietaryPreferencesRepository.declare).toHaveBeenCalledWith(
+      HOUSEHOLD_ID,
+      null,
+      'halal',
+      'non_negotiable',
+      'onboarding_declared',
+    );
+    expect(result.dietary_id).toBe(DIETARY_ROW_ID);
+    expect(result.was_existing).toBe(false);
+  });
+
+  it('child-scoped: calls repo with the supplied child_id', async () => {
+    const deps = makeDeps();
+    const spec = createDietaryDeclareToolSpec(makeCtx(), deps);
+    await spec.fn({
+      child_id: CHILD_ID,
+      tag: 'vegetarian',
+      enforcement: 'default',
+    });
+
+    expect(deps.dietaryPreferencesRepository.declare).toHaveBeenCalledWith(
+      HOUSEHOLD_ID,
+      CHILD_ID,
+      'vegetarian',
+      'default',
+      'onboarding_declared',
+    );
+  });
+
+  it('validates tag against vocabularyService before calling the repo', async () => {
+    const deps = makeDeps();
+    vi.mocked(deps.vocabularyService.validateDietary).mockImplementationOnce(() => {
+      throw new Error('Unknown dietary tag: bogus');
+    });
+    const spec = createDietaryDeclareToolSpec(makeCtx(), deps);
+    await expect(
+      spec.fn({ child_id: null, tag: 'bogus', enforcement: 'default' }),
+    ).rejects.toThrow(/Unknown dietary tag/);
+    expect(deps.vocabularyService.validateDietary).toHaveBeenCalledWith(['bogus']);
+    expect(deps.dietaryPreferencesRepository.declare).not.toHaveBeenCalled();
+  });
+});
+
+describe('createCuisineDeclareToolSpec (2.5-s1 stub)', () => {
+  it('happy path: defaults enforcement, returns prior_id', async () => {
+    const spec = createCuisineDeclareToolSpec(makeCtx(), makeDeps());
+    expect(spec.name).toBe('cuisine.declare');
+    const result = (await spec.fn({
+      key: 'south_indian',
+      label: 'South Indian',
+      confidence: 80,
+      presence: 70,
+    })) as { prior_id: string; was_existing: boolean };
+    expect(result.prior_id).toMatch(UUID_REGEX);
+  });
+});
+
+describe('createFoodPreferenceDeclareToolSpec (2.5-s1 stub)', () => {
+  it('happy path: household-wide preference (no child) with refuses valence', async () => {
+    const spec = createFoodPreferenceDeclareToolSpec(makeCtx(), makeDeps());
+    expect(spec.name).toBe('food_preference.declare');
+    const result = (await spec.fn({
+      item: 'cilantro',
+      valence: 'refuses',
+    })) as { food_preference_id: string };
+    expect(result.food_preference_id).toMatch(UUID_REGEX);
+  });
+
+  it('rejects unknown valence', async () => {
+    const spec = createFoodPreferenceDeclareToolSpec(makeCtx(), makeDeps());
+    await expect(spec.fn({ item: 'cilantro', valence: 'hates' })).rejects.toThrow();
+  });
+});
+
+describe('createFavoriteLunchAddToolSpec (2.5-s1 stub)', () => {
+  it('happy path: item only (defaults position 0)', async () => {
+    const spec = createFavoriteLunchAddToolSpec(makeCtx(), makeDeps());
+    expect(spec.name).toBe('favorite_lunch.add');
+    const result = (await spec.fn({ item: 'dal chawal' })) as {
+      favorite_lunch_id: string;
+      position: number;
+    };
+    expect(result.favorite_lunch_id).toMatch(UUID_REGEX);
+    expect(result.position).toBe(0);
+  });
+
+  it('honors explicit position', async () => {
+    const spec = createFavoriteLunchAddToolSpec(makeCtx(), makeDeps());
+    const result = (await spec.fn({ item: 'dal chawal', position: 5 })) as { position: number };
+    expect(result.position).toBe(5);
+  });
+});
+
+describe('createRuleSetToolSpec (2.5-s1 stub)', () => {
+  it('happy path: non-custom rule returns household_rule_id', async () => {
+    const spec = createRuleSetToolSpec(makeCtx(), makeDeps());
+    expect(spec.name).toBe('rule.set');
+    const result = (await spec.fn({ rule_type: 'no_pork' })) as {
+      household_rule_id: string;
+      was_existing: boolean;
+    };
+    expect(result.household_rule_id).toMatch(UUID_REGEX);
+    expect(result.was_existing).toBe(false);
+  });
+
+  it('custom rule requires custom_label', async () => {
+    const spec = createRuleSetToolSpec(makeCtx(), makeDeps());
+    await expect(spec.fn({ rule_type: 'custom' })).rejects.toThrow();
+  });
+
+  it('custom rule with custom_label is valid', async () => {
+    const spec = createRuleSetToolSpec(makeCtx(), makeDeps());
+    const result = (await spec.fn({
+      rule_type: 'custom',
+      custom_label: 'no peanut butter on Fridays',
+    })) as { household_rule_id: string };
+    expect(result.household_rule_id).toMatch(UUID_REGEX);
+  });
+
+  it('non-custom rule with custom_label is rejected', async () => {
+    const spec = createRuleSetToolSpec(makeCtx(), makeDeps());
+    await expect(
+      spec.fn({ rule_type: 'no_pork', custom_label: 'foo' }),
+    ).rejects.toThrow();
+  });
+});
+
+describe('createOnboardingToolSpecs (2.5-s4)', () => {
+  it('exposes all 11 onboarding tools to the agent', () => {
+    const specs = createOnboardingToolSpecs(makeCtx(), makeDeps());
+    expect(specs).toHaveLength(11);
+    const names = specs.map((s) => s.name).sort();
+    expect(names).toEqual(
+      [
+        'allergen.declare',
+        'child.upsert',
+        'cuisine.declare',
+        'cultural.note',
+        'dietary.declare',
+        'favorite_lunch.add',
+        'food_preference.declare',
+        'household.set_name',
+        'household.upsert',
+        'memory.note',
+        'rule.set',
+      ].sort(),
+    );
+  });
+
+  it('still includes the four originally wired tools (child/cultural/memory/household upsert)', () => {
+    const specs = createOnboardingToolSpecs(makeCtx(), makeDeps());
+    const names = new Set(specs.map((s) => s.name));
+    expect(names.has('child.upsert')).toBe(true);
+    expect(names.has('cultural.note')).toBe(true);
+    expect(names.has('memory.note')).toBe(true);
+    expect(names.has('household.upsert')).toBe(true);
+  });
+});
+
+describe('memory.note schema narrowing (2.5-s2)', () => {
+  it("rejects node_type='preference' at the Zod boundary", async () => {
+    const spec = createMemoryNoteToolSpec(makeCtx(), makeDeps());
+    await expect(
+      spec.fn({
+        node_type: 'preference',
+        facet: 'palate',
+        prose_text: 'Loves yogurt.',
+      }),
+    ).rejects.toThrow();
+  });
+
+  it("rejects node_type='allergy' at the Zod boundary", async () => {
+    const spec = createMemoryNoteToolSpec(makeCtx(), makeDeps());
+    await expect(
+      spec.fn({
+        node_type: 'allergy',
+        facet: 'declared_allergen',
+        prose_text: 'Layla is peanut-allergic.',
+      }),
+    ).rejects.toThrow();
   });
 });

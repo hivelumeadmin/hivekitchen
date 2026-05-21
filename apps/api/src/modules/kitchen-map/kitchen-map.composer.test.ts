@@ -14,6 +14,8 @@ function makeRaw(overrides: Partial<RawKitchenMapData> = {}): RawKitchenMapData 
       tier_variant: 'beta',
       timezone: 'America/New_York',
       kitchen_map_version: 7,
+      // Slice 2.5-s1 — placeholder matches migration backfill format.
+      display_name: 'Household 00000000',
       cultural_identifiers: [],
       dietary_preferences: [],
       declared_allergens: [],
@@ -25,6 +27,12 @@ function makeRaw(overrides: Partial<RawKitchenMapData> = {}): RawKitchenMapData 
     school_policies: [],
     extra_library: [],
     recipe_usage: [],
+    // Slice 2.5-s1 — five new top-level arrays.
+    allergens: [],
+    dietary: [],
+    food_preferences: [],
+    favorite_lunches: [],
+    rules: [],
     ...overrides,
   };
 }
@@ -37,12 +45,26 @@ describe('composeKitchenMap — household + meta', () => {
       tier: 'standard',
       tier_variant: 'beta',
       timezone: 'America/New_York',
+      display_name: 'Household 00000000',
       cultural_identifiers: [],
       dietary_preferences: [],
       declared_allergens: [],
     });
     expect(map.meta.map_version).toBe(7);
-    expect(map.meta.schema_version).toBe('1.0.0');
+    // Slice 2.5-s1 — schema bumped 1.0.0 → 1.1.0.
+    expect(map.meta.schema_version).toBe('1.1.0');
+  });
+
+  it('projects display_name=null when household row has no name', () => {
+    const map = composeKitchenMap(
+      makeRaw({
+        household: {
+          ...makeRaw().household,
+          display_name: null,
+        },
+      }),
+    );
+    expect(map.household.display_name).toBeNull();
   });
 
   it('is_complete=false when there are no children', () => {
@@ -68,6 +90,11 @@ describe('composeKitchenMap — household + meta', () => {
       }),
     );
     expect(map.meta.is_complete).toBe(true);
+  });
+
+  it('required_set_complete=false for every existing household (stub in s1)', () => {
+    const map = composeKitchenMap(makeRaw());
+    expect(map.meta.required_set_complete).toBe(false);
   });
 });
 
@@ -218,7 +245,7 @@ describe('composeKitchenMap — children + school_policies', () => {
 });
 
 describe('composeKitchenMap — cultural priors bucketing', () => {
-  function priorRow(state: string, key = 'south_asian') {
+  function priorRow(state: string, key = 'south_asian', enforcement = 'just_for_context') {
     return {
       key,
       label: 'South Asian',
@@ -226,6 +253,7 @@ describe('composeKitchenMap — cultural priors bucketing', () => {
       state,
       confidence: 80,
       presence: 70,
+      enforcement,
     };
   }
 
@@ -267,24 +295,178 @@ describe('composeKitchenMap — cultural priors bucketing', () => {
     expect(m.cultural.active).toHaveLength(0);
     expect(m.cultural.suggested).toHaveLength(0);
   });
+
+  it('passes enforcement through verbatim when valid', () => {
+    const m = composeKitchenMap(
+      makeRaw({ cultural_priors: [priorRow('active', 'halal', 'non_negotiable')] }),
+    );
+    expect(m.cultural.active[0]?.enforcement).toBe('non_negotiable');
+  });
+
+  it("falls back to 'just_for_context' for rogue enforcement value", () => {
+    const m = composeKitchenMap(
+      makeRaw({ cultural_priors: [priorRow('active', 'halal', 'gospel_truth')] }),
+    );
+    expect(m.cultural.active[0]?.enforcement).toBe('just_for_context');
+  });
+});
+
+// Slice 2.5-s1 — bag_composition_pattern is derived from the booleans.
+describe('composeKitchenMap — bag_composition_pattern derivation', () => {
+  function childRow(snack: boolean, extra: boolean) {
+    return {
+      id: UUID(10),
+      name: 'Layla',
+      age_band: 'child' as const,
+      declared_allergens: [],
+      cultural_identifiers: [],
+      dietary_preferences: [],
+      bag_composition: { main: true, snack, extra },
+      extra_rules: { pins: [], bans: [] },
+    };
+  }
+
+  it("snack=false, extra=false → 'main_only'", () => {
+    const m = composeKitchenMap(makeRaw({ children: [childRow(false, false)] }));
+    expect(m.children[0]?.bag_composition_pattern).toBe('main_only');
+  });
+
+  it("snack=true, extra=false → 'main_plus_snack'", () => {
+    const m = composeKitchenMap(makeRaw({ children: [childRow(true, false)] }));
+    expect(m.children[0]?.bag_composition_pattern).toBe('main_plus_snack');
+  });
+
+  it("snack=false, extra=true → 'main_plus_extra'", () => {
+    const m = composeKitchenMap(makeRaw({ children: [childRow(false, true)] }));
+    expect(m.children[0]?.bag_composition_pattern).toBe('main_plus_extra');
+  });
+
+  it("snack=true, extra=true → 'main_plus_snack_plus_extra'", () => {
+    const m = composeKitchenMap(makeRaw({ children: [childRow(true, true)] }));
+    expect(m.children[0]?.bag_composition_pattern).toBe('main_plus_snack_plus_extra');
+  });
+});
+
+// Slice 2.5-s1 — five new top-level arrays. Each empty by default;
+// projection passes through raw rows verbatim with defensive enforcement
+// coercion for rogue values.
+describe('composeKitchenMap — Epic 2.5 structured signal arrays', () => {
+  it('emits empty arrays for an existing household (no rows in new tables)', () => {
+    const m = composeKitchenMap(makeRaw());
+    expect(m.allergens).toEqual([]);
+    expect(m.dietary).toEqual([]);
+    expect(m.food_preferences).toEqual([]);
+    expect(m.favorite_lunches).toEqual([]);
+    expect(m.rules).toEqual([]);
+  });
+
+  it('projects allergen rows verbatim', () => {
+    const m = composeKitchenMap(
+      makeRaw({
+        allergens: [
+          { child_id: UUID(10), allergen: 'peanut', source: 'onboarding_declared' },
+        ],
+      }),
+    );
+    expect(m.allergens).toEqual([
+      { child_id: UUID(10), allergen: 'peanut', source: 'onboarding_declared' },
+    ]);
+  });
+
+  it('projects dietary rows verbatim with valid enforcement', () => {
+    const m = composeKitchenMap(
+      makeRaw({
+        dietary: [
+          {
+            child_id: null,
+            tag: 'halal',
+            enforcement: 'non_negotiable',
+            source: 'onboarding_declared',
+          },
+        ],
+      }),
+    );
+    expect(m.dietary[0]?.enforcement).toBe('non_negotiable');
+  });
+
+  it("falls back to 'just_for_context' for rogue dietary enforcement", () => {
+    const m = composeKitchenMap(
+      makeRaw({
+        dietary: [
+          {
+            child_id: null,
+            tag: 'halal',
+            enforcement: 'gospel_truth',
+            source: 'onboarding_declared',
+          },
+        ],
+      }),
+    );
+    expect(m.dietary[0]?.enforcement).toBe('just_for_context');
+  });
+
+  it("falls back to 'soft' for rogue food_preference enforcement", () => {
+    const m = composeKitchenMap(
+      makeRaw({
+        food_preferences: [
+          {
+            child_id: null,
+            item: 'cilantro',
+            valence: 'refuses',
+            enforcement: 'beyond_law',
+            source: 'onboarding_declared',
+          },
+        ],
+      }),
+    );
+    expect(m.food_preferences[0]?.enforcement).toBe('soft');
+  });
+
+  it('projects favorite_lunch rows preserving position', () => {
+    const m = composeKitchenMap(
+      makeRaw({
+        favorite_lunches: [
+          { item: 'dal chawal', provenance: 'onboarding_seed', position: 2 },
+        ],
+      }),
+    );
+    expect(m.favorite_lunches[0]?.position).toBe(2);
+  });
+
+  it('projects household_rule rows verbatim with null custom_label for non-custom', () => {
+    const m = composeKitchenMap(
+      makeRaw({
+        rules: [
+          {
+            rule_type: 'no_pork',
+            custom_label: null,
+            enforcement: 'non_negotiable',
+            source: 'onboarding_declared',
+          },
+        ],
+      }),
+    );
+    expect(m.rules[0]?.custom_label).toBeNull();
+    expect(m.rules[0]?.enforcement).toBe('non_negotiable');
+  });
 });
 
 describe('composeKitchenMap — memory', () => {
-  it('passes valid node types through', () => {
+  it('passes valid (narrowed) node types through', () => {
     const m = composeKitchenMap(
       makeRaw({
         memory_nodes: [
-          {
-            node_type: 'preference',
-            facet: 'palate',
-            prose_text: 'Loves yogurt and rice.',
-            subject_child_id: UUID(10),
-          },
           {
             node_type: 'rhythm',
             facet: 'family_rhythm',
             prose_text: 'Friday is leftover night.',
             subject_child_id: null,
+          },
+          {
+            node_type: 'child_obsession',
+            facet: 'fixation',
+            prose_text: 'Layla only wants pasta this month.',
+            subject_child_id: UUID(10),
           },
         ],
       }),
@@ -300,6 +482,26 @@ describe('composeKitchenMap — memory', () => {
             node_type: 'opinion',
             facet: 'x',
             prose_text: 'y',
+            subject_child_id: null,
+          },
+        ],
+      }),
+    );
+    expect(m.memory.nodes).toHaveLength(0);
+  });
+
+  // Slice 2.5-s2 — node_types narrowed; rogue rows of removed types
+  // (e.g. lingering 'preference' if a soft-forgotten row somehow gets
+  // returned by a misbehaving repository) are silently excluded by the
+  // VALID_MEMORY_NODE_TYPES filter.
+  it("excludes node_type='preference' from the projection", () => {
+    const m = composeKitchenMap(
+      makeRaw({
+        memory_nodes: [
+          {
+            node_type: 'preference',
+            facet: 'palate',
+            prose_text: 'Loves yogurt.',
             subject_child_id: null,
           },
         ],

@@ -3,7 +3,7 @@ import { ThemeToggle } from './ThemeToggle.js';
 
 export function AppHeader() {
   return (
-    <header className="border-b border-border/20 bg-bg">
+    <header className="border-b border-neutral-400/30 bg-bg">
       <div className="mx-auto flex w-full max-w-7xl items-center justify-between px-6 py-4">
         <div className="flex items-center gap-2">
           <span className="font-serif text-3xl italic text-amber-warm">HiveKitchen</span>

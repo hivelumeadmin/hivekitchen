@@ -1,0 +1,367 @@
+<!DOCTYPE html>
+
+<html class="dark" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>HiveKitchen | Visible Memory</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&amp;family=Inter:wght@300;400;500;600;700&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script id="tailwind-config">
+  tailwind.config = {
+    darkMode: "class",
+    theme: {
+      extend: {
+        "colors": {
+                "surface-bright": "#3b3935",
+                "surface-variant": "#373431",
+                "on-primary-container": "#522e00",
+                "inverse-on-surface": "#32302d",
+                "foliage": "#7A9681",
+                "warm-neutral-50": "#FAF7F2",
+                "sacred-plum": "#8A5F72",
+                "on-error": "#690005",
+                "surface-container-lowest": "#100e0b",
+                "warm-neutral-800": "#262420",
+                "tertiary": "#b0ceb7",
+                "surface-container-highest": "#373431",
+                "surface-container": "#211f1c",
+                "secondary": "#ffb59a",
+                "on-primary-fixed-variant": "#693c00",
+                "surface": "#1C1A17",
+                "secondary-fixed-dim": "#ffb59a",
+                "on-tertiary-container": "#223c2b",
+                "on-surface": "#e7e1dc",
+                "primary-fixed-dim": "#ffb86f",
+                "on-secondary-container": "#f5a081",
+                "surface-dim": "#151310",
+                "error-container": "#93000a",
+                "background": "#1C1A17",
+                "safety-red": "#C65A4E",
+                "safety-cleared-teal": "#5A9C8B",
+                "surface-container-high": "#2c2a26",
+                "amber-warm": "#E69A3D",
+                "error": "#ffb4ab",
+                "primary": "#ffb86f",
+                "on-secondary-fixed-variant": "#72351d",
+                "on-background": "#e7e1dc",
+                "on-secondary-fixed": "#380d00",
+                "inverse-surface": "#e7e1dc",
+                "secondary-fixed": "#ffdbcf",
+                "on-secondary": "#552009",
+                "primary-fixed": "#ffdcbd",
+                "border-radius-xl": "24px",
+                "surface-container-low": "#1d1b18",
+                "border-radius-sm": "6px",
+                "primary-container": "#d98f3c",
+                "warm-neutral-900": "#1C1A17",
+                "warm-neutral-400": "#7B7668",
+                "outline-variant": "#524437",
+                "on-tertiary-fixed": "#062012",
+                "border-radius-lg": "16px",
+                "on-primary-fixed": "#2c1600",
+                "on-tertiary-fixed-variant": "#334c3b",
+                "on-tertiary": "#1c3625",
+                "inverse-primary": "#8a5100",
+                "secondary-container": "#72351d",
+                "warm-neutral-700": "#2F2D27",
+                "outline": "#a08d7e",
+                "on-error-container": "#ffdad6",
+                "tertiary-fixed": "#ccead2",
+                "tertiary-fixed-dim": "#b0ceb7",
+                "lumi-terracotta-warmed": "#C88A6E",
+                "tertiary-container": "#8aa690",
+                "on-primary": "#4a2900",
+                "surface-tint": "#ffb86f",
+                "on-surface-variant": "#d7c3b2",
+                "border-radius-md": "10px",
+                "lumi-terracotta": "#B46A4E",
+                "honey-accent": "#E69A3D"
+        },
+        "borderRadius": {
+                "DEFAULT": "0.25rem",
+                "lg": "0.5rem",
+                "xl": "0.75rem",
+                "full": "9999px"
+        },
+        "spacing": {
+                "unit": "4px",
+                "container-margin": "32px",
+                "card-padding": "24px",
+                "gutter": "20px",
+                "brief-padding": "48px",
+                "section-gap": "80px"
+        },
+        "fontFamily": {
+                "headline": [
+                        "Instrument Serif",
+                        "serif"
+                ],
+                "display": [
+                        "Instrument Serif",
+                        "serif"
+                ],
+                "body": [
+                        "Inter",
+                        "sans-serif"
+                ],
+                "label": [
+                        "Inter",
+                        "sans-serif"
+                ]
+        }
+},
+    },
+  }
+</script>
+<style>
+        .material-symbols-outlined {
+            font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+            vertical-align: middle;
+        }
+        .lumi-glow {
+            box-shadow: 0 0 15px rgba(230, 154, 61, 0.4);
+        }
+    </style>
+</head>
+<body class="bg-warm-neutral-900 text-on-surface font-body selection:bg-amber-warm/30">
+<!-- TopAppBar -->
+<header class="border-b border-outline/20 bg-warm-neutral-900">
+<div class="flex justify-between items-center w-full px-6 py-4 max-w-7xl mx-auto">
+<!-- Brand Logo -->
+<div class="flex items-center gap-2">
+<span class="font-headline text-2xl italic text-amber-warm">HiveKitchen</span>
+</div>
+<!-- Multimedia/Status Icons -->
+<div class="flex items-center gap-6 text-on-surface-variant">
+<button aria-label="Notifications" class="hover:text-amber-warm transition-colors">
+<span class="material-symbols-outlined text-[22px]">notifications</span>
+</button>
+<button aria-label="User Profile" class="hover:text-amber-warm transition-colors">
+<span class="material-symbols-outlined text-[22px]">account_circle</span>
+</button>
+</div>
+</div>
+</header>
+<div class="flex min-h-screen">
+<main class="flex-1 max-w-4xl mx-auto px-6 py-16 md:py-24">
+<!-- Editorial Header -->
+<section class="text-center mb-20">
+<p class="font-label text-[11px] tracking-[0.2em] text-amber-warm uppercase font-bold mb-4">VISIBLE MEMORY · UPDATED 9 MAY</p>
+<h1 class="font-display text-4xl md:text-[56px] leading-[1.1] text-on-surface mb-6">What Lumi knows about your kitchen.</h1>
+<p class="font-body text-lg text-on-surface-variant max-w-2xl mx-auto leading-relaxed">
+                    Lumi only suggests things that fit. If anything here is wrong, change it — Lumi listens.
+                </p>
+</section>
+<!-- Collective Kitchen Identity Section -->
+<section class="mb-16">
+<h2 class="font-label text-[11px] tracking-[0.2em] text-on-surface-variant uppercase font-bold mb-8">COLLECTIVE KITCHEN IDENTITY</h2>
+<div class="bg-warm-neutral-800 border border-outline/20 rounded-2xl p-8 md:p-12 relative overflow-hidden">
+<blockquote class="font-display text-2xl md:text-3xl text-sacred-plum italic leading-relaxed mb-10">
+    "A blend of Punjabi and Gujarati traditions, rooted in a Halal household where flavor is non-negotiable but heat is tempered for the little ones."
+</blockquote>
+<div class="grid grid-cols-1 md:grid-cols-3 gap-8 mb-8">
+<div>
+<div class="flex items-center gap-2 text-amber-warm mb-3">
+<span class="material-symbols-outlined">public</span>
+<h3 class="font-bold text-sm tracking-wider uppercase">Cultural Heritage</h3>
+</div>
+<p class="text-on-surface-variant text-sm leading-relaxed">A rich blend of Punjabi and Gujarati traditions. Cooking centers around hearty, comforting meals that celebrate these dual heritages.</p>
+</div>
+<div>
+<div class="flex items-center gap-2 text-amber-warm mb-3">
+<span class="material-symbols-outlined">shield</span>
+<h3 class="font-bold text-sm tracking-wider uppercase">Dietary Guardrails</h3>
+</div>
+<ul class="text-on-surface-variant text-sm leading-relaxed list-disc list-inside">
+<li>Halal</li>
+<li>Nut-free</li>
+<li>Egg-free</li>
+</ul>
+</div>
+<div>
+<div class="flex items-center gap-2 text-amber-warm mb-3">
+<span class="material-symbols-outlined">restaurant</span>
+<h3 class="font-bold text-sm tracking-wider uppercase">Shared Tastes</h3>
+</div>
+<p class="text-on-surface-variant text-sm leading-relaxed">Strong preference for warm spices like cumin and coriander over chili. Flavor is paramount, but heat levels are kept mild.</p>
+</div>
+</div>
+<div class="flex justify-end">
+<button class="text-amber-warm text-sm font-medium hover:underline flex items-center gap-1">
+    Refine collective identity <span class="material-symbols-outlined text-[16px]">edit</span>
+</button>
+</div>
+</div>
+</section>
+<!-- Children Section -->
+<section class="mb-16">
+<h2 class="font-label text-[11px] tracking-[0.2em] text-on-surface-variant uppercase font-bold mb-8">CHILDREN</h2>
+<div class="space-y-8">
+<!-- Card 1: Aarav -->
+<div class="bg-warm-neutral-800 border border-outline/20 rounded-lg p-8 relative overflow-hidden">
+<div class="absolute left-0 top-0 bottom-0 w-1 bg-amber-warm/20"></div>
+<div class="flex flex-col md:flex-row gap-8">
+<div class="flex-shrink-0">
+<div class="w-20 h-20 rounded-full border-2 border-outline/20 flex items-center justify-center bg-surface-bright bg-[url('https://www.transparenttextures.com/patterns/carbon-fibre.png')] bg-opacity-10">
+<span class="font-display text-4xl text-amber-warm font-medium">A</span>
+</div>
+</div>
+<div class="flex-1">
+<div class="flex justify-between items-start mb-4">
+<div>
+<h3 class="font-display text-3xl text-on-surface">Aarav, 9</h3>
+<span class="inline-block bg-surface-bright text-safety-cleared-teal text-[12px] font-medium px-3 py-1 rounded-full mt-2">Greenfield Primary</span>
+</div>
+<button class="text-amber-warm text-sm font-medium hover:underline">Edit</button>
+</div>
+<div class="text-[11px] tracking-[0.05em] font-bold text-on-surface-variant/60 uppercase mb-4 flex flex-wrap gap-x-4">
+<span>HALAL</span>
+<span>•</span>
+<span>SOUTH ASIAN HOUSEHOLD</span>
+<span>•</span>
+<span>HOT FOOD UNAVAILABLE AT SCHOOL</span>
+</div>
+<div class="grid grid-cols-1 md:grid-cols-2 gap-8 mt-6">
+<div>
+<p class="text-[12px] font-bold text-safety-red uppercase tracking-wider mb-3">Allergies</p>
+<div class="space-y-2">
+<div class="flex items-center gap-2 text-safety-red">
+<span class="material-symbols-outlined text-[18px]">warning</span>
+<span class="font-medium text-body-md">TREE NUTS — life-threatening</span>
+</div>
+<div class="flex items-center gap-2 text-on-surface-variant">
+<span class="material-symbols-outlined text-[18px]">info</span>
+<span class="font-medium text-body-md">Sesame — caution</span>
+</div>
+</div>
+</div>
+<div>
+<p class="text-[12px] font-bold text-amber-warm uppercase tracking-wider mb-3">Lumi Learning</p>
+<div class="space-y-3 text-on-surface-variant">
+<p class="text-sm"><span class="text-on-surface">Loves:</span> chickpeas, paneer, chutney</p>
+<p class="text-sm"><span class="text-on-surface">Avoids:</span> cucumber, tomato</p>
+<div class="bg-amber-warm/10 p-3 rounded-lg border border-amber-warm/20 mt-2">
+<p class="text-xs italic text-lumi-terracotta">"Rated highest: cumin chicken pita"</p>
+</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+<!-- Card 2: Layla -->
+<div class="bg-warm-neutral-800 border border-outline/20 rounded-lg p-8 relative overflow-hidden">
+<div class="absolute left-0 top-0 bottom-0 w-1 bg-amber-warm/20"></div>
+<div class="flex flex-col md:flex-row gap-8">
+<div class="flex-shrink-0">
+<div class="w-20 h-20 rounded-full border-2 border-outline/20 flex items-center justify-center bg-surface-bright bg-[url('https://www.transparenttextures.com/patterns/carbon-fibre.png')] bg-opacity-10">
+<span class="font-display text-4xl text-amber-warm font-medium">L</span>
+</div>
+</div>
+<div class="flex-1">
+<div class="flex justify-between items-start mb-4">
+<div>
+<h3 class="font-display text-3xl text-on-surface">Layla, 7</h3>
+<span class="inline-block bg-surface-bright text-safety-cleared-teal text-[12px] font-medium px-3 py-1 rounded-full mt-2">Brookmere CofE Primary · Nut-free policy</span>
+</div>
+<button class="text-amber-warm text-sm font-medium hover:underline">Edit</button>
+</div>
+<div class="text-[11px] tracking-[0.05em] font-bold text-on-surface-variant/60 uppercase mb-4 flex flex-wrap gap-x-4">
+<span>HALAL</span>
+<span>•</span>
+<span>DAIRY-LIGHT</span>
+</div>
+<div class="grid grid-cols-1 md:grid-cols-2 gap-8 mt-6">
+<div>
+<p class="text-[12px] font-bold text-safety-red uppercase tracking-wider mb-3">Allergies</p>
+<div class="space-y-2">
+<div class="flex items-center gap-2 text-safety-red">
+<span class="material-symbols-outlined text-[18px]">warning</span>
+<span class="font-medium text-body-md">EGGS — life-threatening</span>
+</div>
+</div>
+</div>
+<div>
+<p class="text-[12px] font-bold text-amber-warm uppercase tracking-wider mb-3">Lumi Learning</p>
+<div class="space-y-3 text-on-surface-variant">
+<p class="text-sm"><span class="text-on-surface">Loves:</span> paneer kathi rolls, carrot ribbons</p>
+<p class="text-sm"><span class="text-on-surface">Avoids:</span> pickles, spicy food</p>
+</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+<div class="flex flex-wrap gap-4 mt-8 pt-4">
+<div class="flex items-center gap-2 px-4 py-2 bg-warm-neutral-800 rounded-full border border-outline/20 shadow-sm">
+<span class="material-symbols-outlined text-[18px] text-amber-warm">restaurant</span>
+<span class="text-sm font-medium text-on-surface">Halal</span>
+</div>
+<div class="flex items-center gap-2 px-4 py-2 bg-warm-neutral-800 rounded-full border border-outline/20 shadow-sm">
+<span class="material-symbols-outlined text-[18px] text-safety-cleared-teal">block</span>
+<span class="text-sm font-medium text-on-surface">Nut-Free</span>
+</div>
+<div class="flex items-center gap-2 px-4 py-2 bg-warm-neutral-800 rounded-full border border-outline/20 shadow-sm">
+<span class="material-symbols-outlined text-[18px] text-lumi-terracotta-warmed">public</span>
+<span class="text-sm font-medium text-on-surface">Punjabi-Gujarati</span>
+</div>
+</div>
+</section>
+<!-- Schools Section -->
+<section class="mb-16">
+<div class="flex justify-between items-end mb-8">
+<h2 class="font-label text-[11px] tracking-[0.2em] text-on-surface-variant uppercase font-bold">SCHOOLS</h2>
+</div>
+<div class="bg-warm-neutral-800 rounded-lg border border-outline/20">
+<div class="px-6 py-4 flex justify-between items-center border-b border-outline/10">
+<span class="font-display text-xl">Greenfield Primary</span>
+<span class="material-symbols-outlined text-on-surface-variant">chevron_right</span>
+</div>
+<div class="px-6 py-4 flex justify-between items-center">
+<span class="font-display text-xl">Brookmere CofE Primary</span>
+<span class="material-symbols-outlined text-on-surface-variant">chevron_right</span>
+</div>
+</div>
+<button class="w-full mt-4 py-4 border border-dashed border-outline/30 rounded-lg text-on-surface-variant hover:text-on-surface hover:border-outline/50 transition-all flex items-center justify-center gap-2">
+<span class="material-symbols-outlined">add</span>
+<span class="font-medium">Add a school</span>
+</button>
+</section>
+<!-- Calendar Summary -->
+<section class="mb-16">
+<h2 class="font-label text-[11px] tracking-[0.2em] text-on-surface-variant uppercase font-bold mb-8">CALENDAR</h2>
+<div class="bg-warm-neutral-800 border border-outline/20 rounded-lg p-6 flex flex-col md:flex-row justify-between items-start md:items-center gap-6">
+<div class="flex gap-8">
+<div>
+<p class="text-[10px] text-on-surface-variant uppercase font-bold mb-1">CURRENT TERM</p>
+<p class="font-display text-lg">Ends Friday, 19 July</p>
+</div>
+<div>
+<p class="text-[10px] text-lumi-terracotta uppercase font-bold mb-1">UPCOMING TRIP</p>
+<p class="font-display text-lg">Tue, 14 May · Science Museum</p>
+</div>
+</div>
+<a class="flex items-center gap-2 text-amber-warm font-medium hover:underline" href="#">
+<span class="material-symbols-outlined">calendar_today</span>
+<span>Sync Google Calendar</span>
+</a>
+</div>
+</section>
+<!-- Privacy Footer -->
+<footer class="mt-auto border-t border-outline/10 bg-warm-neutral-900 py-12">
+<div class="max-w-7xl mx-auto px-8 flex flex-col md:flex-row justify-between items-center gap-8">
+<div class="text-on-surface-variant font-body text-caption uppercase tracking-widest">
+      (C) 2026 HIVELUME LLC
+    </div>
+<div class="flex gap-8 text-on-surface-variant font-body text-caption uppercase tracking-widest">
+<a class="hover:text-amber-warm transition-colors" href="#">Privacy Policy</a>
+<a class="hover:text-amber-warm transition-colors" href="#">Terms of Service</a>
+<a class="hover:text-amber-warm transition-colors" href="#">Help Center</a>
+</div>
+</div>
+</footer>
+</main>
+</div>
+</body></html>

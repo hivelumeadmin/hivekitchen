@@ -291,11 +291,36 @@ Amendments from Step 4 Party Mode (Winston / Mary / John / Sally / Amelia) are i
 - Every table carries `household_id NOT NULL` (exceptions: `users`, `audit_log`, `allergy_rules`, cross-household reference tables).
 
 **1.2 Visible Memory data model — hybrid relational core + JSONB provenance sidecar + pre-composed prose on the Brief projection [amended — Sally + Amelia].**
-- Core table `memory_nodes`: `(id uuid pk, household_id uuid not null, node_type enum('preference','rhythm','cultural_rhythm','allergy','child_obsession','school_policy','other') not null, facet text not null, subject_child_id uuid null, prose_text text not null, soft_forget_at timestamptz null, hard_forgotten boolean not null default false, created_at timestamptz not null, updated_at timestamptz not null)`.
+- Core table `memory_nodes`: `(id uuid pk, household_id uuid not null, node_type enum('rhythm','child_obsession','other') not null [amended — Slice 2.5-s2: narrowed from 7 to 3 values; 'preference','cultural_rhythm','allergy','school_policy' backfilled into structured tables and soft-forgotten.], facet text not null, subject_child_id uuid null, prose_text text not null, soft_forget_at timestamptz null, hard_forgotten boolean not null default false, created_at timestamptz not null, updated_at timestamptz not null)`.
 - Sidecar `memory_provenance` (1-to-many): `(id uuid pk, memory_node_id uuid fk, source_type enum('onboarding','turn','tool','user_edit','plan_outcome','import') not null, source_ref jsonb not null, captured_at timestamptz not null, captured_by uuid null, confidence numeric(3,2) not null, superseded_by uuid null)`.
 - **Pre-composed prose on projection:** the per-household `brief_state` projection (1.5) carries a `memory_prose` snapshot column populated by an upstream composer at plan-compose time. The Brief never joins core + sidecar at render. Sidecar is for audits, source-ledger chips on tap, and plan-generation context loads — not for the ambient-memory render path (Sally: "ambient memory must not become uncanny-valley memory").
 - Forget semantics: `soft_forget_at` keeps the row inactive-retained; nightly job promotes soft → hard at `soft_forget_at + 30d`. Hard forget writes a tombstone row to `audit_log` then purges `memory_nodes` + cascades to `memory_embeddings` row + `memory_provenance` rows. Both routes audit-logged with `category='memory.forget'`.
 - Rejected: pure JSONB blob (forget semantics complex, indexable facets lost); event-sourced log-only (rebuild on read hurts <90s plan-generation SLO).
+- **Slice 2.5-s2 completion note:** the `node_type` enum was narrowed to `('rhythm','child_obsession','other')` in slice 2.5-s2. Rows of the four removed types (`'preference','cultural_rhythm','allergy','school_policy'`) were soft-forgotten in migration `20260904000100`; eligible `'cultural_rhythm'` rows backfilled into `cultural_priors` (state `'suggested'`, tier `'L3'`). The DB enum was narrowed in `20260904000300` (guard verifies all deprecated rows are soft-forgotten before the type change). The `memory.note` Zod schema rejects deprecated types at the parse boundary; the deprecation warn log was removed.
+
+**1.2b Structured signal tables — five new tables capturing Epic 2.5 chaptered-conversation outputs [Epic 2.5, slice 2.5-s1 — Winston].**
+
+The Epic 2.5 onboarding chapter conversation requires structured shapes that `memory_nodes` (qualitative narrative) cannot represent natively. Five new tables, one per signal type, each scoped under `household_id` with appropriate FK cascades. Sourced and idempotent via hash columns where the underlying value is encrypted.
+
+- **`enforcement_level` enum** (migration `20260903000000`) — five-rung enforcement strength, increasing strictness: `non_negotiable`, `strong`, `default`, `soft`, `just_for_context`. Allergens are intentionally not routed through this enum (uniformly hard per FR122-equivalent intent). Paired TS contract: `EnforcementLevelSchema` in `packages/contracts/src/enforcement.ts`; DB↔TS parity is testable via `pg_enum` query.
+
+- **`child_allergens`** — per-child medical allergens; one row per allergen per child. Replaces (long-term, post-Epic-2.5 backfill in 2.5-s2) the JSONB-array column `children.declared_allergens`. **No `severity` column** — uniform-strength model per locked policy. Columns: `id uuid pk, household_id uuid fk, child_id uuid fk, allergen text encrypted, allergen_hash text, source text check (...), created_at, updated_at`. UNIQUE `(child_id, allergen_hash)` for idempotency. Hash is `SHA-256(lower(trim(plaintext)))` via `normalizedHash()` in `apps/api/src/lib/envelope-encryption.ts`.
+
+- **`food_preferences`** — open-vocabulary likes/dislikes. `child_id NULL` = household-scoped. Columns: `id, household_id, child_id (nullable), item text encrypted, item_hash text, valence text check ('loves' | 'likes' | 'neutral' | 'dislikes' | 'refuses'), enforcement enforcement_level default 'soft', source text check (...), created_at, updated_at`. UNIQUE `(household_id, COALESCE(child_id, sentinel), item_hash)`. Routes "X hates broccoli" → `food_preference.declare(valence='refuses')`, distinguishing it from medical allergens which always route to `child_allergens` via `allergen.declare`.
+
+- **`dietary_preferences`** (the table — distinct from the legacy encrypted-JSONB column `households.dietary_preferences`) — closed-vocabulary dietary identity. `child_id NULL` = household-scoped (the default post-Epic-2.5). Columns: `id, household_id, child_id (nullable), tag text, enforcement enforcement_level default 'default', source text check (...), created_at, updated_at`. UNIQUE `(household_id, COALESCE(child_id, sentinel), tag)`. Tag is vocabulary-validated, not encrypted; matches the `dietary_tags` vocabulary table. Naming collision with the household column is accepted (mirrors `child_allergens` ≠ `children.declared_allergens`); SQL qualifies with table name; TS uses distinct schemas (`KitchenMapDietarySchema` vs `KitchenMapHouseholdSchema.dietary_preferences`).
+
+- **`favorite_lunches`** — household-scoped cold-start seed (Epic 2.5 Moment 5; FR124-equivalent). Columns: `id, household_id, item text encrypted, item_hash text, provenance text check ('onboarding_seed' | 'parent_added' | 'plan_promoted'), position integer, created_at, updated_at`. UNIQUE `(household_id, item_hash)`. Ordered by `position` for stable rendering.
+
+- **`household_rules`** — closed set of common rules + custom escape hatch. Columns: `id, household_id, rule_type text check ('no_pork' | 'no_alcohol' | 'no_beef' | 'no_overnight_leftovers' | 'no_microwave_at_school' | 'custom'), custom_label text encrypted (nullable; required iff rule_type='custom'), custom_label_hash text (nullable), enforcement enforcement_level default 'strong', source text check (...), created_at, updated_at`. Two partial unique indexes: `(household_id, rule_type) WHERE rule_type <> 'custom'` and `(household_id, custom_label_hash) WHERE rule_type = 'custom'`. CHECK constraint enforces label-iff-custom consistency.
+
+- **Cache invalidation:** all five tables carry `kitchen_map_version` bump triggers (migration `20260903000900`) so writes invalidate the Redis cache (Tier A) atomically via the existing `bump_kitchen_map_version()` trigger function from `20260820000000`.
+
+- **Cultural priors extension:** `ALTER TABLE cultural_priors ADD COLUMN enforcement enforcement_level NOT NULL DEFAULT 'just_for_context'` (migration `20260903000700`). Existing priors default to advisory (matches shipped behaviour); promotion to `strong`/`non_negotiable` happens via the cultural ratification flow (slices 2.5-s7 + 2.5-s10). The state machine is unchanged — enforcement is an orthogonal axis.
+
+- **Onboarding moment state:** `onboarding_moment_state(household_id pk fk cascade, current_moment text check (8 values incl. 'finalized'), required_set_status jsonb default '{}', timestamps)` — sidecar to the existing threads/thread_turns machinery (2-s26 reused those rather than introducing a new state table). Tracks chaptered-conversation progression; required-set definition lands in slice 2.5-s4.
+
+- **Composer performance contract:** `KitchenMapRepository.loadRaw` adds five parallel queries (one per new table) inside the existing `Promise.all` block; per-query latency budget ≤ 50ms on Postgres p95. Combined cold-path Kitchen Map composition target ≤ 80ms p95 (matches today's 7-source baseline within the existing single-row read pattern; new tables are indexed on `household_id`). Evolution path to a projection table is documented in `_bmad-output/planning-artifacts/sprint-change-proposal-2026-05-19.md` and is deferred until measured p95 > 150ms.
 
 **1.3 pgvector — `hnsw` for append-only writes, `ivfflat` for static catalogue [amended — Winston].**
 - `memory_embeddings` and `thread_turn_embeddings` use **`hnsw`** index (pgvector 0.5+). Append-only growth with 50k HH makes ivfflat's reindex treadmill a 12-month operational tax.
@@ -340,9 +365,11 @@ Amendments from Step 4 Party Mode (Winston / Mary / John / Sally / Amelia) are i
 - **Grace window [amended]:** submission within **60 seconds after `exp`** accepted (offline-device clock drift); submission beyond grace → 410.
 - Sibling-device: separate `nonce` per `(child, device-open-event)`. No cross-child signal leakage.
 
-**2.4 Envelope encryption — extended scope to Safety-Classified-Sensitive fields [amended — Mary].**
-- Encrypted field set: `children.declared_allergens` (JSONB), `children.cultural_identifiers` (JSONB), `children.dietary_preferences` (JSONB), `heart_notes.content` (text), `households.caregiver_relationships` (JSONB).
+**2.4 Envelope encryption — extended scope to Safety-Classified-Sensitive fields [amended — Mary; Epic 2.5 additions — Winston].**
+- Encrypted field set: `children.declared_allergens` (JSONB), `children.cultural_identifiers` (JSONB), `children.dietary_preferences` (JSONB), `heart_notes.content` (text), `households.caregiver_relationships` (JSONB), `households.cultural_identifiers` (text), `households.dietary_preferences` (text), `households.declared_allergens` (text). **Epic 2.5 additions (slice 2.5-s1):** `child_allergens.allergen` (text), `food_preferences.item` (text), `favorite_lunches.item` (text), `household_rules.custom_label` (text nullable).
 - Rationale (Mary): California AB 2273 most-protective-defaults doesn't distinguish allergen vs. other child-sensitive data; the Brief centers culturally-identified households as a stakeholder voice. Narrowing to allergens alone fails the AADC DPIA standard.
+- **JSONB column deprecation note:** backfill ran in slice 2.5-s2 (`scripts/migrations/2-5-s2-backfill.ts`). `children.declared_allergens`, `children.cultural_identifiers`, `children.dietary_preferences` (and `households.cultural_identifiers`) per-row entries were migrated into `child_allergens` / `dietary_preferences` / `cultural_priors`. Columns remain live through Epic 2.5 (both columns and new tables coexist); removal post-Epic-2.5.
+- **Hash-column idempotency pattern (slice 2.5-s1):** for any encrypted free-text column that needs dedupe, pair with a `<col>_hash text` column populated by `normalizedHash(value) = SHA-256(lower(trim(plaintext)))` (helper in `apps/api/src/lib/envelope-encryption.ts`). AES-GCM uses a random nonce per encrypt call, so the ciphertext bytes are non-deterministic — the hash provides a stable dedupe key while keeping the value at rest encrypted.
 - DEK per household, wrapped by Supabase Vault KEK. KEK rotation operational; DEK rotation triggers offline re-encryption job.
 - Access to any encrypted field goes through an audit-logged decryption endpoint; ops/eng cannot casually read.
 
@@ -386,6 +413,7 @@ Amendments from Step 4 Party Mode (Winston / Mary / John / Sally / Amelia) are i
 - **Payload [amended — Amelia]:** early-ack to ElevenLabs returns `{ response: "one sec.", continuation: { resume_token, expected_within_ms } }`. Continuation handler runs async, emits final spoken response via the thread's SSE channel; ElevenLabs plays acknowledgement first, then the continuation.
 - Budget composition: 200ms thread load + 300ms intent classification + `sum(tool estimates)` + 500ms audit + persist. Any tool without a `maxLatencyMs` declaration fails CI.
 - **Runtime audit of declarations [amended — Occam T]:** every tool invocation records actual latency to a Redis sliding-window histogram (`tool_latency:{tool_name}` with 24h window). A Grafana alert fires when sampled p95 > declared `maxLatencyMs × 1.5` for ≥1h sustained. Declarations are the **contract**; sampling is the **early-warning audit**. Without runtime sampling, a tool can drift slow without triggering the budget logic until the static `maxLatencyMs` is updated by a human — which won't happen if the contract isn't being looked at. With sampling, drift is alarmed in <2h.
+- **Epic 2.5 tool additions [slice 2.5-s1]:** seven new onboarding tool stubs registered in `tools.manifest.ts`: `household.set_name` (80ms), `allergen.declare` (120ms), `dietary.declare` (100ms), `cuisine.declare` (100ms), `food_preference.declare` (120ms), `favorite_lunch.add` (120ms), `rule.set` (100ms). All seven start as `NotImplementedError`-throwing stubs (the same pattern as existing onboarding tools) — `OnboardingService` overwrites each entry with the real wired spec when 2.5-s4 ships the agent prompt v2 that knows how to invoke them. Until that slice ships, the tools are NOT exposed to OpenAI (they are absent from the array returned by `createOnboardingToolSpecs`); the contracts and manifest entries exist so downstream slices can `import` them without runtime risk. Pino info logs from the stub factories include `action: '<tool>.stub'` to make accidental invocations visible during dev.
 
 **3.6 Rate limiting — `@fastify/rate-limit` + Redis store.**
 - Per-household + per-endpoint + per-tier (Standard voice 10min/week per FR58; plan regen 5/week/HH; Lunch Link per-channel vendor caps).
@@ -1681,3 +1709,57 @@ All issues found during Steps 4–6 party-mode and advanced-elicitation passes w
 8. Local dev workflow scripts (`supabase:start`, `seed:dev`, `dev`) wired in root `package.json`.
 
 After Bootstrap, follow the Implementation Sequence in §Decision Impact Analysis (Auth → Data Foundation → Plan Generation → Thread/Voice → Lunch Link → Coordination → Visible Memory → Billing → Grocery → Ops).
+
+---
+
+## §X — OnboardingAgent Contract (Amendment A5, Sprint 2026-05-19)
+
+Introduced by the Epic 2.5 sprint pivot (`_bmad-output/planning-artifacts/sprint-change-proposal-2026-05-19.md`, §4.C). Shipped via slice 2.5-s4. The OnboardingAgent moves from a one-shot conversational prompt to a **stateful, chaptered conversation** with a structured progression and an explicit completion gate. This section captures the contract every downstream slice (2.5-s5 through 2.5-s10) builds on.
+
+**Chaptered conversation model.** The text-mode onboarding interview is divided into five moments plus a summary:
+
+| Moment | Key | Required / Optional | Exit condition |
+|---|---|---|---|
+| Who's at the table | `m1_table` | Required | household.display_name set AND ≥1 child declared |
+| What I need to keep safe | `m2_safe` | Required (safety wall) | Explicit allergen response captured for ≥1 child (including the "no known allergens" path) |
+| How your kitchen tastes | `m3_taste` | Optional | Parent finishes or taps the skip chip |
+| What goes in the bag | `m4_bag` | Optional | Parent finishes or taps the skip chip |
+| A starting line for Lumi | `m5_starting_line` | Required | favorite_lunches count ≥ 10 OR the parent uses the explicit Override chip (count ≥ 6) |
+| Review and finalize | `summary` → `finalized` | Required-set gate | `required_set_complete = true` before finalize is allowed |
+
+**State-awareness contract.** Per-household onboarding state lives in `onboarding_moment_state` (one row per household_id, created in 2.5-s1 migration `20260903000800`). The table stores `current_moment` (CHECK-constrained text enum matching the eight valid keys including `pre_start` and `finalized`) and `required_set_status` (JSONB carrying `m1_household_name`, `m1_child_declared`, `m2_allergen_response`, `m5_favorite_count`, `m5_complete`). `OnboardingService.submitTextTurn` reads the state pre-turn, injects it as a `momentStateBlock` into the agent's system prompt (between `kitchenMapBlock` and `vocabularyBlock` for cache-friendly ordering), and writes the updated state post-turn.
+
+**Moment-advance directive (`[NEXT_MOMENT:<key>]`).** The agent advances moments by embedding the literal token `[NEXT_MOMENT:<key>]` at the very end of its prose. Valid keys: `m1_table`, `m2_safe`, `m3_taste`, `m4_bag`, `m5_starting_line`, `summary`, `finalized`. The OnboardingService strips the directive by regex (`/\[NEXT_MOMENT:([a-z0-9_]+)\]\s*$/`) before persisting Lumi's turn — the user never sees it. Unrecognised or absent directives leave `current_moment` unchanged (safe fallback). The service never advances past `summary` in submitTextTurn; transition to `finalized` is the responsibility of the finalize endpoint (slice 2.5-s10).
+
+**Multi-tool parallel inference.** The agent fires every tool relevant to a single parent message in the **same** response turn. The runtime batches them and dispatches concurrently. Splitting one parent message across multiple Lumi turns is a contract violation — the parent will feel re-asked.
+
+**Required-set finalize gate.** The agent MAY NOT emit `[NEXT_MOMENT:summary]` or `[NEXT_MOMENT:finalized]` until `required_set_complete = true`. The four booleans the service computes post-turn:
+
+- `m1_household_name` — `households.display_name IS NOT NULL AND <> ''`
+- `m1_child_declared` — `COUNT(children) > 0`
+- `m2_allergen_response` — at least one `child_allergens` row OR the agent advanced out of `m2_safe` this turn (the latter catches the "no known allergens" path) OR a prior turn already flipped it true
+- `m5_complete` — `COUNT(favorite_lunches) >= 10`
+
+When the parent tries to end the conversation early, the agent acknowledges warmly and routes them to the missing required moment.
+
+**Anti-narration discipline.** Tool calls and the moment-advance directive are invisible plumbing — the agent's prose never mentions them. Forbidden phrases: "I'll add Layla now…", "Adding to your profile…", "I'm moving to Moment 2." Allowed: warm conversational acknowledgement, then the next moment's question.
+
+**Tool routing.** Eleven tools are exposed to the text-mode agent in slice 2.5-s4 (the seven structured-signal tools shipped as stubs in 2.5-s1 are wired into `createOnboardingToolSpecs` alongside the original four):
+
+| Tool | When | Notes |
+|---|---|---|
+| household.set_name | M1 | One call total per onboarding. |
+| child.upsert | M1 first mention; later moments for PATCH | Idempotent by name within the household. |
+| allergen.declare | M2 | One call per allergen per child. |
+| cultural.note | M3 | state='suggested' always; ratification separate. |
+| cuisine.declare | M3 | Cuisine preference, distinct from cultural identity. |
+| dietary.declare | M3 | Dietary identity tag with enforcement. |
+| food_preference.declare | M3 | Item-level likes / dislikes / refuses. "Hates X" → here, NOT allergen.declare. |
+| rule.set | M2 or M3 | Household-wide rules; enforcement defaults to 'strong'. |
+| favorite_lunch.add | M5 | Household-scoped; target 10. |
+| household.upsert | Any | PATCH-style corrections to existing household fields. |
+| memory.note | Any | Facts not captured by a structured tool; node_type ∈ {rhythm, child_obsession, other}. |
+
+**Chip configuration handshake.** Each turn the service computes `chip_config` from the post-turn `current_moment` (via `momentToChipConfig`). The response shape `TextOnboardingTurnResponseSchema` carries `chip_config: ChipConfig | null` (defined in `packages/contracts/src/onboarding.ts` since 2.5-s3). Slice 2.5-s4 ships the wiring with every branch returning `null`; the per-moment chip sets land in slices 2.5-s5 through 2.5-s9.
+
+**Voice path unchanged.** `getOnboardingSystemPrompt('voice')` continues to return the pre-Epic-2.5 single-shot voice prompt (`ONBOARDING_CORE_VOICE` + `VOICE_RULES`). The chaptered conversation, tool loop, and moment-state machinery are text-mode only. Voice will be re-prompted when the text-first policy lifts (slice 2-s21).

@@ -1,0 +1,348 @@
+<!DOCTYPE html>
+
+<html class="dark" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>HiveKitchen — Step 1: The Hearth</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<script defer="" src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+<link href="https://fonts.googleapis.com/css2?family=Libre+Caslon+Text:ital,wght@0,400;0,700;1,400&amp;family=Inter:wght@300;400;500;600&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script id="tailwind-config">
+  tailwind.config = {
+    darkMode: "class",
+    theme: {
+      extend: {
+        "colors": {
+                "warm-neutral-900": "#1C1A17",
+                "warm-neutral-700": "#2F2D27",
+                "outline": "#a08d7e",
+                "secondary": "#ffb59a",
+                "on-tertiary-container": "#223c2b",
+                "on-surface": "#e7e1dc",
+                "sacred-plum": "#8A5F72",
+                "on-secondary-fixed-variant": "#72351d",
+                "primary": "#ffb86f",
+                "surface-bright": "#3b3935",
+                "border-radius-lg": "16px",
+                "surface-container-lowest": "#100e0b",
+                "on-tertiary-fixed-variant": "#334c3b",
+                "inverse-on-surface": "#32302d",
+                "surface-variant": "#373431",
+                "surface-container": "#211f1c",
+                "lumi-terracotta-warmed": "#C88A6E",
+                "border-radius-xl": "24px",
+                "safety-red": "#C65A4E",
+                "warm-neutral-400": "#7B7668",
+                "on-secondary-fixed": "#380d00",
+                "surface-container-highest": "#373431",
+                "outline-variant": "#524437",
+                "on-primary-fixed": "#2c1600",
+                "on-secondary-container": "#f5a081",
+                "on-error-container": "#ffdad6",
+                "safety-cleared-teal": "#5A9C8B",
+                "on-tertiary": "#1c3625",
+                "amber-warm": "#E69A3D",
+                "secondary-fixed-dim": "#ffb59a",
+                "secondary-container": "#72351d",
+                "on-surface-variant": "#d7c3b2",
+                "on-secondary": "#552009",
+                "border-radius-md": "10px",
+                "surface": "#151310",
+                "on-primary": "#4a2900",
+                "border-radius-sm": "6px",
+                "surface-dim": "#151310",
+                "tertiary-fixed": "#ccead2",
+                "warm-neutral-50": "#FAF7F2",
+                "foliage": "#7A9681",
+                "on-primary-container": "#522e00",
+                "surface-container-low": "#1d1b18",
+                "primary-fixed": "#ffdcbd",
+                "on-error": "#690005",
+                "primary-fixed-dim": "#ffb86f",
+                "lumi-terracotta": "#B46A4E",
+                "warm-neutral-800": "#262420",
+                "tertiary-fixed-dim": "#b0ceb7",
+                "tertiary-container": "#8aa690",
+                "surface-container-high": "#2c2a26",
+                "error": "#ffb4ab",
+                "inverse-primary": "#8a5100",
+                "on-background": "#e7e1dc",
+                "on-tertiary-fixed": "#062012",
+                "background": "#151310",
+                "surface-tint": "#ffb86f",
+                "primary-container": "#d98f3c",
+                "on-primary-fixed-variant": "#693c00",
+                "inverse-surface": "#e7e1dc",
+                "honey-accent": "#E69A3D",
+                "error-container": "#93000a",
+                "tertiary": "#b0ceb7",
+                "secondary-fixed": "#ffdbcf"
+        },
+        "borderRadius": {
+                "DEFAULT": "0.25rem",
+                "lg": "0.5rem",
+                "xl": "0.75rem",
+                "full": "9999px"
+        },
+        "spacing": {
+                "container-margin": "32px",
+                "unit": "4px",
+                "section-gap": "80px",
+                "brief-padding": "48px",
+                "card-padding": "24px",
+                "gutter": "20px"
+        },
+        "fontFamily": {
+                "headline-display": [
+                        "Libre Caslon Text"
+                ],
+                "meta": [
+                        "Inter"
+                ],
+                "headline-display-mobile": [
+                        "Libre Caslon Text"
+                ],
+                "brief-moment": [
+                        "Libre Caslon Text"
+                ],
+                "body-main": [
+                        "Inter"
+                ],
+                "section-label": [
+                        "Inter"
+                ],
+                "heart-note": [
+                        "Libre Caslon Text"
+                ]
+        },
+        "fontSize": {
+                "headline-display": [
+                        "40px",
+                        {
+                                "lineHeight": "1.1",
+                                "letterSpacing": "0px",
+                                "fontWeight": "400"
+                        }
+                ],
+                "meta": [
+                        "12px",
+                        {
+                                "lineHeight": "1.4",
+                                "fontWeight": "400"
+                        }
+                ],
+                "headline-display-mobile": [
+                        "32px",
+                        {
+                                "lineHeight": "1.1",
+                                "fontWeight": "400"
+                        }
+                ],
+                "brief-moment": [
+                        "34px",
+                        {
+                                "lineHeight": "1.18",
+                                "fontWeight": "400"
+                        }
+                ],
+                "body-main": [
+                        "15px",
+                        {
+                                "lineHeight": "1.6",
+                                "fontWeight": "400"
+                        }
+                ],
+                "section-label": [
+                        "11px",
+                        {
+                                "lineHeight": "1.2",
+                                "letterSpacing": "0.16em",
+                                "fontWeight": "500"
+                        }
+                ],
+                "heart-note": [
+                        "26px",
+                        {
+                                "lineHeight": "1.35",
+                                "fontWeight": "400"
+                        }
+                ]
+        }
+},
+    },
+  }
+</script>
+<style>
+    body {
+      background-color: #151310;
+      color: #e7e1dc;
+      font-family: 'Inter', sans-serif;
+      -webkit-font-smoothing: antialiased;
+    }
+    .material-symbols-outlined {
+      font-variation-settings: 'FILL' 0, 'wght' 300, 'GRAD' 0, 'opsz' 24;
+    }
+    .newsreader-italic { font-family: 'Libre Caslon Text', serif; font-style: italic; }
+    .newsreader-regular { font-family: 'Libre Caslon Text', serif; }
+    .caps-spacing { letter-spacing: 0.15em; font-size: 0.75rem; font-weight: 600; }
+    [x-cloak] { display: none !important; }
+  </style>
+</head>
+<body class="bg-surface selection:bg-lumi-terracotta/30">
+<!-- TopAppBar -->
+<header class="border-b border-outline/20 bg-surface">
+<div class="flex justify-between items-center w-full px-6 py-4 max-w-7xl mx-auto">
+<!-- Brand Logo -->
+<div class="flex items-center gap-2">
+<span class="font-headline-display text-2xl italic text-primary">HiveKitchen</span>
+</div>
+<!-- Multimedia/Status Icons -->
+<div class="flex items-center gap-6 text-on-surface-variant">
+<button aria-label="Notifications" class="hover:text-primary transition-colors">
+<span class="material-symbols-outlined text-[22px]">notifications</span>
+</button>
+<button aria-label="User Profile" class="hover:text-primary transition-colors">
+<span class="material-symbols-outlined text-[22px]">account_circle</span>
+</button>
+</div>
+</div>
+</header>
+<main class="relative" x-data="{ mode: 'video' }">
+<!-- Hero Section -->
+<section class="relative w-full h-[750px] overflow-hidden">
+<div class="absolute inset-0 bg-gradient-to-t from-surface via-surface/40 to-transparent z-10"></div>
+<img alt="Hands packing a wooden lunchbox in a warm kitchen" class="w-full h-full object-cover grayscale-[0.2] brightness-[0.7]" data-alt="A cinematic, high-detail photograph of a quiet kitchen at dusk. Warm golden light spills from a shaded lamp onto a wooden countertop where soft, capable hands are carefully placing sliced fruit into a minimalist lunchbox. The atmosphere is atmospheric and serene, with deep shadows in the background and a rich color palette of charcoal, amber, and soft earth tones. The lighting is low-key and intentional, creating an editorial, high-end feel." src="https://lh3.googleusercontent.com/aida-public/AB6AXuBUwXemXZOSlvHA-8eigRfU3MXTD7SL3jtQ3lfW_-U50sb8svLhLhZtvteSx-CLeQKnpuqXdNvivrarV5MjiTWLQsnald1nReC6HJ5W28CRzeWpDI7A8pTQWtwoBVa7ZxTtjctfWJcnuOvbfyz1S3kOkbRNTYfLC8HkBHdsYvw7ZNCj34s6Wgym0QQxKD1JJ8JrgMbC9rxFB15X8MuH4p2xDoenEocIp79NMAngcG6uB2LUCMYD18lXk0WQSDrbT36iV9gciBuLGpQ"/>
+<div class="absolute bottom-0 left-0 w-full z-20 pb-24 px-32">
+<div class="max-w-4xl space-y-4">
+<p class="font-section-label caps-spacing text-primary uppercase">Welcome to HiveKitchen</p>
+<h2 class="font-headline-display text-headline-display text-on-surface tracking-tight">Come in. The kitchen is yours.</h2>
+<p class="font-brief-moment text-brief-moment italic text-on-surface-variant font-light max-w-2xl">
+            Lumi will help carry the weekly thinking, so you can carry the meaning.
+          </p>
+</div>
+</div>
+</section>
+<!-- Full-width Tab-style Multimedia Bar -->
+<div class="w-full border-b border-outline/20 bg-surface z-30 relative">
+<div class="max-w-[720px] mx-auto flex">
+<button :class="mode === 'video' ? 'border-primary text-primary bg-primary/5' : 'border-transparent text-on-surface-variant hover:text-on-surface hover:bg-surface-container/50'" @click="mode = 'video'" class="flex-1 py-5 text-center font-section-label text-sm tracking-wide transition-all duration-300 flex justify-center items-center gap-2 border-b-2">
+<span class="material-symbols-outlined text-[20px]">play_circle</span>
+      Watch Video
+    </button>
+<button :class="mode === 'audio' ? 'border-primary text-primary bg-primary/5' : 'border-transparent text-on-surface-variant hover:text-on-surface hover:bg-surface-container/50'" @click="mode = 'audio'" class="flex-1 py-5 text-center font-section-label text-sm tracking-wide transition-all duration-300 flex justify-center items-center gap-2 border-b-2">
+<span class="material-symbols-outlined text-[20px]">graphic_eq</span>
+      Listen to Lumi
+    </button>
+<button :class="mode === 'text' ? 'border-primary text-primary bg-primary/5' : 'border-transparent text-on-surface-variant hover:text-on-surface hover:bg-surface-container/50'" @click="mode = 'text'" class="flex-1 py-5 text-center font-section-label text-sm tracking-wide transition-all duration-300 flex justify-center items-center gap-2 border-b-2">
+<span class="material-symbols-outlined text-[20px]">article</span>
+      Read Text
+    </button>
+</div>
+</div>
+<!-- Dynamic Content Area -->
+<section class="py-24 px-8 min-h-[400px]">
+<div class="max-w-[720px] mx-auto">
+<!-- Text Mode -->
+<div class="space-y-10" x-cloak="" x-show="mode === 'text'" x-transition:enter="transition ease-out duration-300" x-transition:enter-end="opacity-100 translate-y-0" x-transition:enter-start="opacity-0 translate-y-4">
+<p class="font-body-main text-body-main text-on-surface-variant">
+            HiveKitchen is a quiet planning companion for school lunches. We believe the rhythm of a family is found in the small, repeated gestures of care. By organizing the logistics of nutrition and safety, we clear the space for you to focus on the child behind the lunchbox.
+          </p>
+<hr class="border-t border-outline/20"/>
+<p class="font-body-main text-body-main text-on-surface-variant">
+            It is not a recipe app. It is not a tracker. It is an ambient intelligence designed to understand your school’s unique policies, your child’s evolving tastes, and the reality of a busy Sunday evening. Lumi works in the background, so you never start from a blank page.
+          </p>
+<hr class="border-t border-outline/20"/>
+<p class="font-body-main text-body-main text-on-surface-variant">
+            In a few moments, Lumi will sit with you for a short kitchen interview. Together, you will define the boundaries of your hearth—from allergen safety to the specific ways your child prefers their sandwiches sliced. This is the foundation of our partnership.
+          </p>
+</div>
+<!-- Video Mode -->
+<div x-cloak="" x-show="mode === 'video'" x-transition:enter="transition ease-out duration-300" x-transition:enter-end="opacity-100 translate-y-0" x-transition:enter-start="opacity-0 translate-y-4">
+<div class="w-full aspect-video bg-surface-container rounded-2xl overflow-hidden relative border border-outline/20 group cursor-pointer shadow-2xl shadow-black/50">
+<img alt="Kitchen hearth video" class="w-full h-full object-cover opacity-60 group-hover:scale-105 transition-transform duration-700 ease-out" src="https://lh3.googleusercontent.com/aida-public/AB6AXuAJRYtf4_-CBwT4m8wB_UFwUQDS1x7WByMJKVdmSVOkrSKNoJDaKnIg4x4D9o7XEhHDDqAGBmplS94xJxmhxz50fLdro8Hw3LaOauiBAFlR7l41QPJMS5sOLPj-9MjMwBOSZ3lQXX8eJ3-josA-Q-nMptLDxXPxpo0VJ93o0K5my9WR3RnMWGnnJjn2FP8RrQ8S6R4bAlIa3tPvQpOkZyfHeaK84dMWHodxD5BqnHC8EvxFtQA-xFW6M0eWXC5DGlxV8zhMxoitCwU"/>
+<div class="absolute inset-0 bg-surface/30 group-hover:bg-surface/10 transition-colors duration-500"></div>
+<div class="absolute inset-0 flex items-center justify-center">
+<div class="w-20 h-20 rounded-full bg-primary/20 backdrop-blur-md flex items-center justify-center border border-primary/30 group-hover:scale-110 group-hover:bg-primary/30 transition-all duration-300">
+<span class="material-symbols-outlined text-5xl text-primary ml-1" style="font-variation-settings: 'FILL' 1;">play_arrow</span>
+</div>
+</div>
+</div>
+</div>
+<!-- Audio Mode -->
+<div x-cloak="" x-show="mode === 'audio'" x-transition:enter="transition ease-out duration-300" x-transition:enter-end="opacity-100 translate-y-0" x-transition:enter-start="opacity-0 translate-y-4">
+<div class="w-full p-12 bg-surface-container rounded-2xl border border-outline/20 flex flex-col items-center justify-center space-y-8 shadow-xl">
+<div class="flex items-center justify-center gap-1.5 h-16">
+<div class="w-1.5 bg-lumi-terracotta/40 rounded-full h-6 animate-[bounce_1s_infinite_100ms]"></div>
+<div class="w-1.5 bg-lumi-terracotta/70 rounded-full h-12 animate-[bounce_1.2s_infinite_200ms]"></div>
+<div class="w-1.5 bg-lumi-terracotta rounded-full h-16 animate-[bounce_0.8s_infinite_300ms]"></div>
+<div class="w-1.5 bg-lumi-terracotta/70 rounded-full h-10 animate-[bounce_1.1s_infinite_400ms]"></div>
+<div class="w-1.5 bg-lumi-terracotta/40 rounded-full h-8 animate-[bounce_0.9s_infinite_500ms]"></div>
+</div>
+<div class="text-center space-y-3">
+<p class="font-headline-display italic text-2xl text-on-surface font-light">"Welcome to HiveKitchen..."</p>
+<p class="font-section-label text-sm text-on-surface-variant/60 tracking-widest uppercase">Playing Audio Overview</p>
+</div>
+</div>
+</div>
+</div>
+</section>
+<!-- Atmospheric Tiles -->
+<section class="pb-16 px-8 text-center space-y-12">
+<div class="space-y-6">
+<p class="font-headline-display italic text-on-surface-variant text-lg">Your family's data stays yours. Lumi never trains on your private notes.</p>
+<div class="flex flex-col items-center gap-8">
+<div class="flex items-center gap-4 text-xs tracking-widest font-section-label text-on-surface-variant/60 uppercase">
+<span class="text-primary">●</span> <span>○</span> <span>○</span>
+<span class="ml-2">Hearth · Kitchen Interview · First Brief</span>
+</div>
+<div class="flex flex-col items-center gap-6">
+<button class="bg-primary hover:bg-honey-accent active:opacity-80 text-surface font-section-label font-semibold py-5 px-12 rounded-lg transition-all duration-300 scale-100 hover:scale-[1.02] shadow-xl shadow-primary/10">
+          Begin the kitchen interview
+        </button>
+<a class="font-section-label text-sm text-on-surface-variant hover:text-primary transition-colors duration-300 underline underline-offset-8 decoration-outline/30 hover:decoration-primary" href="#">
+          I'd like to look around first
+        </a>
+</div>
+</div>
+</div>
+</section><section class="pb-24 px-8">
+<div class="max-w-5xl mx-auto grid grid-cols-1 md:grid-cols-3 gap-16">
+<div class="flex flex-col items-center text-center space-y-4">
+<div class="w-16 h-16 rounded-full overflow-hidden border border-outline/30">
+<img alt="Weekend brief" class="w-full h-full object-cover" data-alt="A close-up, soft-focus image of a handwritten grocery list on textured linen paper. The lighting is warm and ambient, focusing on the tactile quality of the paper and the ink. The color palette is muted with hints of honey and charcoal." src="https://lh3.googleusercontent.com/aida-public/AB6AXuDR0Lz9gLcLSkS3yig7jf_Fz4zlqQienQ5DWe4sO62HHMyFhTcU6RX__WWU4qjdGV4ZfL7khrWVumuee0zFpsnCGPwKZGQGYAy6Ihw7J0Kt5Jn2jtyAZutcQVHIloxYnGu4s896o5UwpufpDnoriKGtg3oqi8CqTp7cBQsY1iV45Qj4CoISmU0ID-PXAMDagA_YL8GWvx2K2wXXdz-ofHRVuTm3Xv4xt7cbfk6c00jDNuqe_zmDPIrNN9WarJelLO-qukZVszxJCJs"/>
+</div>
+<p class="font-headline-display italic text-on-surface-variant text-lg">A weekend brief</p>
+</div>
+<div class="flex flex-col items-center text-center space-y-4">
+<div class="w-16 h-16 rounded-full overflow-hidden border border-outline/30">
+<img alt="Child note" class="w-full h-full object-cover" data-alt="A small, hand-drawn heart on a small paper note tucked into a lunchbox. The scene is intimate and warm, with soft lighting highlighting the texture of the cardboard and the simple ink drawing. The aesthetic is modern-editorial and quiet." src="https://lh3.googleusercontent.com/aida-public/AB6AXuCNXy-War4rdRiGKNtBcJGnVsMY5DwQHcVGm6FQr6eqC6LRKnvG1z1-U-SBWVnbDoF212WEEoQQByyrX8kIxCaB_CukVzuDJ9yOCkaVED0f6z6IZ-FLdQUDHDRFLpDbfgn9q6aqQ42yCP1w32E_fPl_RY28OkYMw_ix3C71IKNE9j-3k_b34i4_kMbkVzCFh05-2mJ6L5jZl11SABEuiOOYsaRfSBAR6ruMsaIhyCo_oUU_l8NyiTW8U8y2k_f8G4nqciZZGctd1k4"/>
+</div>
+<p class="font-headline-display italic text-on-surface-variant text-lg">A lunchtime note for your child</p>
+</div>
+<div class="flex flex-col items-center text-center space-y-4">
+<div class="w-16 h-16 rounded-full overflow-hidden border border-outline/30">
+<div class="w-full h-full bg-surface-container flex items-center justify-center">
+<span class="material-symbols-outlined text-primary opacity-40">graphic_eq</span>
+</div>
+</div>
+<p class="font-headline-display italic text-on-surface-variant text-lg">A quiet voice when you need to ask</p>
+</div>
+</div>
+</section>
+<!-- Action Block -->
+</main>
+<!-- Footer -->
+<footer class="mt-auto border-t border-outline/10 bg-surface py-12">
+<div class="max-w-7xl mx-auto px-8 flex flex-col md:flex-row justify-between items-center gap-8">
+<div class="text-on-surface-variant font-body-main text-meta uppercase tracking-widest">
+      (C) 2026 HIVELUME LLC
+    </div>
+<div class="flex gap-8 text-on-surface-variant font-body-main text-meta uppercase tracking-widest">
+<a class="hover:text-primary transition-colors" href="#">Privacy Policy</a>
+<a class="hover:text-primary transition-colors" href="#">Terms of Service</a>
+<a class="hover:text-primary transition-colors" href="#">Help Center</a>
+</div>
+</div>
+</footer>
+</body></html>

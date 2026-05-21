@@ -1,16 +1,33 @@
+import { randomUUID } from 'node:crypto';
 import type { FastifyBaseLogger } from 'fastify';
 import {
+  AllergenDeclareInputSchema,
+  AllergenDeclareOutputSchema,
   ChildUpsertInputSchema,
   ChildUpsertOutputSchema,
+  CuisineDeclareInputSchema,
+  CuisineDeclareOutputSchema,
   CulturalNoteInputSchema,
   CulturalNoteOutputSchema,
+  DietaryDeclareInputSchema,
+  DietaryDeclareOutputSchema,
+  FavoriteLunchAddInputSchema,
+  FavoriteLunchAddOutputSchema,
+  FoodPreferenceDeclareInputSchema,
+  FoodPreferenceDeclareOutputSchema,
+  HouseholdSetNameInputSchema,
+  HouseholdSetNameOutputSchema,
   HouseholdUpsertInputSchema,
   HouseholdUpsertOutputSchema,
   MemoryNoteFromOnboardingInputSchema,
   MemoryNoteFromOnboardingOutputSchema,
+  RuleSetInputSchema,
+  RuleSetOutputSchema,
 } from '@hivekitchen/contracts';
+import type { ChildAllergensRepository } from '../../modules/children/child-allergens.repository.js';
 import type { ChildrenService } from '../../modules/children/children.service.js';
 import type { CulturalPriorRepository } from '../../modules/cultural-priors/cultural-prior.repository.js';
+import type { DietaryPreferencesRepository } from '../../modules/dietary-preferences/dietary-preferences.repository.js';
 import type { HouseholdsService } from '../../modules/households/households.service.js';
 import type { MemoryService } from '../../modules/memory/memory.service.js';
 import type { VocabularyService } from '../../modules/vocabulary/vocabulary.service.js';
@@ -46,6 +63,11 @@ export interface OnboardingToolDeps {
   householdsService: HouseholdsService;
   memoryService: MemoryService;
   vocabularyService: VocabularyService;
+  // Slice 2.5-s6 — structured per-child allergen + dietary writes wired into
+  // allergen.declare / dietary.declare. Required: the tool factories throw
+  // at runtime if these are not provided.
+  childAllergensRepository: ChildAllergensRepository;
+  dietaryPreferencesRepository: DietaryPreferencesRepository;
 }
 
 // ---- child.upsert --------------------------------------------------------
@@ -236,10 +258,10 @@ export function createMemoryNoteToolSpec(
       'Record a memory node about this household. Use for facts that should inform ' +
       "future planning but aren't structured fields (e.g. 'Friday is leftover night', " +
       "'the kids love yogurt-based snacks', 'they avoid heavy proteins on swim-practice " +
-      "Tuesdays'). For child-specific notes (allergies, refusals, obsessions), pass " +
-      'subject_child_id from a prior child.upsert call. For household-wide patterns, ' +
-      'omit subject_child_id. node_type values: preference, rhythm, cultural_rhythm, ' +
-      'allergy, child_obsession, school_policy, other.',
+      "Tuesdays'). For child-specific notes, pass subject_child_id from a prior " +
+      'child.upsert call. For household-wide patterns, omit subject_child_id. ' +
+      'node_type values: rhythm (family eating patterns/routines), child_obsession ' +
+      '(strong single-food fixation), other (anything not captured by a structured tool).',
     inputSchema: MemoryNoteFromOnboardingInputSchema,
     outputSchema: MemoryNoteFromOnboardingOutputSchema,
     maxLatencyMs: 800,
@@ -394,12 +416,351 @@ export function createHouseholdUpsertToolSpec(
   };
 }
 
+// ===========================================================================
+// Slice 2.5-s1 — seven new structured tools (stub factories)
+// ===========================================================================
+// Each factory validates input via the Zod schema, emits a Pino info log
+// with the structured payload, and returns a deterministic-shaped stub
+// success response. Full DB-writing implementations land alongside the
+// moment slices (2.5-s5 through 2.5-s9) that actually need them.
+//
+// IMPORTANT: these factories are NOT included in createOnboardingToolSpecs
+// below — they're not yet exposed to OpenAI. Slice 2.5-s4 (agent prompt v2)
+// is the slice that adds them to the array returned to the agent.
+
+// ---- household.set_name --------------------------------------------------
+
+export function createHouseholdSetNameToolSpec(
+  ctx: OnboardingToolContext,
+  deps: OnboardingToolDeps,
+): ToolSpec {
+  return {
+    name: 'household.set_name',
+    description:
+      "Set the parent-chosen household label (e.g. 'The Menons'). Captured in " +
+      'Moment 1 of Epic 2.5 onboarding. Single field, low ambiguity — call this ' +
+      'as soon as the parent names the household.',
+    inputSchema: HouseholdSetNameInputSchema,
+    outputSchema: HouseholdSetNameOutputSchema,
+    maxLatencyMs: 300,
+    fn: async (input: unknown) => {
+      const parsed = HouseholdSetNameInputSchema.parse(input);
+      await deps.householdsService.setDisplayName(ctx.householdId, parsed.display_name);
+      ctx.logger.info(
+        {
+          module: 'onboarding-tools',
+          action: 'household.set_name',
+          household_id: ctx.householdId,
+          user_id: ctx.userId,
+          display_name_length: parsed.display_name.length,
+        },
+        'household.set_name handled',
+      );
+      return HouseholdSetNameOutputSchema.parse({ household_id: ctx.householdId });
+    },
+  };
+}
+
+// ---- allergen.declare ----------------------------------------------------
+
+export function createAllergenDeclareToolSpec(
+  ctx: OnboardingToolContext,
+  deps: OnboardingToolDeps,
+): ToolSpec {
+  return {
+    name: 'allergen.declare',
+    description:
+      'Declare a per-child medical allergen. One allergen per call (fire one ' +
+      'call per allergen the parent names). Uniform strength — no severity ' +
+      'gradient. Pass child_id from a prior child.upsert call, OR pass ' +
+      'child_name to resolve via case-insensitive name lookup within the ' +
+      "household. Use this for medical allergens only; 'hates X' uses " +
+      'food_preference.declare with valence=refuses.',
+    inputSchema: AllergenDeclareInputSchema,
+    outputSchema: AllergenDeclareOutputSchema,
+    // 2.5-s6: bumped from 120 (stub) to cover DEK fetch + encrypt + DB upsert.
+    maxLatencyMs: 800,
+    fn: async (input: unknown) => {
+      const parsed = AllergenDeclareInputSchema.parse(input);
+
+      // Resolve child_id — schema XOR-enforces exactly one of id/name.
+      let childId: string;
+      if (parsed.child_id !== null && parsed.child_id !== undefined) {
+        // Verify the child belongs to this household. getChild throws NotFoundError
+        // when the (householdId, childId) pair doesn't exist in children table,
+        // preventing cross-household writes if the agent supplies a stale UUID.
+        await deps.childrenService.getChild({ householdId: ctx.householdId, childId: parsed.child_id });
+        childId = parsed.child_id;
+      } else {
+        const resolved = await deps.childrenService.findChildIdByName(
+          ctx.householdId,
+          parsed.child_name as string,
+        );
+        if (resolved === null) {
+          throw new Error(
+            `allergen.declare: child "${parsed.child_name as string}" not found in household ${ctx.householdId} — ` +
+              'call child.upsert first to register the child, then declare their allergen',
+          );
+        }
+        childId = resolved;
+      }
+
+      const result = await deps.childAllergensRepository.declare(
+        ctx.householdId,
+        childId,
+        parsed.allergen,
+        parsed.source,
+      );
+
+      // Guardrail — allergen plaintext is medical PII; do NOT include
+      // parsed.allergen in this log. The repository owns the encrypted
+      // payload; provenance lives in DB row source + audit log.
+      ctx.logger.info(
+        {
+          module: 'onboarding-tools',
+          action: 'allergen.declare',
+          household_id: ctx.householdId,
+          user_id: ctx.userId,
+          child_id: childId,
+          source: parsed.source,
+          was_existing: result.was_existing,
+          allergen: 'REDACTED',
+        },
+        'allergen.declare handled',
+      );
+
+      return AllergenDeclareOutputSchema.parse({
+        child_allergen_id: result.child_allergen_id,
+        was_existing: result.was_existing,
+      });
+    },
+  };
+}
+
+// ---- dietary.declare -----------------------------------------------------
+
+export function createDietaryDeclareToolSpec(
+  ctx: OnboardingToolContext,
+  deps: OnboardingToolDeps,
+): ToolSpec {
+  return {
+    name: 'dietary.declare',
+    description:
+      "Declare a dietary identity tag (e.g. 'halal', 'vegetarian'). Pass " +
+      'child_id=null for household-scoped (the default post-Epic-2.5) or a ' +
+      'specific child_id for the rare per-child override case. enforcement is ' +
+      "required — typically 'strong' or 'non_negotiable' for religious dietary " +
+      "rules, 'default' for family preferences.",
+    inputSchema: DietaryDeclareInputSchema,
+    outputSchema: DietaryDeclareOutputSchema,
+    // 2.5-s6: bumped from 100 (stub) to cover real DB upsert + fallback path.
+    maxLatencyMs: 400,
+    fn: async (input: unknown) => {
+      const parsed = DietaryDeclareInputSchema.parse(input);
+
+      // Throws if tag is not in the active dietary vocabulary; the agent
+      // receives the failure as a tool-call error and recovers by retrying
+      // with a vocabulary-valid tag.
+      deps.vocabularyService.validateDietary([parsed.tag]);
+
+      const result = await deps.dietaryPreferencesRepository.declare(
+        ctx.householdId,
+        parsed.child_id ?? null,
+        parsed.tag,
+        parsed.enforcement,
+        parsed.source,
+      );
+
+      ctx.logger.info(
+        {
+          module: 'onboarding-tools',
+          action: 'dietary.declare',
+          household_id: ctx.householdId,
+          user_id: ctx.userId,
+          child_scoped: parsed.child_id !== null && parsed.child_id !== undefined,
+          tag: parsed.tag,
+          enforcement: parsed.enforcement,
+          was_existing: result.was_existing,
+        },
+        'dietary.declare handled',
+      );
+
+      return DietaryDeclareOutputSchema.parse({
+        dietary_id: result.dietary_id,
+        was_existing: result.was_existing,
+      });
+    },
+  };
+}
+
+// ---- cuisine.declare -----------------------------------------------------
+
+export function createCuisineDeclareToolSpec(
+  ctx: OnboardingToolContext,
+  _deps: OnboardingToolDeps,
+): ToolSpec {
+  return {
+    name: 'cuisine.declare',
+    description:
+      "Register a cuisine preference identifier (e.g. 'south_indian', " +
+      "'levantine'). Shares the cultural_priors table with cultural.note — " +
+      'cuisine.declare is for cuisine preference, cultural.note is for ' +
+      'cultural/religious identity. enforcement defaults to ' +
+      "'just_for_context' for cuisine preferences (advisory, not gating).",
+    inputSchema: CuisineDeclareInputSchema,
+    outputSchema: CuisineDeclareOutputSchema,
+    maxLatencyMs: 100,
+    fn: async (input: unknown) => {
+      const parsed = CuisineDeclareInputSchema.parse(input);
+      ctx.logger.info(
+        {
+          module: 'onboarding-tools',
+          action: 'cuisine.declare.stub',
+          household_id: ctx.householdId,
+          user_id: ctx.userId,
+          key: parsed.key,
+          enforcement: parsed.enforcement,
+        },
+        'cuisine.declare STUB — registered for slice 2.5-s4 wiring',
+      );
+      return CuisineDeclareOutputSchema.parse({
+        prior_id: randomUUID(),
+        was_existing: false,
+      });
+    },
+  };
+}
+
+// ---- food_preference.declare ---------------------------------------------
+
+export function createFoodPreferenceDeclareToolSpec(
+  ctx: OnboardingToolContext,
+  _deps: OnboardingToolDeps,
+): ToolSpec {
+  return {
+    name: 'food_preference.declare',
+    description:
+      'Record a like/dislike/refuses food preference. Open vocabulary (free-' +
+      'text item name accepted). Pass child_id or child_name for per-child ' +
+      'preferences; omit both for household-wide. valence values: loves, ' +
+      "likes, neutral, dislikes, refuses. enforcement defaults to 'soft'. " +
+      "USE THIS for 'X hates broccoli' — NOT allergen.declare (which is " +
+      'medical-only).',
+    inputSchema: FoodPreferenceDeclareInputSchema,
+    outputSchema: FoodPreferenceDeclareOutputSchema,
+    maxLatencyMs: 120,
+    fn: async (input: unknown) => {
+      const parsed = FoodPreferenceDeclareInputSchema.parse(input);
+      ctx.logger.info(
+        {
+          module: 'onboarding-tools',
+          action: 'food_preference.declare.stub',
+          household_id: ctx.householdId,
+          user_id: ctx.userId,
+          has_child_id: parsed.child_id !== null && parsed.child_id !== undefined,
+          has_child_name: parsed.child_name !== null && parsed.child_name !== undefined,
+          valence: parsed.valence,
+          enforcement: parsed.enforcement,
+        },
+        'food_preference.declare STUB — registered for slice 2.5-s4 wiring',
+      );
+      return FoodPreferenceDeclareOutputSchema.parse({
+        food_preference_id: randomUUID(),
+        was_existing: false,
+      });
+    },
+  };
+}
+
+// ---- favorite_lunch.add --------------------------------------------------
+
+export function createFavoriteLunchAddToolSpec(
+  ctx: OnboardingToolContext,
+  _deps: OnboardingToolDeps,
+): ToolSpec {
+  return {
+    name: 'favorite_lunch.add',
+    description:
+      'Append a favorite lunch item to the household cold-start seed ' +
+      '(Moment 5). Household-scoped only. Target: 10 items to satisfy FR124 ' +
+      'completion gate. Omit position to append at the end of the current ' +
+      'list. Idempotent on item: re-emitting the same item is a no-op.',
+    inputSchema: FavoriteLunchAddInputSchema,
+    outputSchema: FavoriteLunchAddOutputSchema,
+    maxLatencyMs: 120,
+    fn: async (input: unknown) => {
+      const parsed = FavoriteLunchAddInputSchema.parse(input);
+      ctx.logger.info(
+        {
+          module: 'onboarding-tools',
+          action: 'favorite_lunch.add.stub',
+          household_id: ctx.householdId,
+          user_id: ctx.userId,
+          item_length: parsed.item.length,
+          position_provided: parsed.position !== undefined,
+        },
+        'favorite_lunch.add STUB — registered for slice 2.5-s4 wiring',
+      );
+      return FavoriteLunchAddOutputSchema.parse({
+        favorite_lunch_id: randomUUID(),
+        position: parsed.position ?? 0,
+      });
+    },
+  };
+}
+
+// ---- rule.set ------------------------------------------------------------
+
+export function createRuleSetToolSpec(
+  ctx: OnboardingToolContext,
+  _deps: OnboardingToolDeps,
+): ToolSpec {
+  return {
+    name: 'rule.set',
+    description:
+      'Set a household-wide rule. rule_type values: no_pork, no_alcohol, ' +
+      'no_beef, no_overnight_leftovers, no_microwave_at_school, custom. ' +
+      "custom_label REQUIRED when rule_type='custom', omitted otherwise. " +
+      "enforcement defaults to 'strong'. One row per rule_type per household " +
+      '(non-custom); one row per unique custom_label per household.',
+    inputSchema: RuleSetInputSchema,
+    outputSchema: RuleSetOutputSchema,
+    maxLatencyMs: 100,
+    fn: async (input: unknown) => {
+      const parsed = RuleSetInputSchema.parse(input);
+      ctx.logger.info(
+        {
+          module: 'onboarding-tools',
+          action: 'rule.set.stub',
+          household_id: ctx.householdId,
+          user_id: ctx.userId,
+          rule_type: parsed.rule_type,
+          enforcement: parsed.enforcement,
+        },
+        'rule.set STUB — registered for slice 2.5-s4 wiring',
+      );
+      return RuleSetOutputSchema.parse({
+        household_rule_id: randomUUID(),
+        was_existing: false,
+      });
+    },
+  };
+}
+
 // ---- Factory bundle ------------------------------------------------------
 
 /**
  * Convenience: build the full tool spec bundle for a given (householdId,
  * userId) context. The OnboardingService calls this per turn and passes the
  * returned array to OnboardingAgent.respond().
+ *
+ * Slice 2.5-s5 completes the 2.5-s4 bundle — the seven new structured tools
+ * (household.set_name, allergen.declare, dietary.declare, cuisine.declare,
+ * food_preference.declare, favorite_lunch.add, rule.set) are exposed alongside
+ * the original four. household.set_name is fully wired (real DB write).
+ * The remaining six retain their 2.5-s1 stub implementations until the moment
+ * slices (2.5-s6 through 2.5-s9) wire them to real persistence.
+ * Total: 11 tools.
  */
 export function createOnboardingToolSpecs(
   ctx: OnboardingToolContext,
@@ -410,5 +771,12 @@ export function createOnboardingToolSpecs(
     createCulturalNoteToolSpec(ctx, deps),
     createMemoryNoteToolSpec(ctx, deps),
     createHouseholdUpsertToolSpec(ctx, deps),
+    createHouseholdSetNameToolSpec(ctx, deps),
+    createAllergenDeclareToolSpec(ctx, deps),
+    createDietaryDeclareToolSpec(ctx, deps),
+    createCuisineDeclareToolSpec(ctx, deps),
+    createFoodPreferenceDeclareToolSpec(ctx, deps),
+    createFavoriteLunchAddToolSpec(ctx, deps),
+    createRuleSetToolSpec(ctx, deps),
   ];
 }

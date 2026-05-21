@@ -33,7 +33,7 @@ const sizeClass: Record<PrimaryButtonSize, string> = {
  * subtle scale-down on press. Always has a leading icon (auto-sized to
  * `h-5 w-5`).
  *
- * Honors the design rule documented in `.stitch/DESIGN.md` §7 — primary CTAs
+ * Honors the design rule documented in `docs/DESIGN.md` §7 — primary CTAs
  * never use sacred-plum, lumi-terracotta, or honey-accent (each is reserved
  * for other channels).
  */

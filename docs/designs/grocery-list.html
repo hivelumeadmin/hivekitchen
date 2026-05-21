@@ -1,0 +1,346 @@
+<!DOCTYPE html>
+
+<html class="dark" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>Weekly Grocery List | HiveKitchen</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&amp;family=Inter:wght@400..700&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script id="tailwind-config">
+  tailwind.config = {
+    darkMode: "class",
+    theme: {
+      extend: {
+        "colors": {
+                "on-tertiary-fixed-variant": "#334c3b",
+                "lumi-terracotta-warmed": "#C88A6E",
+                "secondary-fixed-dim": "#ffb59a",
+                "inverse-primary": "#8a5100",
+                "on-error": "#690005",
+                "warm-neutral-900": "#1C1A17",
+                "inverse-surface": "#e7e1dc",
+                "on-primary": "#4a2900",
+                "on-secondary-fixed-variant": "#72351d",
+                "lumi-terracotta": "#B46A4E",
+                "background": "#151310",
+                "border-radius-lg": "16px",
+                "surface-dim": "#151310",
+                "surface-variant": "#373431",
+                "on-tertiary-fixed": "#062012",
+                "on-secondary-fixed": "#380d00",
+                "safety-red": "#C65A4E",
+                "on-primary-container": "#522e00",
+                "surface-container-high": "#2c2a26",
+                "surface-container-low": "#1d1b18",
+                "on-tertiary": "#1c3625",
+                "surface-container-lowest": "#100e0b",
+                "border-radius-xl": "24px",
+                "outline": "#a08d7e",
+                "warm-neutral-400": "#7B7668",
+                "surface-bright": "#3b3935",
+                "primary-fixed-dim": "#ffb86f",
+                "border-radius-md": "10px",
+                "on-error-container": "#ffdad6",
+                "surface": "#151310",
+                "tertiary-fixed-dim": "#b0ceb7",
+                "warm-neutral-700": "#2F2D27",
+                "on-secondary": "#552009",
+                "primary": "#ffb86f",
+                "on-surface": "#e7e1dc",
+                "honey-accent": "#E69A3D",
+                "outline-variant": "#524437",
+                "warm-neutral-800": "#262420",
+                "warm-neutral-50": "#FAF7F2",
+                "tertiary-container": "#8aa690",
+                "on-primary-fixed-variant": "#693c00",
+                "amber-warm": "#E69A3D",
+                "error-container": "#93000a",
+                "on-background": "#e7e1dc",
+                "on-primary-fixed": "#2c1600",
+                "sacred-plum": "#8A5F72",
+                "tertiary": "#b0ceb7",
+                "secondary-container": "#72351d",
+                "on-surface-variant": "#d7c3b2",
+                "primary-container": "#d98f3c",
+                "inverse-on-surface": "#32302d",
+                "secondary": "#ffb59a",
+                "error": "#ffb4ab",
+                "surface-container": "#211f1c",
+                "safety-cleared-teal": "#5A9C8B",
+                "on-secondary-container": "#f5a081",
+                "foliage": "#7A9681",
+                "on-tertiary-container": "#223c2b",
+                "border-radius-sm": "6px",
+                "tertiary-fixed": "#ccead2",
+                "primary-fixed": "#ffdcbd",
+                "surface-container-highest": "#373431",
+                "surface-tint": "#ffb86f",
+                "secondary-fixed": "#ffdbcf"
+        },
+        "borderRadius": {
+                "DEFAULT": "0.25rem",
+                "lg": "0.5rem",
+                "xl": "0.75rem",
+                "full": "9999px"
+        },
+        "spacing": {
+                "section-gap": "80px",
+                "container-margin": "32px",
+                "unit": "4px",
+                "brief-padding": "48px",
+                "gutter": "20px",
+                "card-padding": "24px",
+                "container-max": "1280px"
+        },
+        "fontFamily": {
+                "meta": [
+                        "Inter"
+                ],
+                "headline-display": [
+                        "Instrument Serif"
+                ],
+                "brief-moment": [
+                        "Instrument Serif"
+                ],
+                "headline-display-mobile": [
+                        "Instrument Serif"
+                ],
+                "heart-note": [
+                        "Instrument Serif"
+                ],
+                "section-label": [
+                        "Inter"
+                ],
+                "body-main": [
+                        "Inter"
+                ]
+        },
+        "fontSize": {
+                "meta": [
+                        "12px",
+                        {
+                                "lineHeight": "1.4",
+                                "fontWeight": "400"
+                        }
+                ],
+                "headline-display": [
+                        "40px",
+                        {
+                                "lineHeight": "1.1",
+                                "letterSpacing": "0px",
+                                "fontWeight": "400"
+                        }
+                ],
+                "brief-moment": [
+                        "34px",
+                        {
+                                "lineHeight": "1.18",
+                                "fontWeight": "400"
+                        }
+                ],
+                "headline-display-mobile": [
+                        "32px",
+                        {
+                                "lineHeight": "1.1",
+                                "fontWeight": "400"
+                        }
+                ],
+                "heart-note": [
+                        "26px",
+                        {
+                                "lineHeight": "1.35",
+                                "fontWeight": "400"
+                        }
+                ],
+                "section-label": [
+                        "11px",
+                        {
+                                "lineHeight": "1.2",
+                                "letterSpacing": "0.16em",
+                                "fontWeight": "500"
+                        }
+                ],
+                "body-main": [
+                        "15px",
+                        {
+                                "lineHeight": "1.6",
+                                "fontWeight": "400"
+                        }
+                ]
+        }
+},
+    },
+  }
+</script>
+<style>
+        .material-symbols-outlined {
+            font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+        }
+        .spine-border {
+            border-left: 2px solid;
+        }
+        .pb-safe {
+            padding-bottom: env(safe-area-inset-bottom);
+        }
+    </style>
+</head>
+<body class="bg-background text-on-background font-body-main selection:bg-primary selection:text-on-primary">
+<!-- Top AppBar -->
+<header class="border-b border-outline/20 bg-surface">
+<div class="flex justify-between items-center w-full px-6 py-4 max-w-7xl mx-auto">
+<!-- Brand Logo -->
+<div class="flex items-center gap-2">
+<span class="font-headline-display text-2xl italic text-honey-accent">HiveKitchen</span>
+</div>
+<!-- Multimedia/Status Icons -->
+<div class="flex items-center gap-6 text-on-surface-variant">
+<button aria-label="Notifications" class="hover:text-honey-accent transition-colors">
+<span class="material-symbols-outlined text-[22px]">notifications</span>
+</button>
+<button aria-label="User Profile" class="hover:text-honey-accent transition-colors">
+<span class="material-symbols-outlined text-[22px]">account_circle</span>
+</button>
+</div>
+</div>
+</header>
+<main class="max-w-container-max mx-auto px-gutter pt-8 pb-32">
+<!-- Hero Section -->
+<div class="grid grid-cols-1 md:grid-cols-12 gap-gutter items-center mb-12">
+<div class="md:col-span-7">
+<div class="flex items-center gap-2 mb-4">
+<span class="material-symbols-outlined text-secondary" data-icon="sync" data-weight="fill" style='font-variation-settings: "FILL" 1;'>sync</span>
+<span class="font-meta text-meta text-on-surface-variant uppercase tracking-widest">Plan Updated • 5m ago</span>
+</div>
+<h2 class="font-brief-moment text-brief-moment mb-4">Your Weekly Grocery Shopping  List</h2>
+<p class="text-on-surface-variant font-body-main max-w-xl">
+                    Consolidated from your weekly meal plan, including Cashew Satay Bowls, Herbed Lemon Chicken, and household snacks.
+                </p>
+</div>
+<div class="md:col-span-5 h-48 md:h-64 overflow-hidden rounded border border-outline-variant">
+<img alt="Fresh ingredients laid out on a dark kitchen counter" class="w-full h-full object-cover" src="https://lh3.googleusercontent.com/aida-public/AB6AXuCWB1ZGL47Kky61amJjVO5QPYRKGAI_rIe11M2IIA8Fm-cC2B7x1c2o4EgTedkVSed2Pcb_bLf6LhHzk3m4sp4cNooHYVkm-Krx-pn0QmM2fFUSfyZR_GXZnpLj0IM5Mgy4oqZk14EjJobBxllybOAf3Unv_hKH82MWid7UrnL63zoLT_TrEybvBQILGztH2os8vr6WI3Ttlnu4clZQ0vAhHS6rNjvHGlfjINvR6GFfUO39WbFfCWSNmZJE954sxbUCyJxCmdxDqEw"/>
+</div>
+</div>
+<div class="grid grid-cols-1 lg:grid-cols-12 gap-gutter">
+<!-- Shopping List Main -->
+<div class="lg:col-span-8 space-y-12"><div class="flex items-center gap-2 mb-3 px-2 text-lumi-terracotta">
+<span class="material-symbols-outlined text-sm">forum</span>
+<span class="text-xs font-section-label italic">Lumi: "Need help finding a substitute or checking pantry inventory? Just ask."</span>
+</div><div class="mb-10 p-1 bg-surface-container-high rounded border border-outline-variant/30 flex items-center shadow-sm">
+<div class="flex-grow flex items-center px-4">
+<span class="material-symbols-outlined text-on-surface-variant mr-3" data-icon="add_circle">add_circle</span>
+<input class="bg-transparent border-none focus:ring-0 text-on-surface w-full font-body-main placeholder:text-on-surface-variant/50" placeholder="Add a household snack or essential..." type="text"/>
+</div>
+<button class="bg-primary text-on-primary px-6 py-3 rounded font-bold text-sm hover:bg-primary-container transition-colors">
+        Add to List
+    </button>
+</div>
+<!-- Store Group: Haji's Global Market -->
+<section>
+<div class="flex items-center gap-2 mb-6 text-tertiary">
+<span class="material-symbols-outlined" data-icon="storefront">storefront</span>
+<h3 class="font-headline-display text-2xl">Haji's Global Market</h3>
+<span class="bg-tertiary/10 text-tertiary text-[10px] px-2 py-0.5 rounded-full font-bold uppercase ml-2">Cultural Supplier</span>
+</div>
+<div class="space-y-8">
+<div>
+<h4 class="font-section-label text-section-label text-on-surface-variant uppercase mb-4 border-b border-outline-variant pb-1">Specialty Pantry</h4>
+<div class="space-y-4">
+<div class="flex items-center gap-4 p-5 bg-surface-container rounded border border-outline-variant/30 hover:border-primary transition-all group cursor-pointer"><div class="w-12 h-12 flex-shrink-0 flex items-center justify-center border-2 border-outline rounded group-hover:border-primary"><span class="material-symbols-outlined text-transparent" data-icon="check">check</span></div><div class="flex-grow"><p class="font-body-main text-lg font-semibold text-sacred-plum">Stone-Ground Cashew Butter</p><p class="text-on-surface-variant text-sm">16oz Jar, Unsalted • Aisle 4</p></div><div class="flex items-center gap-3 ml-4"><div class="flex items-center bg-surface-container-high rounded border border-outline-variant/30 p-1"><button class="w-8 h-8 flex items-center justify-center hover:text-primary"><span class="material-symbols-outlined text-sm">remove</span></button><span class="px-2 font-bold min-w-[2ch] text-center text-sm">1</span><button class="w-8 h-8 flex items-center justify-center hover:text-primary"><span class="material-symbols-outlined text-sm">add</span></button></div><select class="bg-surface-container-high border-outline-variant/30 rounded text-xs font-section-label focus:ring-primary focus:border-primary py-1.5 px-3 pr-8"><option>unit</option><option>lb</option><option>oz</option><option>pack</option></select><button class="text-on-surface-variant hover:text-error transition-colors ml-2"><span class="material-symbols-outlined">delete</span></button></div></div>
+<div class="flex items-center gap-4 p-5 bg-surface-container rounded border border-outline-variant/30 hover:border-primary transition-all group cursor-pointer"><div class="w-12 h-12 flex-shrink-0 flex items-center justify-center border-2 border-outline rounded group-hover:border-primary"><span class="material-symbols-outlined text-transparent" data-icon="check">check</span></div><div class="flex-grow"><p class="font-body-main text-lg font-semibold text-sacred-plum">Small-Batch Chili Oil</p><p class="text-on-surface-variant text-sm">200ml • Check the back shelf</p></div><div class="flex items-center gap-3 ml-4"><div class="flex items-center bg-surface-container-high rounded border border-outline-variant/30 p-1"><button class="w-8 h-8 flex items-center justify-center hover:text-primary"><span class="material-symbols-outlined text-sm">remove</span></button><span class="px-2 font-bold min-w-[2ch] text-center text-sm">1</span><button class="w-8 h-8 flex items-center justify-center hover:text-primary"><span class="material-symbols-outlined text-sm">add</span></button></div><select class="bg-surface-container-high border-outline-variant/30 rounded text-xs font-section-label focus:ring-primary focus:border-primary py-1.5 px-3 pr-8"><option>ml</option><option>unit</option></select><button class="text-on-surface-variant hover:text-error transition-colors ml-2"><span class="material-symbols-outlined">delete</span></button></div></div>
+</div>
+</div>
+<div>
+<h4 class="font-section-label text-section-label text-on-surface-variant uppercase mb-4 border-b border-outline-variant pb-1">Produce</h4>
+<div class="space-y-4">
+<div class="flex items-center gap-4 p-5 bg-surface-container rounded border border-outline-variant/30 hover:border-primary transition-all group cursor-pointer"><div class="w-12 h-12 flex-shrink-0 flex items-center justify-center border-2 border-outline rounded group-hover:border-primary"><span class="material-symbols-outlined text-transparent" data-icon="check">check</span></div><div class="flex-grow"><p class="font-body-main text-lg font-semibold text-sacred-plum">Stone-Ground Cashew Butter</p><p class="text-on-surface-variant text-sm">16oz Jar, Unsalted • Aisle 4</p></div><div class="flex items-center gap-3 ml-4"><div class="flex items-center bg-surface-container-high rounded border border-outline-variant/30 p-1"><button class="w-8 h-8 flex items-center justify-center hover:text-primary"><span class="material-symbols-outlined text-sm">remove</span></button><span class="px-2 font-bold min-w-[2ch] text-center text-sm">1</span><button class="w-8 h-8 flex items-center justify-center hover:text-primary"><span class="material-symbols-outlined text-sm">add</span></button></div><select class="bg-surface-container-high border-outline-variant/30 rounded text-xs font-section-label focus:ring-primary focus:border-primary py-1.5 px-3 pr-8"><option>unit</option><option>lb</option><option>oz</option><option>pack</option></select><button class="text-on-surface-variant hover:text-error transition-colors ml-2"><span class="material-symbols-outlined">delete</span></button></div></div>
+</div>
+</div>
+</div>
+</section>
+<!-- Store Group: General Grocer -->
+<section>
+<div class="flex items-center gap-2 mb-6 text-primary">
+<span class="material-symbols-outlined" data-icon="shopping_basket">shopping_basket</span>
+<h3 class="font-headline-display text-2xl">General Grocer</h3>
+</div>
+<div class="space-y-8">
+<div>
+<h4 class="font-section-label text-section-label text-on-surface-variant uppercase mb-4 border-b border-outline-variant pb-1">Fresh to Pack</h4>
+<div class="space-y-4">
+<div class="flex items-center gap-4 p-5 bg-surface-container rounded border border-outline-variant/30 hover:border-primary transition-all group cursor-pointer"><div class="w-12 h-12 flex-shrink-0 flex items-center justify-center border-2 border-outline rounded group-hover:border-primary"><span class="material-symbols-outlined text-transparent" data-icon="check">check</span></div><div class="flex-grow"><p class="font-body-main text-lg font-semibold text-sacred-plum">Organic Chicken Breasts</p><p class="text-on-surface-variant text-sm">1.5 lb for Herbed Lemon Chicken</p></div><div class="flex items-center gap-3 ml-4"><div class="flex items-center bg-surface-container-high rounded border border-outline-variant/30 p-1"><button class="w-8 h-8 flex items-center justify-center hover:text-primary"><span class="material-symbols-outlined text-sm">remove</span></button><span class="px-2 font-bold min-w-[2ch] text-center text-sm">1.5</span><button class="w-8 h-8 flex items-center justify-center hover:text-primary"><span class="material-symbols-outlined text-sm">add</span></button></div><select class="bg-surface-container-high border-outline-variant/30 rounded text-xs font-section-label focus:ring-primary focus:border-primary py-1.5 px-3 pr-8"><option>lb</option><option>unit</option><option>g</option></select><button class="text-on-surface-variant hover:text-error transition-colors ml-2"><span class="material-symbols-outlined">delete</span></button></div></div>
+<div class="flex items-center gap-4 p-5 bg-surface-container rounded border border-outline-variant/30 hover:border-primary transition-all group cursor-pointer"><div class="w-12 h-12 flex-shrink-0 flex items-center justify-center border-2 border-outline rounded group-hover:border-primary"><span class="material-symbols-outlined text-transparent" data-icon="check">check</span></div><div class="flex-grow"><p class="font-body-main text-lg font-semibold text-sacred-plum">Fresh Cilantro Bunches</p><p class="text-on-surface-variant text-sm">2 bunches</p></div><div class="flex items-center gap-3 ml-4"><div class="flex items-center bg-surface-container-high rounded border border-outline-variant/30 p-1"><button class="w-8 h-8 flex items-center justify-center hover:text-primary"><span class="material-symbols-outlined text-sm">remove</span></button><span class="px-2 font-bold min-w-[2ch] text-center text-sm">2</span><button class="w-8 h-8 flex items-center justify-center hover:text-primary"><span class="material-symbols-outlined text-sm">add</span></button></div><select class="bg-surface-container-high border-outline-variant/30 rounded text-xs font-section-label focus:ring-primary focus:border-primary py-1.5 px-3 pr-8"><option>bunches</option><option>unit</option></select><button class="text-on-surface-variant hover:text-error transition-colors ml-2"><span class="material-symbols-outlined">delete</span></button></div></div>
+<div class="flex items-center gap-4 p-5 bg-surface-container rounded border border-outline-variant/30 hover:border-primary transition-all group cursor-pointer"><div class="w-12 h-12 flex-shrink-0 flex items-center justify-center border-2 border-outline rounded group-hover:border-primary"><span class="material-symbols-outlined text-transparent" data-icon="check">check</span></div><div class="flex-grow"><p class="font-body-main text-lg font-semibold text-sacred-plum">Large Lemons</p><p class="text-on-surface-variant text-sm">4 pieces, firm &amp; heavy</p></div><div class="flex items-center gap-3 ml-4"><div class="flex items-center bg-surface-container-high rounded border border-outline-variant/30 p-1"><button class="w-8 h-8 flex items-center justify-center hover:text-primary"><span class="material-symbols-outlined text-sm">remove</span></button><span class="px-2 font-bold min-w-[2ch] text-center text-sm">4</span><button class="w-8 h-8 flex items-center justify-center hover:text-primary"><span class="material-symbols-outlined text-sm">add</span></button></div><select class="bg-surface-container-high border-outline-variant/30 rounded text-xs font-section-label focus:ring-primary focus:border-primary py-1.5 px-3 pr-8"><option>unit</option><option>lb</option></select><button class="text-on-surface-variant hover:text-error transition-colors ml-2"><span class="material-symbols-outlined">delete</span></button></div></div>
+</div>
+</div>
+<div>
+<h4 class="font-section-label text-section-label text-on-surface-variant uppercase mb-4 border-b border-outline-variant pb-1">Pantry Staples</h4>
+<div class="space-y-4">
+<div class="flex items-center gap-4 p-5 bg-surface-container-low rounded border border-outline-variant/30 opacity-60"><div class="w-12 h-12 flex-shrink-0 flex items-center justify-center border-2 border-outline rounded group-hover:border-primary"><span class="material-symbols-outlined text-transparent" data-icon="check">check</span></div><div class="flex-grow"><p class="font-body-main text-lg font-semibold text-sacred-plum">Organic Chicken Breasts</p><p class="text-on-surface-variant text-sm">1.5 lb for Herbed Lemon Chicken</p></div><div class="flex items-center gap-3 ml-4"><div class="flex items-center bg-surface-container-high rounded border border-outline-variant/30 p-1"><button class="w-8 h-8 flex items-center justify-center hover:text-primary"><span class="material-symbols-outlined text-sm">remove</span></button><span class="px-2 font-bold min-w-[2ch] text-center text-sm">1.5</span><button class="w-8 h-8 flex items-center justify-center hover:text-primary"><span class="material-symbols-outlined text-sm">add</span></button></div><select class="bg-surface-container-high border-outline-variant/30 rounded text-xs font-section-label focus:ring-primary focus:border-primary py-1.5 px-3 pr-8"><option>lb</option><option>unit</option><option>g</option></select><button class="text-on-surface-variant hover:text-error transition-colors ml-2"><span class="material-symbols-outlined">delete</span></button></div></div>
+<div class="flex items-center gap-4 p-5 bg-surface-container rounded border border-outline-variant/30 hover:border-primary transition-all group cursor-pointer"><div class="w-12 h-12 flex-shrink-0 flex items-center justify-center border-2 border-outline rounded group-hover:border-primary"><span class="material-symbols-outlined text-transparent" data-icon="check">check</span></div><div class="flex-grow"><p class="font-body-main text-lg font-semibold text-sacred-plum">Fresh Cilantro Bunches</p><p class="text-on-surface-variant text-sm">2 bunches</p></div><div class="flex items-center gap-3 ml-4"><div class="flex items-center bg-surface-container-high rounded border border-outline-variant/30 p-1"><button class="w-8 h-8 flex items-center justify-center hover:text-primary"><span class="material-symbols-outlined text-sm">remove</span></button><span class="px-2 font-bold min-w-[2ch] text-center text-sm">2</span><button class="w-8 h-8 flex items-center justify-center hover:text-primary"><span class="material-symbols-outlined text-sm">add</span></button></div><select class="bg-surface-container-high border-outline-variant/30 rounded text-xs font-section-label focus:ring-primary focus:border-primary py-1.5 px-3 pr-8"><option>bunches</option><option>unit</option></select><button class="text-on-surface-variant hover:text-error transition-colors ml-2"><span class="material-symbols-outlined">delete</span></button></div></div>
+<div class="flex items-center gap-4 p-5 bg-surface-container rounded border border-outline-variant/30 hover:border-primary transition-all group cursor-pointer"><div class="w-12 h-12 flex-shrink-0 flex items-center justify-center border-2 border-outline rounded group-hover:border-primary"><span class="material-symbols-outlined text-transparent" data-icon="check">check</span></div><div class="flex-grow"><p class="font-body-main text-lg font-semibold text-sacred-plum">Large Lemons</p><p class="text-on-surface-variant text-sm">4 pieces, firm &amp; heavy</p></div><div class="flex items-center gap-3 ml-4"><div class="flex items-center bg-surface-container-high rounded border border-outline-variant/30 p-1"><button class="w-8 h-8 flex items-center justify-center hover:text-primary"><span class="material-symbols-outlined text-sm">remove</span></button><span class="px-2 font-bold min-w-[2ch] text-center text-sm">4</span><button class="w-8 h-8 flex items-center justify-center hover:text-primary"><span class="material-symbols-outlined text-sm">add</span></button></div><select class="bg-surface-container-high border-outline-variant/30 rounded text-xs font-section-label focus:ring-primary focus:border-primary py-1.5 px-3 pr-8"><option>unit</option><option>lb</option></select><button class="text-on-surface-variant hover:text-error transition-colors ml-2"><span class="material-symbols-outlined">delete</span></button></div></div>
+</div>
+</div>
+</div>
+</section>
+</div>
+<!-- Sidebar / Session Summary -->
+<div class="lg:col-span-4">
+<div class="sticky top-24 p-8 bg-surface-container border border-outline-variant rounded">
+<h4 class="font-headline-display text-2xl mb-6">Store Session</h4>
+<div class="space-y-6 mb-8">
+<div class="flex justify-between items-center text-sm">
+<span class="text-on-surface-variant">Progress</span>
+<span class="font-bold">1 of 12 items found</span>
+</div>
+<div class="w-full bg-surface-container-highest h-2 rounded-full overflow-hidden">
+<div class="bg-primary h-full w-[8%]"></div>
+</div>
+<div class="pt-6 border-t border-outline-variant space-y-4">
+<button class="w-full py-4 border border-tertiary text-tertiary font-bold rounded hover:bg-tertiary hover:text-on-tertiary transition-all">Select a Store</button>
+</div>
+</div>
+<div class="p-4 bg-surface-container-high rounded border border-dashed border-outline-variant">
+<p class="font-meta text-meta text-lumi-terracotta mb-2 italic">Pro-tip for this week:</p>
+<p class="text-xs leading-relaxed text-on-surface">
+                            "Haji's just received a shipment of fresh lemongrass. It would be a perfect aromatic addition to the Lemon Chicken marinade."
+                        </p>
+</div>
+</div>
+</div>
+</div>
+</main>
+<!-- Bottom Navigation -->
+<nav class="fixed bottom-0 left-0 w-full z-50 flex justify-around items-center px-4 py-3 pb-safe bg-surface-container border-t border-outline-variant">
+<!-- Brief (Home) -->
+<a class="flex flex-col items-center justify-center text-on-surface-variant px-6 py-2 hover:bg-surface-container-high transition-all" href="#">
+<span class="material-symbols-outlined mb-1" data-icon="auto_awesome">auto_awesome</span>
+<span class="font-section-label text-section-label">Brief</span>
+</a>
+<!-- Thread (Current Task) -->
+<a class="flex flex-col items-center justify-center bg-primary-container text-on-primary-container rounded-full px-8 py-2 active:scale-95 transition-transform duration-150" href="#">
+<span class="material-symbols-outlined mb-1" data-icon="forum" data-weight="fill" style='font-variation-settings: "FILL" 1;'>forum</span>
+<span class="font-section-label text-section-label">Thread</span>
+</a>
+<!-- Memory (History) -->
+<a class="flex flex-col items-center justify-center text-on-surface-variant px-6 py-2 hover:bg-surface-container-high transition-all" href="#">
+<span class="material-symbols-outlined mb-1" data-icon="auto_stories">auto_stories</span>
+<span class="font-section-label text-section-label">Memory</span>
+</a>
+</nav>
+<button class="fixed bottom-24 right-8 w-14 h-14 bg-tertiary text-on-tertiary rounded-full flex items-center justify-center shadow-lg hover:bg-tertiary-container transition-all z-40 active:scale-95 group">
+<span class="material-symbols-outlined group-hover:rotate-12 transition-transform" style='font-variation-settings: "FILL" 1;'>auto_awesome</span>
+<div class="absolute -top-1 -right-1 w-3 h-3 bg-primary rounded-full border-2 border-background"></div>
+</button>
+<footer class="mt-auto border-t border-outline/10 bg-surface py-12">
+<div class="max-w-7xl mx-auto px-8 flex flex-col md:flex-row justify-between items-center gap-8">
+<div class="text-on-surface-variant font-body-main text-xs uppercase tracking-widest">
+      (C) 2026 HIVELUME LLC
+    </div>
+<div class="flex gap-8 text-on-surface-variant font-body-main text-xs uppercase tracking-widest">
+<a class="hover:text-honey-accent transition-colors" href="#">Privacy Policy</a>
+<a class="hover:text-honey-accent transition-colors" href="#">Terms of Service</a>
+<a class="hover:text-honey-accent transition-colors" href="#">Help Center</a>
+</div>
+</div>
+</footer></body></html>

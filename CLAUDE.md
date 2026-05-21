@@ -61,11 +61,13 @@ ElevenLabs owns the entire audio pipeline — capture, speech-to-text, text-to-s
 - `packages/tsconfig` — Shared base tsconfig presets
 
 ## Specs (read before generating code)
-- `specs/Technical Architecture.md` — system architecture and stack reference
-- `specs/Design System.md` — frontend design philosophy and UI surface definitions
-- `specs/Voice Interaction Design.md` — ElevenLabs voice pipeline design
-- `specs/AI Principles.md` — AI agent design principles
-- `specs/Product Concept .md` — product vision and concept
+- `docs/DESIGN.md` — canonical v2.0 design system spec (tokens, components, button taxonomy, StickyBottomBar pattern, Honey rule). **READ FIRST before any UI work.**
+- `docs/Technical Architecture.md` — system architecture and stack reference
+- `docs/Voice Interaction Design.md` — ElevenLabs voice pipeline design
+- `docs/AI Principles.md` — AI agent design principles
+- `docs/Product Concept .md` — product vision and concept
+- `docs/Backend_Architecture.md` — backend service architecture
+- `docs/OnboardingPrompt.md` — onboarding agent prompt reference
 
 
 ## Conventions

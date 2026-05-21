@@ -6,7 +6,7 @@ const footerLinks = [
 
 export function AppFooter() {
   return (
-    <footer className="mt-auto w-full border-t border-border bg-bg">
+    <footer className="mt-auto w-full border-t border-neutral-400/30 bg-bg">
       <div className="mx-auto flex max-w-7xl flex-col items-center justify-between gap-6 px-8 py-12 md:flex-row">
         <div className="font-serif text-2xl text-fg-muted">HiveKitchen</div>
         <nav className="flex gap-8">

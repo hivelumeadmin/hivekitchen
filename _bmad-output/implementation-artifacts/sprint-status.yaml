@@ -1,5 +1,5 @@
 # generated: 2026-04-23
-# last_updated: 2026-05-20 (2.5-s3 → done; 5 review patches applied)
+# last_updated: 2026-05-20 (2.5-s5 → done)
 # project: hivekitchen
 # project_key: NOKEY
 # tracking_system: file-system
@@ -52,7 +52,7 @@
 # Walls (decision moments) are flagged with `# WALL:` markers.
 
 generated: 2026-04-23
-last_updated: 2026-05-20 (2.5-s3 → done; 5 review patches applied)
+last_updated: 2026-05-20 (2.5-s6 → done)
 project: hivekitchen
 project_key: NOKEY
 tracking_system: file-system
@@ -138,9 +138,9 @@ development_status:
   2.5-s1-foundation-enforcement-contracts-db-schema: done                    # contracts + migrations only; no user-facing change
   2.5-s2-memory-note-narrowing-backfill: done                                 # data migration; existing memory_nodes rows with removed types → structured tables
   2.5-s3-chip-turn-ux-primitive: done                                         # WALL: chip UX wall — gates moment slices; MOCK-REF
-  2.5-s4-agent-prompt-v2-required-set-tracker: backlog                        # agent state-awareness contract; chaptered conversation prompt
-  2.5-s5-moment-1-whos-at-the-table: backlog                                  # household name + children + age bands; MOCK-REF
-  2.5-s6-moment-2-what-i-need-to-keep-safe: backlog                           # WALL: safety wall — allergens explicit response gate; MOCK-REF
+  2.5-s4-agent-prompt-v2-required-set-tracker: done                           # agent state-awareness contract; chaptered conversation prompt
+  2.5-s5-moment-1-whos-at-the-table: done                                    # household name + children + age bands; MOCK-REF
+  2.5-s6-moment-2-what-i-need-to-keep-safe: done                              # WALL: safety wall — allergens explicit response gate; MOCK-REF
   2.5-s7-moment-3-how-your-kitchen-tastes: backlog                            # cultural & religious identity + dietary + cuisine + food preferences; MOCK-REF
   2.5-s8-moment-4-what-goes-in-the-bag: backlog                               # bag composition per child; MOCK-REF
   2.5-s9-moment-5-a-starting-line-for-lumi: backlog                           # 10 favorite lunches cold-start seed; MOCK-REF

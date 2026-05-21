@@ -1,0 +1,204 @@
+<!DOCTYPE html>
+
+<html class="dark" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&amp;family=Inter:ital,wght@0,100..900;1,100..900&amp;display=swap" rel="stylesheet"/>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    colors: {
+                        "on-tertiary-fixed-variant": "#334c3b",
+                        "lumi-terracotta-warmed": "#C88A6E",
+                        "secondary-fixed-dim": "#ffb59a",
+                        "inverse-primary": "#8a5100",
+                        "on-error": "#690005",
+                        "warm-neutral-900": "#1C1A17",
+                        "inverse-surface": "#e7e1dc",
+                        "on-primary": "#4a2900",
+                        "on-secondary-fixed-variant": "#72351d",
+                        "lumi-terracotta": "#B46A4E",
+                        "background": "#151310",
+                        "surface-dim": "#151310",
+                        "surface-variant": "#373431",
+                        "on-tertiary-fixed": "#062012",
+                        "on-secondary-fixed": "#380d00",
+                        "safety-red": "#C65A4E",
+                        "on-primary-container": "#522e00",
+                        "surface-container-high": "#2c2a26",
+                        "surface-container-low": "#1d1b18",
+                        "on-tertiary": "#1c3625",
+                        "surface-container-lowest": "#100e0b",
+                        "outline": "#a08d7e",
+                        "warm-neutral-400": "#7B7668",
+                        "surface-bright": "#3b3935",
+                        "primary-fixed-dim": "#ffb86f",
+                        "on-error-container": "#ffdad6",
+                        "surface": "#151310",
+                        "tertiary-fixed-dim": "#b0ceb7",
+                        "warm-neutral-700": "#2F2D27",
+                        "on-secondary": "#552009",
+                        "primary": "#ffb86f",
+                        "on-surface": "#FAF7F2",
+                        "honey-accent": "#E69A3D",
+                        "outline-variant": "#524437",
+                        "warm-neutral-800": "#262420",
+                        "warm-neutral-50": "#FAF7F2",
+                        "tertiary-container": "#8aa690",
+                        "on-primary-fixed-variant": "#693c00",
+                        "amber-warm": "#E69A3D",
+                        "error-container": "#93000a",
+                        "on-background": "#FAF7F2",
+                        "on-primary-fixed": "#2c1600",
+                        "sacred-plum": "#8A5F72",
+                        "tertiary": "#b0ceb7",
+                        "secondary-container": "#72351d",
+                        "on-surface-variant": "#7B7668",
+                        "primary-container": "#d98f3c",
+                        "inverse-on-surface": "#32302d",
+                        "secondary": "#ffb59a",
+                        "error": "#ffb4ab",
+                        "surface-container": "#262420",
+                        "safety-cleared-teal": "#5A9C8B",
+                        "on-secondary-container": "#f5a081",
+                        "foliage": "#7A9681",
+                        "on-tertiary-container": "#223c2b",
+                        "tertiary-fixed": "#ccead2",
+                        "primary-fixed": "#ffdcbd",
+                        "surface-container-highest": "#373431",
+                        "surface-tint": "#ffb86f",
+                        "secondary-fixed": "#ffdbcf"
+                    },
+                    borderRadius: {
+                        "DEFAULT": "0.5rem",
+                        "lg": "1rem",
+                        "xl": "1.5rem",
+                        "full": "9999px"
+                    },
+                    fontFamily: {
+                        "headline": ["Instrument Serif", "serif"],
+                        "display": ["Instrument Serif", "serif"],
+                        "body": ["Inter", "sans-serif"],
+                        "label": ["Inter", "sans-serif"]
+                    }
+                },
+            },
+        }
+    </script>
+<style>
+        body { font-family: 'Inter', sans-serif; background-color: #1C1A17; color: #FAF7F2; -webkit-font-smoothing: antialiased; }
+        .font-headline { font-family: 'Instrument Serif', serif; }
+        .paper-ruling {
+            background-image: linear-gradient(#7B766814 1px, transparent 1px);
+            background-size: 100% 32px;
+        }
+        .material-symbols-outlined {
+            font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+        }
+    </style>
+<style>
+    body {
+      min-height: max(884px, 100dvh);
+    }
+  </style>
+</head>
+<body class="min-h-screen flex flex-col items-center justify-center p-4 bg-warm-neutral-900">
+<div class="max-w-md w-full space-y-8">
+<!-- TopAppBar (Shared Component Implementation) -->
+<header class="border-b border-outline/20 bg-warm-neutral-900">
+<div class="flex justify-between items-center w-full px-6 py-4 max-w-7xl mx-auto">
+<!-- Brand Logo -->
+<div class="flex items-center gap-2">
+<span class="font-headline text-2xl italic text-lumi-terracotta">HiveKitchen</span>
+</div>
+<!-- Multimedia/Status Icons -->
+<div class="flex items-center gap-6 text-warm-neutral-400">
+<button aria-label="Notifications" class="hover:text-lumi-terracotta transition-colors">
+<span class="material-symbols-outlined text-[22px]">notifications</span>
+</button>
+<button aria-label="User Profile" class="hover:text-lumi-terracotta transition-colors">
+<span class="material-symbols-outlined text-[22px]">account_circle</span>
+</button>
+</div>
+</div>
+</header>
+<!-- Salutation -->
+<section class="text-center space-y-2">
+<h1 class="font-headline text-[28px] text-sacred-plum leading-tight">A note from Mum</h1>
+<p class="font-body text-[12px] uppercase tracking-widest text-warm-neutral-400">Tuesday · 12 May</p>
+</section>
+<!-- The Heart Note -->
+<section class="relative">
+<div class="bg-warm-neutral-700 rounded-lg p-8 shadow-inner paper-ruling border border-outline/10 min-h-[200px] flex flex-col justify-between">
+<p class="font-headline italic text-[20px] text-warm-neutral-50 leading-relaxed text-center">
+                    "Hope today is a calm one — I packed your favourite carrot ribbons because I know you're trying out for the choir later. You're going to be amazing. Love, Mum xx"
+                </p>
+<div class="text-right mt-4">
+<span class="font-headline italic text-[16px] text-sacred-plum opacity-90">— Mum</span>
+</div>
+</div>
+<!-- Subtle Lumi glow -->
+<div class="absolute -bottom-2 -right-2 w-4 h-4 bg-sacred-plum/30 blur-xl rounded-full"></div>
+</section>
+<!-- Lunch Summary -->
+<section>
+<div class="bg-warm-neutral-800 rounded-lg p-4 flex items-center gap-4 border border-outline/5">
+<div class="relative w-16 h-16 rounded-lg overflow-hidden flex-shrink-0">
+<img alt="Cumin chicken pita" class="w-full h-full object-cover" data-alt="A warm, appetizing macro shot of a cumin-spiced chicken pita wrap, golden-browned bread with vibrant orange carrot ribbons peeking out, captured in soft kitchen lighting that highlights textures. The aesthetic is editorial and wholesome, reflecting a home-cooked meal prepared with care. The color palette features warm ochres, deep browns, and fresh vegetable tones consistent with the HiveKitchen brand." src="https://lh3.googleusercontent.com/aida-public/AB6AXuACxllEbWwX_GqLGIAu_5EibB00iOJzKyAQ2AzcKBkboVljxe6L4TJaXTv-Q0EVMtuMdgGuhdwABI_J27AbrqgzZcg2wzRxpJVrZSah8utp9gi2jeh7n4RlGCNa5Tz3uaziCTm_ShcMCcyh2oLFZT_W-5YCzRarSaZmr55TbtrDK5h_EWQVhvST18LqcEVcaHLOuY67L-2z1SCEwkgnpQFiD_FPy_dZurFNE49D0yJIvYbV2_HgO9JD_wMifXKSPhBN4N3vGNdn0OA"/>
+</div>
+<div class="flex-grow">
+<span class="font-body text-[11px] font-bold tracking-widest text-lumi-terracotta uppercase">Today's Lunch</span>
+<h2 class="font-headline text-[18px] text-warm-neutral-50 leading-snug mt-0.5">Cumin chicken pita</h2>
+<p class="font-body text-[13px] text-warm-neutral-400">with carrot ribbons</p>
+</div>
+<div>
+<span class="bg-safety-cleared-teal/20 text-safety-cleared-teal text-[11px] px-2 py-1 rounded-full border border-safety-cleared-teal/30 flex items-center gap-1">
+                        Nut-free <span class="material-symbols-outlined text-[12px]">check</span>
+</span>
+</div>
+</div>
+</section>
+<!-- Feedback Interaction -->
+<section class="text-center space-y-6 pt-4">
+<h3 class="font-headline text-[22px] text-warm-neutral-50">How was lunch, Layla?</h3>
+<div class="flex justify-center gap-6">
+<button class="group flex flex-col items-center gap-3 transition-transform duration-200 active:scale-95">
+<div class="w-[72px] h-[72px] rounded-full bg-warm-neutral-800 flex items-center justify-center text-[32px] border border-outline/10 group-hover:border-lumi-terracotta/50 group-hover:shadow-[0_0_20px_rgba(180,106,78,0.15)] transition-all">
+                        😋
+                    </div>
+<span class="font-body text-[13px] font-medium text-warm-neutral-400 group-hover:text-lumi-terracotta transition-colors">Loved it</span>
+</button>
+<button class="group flex flex-col items-center gap-3 transition-transform duration-200 active:scale-95">
+<div class="w-[72px] h-[72px] rounded-full bg-warm-neutral-800 flex items-center justify-center text-[32px] border border-outline/10 group-hover:border-lumi-terracotta/50 group-hover:shadow-[0_0_20px_rgba(180,106,78,0.15)] transition-all">
+                        🙂
+                    </div>
+<span class="font-body text-[13px] font-medium text-warm-neutral-400 group-hover:text-lumi-terracotta transition-colors">It was OK</span>
+</button>
+<button class="group flex flex-col items-center gap-3 transition-transform duration-200 active:scale-95">
+<div class="w-[72px] h-[72px] rounded-full bg-warm-neutral-800 flex items-center justify-center text-[32px] border border-outline/10 group-hover:border-lumi-terracotta/50 group-hover:shadow-[0_0_20px_rgba(180,106,78,0.15)] transition-all">
+                        😕
+                    </div>
+<span class="font-body text-[13px] font-medium text-warm-neutral-400 group-hover:text-lumi-terracotta transition-colors">Not really</span>
+</button>
+</div>
+<p class="font-body text-[12px] text-warm-neutral-400/70 italic">Tap one. That's all.</p>
+</section>
+<!-- Footer -->
+<footer class="mt-auto border-t border-outline/10 bg-warm-neutral-900 py-12">
+<div class="max-w-7xl mx-auto px-8 flex flex-col md:flex-row justify-between items-center gap-8">
+<div class="text-warm-neutral-400 font-body text-caption uppercase tracking-widest text-[11px]">
+      (C) 2026 HIVELUME LLC
+    </div>
+<div class="flex gap-8 text-warm-neutral-400 font-body text-caption uppercase tracking-widest text-[11px]">
+<a class="hover:text-lumi-terracotta transition-colors" href="#">Privacy Policy</a>
+<a class="hover:text-lumi-terracotta transition-colors" href="#">Terms of Service</a>
+<a class="hover:text-lumi-terracotta transition-colors" href="#">Help Center</a>
+</div>
+</div>
+</footer>
+</div>
+</body></html>

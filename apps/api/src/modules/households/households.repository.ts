@@ -226,6 +226,24 @@ export class HouseholdsRepository extends BaseRepository {
     if (error) throw error;
   }
 
+  // Slice 2.5-s5 — parent-chosen household label captured in Moment 1.
+  // Intentionally NOT encrypted: low PII risk (self-chosen label like
+  // "The Menons"), and storing in plaintext lets the kitchen-map composer
+  // and agent prompt read it without a DEK round-trip on every turn.
+  async setDisplayName(householdId: string, displayName: string): Promise<void> {
+    const { data, error } = await this.client
+      .from('households')
+      .update({ display_name: displayName, updated_at: new Date().toISOString() })
+      .eq('id', householdId)
+      .select('id')
+      .maybeSingle();
+    if (error) throw error;
+    if (data === null) {
+      throw new Error(`household not found: ${householdId}`);
+    }
+    await this.bumpKitchenMapVersion(householdId);
+  }
+
   // Advisory lock helpers — bracket addAllergens read-modify-write to prevent
   // concurrent turns from silently overwriting each other's allergen additions.
   // Session-level: caller MUST call releaseAllergenLock in a finally block.

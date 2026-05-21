@@ -1,0 +1,316 @@
+<!DOCTYPE html>
+
+<html class="dark" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>HiveKitchen - Kitchen Inspiration</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Libre+Caslon+Text:ital,wght@0,400;0,700;1,400&amp;family=Inter:wght@400;500;600&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script id="tailwind-config">
+  tailwind.config = {
+    darkMode: "class",
+    theme: {
+      extend: {
+        "colors": {
+                "warm-neutral-900": "#1C1A17",
+                "warm-neutral-700": "#2F2D27",
+                "outline": "#a08d7e",
+                "secondary": "#ffb59a",
+                "on-tertiary-container": "#223c2b",
+                "on-surface": "#e7e1dc",
+                "sacred-plum": "#8A5F72",
+                "on-secondary-fixed-variant": "#72351d",
+                "primary": "#ffb86f",
+                "surface-bright": "#3b3935",
+                "border-radius-lg": "16px",
+                "surface-container-lowest": "#100e0b",
+                "on-tertiary-fixed-variant": "#334c3b",
+                "inverse-on-surface": "#32302d",
+                "surface-variant": "#373431",
+                "surface-container": "#211f1c",
+                "lumi-terracotta-warmed": "#C88A6E",
+                "border-radius-xl": "24px",
+                "safety-red": "#C65A4E",
+                "warm-neutral-400": "#7B7668",
+                "on-secondary-fixed": "#380d00",
+                "surface-container-highest": "#373431",
+                "outline-variant": "#524437",
+                "on-primary-fixed": "#2c1600",
+                "on-secondary-container": "#f5a081",
+                "on-error-container": "#ffdad6",
+                "safety-cleared-teal": "#5A9C8B",
+                "on-tertiary": "#1c3625",
+                "amber-warm": "#E69A3D",
+                "secondary-fixed-dim": "#ffb59a",
+                "secondary-container": "#72351d",
+                "on-surface-variant": "#d7c3b2",
+                "on-secondary": "#552009",
+                "border-radius-md": "10px",
+                "surface": "#151310",
+                "on-primary": "#4a2900",
+                "border-radius-sm": "6px",
+                "surface-dim": "#151310",
+                "tertiary-fixed": "#ccead2",
+                "warm-neutral-50": "#FAF7F2",
+                "foliage": "#7A9681",
+                "on-primary-container": "#522e00",
+                "surface-container-low": "#1d1b18",
+                "primary-fixed": "#ffdcbd",
+                "on-error": "#690005",
+                "primary-fixed-dim": "#ffb86f",
+                "lumi-terracotta": "#B46A4E",
+                "warm-neutral-800": "#262420",
+                "tertiary-fixed-dim": "#b0ceb7",
+                "tertiary-container": "#8aa690",
+                "surface-container-high": "#2c2a26",
+                "error": "#ffb4ab",
+                "inverse-primary": "#8a5100",
+                "on-background": "#e7e1dc",
+                "on-tertiary-fixed": "#062012",
+                "background": "#151310",
+                "surface-tint": "#ffb86f",
+                "primary-container": "#d98f3c",
+                "on-primary-fixed-variant": "#693c00",
+                "inverse-surface": "#e7e1dc",
+                "honey-accent": "#E69A3D",
+                "error-container": "#93000a",
+                "tertiary": "#b0ceb7",
+                "secondary-fixed": "#ffdbcf"
+        },
+        "borderRadius": {
+                "DEFAULT": "0.25rem",
+                "lg": "0.5rem",
+                "xl": "0.75rem",
+                "full": "9999px"
+        },
+        "spacing": {
+                "container-margin": "32px",
+                "unit": "4px",
+                "section-gap": "80px",
+                "brief-padding": "48px",
+                "card-padding": "24px",
+                "gutter": "20px"
+        },
+        "fontFamily": {
+                "headline-display": [
+                        "Libre Caslon Text"
+                ],
+                "meta": [
+                        "Inter"
+                ],
+                "headline-display-mobile": [
+                        "Libre Caslon Text"
+                ],
+                "brief-moment": [
+                        "Libre Caslon Text"
+                ],
+                "body-main": [
+                        "Inter"
+                ],
+                "section-label": [
+                        "Inter"
+                ],
+                "heart-note": [
+                        "Libre Caslon Text"
+                ]
+        },
+        "fontSize": {
+                "headline-display": [
+                        "40px",
+                        {
+                                "lineHeight": "1.1",
+                                "letterSpacing": "0px",
+                                "fontWeight": "400"
+                        }
+                ],
+                "meta": [
+                        "12px",
+                        {
+                                "lineHeight": "1.4",
+                                "fontWeight": "400"
+                        }
+                ],
+                "headline-display-mobile": [
+                        "32px",
+                        {
+                                "lineHeight": "1.1",
+                                "fontWeight": "400"
+                        }
+                ],
+                "brief-moment": [
+                        "34px",
+                        {
+                                "lineHeight": "1.18",
+                                "fontWeight": "400"
+                        }
+                ],
+                "body-main": [
+                        "15px",
+                        {
+                                "lineHeight": "1.6",
+                                "fontWeight": "400"
+                        }
+                ],
+                "section-label": [
+                        "11px",
+                        {
+                                "lineHeight": "1.2",
+                                "letterSpacing": "0.16em",
+                                "fontWeight": "500"
+                        }
+                ],
+                "heart-note": [
+                        "26px",
+                        {
+                                "lineHeight": "1.35",
+                                "fontWeight": "400"
+                        }
+                ]
+        }
+},
+    },
+  }
+</script>
+<style>
+        .material-symbols-outlined {
+            font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+        }
+        body {
+            background-color: #151310;
+            color: #e7e1dc;
+        }
+    </style>
+</head>
+<body class="font-body-main text-body-main selection:bg-honey-accent selection:text-on-primary">
+<!-- TopAppBar -->
+<header class="bg-surface dark:bg-surface fixed top-0 w-full z-[100] transition-all">
+<div class="flex justify-between items-center w-full px-gutter max-w-7xl mx-auto h-16">
+<div class="flex items-center gap-8">
+<span class="font-headline-display text-headline-display text-honey-accent leading-none">HiveKitchen</span>
+<nav class="hidden md:flex gap-6 items-center">
+<a class="text-on-surface font-bold font-section-label text-section-label hover:text-honey-accent transition-colors" href="#">Brief</a>
+<a class="text-on-surface-variant font-section-label text-section-label hover:text-honey-accent transition-colors" href="#">Thread</a>
+<a class="text-on-surface-variant font-section-label text-section-label hover:text-honey-accent transition-colors" href="#">Memory</a>
+</nav>
+</div>
+<div class="flex items-center gap-4">
+<button class="material-symbols-outlined text-on-surface-variant hover:text-honey-accent transition-all p-2">notifications</button>
+<button class="material-symbols-outlined text-on-surface-variant hover:text-honey-accent transition-all p-2">account_circle</button>
+</div>
+</div>
+</header>
+<main class="pt-24 pb-32 px-gutter max-w-7xl mx-auto">
+<!-- Header Section -->
+<section class="mb-12">
+<h1 class="font-brief-moment text-brief-moment text-on-surface mb-2">In the Same Rhythm</h1>
+<p class="text-on-surface-variant max-w-2xl">Lumi curated these based on your love for the Cashew Satay Bowl’s warmth and nutty complexity.</p><div class="mt-4 flex items-center gap-3 py-2 px-4 bg-tertiary-container/10 border border-tertiary/20 rounded-lg w-fit"><span class="flex h-2 w-2 relative"><span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-tertiary opacity-75"></span><span class="relative inline-flex rounded-full h-2 w-2 bg-tertiary"></span></span><span class="text-meta font-section-label text-tertiary tracking-wider">Lumi is curating rhythms from recent family signals</span></div>
+</section>
+<!-- Bento Recipe Grid -->
+<div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-12 gap-gutter">
+<!-- Featured Large Card -->
+<div class="lg:col-span-8 group bg-surface-container-low border border-outline-variant rounded-xl overflow-hidden hover:-translate-y-1 transition-transform duration-300">
+<div class="flex flex-col md:flex-row h-full">
+<div class="p-card-padding flex flex-col justify-between">
+<div>
+<div class="flex flex-wrap gap-2 mb-4">
+<span class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-sacred-plum/10 text-sacred-plum border border-sacred-plum/20 text-meta font-section-label">
+<span class="material-symbols-outlined text-sm" style="font-variation-settings: 'FILL' 1;">star</span> Maya's Pick
+                                </span>
+<span class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-safety-cleared-teal/10 text-safety-cleared-teal border border-safety-cleared-teal/20 text-meta font-section-label">
+<span class="material-symbols-outlined text-sm">check_circle</span> Halal
+                                </span>
+</div>
+<h2 class="font-headline-display text-brief-moment text-on-surface mb-3">Tahini Roasted Sweet Potato Bowl</h2>
+<p class="text-on-surface-variant text-body-main mb-6">A earthy blend of slow-roasted tubers and nutty creaminess that echoes the profile of satay.</p>
+</div>
+<div class="border-l-2 border-lumi-terracotta pl-4 py-2">
+<span class="font-section-label text-section-label text-lumi-terracotta block mb-1">LUMI'S REASONING</span>
+<blockquote class="font-heart-note text-heart-note text-on-surface italic leading-snug">
+                                "This hits that same comfort chord—warm fats meeting vibrant textures, just like your favorite cashew base."
+                            </blockquote>
+</div>
+</div>
+</div>
+</div>
+<!-- Standard Card 1 -->
+<div class="lg:col-span-4 bg-surface-container-low border border-outline-variant rounded-xl overflow-hidden hover:-translate-y-1 transition-transform duration-300 flex flex-col">
+<div class="p-card-padding flex-1 flex flex-col">
+<div class="mb-4">
+<span class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-safety-cleared-teal/10 text-safety-cleared-teal border border-safety-cleared-teal/20 text-meta font-section-label">
+<span class="material-symbols-outlined text-sm">security</span> Nut-Free
+                        </span>
+</div>
+<h3 class="font-headline-display text-brief-moment text-on-surface mb-2 leading-tight">Ginger Miso Salmon</h3>
+<p class="text-on-surface-variant text-body-main mb-6">The miso provides a savory depth similar to peanut sauce without the allergens.</p>
+<div class="mt-auto border-l-2 border-lumi-terracotta pl-4 py-1">
+<blockquote class="font-heart-note text-heart-note text-on-surface italic leading-snug">
+                            "Umami-forward and silky."
+                        </blockquote>
+</div>
+</div>
+</div>
+<!-- Standard Card 2 -->
+<div class="lg:col-span-4 bg-surface-container-low border border-outline-variant rounded-xl overflow-hidden hover:-translate-y-1 transition-transform duration-300 flex flex-col">
+<div class="p-card-padding flex-1 flex flex-col">
+<div class="mb-4">
+<span class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-amber-warm/10 text-amber-warm border border-amber-warm/20 text-meta font-section-label">
+<span class="material-symbols-outlined text-sm">wb_sunny</span> Today's Suggestion
+                        </span>
+</div>
+<h3 class="font-headline-display text-brief-moment text-on-surface mb-2 leading-tight">Golden Coconut Curry</h3>
+<p class="text-on-surface-variant text-body-main mb-6">A gentle aromatic bowl that utilizes the same lime-leaf base as your Cashew Satay.</p>
+<div class="mt-auto border-l-2 border-lumi-terracotta pl-4 py-1">
+<blockquote class="font-heart-note text-heart-note text-on-surface italic leading-snug">
+                            "A seamless flavor bridge."
+                        </blockquote>
+</div>
+</div>
+</div>
+<!-- Staggered Large Card -->
+<div class="lg:col-span-8 bg-surface-container-low border border-outline-variant rounded-xl overflow-hidden hover:-translate-y-1 transition-transform duration-300">
+<div class="flex flex-col md:flex-row-reverse h-full">
+<div class="p-card-padding flex flex-col justify-between">
+<div>
+<div class="flex flex-wrap gap-2 mb-4">
+<span class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-sacred-plum/10 text-sacred-plum border border-sacred-plum/20 text-meta font-section-label">
+<span class="material-symbols-outlined text-sm" style="font-variation-settings: 'FILL' 1;">workspace_premium</span> Sacred Choice
+                                </span>
+</div>
+<h2 class="font-headline-display text-brief-moment text-on-surface mb-3">Za'atar Cauliflower Roast</h2>
+<p class="text-on-surface-variant text-body-main mb-6">A textured vegetable-forward dish that satisfies the 'crunch' factor you enjoyed last Tuesday.</p>
+</div>
+<div class="border-l-2 border-lumi-terracotta pl-4 py-2">
+<span class="font-section-label text-section-label text-lumi-terracotta block mb-1">LUMI'S REASONING</span>
+<blockquote class="font-heart-note text-heart-note text-on-surface italic leading-snug">
+                                "The pomegranate provides that acid spark your palate seeks after richer meals."
+                            </blockquote>
+</div>
+</div>
+</div>
+</div>
+</div>
+<!-- Section Action -->
+<div class="mt-16 flex justify-center items-center">
+<button class="px-8 py-4 border-2 border-lumi-terracotta text-on-surface font-section-label text-section-label rounded-xl hover:bg-lumi-terracotta-warmed hover:border-lumi-terracotta-warmed transition-all active:scale-95">
+                LOAD MORE RHYTHMS
+            </button><button class="ml-4 px-8 py-4 text-on-surface-variant font-section-label text-section-label hover:text-honey-accent transition-all flex items-center gap-2 group">Not these? <span class="underline decoration-outline-variant group-hover:decoration-honey-accent">Talk to Lumi</span></button>
+</div>
+</main>
+<!-- BottomNavBar -->
+<nav class="fixed bottom-0 left-0 w-full z-50 flex justify-around items-center px-4 py-3 pb-safe bg-surface-container dark:bg-surface-container rounded-t-xl border-t border-outline-variant">
+<a class="flex flex-col items-center justify-center bg-primary-container text-on-primary-container rounded-full px-6 py-2 transition-all active:scale-95" href="#">
+<span class="material-symbols-outlined" style="font-variation-settings: 'FILL' 1;">auto_awesome</span>
+<span class="font-section-label text-section-label mt-1">Brief</span>
+</a>
+<a class="flex flex-col items-center justify-center text-on-surface-variant px-6 py-2 hover:bg-surface-container-high transition-all active:scale-95" href="#">
+<span class="material-symbols-outlined">forum</span>
+<span class="font-section-label text-section-label mt-1">Thread</span>
+</a>
+<a class="flex flex-col items-center justify-center text-on-surface-variant px-6 py-2 hover:bg-surface-container-high transition-all active:scale-95" href="#">
+<span class="material-symbols-outlined">auto_stories</span>
+<span class="font-section-label text-section-label mt-1">Memory</span>
+</a>
+</nav>
+<button class="fixed bottom-24 right-6 w-14 h-14 bg-lumi-terracotta text-on-primary rounded-full shadow-lg flex items-center justify-center hover:bg-lumi-terracotta-warmed transition-all active:scale-95 z-[60] group"><span class="material-symbols-outlined text-2xl group-hover:rotate-12 transition-transform">auto_awesome</span><div class="absolute right-full mr-4 bg-surface-container-high border border-outline-variant px-3 py-1.5 rounded-lg opacity-0 group-hover:opacity-100 pointer-events-none whitespace-nowrap transition-opacity text-meta">Chat with Lumi</div></button></body></html>

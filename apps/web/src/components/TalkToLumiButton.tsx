@@ -16,7 +16,7 @@ export type TalkToLumiButtonProps = Readonly<Readonly_TalkToLumiButtonProps>;
  * so users learn its location — a single, consistent affordance for any Lumi
  * interaction across the app.
  *
- * Honors the design rule documented in `.stitch/DESIGN.md` §7. The label and
+ * Honors the design rule documented in `docs/DESIGN.md` §7. The label and
  * icon are fixed (no overrides) to prevent drift; if a screen needs a
  * differently-named action, do not reach for this primitive.
  */

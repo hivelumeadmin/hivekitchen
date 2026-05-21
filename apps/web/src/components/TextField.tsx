@@ -34,7 +34,7 @@ export type TextFieldProps = Readonly<Readonly_TextFieldProps>;
  * Integrates with react-hook-form via `name` + `onChange` + `onBlur` + `inputRef`
  * — spread `register('field')` onto these four props.
  *
- * Honors the design rule documented in `.stitch/DESIGN.md` §7 — all form inputs
+ * Honors the design rule documented in `docs/DESIGN.md` §7 — all form inputs
  * use this primitive so labels, padding, and focus rings stay consistent.
  */
 export function TextField({

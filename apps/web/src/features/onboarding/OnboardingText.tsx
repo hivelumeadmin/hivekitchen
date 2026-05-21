@@ -14,6 +14,30 @@ import { SkipChip } from './components/SkipChip.js';
 type Turn = { id: string; role: 'lumi' | 'user'; content: string };
 const GREETING_TURN_ID = 'greeting';
 
+// Slice 2.5-s6 — M2 capture state for the KitchenProfilePanel safety card.
+// 'none' is the bootstrap state (M2 not yet reached); 'capturing' is set the
+// moment the agent advances into m2_safe; 'all-clear' and 'declared' are the
+// two terminal shapes after the parent submits a chip-bearing turn.
+type M2CaptureState =
+  | { state: 'none' }
+  | { state: 'capturing' }
+  | { state: 'all-clear' }
+  | { state: 'declared'; chips: Array<{ key: string; label: string }> };
+
+// Slice 2.5-s5 — Moment header config. The text path knows all 7 moments the
+// agent can emit; pre_start / finalized produce number=0 so the header falls
+// back to the legacy "Step N of ~8" subtitle on the very first mount.
+const MOMENT_CONFIG: Record<string, { number: number; name: string }> = {
+  pre_start: { number: 0, name: '' },
+  m1_table: { number: 1, name: "Who's at the table" },
+  m2_safe: { number: 2, name: 'What I need to keep safe' },
+  m3_taste: { number: 3, name: 'How your kitchen tastes' },
+  m4_bag: { number: 4, name: 'What goes in the bag' },
+  m5_starting_line: { number: 5, name: 'A starting line for Lumi' },
+  summary: { number: 6, name: 'Summary' },
+  finalized: { number: 0, name: '' },
+};
+
 export interface OnboardingTextProps {
   onFinalized?: () => void;
   initialTurns?: Array<{ id: string; role: 'lumi' | 'user'; content: string }>;
@@ -74,6 +98,17 @@ function IcoGlobe({ cls }: { cls: string }) {
   return (
     <svg className={cls} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
       <path strokeLinecap="round" strokeLinejoin="round" d="M12 21a9.004 9.004 0 008.716-6.747M12 21a9.004 9.004 0 01-8.716-6.747M12 21c2.485 0 4.5-4.03 4.5-9S14.485 3 12 3m0 18c-2.485 0-4.5-4.03-4.5-9S9.515 3 12 3m0 0a8.997 8.997 0 017.843 4.582M12 3a8.997 8.997 0 00-7.843 4.582m15.686 0A11.953 11.953 0 0112 10.5c-2.998 0-5.74-1.1-7.843-2.918m15.686 0A8.959 8.959 0 0121 12c0 .778-.099 1.533-.284 2.253m0 0A17.919 17.919 0 0112 16.5c-3.162 0-6.133-.815-8.716-2.247m0 0A9.015 9.015 0 013 12c0-1.605.42-3.113 1.157-4.418" />
+    </svg>
+  );
+}
+function IcoHome({ cls }: { cls: string }) {
+  return (
+    <svg className={cls} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+      <path
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        d="M2.25 12l8.954-8.955a1.5 1.5 0 012.122 0L22.28 12M4.5 9.75v10.125a1.125 1.125 0 001.125 1.125H9.75v-4.875c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125V21h4.125a1.125 1.125 0 001.125-1.125V9.75"
+      />
     </svg>
   );
 }
@@ -349,18 +384,63 @@ function extractAllergyProfiles(turns: Turn[], children: ChildInfo[]): AllergyPr
   return [];
 }
 
+// ─── Household name extraction ────────────────────────────────────────────────
+
+// Slice 2.5-s5 — pull a household label out of Lumi's echo of the parent's
+// answer. Best-effort only; the canonical value lives on households.display_name
+// once the kitchen map read endpoint goes live (2.5-s11). Until then the
+// profile panel needs *something* to render so the "Your kitchen" card lights
+// up alongside the conversation. Two heuristics in priority order:
+//   1. quoted strings (Lumi often repeats the name in quotes)
+//   2. "the X kitchen" / "the X family" patterns
+function extractHouseholdName(turns: Turn[]): string | null {
+  const allLumi = turns
+    .filter((t) => t.role === 'lumi')
+    .map((t) => t.content)
+    .join('\n');
+  const quoted = allLumi.match(/"([^"]{2,60})"/)?.[1];
+  if (quoted !== undefined) return quoted;
+  const phrase = allLumi.match(/the\s+([A-Z][a-z]+ (?:family|kitchen))/)?.[1];
+  return phrase ?? null;
+}
+
 // ─── Profile panel ─────────────────────────────────────────────────────────────
 
-function KitchenProfilePanel({ turns }: { turns: Turn[] }) {
+function KitchenProfilePanel({
+  turns,
+  currentMomentKey,
+  m2AllergenCapture,
+}: {
+  turns: Turn[];
+  currentMomentKey: string | null;
+  m2AllergenCapture: M2CaptureState;
+}) {
   const topics = detectTopics(turns);
   const children = extractChildren(turns);
   const allergyProfiles = extractAllergyProfiles(turns, children);
   const foodPrefs = extractFoodPreferences(turns);
   const schedule = extractSchedule(turns);
   const culturalPrefs = extractCulturalPrefs(turns);
+  const householdName = extractHouseholdName(turns);
   const coveredCount = TOPIC_CONFIG.filter((t) => topics[t.key]).length;
-  const progressPct = Math.round((coveredCount / TOPIC_CONFIG.length) * 100);
   const questionsComplete = Math.round((coveredCount / TOPIC_CONFIG.length) * 8);
+
+  // Slice 2.5-s5 — moment-based progress when the wire surfaced a moment_key;
+  // otherwise fall back to the legacy topic-detection heuristic so resume-mode
+  // (initialTurns with no turn fired yet) still shows something useful.
+  const momentMeta = currentMomentKey ? MOMENT_CONFIG[currentMomentKey] : undefined;
+  const completedMoments =
+    momentMeta !== undefined && momentMeta.number > 0
+      ? Math.min(momentMeta.number - 1, 5)
+      : 0;
+  const progressPct =
+    momentMeta !== undefined && momentMeta.number > 0
+      ? Math.round((completedMoments / 5) * 100)
+      : Math.round((coveredCount / TOPIC_CONFIG.length) * 100);
+  const footerLabel =
+    momentMeta !== undefined && momentMeta.number > 0
+      ? `Moment ${completedMoments} of 5 complete`
+      : `${questionsComplete} of ~8 questions complete`;
 
   return (
     <div className="flex flex-col h-full overflow-hidden">
@@ -375,8 +455,86 @@ function KitchenProfilePanel({ turns }: { turns: Turn[] }) {
 
       {/* Topic cards */}
       <div className="flex-1 overflow-y-auto px-5 pb-4 flex flex-col gap-3">
+        {/* Slice 2.5-s5 — Moment 1 primary capture: household name. Renders
+            as an active card once we can detect a label from Lumi's echo;
+            otherwise a "still listening" waiting card. */}
+        {householdName !== null ? (
+          <div
+            key="kitchen"
+            className="rounded-xl p-5"
+            style={{ background: 'var(--surface-2, var(--surface))' }}
+          >
+            <div className="flex items-center gap-2 mb-2">
+              <IcoHome cls="h-4 w-4 shrink-0 text-amber-soft" />
+              <h3 className="font-serif text-base text-fg">Your kitchen</h3>
+            </div>
+            <p className="font-sans text-base italic text-fg">{householdName}</p>
+          </div>
+        ) : (
+          <div
+            key="kitchen"
+            className="rounded-xl p-4 flex items-center gap-3.5"
+            style={{ background: 'var(--surface)' }}
+          >
+            <div
+              className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full"
+              style={{ background: 'color-mix(in srgb, var(--amber) 12%, transparent)' }}
+            >
+              <IcoHome cls="h-[15px] w-[15px] text-amber/50" />
+            </div>
+            <div>
+              <p className="font-sans text-sm font-medium text-fg/55">Kitchen name</p>
+              <p className="font-sans text-[11px] mt-0.5 text-fg-muted/40">Still listening…</p>
+            </div>
+          </div>
+        )}
+
         {TOPIC_CONFIG.map(({ key, label, waitingLabel, Icon }) => {
           const isActive = topics[key];
+
+          // Slice 2.5-s6 — M2 primary capture takes precedence over the
+          // legacy regex-based allergen detection. Once the parent has reached
+          // Moment 2 (state !== 'none') the safety card reflects their actual
+          // chip selections instead of heuristics on the transcript.
+          if (key === 'allergens' && m2AllergenCapture.state !== 'none') {
+            return (
+              <div
+                key={key}
+                data-testid="m2-safety-card"
+                className="rounded-xl p-5"
+                style={{ background: 'var(--surface-2, var(--surface))' }}
+              >
+                <div className="flex items-center gap-2 mb-3">
+                  <IcoShield cls="h-4 w-4 shrink-0 text-safety-cleared" />
+                  <h3 className="font-serif text-base text-fg">Safety — allergens</h3>
+                </div>
+                {m2AllergenCapture.state === 'capturing' && (
+                  <p className="font-sans text-xs italic text-fg-muted">Waiting on your response…</p>
+                )}
+                {m2AllergenCapture.state === 'all-clear' && (
+                  <div className="flex items-center gap-2">
+                    <span className="rounded-md bg-safety-cleared-fill px-2.5 py-1 font-sans text-xs text-safety-cleared">
+                      ✓ All clear
+                    </span>
+                    <span className="font-sans text-xs text-fg-muted">No known allergens</span>
+                  </div>
+                )}
+                {m2AllergenCapture.state === 'declared' && (
+                  <div className="flex flex-wrap gap-1.5">
+                    {m2AllergenCapture.chips.map(({ key: chipKey, label: chipLabel }) => (
+                      <span
+                        key={chipKey}
+                        className="flex items-center gap-1 rounded-md bg-safety-cleared-fill px-2.5 py-1 font-sans text-xs text-safety-cleared"
+                      >
+                        <IcoShield cls="h-3 w-3 shrink-0" />
+                        {chipLabel}
+                      </span>
+                    ))}
+                  </div>
+                )}
+              </div>
+            );
+          }
 
           if (isActive && key === 'family') {
             return (
@@ -583,7 +741,7 @@ function KitchenProfilePanel({ turns }: { turns: Turn[] }) {
       <div className="shrink-0 px-7 pt-4 pb-7">
         <div className="flex items-center justify-between mb-3">
           <span className="font-sans text-[13px] text-fg-muted">
-            {questionsComplete} of ~8 questions complete
+            {footerLabel}
           </span>
           <span className="font-serif text-base text-amber">
             {progressPct > 0 ? `${progressPct}%` : ''}
@@ -635,6 +793,14 @@ export function OnboardingText({ onFinalized, initialTurns }: OnboardingTextProp
   // the agent prompt that emits configs.
   const [chipConfig, setChipConfig] = useState<ChipConfig | null>(null);
   const [chipSelections, setChipSelections] = useState<string[]>([]);
+  // Slice 2.5-s5 — server-emitted moment key (e.g. 'm1_table'). Starts null
+  // until the first turn response arrives; in resume mode the panel falls
+  // back to the topic-detection heuristic until the next turn fires.
+  const [currentMomentKey, setCurrentMomentKey] = useState<string | null>(null);
+  // Slice 2.5-s6 — Moment 2 primary capture snapshot for the profile panel.
+  // Held outside the panel so the chip-level info (labels chosen) survives
+  // moments after the parent advances past M2.
+  const [m2AllergenCapture, setM2AllergenCapture] = useState<M2CaptureState>({ state: 'none' });
   const abortRef = useRef<AbortController | null>(null);
   const conversationEndRef = useRef<HTMLDivElement | null>(null);
 
@@ -665,12 +831,24 @@ export function OnboardingText({ onFinalized, initialTurns }: OnboardingTextProp
     }
   }, [turns.length, isComplete]);
 
-  const handleSubmit = useCallback(
-    async (e: React.FormEvent) => {
-      e.preventDefault();
-      const trimmed = draft.trim();
-      const hasChipSelections = chipSelections.length > 0;
-      if (trimmed.length === 0 && !hasChipSelections) return;
+  // Slice 2.5-s6 — when the agent advances into m2_safe for the first time,
+  // flip the safety card from 'none' (hidden waiting card) to 'capturing'
+  // (visible waiting card with "Waiting on your response…" copy). Subsequent
+  // moments do not roll back the capture state — once the parent has
+  // submitted, the card stays on the terminal state.
+  useEffect(() => {
+    if (currentMomentKey === 'm2_safe' && m2AllergenCapture.state === 'none') {
+      setM2AllergenCapture({ state: 'capturing' });
+    }
+  }, [currentMomentKey, m2AllergenCapture.state]);
+
+  // Slice 2.5-s5 — extracted from handleSubmit so the form submit and the
+  // SkipChip onClick share the same POST + optimistic-render + rollback path.
+  // No duplication; both entry points snapshot their inputs and forward here.
+  const submitTurn = useCallback(
+    async (chipSelectionsSnapshot: string[], draftSnapshot: string) => {
+      const hasChipSelections = chipSelectionsSnapshot.length > 0;
+      if (draftSnapshot.length === 0 && !hasChipSelections) return;
       if (pending) return;
 
       setError(null);
@@ -681,13 +859,13 @@ export function OnboardingText({ onFinalized, initialTurns }: OnboardingTextProp
       // backend will see. Mirrors the server-side serializer in
       // apps/api/src/modules/onboarding/onboarding.routes.ts.
       const chipPrefix = hasChipSelections
-        ? `[Chips selected: ${chipSelections.join(', ')}]`
+        ? `[Chips selected: ${chipSelectionsSnapshot.join(', ')}]`
         : '';
       const optimisticContent = hasChipSelections
-        ? trimmed.length > 0
-          ? `${chipPrefix} ${trimmed}`
+        ? draftSnapshot.length > 0
+          ? `${chipPrefix} ${draftSnapshot}`
           : chipPrefix
-        : trimmed;
+        : draftSnapshot;
       const optimisticUserTurn: Turn = {
         id: `local-${Date.now()}`,
         role: 'user',
@@ -695,9 +873,7 @@ export function OnboardingText({ onFinalized, initialTurns }: OnboardingTextProp
       };
       setTurns((prev) => [...prev, optimisticUserTurn]);
 
-      // Snapshot for failure rollback.
-      const draftSnapshot = trimmed;
-      const chipSelectionsSnapshot = chipSelections;
+      // Clear local draft + chip state immediately; rollback below if needed.
       setDraft('');
       setChipSelections([]);
 
@@ -706,16 +882,12 @@ export function OnboardingText({ onFinalized, initialTurns }: OnboardingTextProp
       abortRef.current = controller;
 
       // Slice 2.5-s3 — discriminate body shape on whether chips are active.
-      // When chipConfig is null OR no chips are selected, send the text-turn
-      // body (existing wire shape, unchanged). When chips are selected, send
-      // the chip-turn body; the optional `text` carries any extra freeform
-      // context the parent typed alongside the chips.
       const body: { message: string } | { chip_selections: string[]; text?: string } =
         hasChipSelections
-          ? trimmed.length > 0
-            ? { chip_selections: chipSelectionsSnapshot, text: trimmed }
+          ? draftSnapshot.length > 0
+            ? { chip_selections: chipSelectionsSnapshot, text: draftSnapshot }
             : { chip_selections: chipSelectionsSnapshot }
-          : { message: trimmed };
+          : { message: draftSnapshot };
 
       try {
         const raw = await hkFetch<unknown>('/v1/onboarding/text/turn', {
@@ -730,9 +902,26 @@ export function OnboardingText({ onFinalized, initialTurns }: OnboardingTextProp
           { id: parsed.lumi_turn_id, role: 'lumi', content: parsed.lumi_response },
         ]);
         setIsComplete(parsed.is_complete);
-        // Update chip slot from response. `parsed.chip_config` is null in this
-        // slice (backend hardcoded); 2.5-s4 will populate it.
+        // Slice 2.5-s6 — snapshot M2 chips for the profile-panel safety card
+        // BEFORE chipConfig is reset by the new turn's chip_config. Uses the
+        // chip selections + the *current* chipConfig (which describes M2's
+        // 10 allergen options) to recover human-readable labels.
+        if (currentMomentKey === 'm2_safe' && chipSelectionsSnapshot.length > 0) {
+          if (chipSelectionsSnapshot.includes('none')) {
+            setM2AllergenCapture({ state: 'all-clear' });
+          } else {
+            const labeled = chipSelectionsSnapshot.map((key) => {
+              const label = chipConfig?.options?.find((o) => o.key === key)?.label ?? key;
+              return { key, label };
+            });
+            setM2AllergenCapture({ state: 'declared', chips: labeled });
+          }
+        }
         setChipConfig(parsed.chip_config ?? null);
+        // Slice 2.5-s5 — track the post-turn moment so the header renders the
+        // correct "Moment X of 5" copy. null/undefined preserves the previous
+        // moment so a transient drop doesn't flicker the header.
+        setCurrentMomentKey(parsed.moment_key ?? null);
       } catch (err) {
         if (controller.signal.aborted) return;
         if (err instanceof DOMException && err.name === 'AbortError') return;
@@ -758,7 +947,15 @@ export function OnboardingText({ onFinalized, initialTurns }: OnboardingTextProp
         }
       }
     },
-    [draft, pending, chipSelections],
+    [pending, currentMomentKey, chipConfig],
+  );
+
+  const handleSubmit = useCallback(
+    async (e: React.FormEvent) => {
+      e.preventDefault();
+      await submitTurn(chipSelections, draft.trim());
+    },
+    [draft, chipSelections, submitTurn],
   );
 
   const handleFinalize = useCallback(async () => {
@@ -799,7 +996,16 @@ export function OnboardingText({ onFinalized, initialTurns }: OnboardingTextProp
             <div className="flex flex-col gap-1">
               <h1 className="font-serif text-xl font-medium tracking-tight text-amber">HiveKitchen</h1>
               <span className="font-sans text-[11px] font-medium uppercase tracking-widest text-fg-muted">
-                Step {stepNumber} of ~8
+                {(() => {
+                  // Slice 2.5-s5 — moment-based subtitle when the wire has
+                  // surfaced a moment_key; otherwise fall back to the legacy
+                  // step counter so resume-mode + pre-first-turn still read.
+                  const meta = currentMomentKey ? MOMENT_CONFIG[currentMomentKey] : undefined;
+                  if (meta !== undefined && meta.number > 0) {
+                    return `Moment ${Math.min(meta.number, 5)} of 5 · ${meta.name}`;
+                  }
+                  return `Step ${stepNumber} of ~8`;
+                })()}
               </span>
             </div>
             <div className="flex items-center gap-2">
@@ -926,13 +1132,30 @@ export function OnboardingText({ onFinalized, initialTurns }: OnboardingTextProp
                                       onClick={() => {
                                         if (chipConfig.mode === 'action') {
                                           setChipSelections([opt.key]);
-                                        } else {
-                                          setChipSelections((prev) =>
-                                            prev.includes(opt.key)
-                                              ? prev.filter((k) => k !== opt.key)
-                                              : [...prev, opt.key],
-                                          );
+                                          return;
                                         }
+                                        // Slice 2.5-s6 — M2 safety wall: 'none'
+                                        // is mutually exclusive with allergen
+                                        // chips. Tapping 'none' clears every-
+                                        // thing else; tapping any allergen
+                                        // clears 'none'.
+                                        if (currentMomentKey === 'm2_safe') {
+                                          setChipSelections((prev) => {
+                                            if (opt.key === 'none') {
+                                              return prev.includes('none') ? [] : ['none'];
+                                            }
+                                            const withoutNone = prev.filter((k) => k !== 'none');
+                                            return withoutNone.includes(opt.key)
+                                              ? withoutNone.filter((k) => k !== opt.key)
+                                              : [...withoutNone, opt.key];
+                                          });
+                                          return;
+                                        }
+                                        setChipSelections((prev) =>
+                                          prev.includes(opt.key)
+                                            ? prev.filter((k) => k !== opt.key)
+                                            : [...prev, opt.key],
+                                        );
                                       }}
                                     />
                                   ))}
@@ -944,11 +1167,12 @@ export function OnboardingText({ onFinalized, initialTurns }: OnboardingTextProp
                             <div className="pt-1">
                               <SkipChip
                                 label={chipConfig.skip_label}
+                                disabled={pending}
                                 onClick={() => {
-                                  // Slice 2.5-s3 — skip behavior lives in
-                                  // 2.5-s4's prompt. Stub: clear local chips
-                                  // so the next turn doesn't re-send them.
-                                  setChipSelections([]);
+                                  // Slice 2.5-s5 — fire an immediate chip turn
+                                  // with the literal "skip" selection so the
+                                  // v2 agent prompt advances the moment.
+                                  void submitTurn(['skip'], '');
                                 }}
                               />
                             </div>
@@ -1015,7 +1239,15 @@ export function OnboardingText({ onFinalized, initialTurns }: OnboardingTextProp
                   // Slice 2.5-s3 — placeholder dims when chips are present so
                   // they read as primary input; textarea becomes the optional
                   // "add a note" channel.
-                  placeholder={chipConfig ? 'Add a note…' : 'Type your answer...'}
+                  // Slice 2.5-s6 — M2 placeholder asks the parent to add
+                  // context (which child, severity) alongside the chips.
+                  placeholder={
+                    currentMomentKey === 'm2_safe'
+                      ? 'Add details — which child, severity, anything special I should know…'
+                      : chipConfig
+                        ? 'Add a note…'
+                        : 'Type your answer...'
+                  }
                   disabled={pending}
                   onKeyDown={(e) => {
                     if (e.key === 'Enter' && !e.shiftKey) {
@@ -1042,14 +1274,60 @@ export function OnboardingText({ onFinalized, initialTurns }: OnboardingTextProp
               </div>
               {/* Slice 2.5-s3 — micro-confirmation below the pill form. Copy
                   matches Moment1Page.tsx so the live onboarding surface and
-                  the mockup read identically once 2.5-s4 lights up chips. */}
-              {chipSelections.length > 0 && (
-                <p className="mt-2 text-center font-sans text-xs italic text-foliage">
-                  {chipSelections.length === 1
-                    ? '1 selection will be sent with your message'
-                    : `${chipSelections.length} selections will be sent with your message`}
-                </p>
-              )}
+                  the mockup read identically once 2.5-s4 lights up chips.
+                  Slice 2.5-s6 — M2 (safety wall) has a Required-mode prompt
+                  and an "all clear" confirmation in addition to the generic
+                  count copy. */}
+              {(() => {
+                if (currentMomentKey === 'm2_safe') {
+                  const hasResponse =
+                    chipSelections.length > 0 || draft.trim().length > 0;
+                  if (!hasResponse) {
+                    return (
+                      <p
+                        data-testid="m2-status-line"
+                        className="mt-2 text-center font-sans text-xs italic text-amber/80"
+                      >
+                        Required — tap an allergen, describe in your own words,
+                        or pick &ldquo;No known allergens&rdquo;.
+                      </p>
+                    );
+                  }
+                  if (chipSelections.includes('none')) {
+                    return (
+                      <p
+                        data-testid="m2-status-line"
+                        className="mt-2 text-center font-sans text-xs italic text-foliage"
+                      >
+                        No known allergens — confirmed
+                      </p>
+                    );
+                  }
+                  if (chipSelections.length > 0) {
+                    return (
+                      <p
+                        data-testid="m2-status-line"
+                        className="mt-2 text-center font-sans text-xs italic text-foliage"
+                      >
+                        {chipSelections.length === 1
+                          ? '1 selection will be sent with your message'
+                          : `${chipSelections.length} selections will be sent with your message`}
+                      </p>
+                    );
+                  }
+                  return null;
+                }
+                if (chipSelections.length > 0) {
+                  return (
+                    <p className="mt-2 text-center font-sans text-xs italic text-foliage">
+                      {chipSelections.length === 1
+                        ? '1 selection will be sent with your message'
+                        : `${chipSelections.length} selections will be sent with your message`}
+                    </p>
+                  );
+                }
+                return null;
+              })()}
               {/* Visible send label for screen-readers / tests */}
               <span className="sr-only">Send</span>
             </form>
@@ -1064,7 +1342,11 @@ export function OnboardingText({ onFinalized, initialTurns }: OnboardingTextProp
           {/* Subtle gradient overlay from Stitch design */}
           <div className="pointer-events-none absolute inset-0 bg-gradient-to-br from-surface to-bg opacity-50" />
           <div className="relative flex flex-1 flex-col overflow-hidden z-10">
-            <KitchenProfilePanel turns={turns} />
+            <KitchenProfilePanel
+              turns={turns}
+              currentMomentKey={currentMomentKey}
+              m2AllergenCapture={m2AllergenCapture}
+            />
           </div>
         </section>
       </div>
@@ -1103,7 +1385,11 @@ export function OnboardingText({ onFinalized, initialTurns }: OnboardingTextProp
             </button>
           </div>
           <div className="flex flex-1 flex-col overflow-hidden">
-            <KitchenProfilePanel turns={turns} />
+            <KitchenProfilePanel
+              turns={turns}
+              currentMomentKey={currentMomentKey}
+              m2AllergenCapture={m2AllergenCapture}
+            />
           </div>
         </div>
       </div>

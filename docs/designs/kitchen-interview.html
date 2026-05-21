@@ -1,0 +1,313 @@
+<!DOCTYPE html>
+
+<html class="dark" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>The Kitchen Interview</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;family=Instrument+Serif:ital@0;1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script id="tailwind-config">
+  tailwind.config = {
+    darkMode: "class",
+    theme: {
+      extend: {
+        "colors": {
+                "warm-neutral-900": "#1C1A17",
+                "warm-neutral-700": "#2F2D27",
+                "outline": "#a08d7e",
+                "secondary": "#ffb59a",
+                "on-tertiary-container": "#223c2b",
+                "on-surface": "#e7e1dc",
+                "sacred-plum": "#8A5F72",
+                "on-secondary-fixed-variant": "#72351d",
+                "primary": "#ffb86f",
+                "surface-bright": "#3b3935",
+                "border-radius-lg": "16px",
+                "surface-container-lowest": "#100e0b",
+                "on-tertiary-fixed-variant": "#334c3b",
+                "inverse-on-surface": "#32302d",
+                "surface-variant": "#373431",
+                "surface-container": "#211f1c",
+                "lumi-terracotta-warmed": "#C88A6E",
+                "border-radius-xl": "24px",
+                "safety-red": "#C65A4E",
+                "warm-neutral-400": "#7B7668",
+                "on-secondary-fixed": "#380d00",
+                "surface-container-highest": "#373431",
+                "outline-variant": "#524437",
+                "on-primary-fixed": "#2c1600",
+                "on-secondary-container": "#f5a081",
+                "on-error-container": "#ffdad6",
+                "safety-cleared-teal": "#5A9C8B",
+                "on-tertiary": "#1c3625",
+                "amber-warm": "#E69A3D",
+                "secondary-fixed-dim": "#ffb59a",
+                "secondary-container": "#72351d",
+                "on-surface-variant": "#d7c3b2",
+                "on-secondary": "#552009",
+                "border-radius-md": "10px",
+                "surface": "#151310",
+                "on-primary": "#4a2900",
+                "border-radius-sm": "6px",
+                "surface-dim": "#151310",
+                "tertiary-fixed": "#ccead2",
+                "warm-neutral-50": "#FAF7F2",
+                "foliage": "#7A9681",
+                "on-primary-container": "#522e00",
+                "surface-container-low": "#1d1b18",
+                "primary-fixed": "#ffdcbd",
+                "on-error": "#690005",
+                "primary-fixed-dim": "#ffb86f",
+                "lumi-terracotta": "#B46A4E",
+                "warm-neutral-800": "#262420",
+                "tertiary-fixed-dim": "#b0ceb7",
+                "tertiary-container": "#8aa690",
+                "surface-container-high": "#2c2a26",
+                "error": "#ffb4ab",
+                "inverse-primary": "#8a5100",
+                "on-background": "#e7e1dc",
+                "on-tertiary-fixed": "#062012",
+                "background": "#151310",
+                "surface-tint": "#ffb86f",
+                "primary-container": "#d98f3c",
+                "on-primary-fixed-variant": "#693c00",
+                "inverse-surface": "#e7e1dc",
+                "honey-accent": "#E69A3D",
+                "error-container": "#93000a",
+                "tertiary": "#b0ceb7",
+                "secondary-fixed": "#ffdbcf"
+        },
+        "borderRadius": {
+                "DEFAULT": "0.25rem",
+                "lg": "0.5rem",
+                "xl": "0.75rem",
+                "full": "9999px"
+        },
+        "spacing": {
+                "container-margin": "32px",
+                "unit": "4px",
+                "section-gap": "80px",
+                "brief-padding": "48px",
+                "card-padding": "24px",
+                "gutter": "20px",
+                "tile-gap": "12px",
+                "grid-gap": "20px",
+                "container-max": "1280px"
+        },
+        "fontFamily": {
+                "headline-display": [
+                        "Instrument Serif"
+                ],
+                "meta": [
+                        "Inter"
+                ],
+                "headline-display-mobile": [
+                        "Instrument Serif"
+                ],
+                "brief-moment": [
+                        "Instrument Serif"
+                ],
+                "body-main": [
+                        "Inter"
+                ],
+                "section-label": [
+                        "Inter"
+                ],
+                "heart-note": [
+                        "Instrument Serif"
+                ],
+                "label-caps": ["Inter"],
+                "meta-sm": ["Inter"],
+                "display-serif": ["Instrument Serif"],
+                "brief-headline": ["Instrument Serif"]
+        },
+        "fontSize": {
+                "headline-display": [
+                        "40px",
+                        {
+                                "lineHeight": "1.1",
+                                "letterSpacing": "0px",
+                                "fontWeight": "400"
+                        }
+                ],
+                "meta": [
+                        "12px",
+                        {
+                                "lineHeight": "1.4",
+                                "fontWeight": "400"
+                        }
+                ],
+                "headline-display-mobile": [
+                        "32px",
+                        {
+                                "lineHeight": "1.1",
+                                "fontWeight": "400"
+                        }
+                ],
+                "brief-moment": [
+                        "34px",
+                        {
+                                "lineHeight": "1.18",
+                                "fontWeight": "400"
+                        }
+                ],
+                "body-main": [
+                        "15px",
+                        {
+                                "lineHeight": "1.6",
+                                "fontWeight": "400"
+                        }
+                ],
+                "section-label": [
+                        "11px",
+                        {
+                                "lineHeight": "1.2",
+                                "letterSpacing": "0.16em",
+                                "fontWeight": "500"
+                        }
+                ],
+                "heart-note": [
+                        "26px",
+                        {
+                                "lineHeight": "1.35",
+                                "fontWeight": "400"
+                        }
+                ],
+                "label-caps": ["11px", { "lineHeight": "1", "letterSpacing": "0.16em", "fontWeight": "500" }],
+                "meta-sm": ["12px", { "lineHeight": "1.2", "fontWeight": "400" }],
+                "display-serif": ["40px", { "lineHeight": "1.1", "fontWeight": "400" }],
+                "brief-headline": ["34px", { "lineHeight": "1.18", "fontWeight": "400" }]
+        }
+},
+    },
+  }
+</script>
+<style>
+        .thread-spine {
+            position: relative;
+        }
+        .thread-spine::before {
+            content: '';
+            position: absolute;
+            left: 24px;
+            top: 40px;
+            bottom: -40px;
+            width: 2px;
+            background-color: theme('colors.surface-variant');
+            z-index: 0;
+        }
+        .turn-lumi .message-content {
+            border-left: 2px solid theme('colors.lumi-terracotta');
+        }
+        .turn-user .message-content {
+            border-left: 2px solid theme('colors.surface-variant');
+        }
+    </style>
+</head>
+<body class="bg-warm-neutral-900 text-warm-neutral-50 min-h-screen flex flex-col font-body-main selection:bg-surface-tint selection:text-warm-neutral-900 antialiased">
+<!-- TopAppBar -->
+<header class="border-b border-outline/20 bg-surface">
+<div class="flex justify-between items-center w-full px-6 py-4 max-w-7xl mx-auto">
+<!-- Brand Logo -->
+<div class="flex items-center gap-2">
+<span class="font-headline-display text-2xl italic text-warm-neutral-50">HiveKitchen</span>
+</div>
+<!-- Multimedia/Status Icons -->
+<div class="flex items-center gap-6 text-on-surface-variant">
+<button aria-label="Notifications" class="hover:text-lumi-terracotta transition-colors">
+<span class="material-symbols-outlined text-[22px]">notifications</span>
+</button>
+<button aria-label="User Profile" class="hover:text-lumi-terracotta transition-colors">
+<span class="material-symbols-outlined text-[22px]">account_circle</span>
+</button>
+</div>
+</div>
+</header>
+<!-- Main Content Canvas -->
+<main class="flex-grow w-full max-w-container-max mx-auto px-4 md:px-brief-padding pb-section-gap pt-12 flex flex-col">
+<div class="flex flex-col max-w-2xl mx-auto w-full relative">
+<!-- Context Header -->
+<div class="mb-12 text-center">
+<h1 class="font-display-serif text-display-serif text-warm-neutral-50 mb-4">The Kitchen Interview</h1>
+<p class="font-body-main text-body-main text-on-surface-variant max-w-md mx-auto">Let's build your profile. Speak naturally, I'm taking notes.</p>
+</div>
+<!-- Thread Container -->
+<div class="thread-spine flex flex-col gap-8 relative z-10">
+<!-- Turn: Lumi -->
+<div class="turn-lumi flex gap-4 w-full">
+<div class="flex-shrink-0 w-12 h-12 rounded-full bg-surface-container flex items-center justify-center border border-outline-variant z-10 relative">
+<span class="material-symbols-outlined text-lumi-terracotta">auto_awesome</span>
+</div>
+<div class="flex flex-col gap-1 w-full pt-2">
+<div class="flex items-baseline gap-3">
+<span class="font-meta-sm text-meta-sm text-on-surface-variant">Lumi</span>
+<span class="font-meta-sm text-meta-sm text-outline">Just now</span>
+</div>
+<div class="message-content pl-4 py-1">
+<p class="font-heart-note text-heart-note text-warm-neutral-50">To start, what did your <span class="text-sacred-plum">grandmother</span> cook? Any specific dishes or flavors that immediately come to mind?</p>
+</div>
+</div>
+</div>
+<!-- Turn: User -->
+<div class="turn-user flex gap-4 w-full">
+<div class="flex-shrink-0 w-12 h-12 rounded-full bg-warm-neutral-800 flex items-center justify-center border border-outline-variant z-10 relative overflow-hidden">
+<img alt="User Profile" class="w-full h-full object-cover" data-alt="A close-up portrait of a young individual with warm, natural lighting. The scene is intimate and relational, reflecting a calm, unhurried mood. The background is softly blurred, emphasizing trust and transparency in an editorial, minimalist aesthetic." src="https://lh3.googleusercontent.com/aida-public/AB6AXuBB2B0-penQdfGA0EQZ2wafILY5CmDrx-HsAwIcaPiX2bVk22OJgEQuPZaYcDW6ONbhLVmPFIcHgqMJoNFmUdlwqPzgxgpdktweR9OWhjiARWX2bYWKExVBA25I_6QpAanZ4121LlZ8f4nmVt6ZeloVVLdnooACtdcatAImKXjScrCCbueSkbsg45GhKOeik31JLgaw_9JuF14P81WrrGTFGHPduDGG1u_Y04Tv5rtbUjPEYBGkur_wvXxoFrQzzgZSuruYP2Vgqj0"/>
+</div>
+<div class="flex flex-col gap-1 w-full pt-2">
+<div class="flex items-baseline gap-3">
+<span class="font-meta-sm text-meta-sm text-on-surface-variant">You</span>
+<span class="font-meta-sm text-meta-sm text-outline">Just now</span>
+</div>
+<div class="message-content pl-4 py-1">
+<div class="bg-surface-container-high rounded-xl p-4 inline-block border border-outline-variant">
+<p class="font-body-main text-body-main text-warm-neutral-50">She always made this incredible <span class="text-sacred-plum">slow-roasted lamb</span> on Sundays. Lots of rosemary and garlic. Oh, and for allergies—I'm strictly gluten-free.</p>
+</div>
+</div>
+</div>
+</div>
+<!-- Turn: Lumi (Pending) -->
+<div class="turn-lumi flex gap-4 w-full opacity-80 mt-4">
+<div class="flex-shrink-0 w-12 h-12 rounded-full bg-surface-container flex items-center justify-center border border-dashed border-outline-variant z-10 relative">
+<span class="w-2 h-2 rounded-full bg-sacred-plum"></span>
+</div>
+<div class="flex flex-col gap-1 w-full pt-2">
+<div class="flex items-baseline gap-3">
+<span class="font-meta-sm text-meta-sm text-on-surface-variant">Lumi</span>
+<span class="font-meta-sm text-meta-sm text-outline">Listening...</span>
+</div>
+<div class="message-content pl-4 py-1 flex items-center h-8">
+<!-- Placeholder for typing indicator / waveform -->
+<div class="flex gap-1 items-center">
+<div class="w-1.5 h-1.5 bg-outline-variant rounded-full"></div>
+<div class="w-1.5 h-1.5 bg-outline-variant rounded-full"></div>
+<div class="w-1.5 h-1.5 bg-outline-variant rounded-full"></div>
+</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+<!-- Floating Voice Action -->
+<div class="fixed bottom-24 left-0 w-full flex justify-center pointer-events-none px-4 z-40">
+<button class="pointer-events-auto flex items-center gap-3 bg-surface-container border border-lumi-terracotta text-warm-neutral-50 px-6 py-4 rounded-full shadow-[0_4px_24px_rgba(0,0,0,0.4)] hover:border-lumi-terracotta-warmed hover:-translate-y-px transition-all focus:outline-none min-h-[56px] group">
+<span class="material-symbols-outlined text-lumi-terracotta group-hover:text-lumi-terracotta-warmed transition-colors" data-weight="fill">mic</span>
+<span class="font-label-caps text-label-caps uppercase tracking-widest text-warm-neutral-50">Hold to talk</span>
+</button>
+</div>
+</main>
+<!-- BottomNavBar -->
+<footer class="mt-auto border-t border-outline/10 bg-surface py-12">
+<div class="max-w-7xl mx-auto px-8 flex flex-col md:flex-row justify-between items-center gap-8">
+<div class="text-on-surface-variant font-body-main text-caption uppercase tracking-widest">
+      (C) 2026 HIVELUME LLC
+    </div>
+<div class="flex gap-8 text-on-surface-variant font-body-main text-caption uppercase tracking-widest">
+<a class="hover:text-lumi-terracotta transition-colors" href="#">Privacy Policy</a>
+<a class="hover:text-lumi-terracotta transition-colors" href="#">Terms of Service</a>
+<a class="hover:text-lumi-terracotta transition-colors" href="#">Help Center</a>
+</div>
+</div>
+</footer>
+</body></html>

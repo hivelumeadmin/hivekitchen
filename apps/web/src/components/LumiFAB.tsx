@@ -15,7 +15,7 @@ export type LumiFABProps = Readonly<Readonly_LumiFABProps>;
  * (which is the in-action-bar variant); this one is for screens that don't
  * have a sticky action bar but still need a Lumi entry point.
  *
- * Honors the design rule documented in `.stitch/DESIGN.md` §7 — Lumi
+ * Honors the design rule documented in `docs/DESIGN.md` §7 — Lumi
  * affordances always use lumi-terracotta with hover transitioning to
  * lumi-terracotta-warmed.
  */

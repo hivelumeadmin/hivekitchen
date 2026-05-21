@@ -26,6 +26,14 @@ export class HouseholdsService {
     };
   }
 
+  // Slice 2.5-s5 — Moment 1 household label setter. No vocabulary validation
+  // (display_name is free-text constrained at the contract boundary). The
+  // repository handles the kitchen_map_version bump so the composer picks
+  // up the new value on next read.
+  async setDisplayName(householdId: string, displayName: string): Promise<void> {
+    return this.deps.repository.setDisplayName(householdId, displayName);
+  }
+
   async addAllergens(
     householdId: string,
     toAdd: string[],

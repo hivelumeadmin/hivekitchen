@@ -1,0 +1,371 @@
+<!DOCTYPE html>
+
+<html class="dark" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&amp;family=Inter:wght@400;500;600;700&amp;family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script id="tailwind-config">
+  tailwind.config = {
+    darkMode: "class",
+    theme: {
+      extend: {
+        "colors": {
+                "warm-neutral-900": "#1C1A17",
+                "warm-neutral-700": "#2F2D27",
+                "outline": "#a08d7e",
+                "secondary": "#ffb59a",
+                "on-tertiary-container": "#223c2b",
+                "on-surface": "#e7e1dc",
+                "sacred-plum": "#8A5F72",
+                "on-secondary-fixed-variant": "#72351d",
+                "primary": "#ffb86f",
+                "surface-bright": "#3b3935",
+                "border-radius-lg": "16px",
+                "surface-container-lowest": "#100e0b",
+                "on-tertiary-fixed-variant": "#334c3b",
+                "inverse-on-surface": "#32302d",
+                "surface-variant": "#373431",
+                "surface-container": "#211f1c",
+                "lumi-terracotta-warmed": "#C88A6E",
+                "border-radius-xl": "24px",
+                "safety-red": "#C65A4E",
+                "warm-neutral-400": "#7B7668",
+                "on-secondary-fixed": "#380d00",
+                "surface-container-highest": "#373431",
+                "outline-variant": "#524437",
+                "on-primary-fixed": "#2c1600",
+                "on-secondary-container": "#f5a081",
+                "on-error-container": "#ffdad6",
+                "safety-cleared-teal": "#5A9C8B",
+                "on-tertiary": "#1c3625",
+                "amber-warm": "#E69A3D",
+                "secondary-fixed-dim": "#ffb59a",
+                "secondary-container": "#72351d",
+                "on-surface-variant": "#d7c3b2",
+                "on-secondary": "#552009",
+                "border-radius-md": "10px",
+                "surface": "#151310",
+                "on-primary": "#4a2900",
+                "border-radius-sm": "6px",
+                "surface-dim": "#151310",
+                "tertiary-fixed": "#ccead2",
+                "warm-neutral-50": "#FAF7F2",
+                "foliage": "#7A9681",
+                "on-primary-container": "#522e00",
+                "surface-container-low": "#1d1b18",
+                "primary-fixed": "#ffdcbd",
+                "on-error": "#690005",
+                "primary-fixed-dim": "#ffb86f",
+                "lumi-terracotta": "#B46A4E",
+                "warm-neutral-800": "#262420",
+                "tertiary-fixed-dim": "#b0ceb7",
+                "tertiary-container": "#8aa690",
+                "surface-container-high": "#2c2a26",
+                "error": "#ffb4ab",
+                "inverse-primary": "#8a5100",
+                "on-background": "#e7e1dc",
+                "on-tertiary-fixed": "#062012",
+                "background": "#151310",
+                "surface-tint": "#ffb86f",
+                "primary-container": "#d98f3c",
+                "on-primary-fixed-variant": "#693c00",
+                "inverse-surface": "#e7e1dc",
+                "honey-accent": "#E69A3D",
+                "error-container": "#93000a",
+                "tertiary": "#b0ceb7",
+                "secondary-fixed": "#ffdbcf"
+        },
+        "borderRadius": {
+                "DEFAULT": "0.25rem",
+                "lg": "0.5rem",
+                "xl": "0.75rem",
+                "full": "9999px"
+        },
+        "spacing": {
+                "container-margin": "32px",
+                "unit": "4px",
+                "section-gap": "80px",
+                "brief-padding": "48px",
+                "card-padding": "24px",
+                "gutter": "20px"
+        },
+        "fontFamily": {
+                "headline-display": [
+                        "Instrument Serif", "serif"
+                ],
+                "meta": [
+                        "Inter", "sans-serif"
+                ],
+                "headline-display-mobile": [
+                        "Instrument Serif", "serif"
+                ],
+                "brief-moment": [
+                        "Instrument Serif", "serif"
+                ],
+                "body-main": [
+                        "Inter", "sans-serif"
+                ],
+                "section-label": [
+                        "Inter", "sans-serif"
+                ],
+                "heart-note": [
+                        "Instrument Serif", "serif"
+                ]
+        },
+        "fontSize": {
+                "headline-display": [
+                        "40px",
+                        {
+                                "lineHeight": "1.1",
+                                "letterSpacing": "0px",
+                                "fontWeight": "400"
+                        }
+                ],
+                "meta": [
+                        "12px",
+                        {
+                                "lineHeight": "1.4",
+                                "fontWeight": "400"
+                        }
+                ],
+                "headline-display-mobile": [
+                        "32px",
+                        {
+                                "lineHeight": "1.1",
+                                "fontWeight": "400"
+                        }
+                ],
+                "brief-moment": [
+                        "34px",
+                        {
+                                "lineHeight": "1.18",
+                                "fontWeight": "400"
+                        }
+                ],
+                "body-main": [
+                        "15px",
+                        {
+                                "lineHeight": "1.6",
+                                "fontWeight": "400"
+                        }
+                ],
+                "section-label": [
+                        "11px",
+                        {
+                                "lineHeight": "1.2",
+                                "letterSpacing": "0.16em",
+                                "fontWeight": "500"
+                        }
+                ],
+                "heart-note": [
+                        "26px",
+                        {
+                                "lineHeight": "1.35",
+                                "fontWeight": "400"
+                        }
+                ]
+        }
+},
+    },
+  }
+</script>
+<style>
+    body {
+      background-color: #151310;
+      color: #e7e1dc;
+      -webkit-font-smoothing: antialiased;
+    }
+    .material-symbols-outlined {
+      font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+      vertical-align: middle;
+    }
+    .text-display-md { font-size: 36px; line-height: 1.15; letter-spacing: -0.015em; }
+    .text-display-lg { font-size: 48px; line-height: 1.1; letter-spacing: -0.02em; }
+    .text-title { font-size: 24px; line-height: 1.2; }
+    .text-label { font-size: 13px; font-weight: 500; }
+    .text-caption { font-size: 12px; }
+  </style>
+</head>
+<body class="font-body-main selection:bg-primary/30">
+<!-- TopAppBar (Shared Component Logic) -->
+<nav class="bg-surface docked full-width top-0 sticky z-50 border-b border-outline flat no shadows">
+<div class="flex justify-between items-center w-full px-8 py-4 max-w-7xl mx-auto">
+<div class="flex items-center gap-6">
+<button class="active:scale-95 transition-transform duration-200 text-on-surface-variant hover:text-primary">
+<span class="material-symbols-outlined" data-icon="chevron_left">chevron_left</span>
+</button>
+<div class="flex items-center gap-2 font-body-main text-label tracking-wide text-on-surface-variant">
+<span class="hover:text-primary cursor-pointer transition-colors">This week</span>
+<span class="text-outline">/</span>
+<span class="text-on-surface font-medium">Tuesday 12 May</span>
+</div>
+</div>
+<div class="flex items-center gap-4">
+<div class="relative flex items-center justify-center">
+<div class="w-2.5 h-2.5 bg-primary rounded-full blur-[2px] animate-pulse"></div>
+<div class="absolute w-2.5 h-2.5 bg-primary rounded-full"></div>
+</div>
+<div class="w-10 h-10 rounded-full overflow-hidden border border-outline/30 bg-surface-container">
+<img alt="User profile with amber Lumi status indicator" class="w-full h-full object-cover" data-alt="A professional close-up headshot of a person with a warm, friendly expression, set against a dark, moody studio background. The lighting is soft and directional, highlighting the contours of the face while maintaining the editorial, high-end aesthetic of the HiveKitchen brand. The color palette is composed of rich charcoals and warm skin tones to match the dark UI design." src="https://lh3.googleusercontent.com/aida-public/AB6AXuAI5lWUvvVUPSsdy-xB7T07ZZC-1AiN9Yw6a_MlJ4X6RZ9q1nlUlxjWchbjT7emfqGSQMdyU-Psg6-sQQKkV8EKnFzbR4jx6HSxTLW8hN_CcquOt-xpFvMv5u1pJ11D_zruq1xmCELJzRs38NzU6Gw2LnPXuAFPi9cGf97JYaD4St7eh1u9YRM5oOz3TVIryFHVQeaTQuaeifoCZj45ITlH7-r6qzOUnWWPIxemamaWXMc8BLi6cVcghIRE76wX8AAJRB6LKewg_fQ"/>
+</div>
+</div>
+</div>
+</nav>
+<main class="max-w-7xl mx-auto px-8 pt-12 pb-24">
+<!-- Editorial Header -->
+<header class="mb-12 max-w-4xl">
+<p class="font-meta uppercase tracking-[0.2em] text-sacred-plum mb-4 font-semibold">
+        TUESDAY · 12 MAY · LUNCH FOR AARAV
+      </p>
+<h1 class="font-headline-display text-display-lg text-on-surface mb-6 italic">
+        Cumin chicken pita with carrot ribbons
+      </h1>
+<p class="font-body-main text-lg leading-relaxed text-on-surface-variant max-w-2xl">
+        A travel-friendly handheld with a side that won't wilt — Lumi picked this because Aarav rated last week's pita ★★★★★ and chickpeas are running ahead this week.
+      </p>
+</header>
+<!-- Main Content Body -->
+<div class="grid grid-cols-1 lg:grid-cols-10 gap-12">
+<!-- Left Column: Primary Content (60%) -->
+<div class="lg:col-span-6 space-y-12">
+<div class="space-y-4">
+<div class="aspect-[4/3] rounded-lg overflow-hidden border border-outline/20">
+<img alt="Lunch Detail" class="w-full h-full object-cover" data-alt="A beautifully plated Mediterranean-style lunch featuring a sliced wholemeal pita bread stuffed with cumin-spiced grilled chicken strips and fresh greens. Beside it sits a small, elegant ceramic bowl containing bright orange carrot ribbons and a couple of dark, glossy medjool dates. The scene is set in a quiet, dimly lit kitchen at dusk with warm ambient light catching the textures of the food, following the Editorial Hearth dark aesthetic." src="https://lh3.googleusercontent.com/aida-public/AB6AXuDCpz5Rw9eG9rYNygjTyGm1FSqzXPCngIF94awK6VG5s3p6JrX_buepXmRyieexMB00CpxlPMG9yB8HaxNxyYM8GoN5NGmbUjq39kyQpSaiokE18uFGZ3MuQs-rXkevOsZtYZ2-SlHKMHYv0E81TbX6h1WnZ51NW26fKDRWUa0mSeWKhPxyMvrMkJB-tZMZ3SfGFRndoocwccx-o_v5s0LedyIVqxvRYO4SI9jSsWSIFz8zfNLZgo8p2L2pcWIde_YAlhQck9V9RMc"/>
+</div>
+<p class="font-meta italic text-on-surface-variant/70 text-right pr-2">Approx. 6 oz / serves one</p>
+</div>
+<section class="space-y-6">
+<h2 class="font-headline-display text-title text-on-surface">What's packed</h2>
+<ul class="space-y-4 border-l border-outline/30 pl-6">
+<li class="flex items-center gap-3">
+<span class="w-1.5 h-1.5 rounded-full bg-primary"></span>
+<span class="font-body-main text-on-surface-variant">Cumin-spiced grilled chicken (4 oz)</span>
+</li>
+<li class="flex items-center gap-3">
+<span class="w-1.5 h-1.5 rounded-full bg-primary"></span>
+<span class="font-body-main text-on-surface-variant">Wholemeal pita, halved</span>
+</li>
+<li class="flex items-center gap-3">
+<span class="w-1.5 h-1.5 rounded-full bg-primary"></span>
+<span class="font-body-main text-on-surface-variant">Carrot ribbons with lemon (small pot)</span>
+</li>
+<li class="flex items-center gap-3">
+<span class="w-1.5 h-1.5 rounded-full bg-primary"></span>
+<span class="font-body-main text-on-surface-variant">2 medjool dates</span>
+</li>
+</ul>
+</section>
+<section class="p-8 rounded-lg bg-surface-container border border-outline/20">
+<div class="flex items-center gap-3 mb-4">
+<span class="material-symbols-outlined text-primary" data-icon="lightbulb">lightbulb</span>
+<h2 class="font-headline-display text-title text-on-surface">Notes for the morning</h2>
+</div>
+<p class="font-body-main text-on-surface-variant leading-relaxed">
+            Pack the pita with the chicken folded inside, not pre-stuffed — keeps it from going soggy. Send the carrot ribbons in the small leakproof pot.
+          </p>
+</section>
+</div>
+<!-- Right Column: Contextual Cards (40%) -->
+<div class="lg:col-span-4 space-y-4">
+<!-- Safety Card -->
+<div class="p-6 rounded-lg bg-surface-container border-l-4 border-sacred-plum shadow-sm">
+<h3 class="font-section-label uppercase tracking-widest text-sacred-plum mb-4">Safe for Aarav's school</h3>
+<div class="space-y-3">
+<div class="flex items-center justify-between font-body-main text-on-surface-variant">
+<span>Nut-free</span>
+<span class="material-symbols-outlined text-sacred-plum" data-icon="check_circle">check_circle</span>
+</div>
+<div class="flex items-center justify-between font-body-main text-on-surface-variant">
+<span>No heating required</span>
+<span class="material-symbols-outlined text-sacred-plum" data-icon="check_circle">check_circle</span>
+</div>
+<div class="flex items-center justify-between font-body-main text-on-surface-variant">
+<span>Halal</span>
+<span class="material-symbols-outlined text-sacred-plum" data-icon="check_circle">check_circle</span>
+</div>
+</div>
+</div>
+<!-- Allergen Scan Card -->
+<div class="p-6 rounded-lg bg-surface-container border border-outline/10">
+<h3 class="font-section-label uppercase tracking-widest text-on-surface mb-4">Allergens checked</h3>
+<div class="flex flex-wrap gap-2">
+<span class="px-3 py-1.5 rounded-full bg-surface-bright border border-outline/20 font-meta flex items-center gap-2">
+<span class="w-1.5 h-1.5 rounded-full bg-safety-red"></span>
+              Wheat
+            </span>
+<span class="px-3 py-1.5 rounded-full bg-surface-bright border border-outline/20 font-meta">Dairy-free</span>
+<span class="px-3 py-1.5 rounded-full bg-surface-bright border border-outline/20 font-meta">Egg-free</span>
+</div>
+</div>
+<!-- Why Lumi Chose Card -->
+<div class="p-6 rounded-lg bg-surface-container border-l-4 border-lumi-terracotta">
+<h3 class="font-section-label uppercase tracking-widest text-lumi-terracotta mb-4">Why Lumi chose this</h3>
+<ul class="space-y-3 font-body-main text-label text-on-surface-variant">
+<li class="flex items-start gap-3">
+<span class="material-symbols-outlined text-[16px] mt-0.5 text-lumi-terracotta" data-icon="star" style="font-variation-settings: 'FILL' 1;">star</span>
+              Matches Aarav's preference for handheld textures.
+            </li>
+<li class="flex items-start gap-3">
+<span class="material-symbols-outlined text-[16px] mt-0.5 text-lumi-terracotta" data-icon="inventory_2">inventory_2</span>
+              Maintains integrity for up to 6 hours in transit.
+            </li>
+<li class="flex items-start gap-3">
+<span class="material-symbols-outlined text-[16px] mt-0.5 text-lumi-terracotta" data-icon="nutrition">nutrition</span>
+              Fits the weekly goal for complex proteins.
+            </li>
+</ul>
+</div>
+<!-- Source Card -->
+<div class="p-4 rounded-lg bg-surface/50 border border-outline/10 text-on-surface-variant/60">
+<div class="flex items-center gap-2 mb-1">
+<span class="material-symbols-outlined text-[14px]" data-icon="menu_book">menu_book</span>
+<span class="font-meta font-medium">From the Seed Library</span>
+</div>
+<p class="text-[11px] uppercase tracking-wider font-section-label">Family-friendly handhelds</p>
+</div>
+</div>
+</div>
+<!-- Sticky Bottom Action Bar -->
+<div class="fixed bottom-0 left-0 right-0 z-40 bg-surface/80 backdrop-blur-md border-t border-outline/20 py-6 px-8">
+<div class="max-w-7xl mx-auto flex flex-col md:flex-row items-center justify-between gap-6">
+<div class="flex flex-wrap items-center gap-4">
+<button class="bg-primary hover:bg-primary-container active:scale-95 text-on-primary font-semibold px-8 py-3 rounded-lg transition-all duration-200">
+            Keep this lunch
+          </button>
+<button class="flex items-center gap-2 px-4 py-3 text-on-surface hover:text-primary transition-colors">
+<span class="material-symbols-outlined" data-icon="refresh">refresh</span>
+<span class="font-medium text-label">Swap to something else</span>
+</button>
+<button class="flex items-center gap-2 px-4 py-3 text-on-surface hover:text-primary transition-colors">
+<span class="material-symbols-outlined" data-icon="calendar_today">calendar_today</span>
+<span class="font-medium text-label">Pause Tuesday</span>
+</button>
+</div>
+<div class="flex flex-col items-end gap-2">
+<button class="flex items-center gap-2 text-lumi-terracotta hover:text-lumi-terracotta-warmed transition-colors group">
+<span class="material-symbols-outlined text-[18px]" data-icon="graphic_eq">graphic_eq</span>
+<span class="font-section-label uppercase tracking-widest font-bold">Speak to Lumi about this</span>
+</button>
+<p class="font-meta text-on-surface-variant italic">
+            Last week, Aarav rated this style ★★★★★ on 7 May.
+          </p>
+</div>
+</div>
+</div>
+</main>
+<!-- Footer (Shared Component Logic) -->
+<footer class="bg-surface w-full mt-auto border-t border-outline flat no shadows">
+<div class="max-w-7xl mx-auto flex flex-col md:flex-row justify-between items-center px-8 py-12 gap-6">
+<div class="font-headline-display text-title text-on-surface-variant">HiveKitchen</div>
+<div class="flex gap-8">
+<a class="font-meta uppercase tracking-widest text-on-surface-variant hover:text-primary transition-colors duration-300 opacity-70 hover:opacity-100" href="#">Privacy Policy</a>
+<a class="font-meta uppercase tracking-widest text-on-surface-variant hover:text-primary transition-colors duration-300 opacity-70 hover:opacity-100" href="#">Terms of Service</a>
+<a class="font-meta uppercase tracking-widest text-on-surface-variant hover:text-primary transition-colors duration-300 opacity-70 hover:opacity-100" href="#">Help Center</a>
+</div>
+<div class="font-meta uppercase tracking-widest text-on-surface-variant/60">
+        © 2024 HiveKitchen — Lumi AI school-lunch companion.
+      </div>
+</div>
+</footer>
+</body></html>

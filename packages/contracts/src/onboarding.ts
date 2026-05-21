@@ -58,6 +58,11 @@ export const TextOnboardingTurnResponseSchema = z.object({
   lumi_response: z.string(),
   is_complete: z.boolean(),
   chip_config: ChipConfigSchema.nullable().optional(),
+  // Slice 2.5-s5 — current moment after this turn. Client renders the
+  // "Moment X of 5 · <name>" header from this. Optional + nullable so old
+  // clients ignore it without breaking; null/undefined falls back to the
+  // legacy "Step N of ~8" subtitle.
+  moment_key: z.string().nullable().optional(),
 });
 
 // POST /v1/onboarding/text/finalize — response (no request body)
