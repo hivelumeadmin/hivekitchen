@@ -1,5 +1,5 @@
 # generated: 2026-04-23
-# last_updated: 2026-05-20 (2.5-s5 → done)
+# last_updated: 2026-05-21 (2.5-s7 → done, 3.28 → done)
 # project: hivekitchen
 # project_key: NOKEY
 # tracking_system: file-system
@@ -52,7 +52,7 @@
 # Walls (decision moments) are flagged with `# WALL:` markers.
 
 generated: 2026-04-23
-last_updated: 2026-05-20 (2.5-s6 → done)
+last_updated: 2026-05-21 (2.5-s7 → done, 3.28 → done)
 project: hivekitchen
 project_key: NOKEY
 tracking_system: file-system
@@ -141,7 +141,7 @@ development_status:
   2.5-s4-agent-prompt-v2-required-set-tracker: done                           # agent state-awareness contract; chaptered conversation prompt
   2.5-s5-moment-1-whos-at-the-table: done                                    # household name + children + age bands; MOCK-REF
   2.5-s6-moment-2-what-i-need-to-keep-safe: done                              # WALL: safety wall — allergens explicit response gate; MOCK-REF
-  2.5-s7-moment-3-how-your-kitchen-tastes: backlog                            # cultural & religious identity + dietary + cuisine + food preferences; MOCK-REF
+  2.5-s7-moment-3-how-your-kitchen-tastes: done                               # cultural & religious identity + dietary + cuisine + food preferences; MOCK-REF
   2.5-s8-moment-4-what-goes-in-the-bag: backlog                               # bag composition per child; MOCK-REF
   2.5-s9-moment-5-a-starting-line-for-lumi: backlog                           # 10 favorite lunches cold-start seed; MOCK-REF
   2.5-s10-summary-and-finalize-gate: backlog                                  # WALL: EPIC MVP WALL — required-set complete, is_onboarded=true; MOCK-REF
@@ -186,7 +186,7 @@ development_status:
   3-25-hard-fail-escalation-no-safe-plan-possible: backlog                    # PAUSED 2026-05-19 pending conflict precedence rules + enforcement gradient
   3-26-graceful-degradation-state-ux: backlog                                 # PAUSED 2026-05-19 pending enforcement strength data being populated
   3-27-variant-preparation-active-learning-visible-to-parent-before-delivery: backlog  # PAUSED 2026-05-19 pending food_preferences + enforcement data
-  3-28-pause-lunch-link-for-child-on-day-without-altering-plan: ready-for-dev # CONTINUES IN PARALLEL — infrastructure, no contract dependency
+  3-28-pause-lunch-link-for-child-on-day-without-altering-plan: done          # CONTINUES IN PARALLEL — infrastructure, no contract dependency
   3-29-degraded-propose-state-with-try-alternating-sovereignty-toggle: backlog  # PAUSED 2026-05-19 pending tight-constraints set knowledge
   3-30-llm-provider-failover-circuit-breaker-audit: ready-for-dev             # CONTINUES IN PARALLEL — infrastructure, no contract dependency
   epic-3-retrospective: optional

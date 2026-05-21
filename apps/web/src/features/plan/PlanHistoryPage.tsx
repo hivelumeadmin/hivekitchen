@@ -26,6 +26,7 @@ function toPlanTileSummaries(items: ReadonlyArray<PlanItemRow>): PlanTileSummary
     return {
       day,
       paused: dayItems.length > 0 && dayItems.every((it) => it.paused_at !== null),
+      lunch_link_suppressed_children: [],
       items: dayItems.map((it) => ({
         plan_item_id: it.id,
         child_id: it.child_id,

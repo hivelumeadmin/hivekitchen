@@ -28,6 +28,10 @@ export interface PlanTileProps {
   trustChips?: ReadonlyArray<{ variant: TrustChipVariant; label: string }>;
   childColorMap?: ReadonlyMap<string, ChildInfo>;
   onSwapIntent?: () => void;
+  // Story 3.28 — pause/resume Lunch Link delivery for this day without altering
+  // the underlying plan. The parent component resolves childId and date then
+  // calls POST /v1/children/:childId/lunch-link-pause.
+  onPauseLunchLink?: () => void;
   // Story 3.15 — historical plan view forces every tile into the past variant
   // regardless of day-of-week. Default behavior (deriveVariant) compares the
   // tile's day to today, which is wrong when rendering a prior week's plan.
@@ -90,6 +94,7 @@ export function PlanTile({
   trustChips,
   childColorMap,
   onSwapIntent,
+  onPauseLunchLink,
   forceVariant,
 }: PlanTileProps) {
   const variant = forceVariant ?? deriveVariant(summary.day);
@@ -234,6 +239,19 @@ export function PlanTile({
             </p>
           )}
         </>
+      )}
+
+      {/* Story 3.28 — pause/resume Lunch Link delivery. Shown only for today/
+          upcoming tiles when the parent provides the callback. Does not appear
+          on past tiles or when state prevents interaction. */}
+      {!isPast && onPauseLunchLink !== undefined && (
+        <button
+          type="button"
+          onClick={onPauseLunchLink}
+          className="mt-2 self-start text-xs text-fg-muted underline underline-offset-2 cursor-pointer hover:text-terracotta focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-amber-warm"
+        >
+          {(summary.lunch_link_suppressed_children?.length ?? 0) > 0 ? 'Resume Lunch Link' : 'Pause Lunch Link'}
+        </button>
       )}
 
       {state === 'swap-in-progress' && (

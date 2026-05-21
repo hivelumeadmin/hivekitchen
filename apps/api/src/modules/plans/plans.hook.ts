@@ -15,6 +15,7 @@ import { ExtraRulesRepository } from '../children/extra-rules.repository.js';
 import { ExtraRemovalSignalService } from './extra-removal-signal.service.js';
 import { RecipeService } from '../recipe/recipe.service.js';
 import { RecipesRepository } from '../recipe/recipes.repository.js';
+import { LunchLinkSessionRepository } from './lunch-link-session.repository.js';
 
 const plansHookPlugin: FastifyPluginAsync = async (fastify) => {
   if (!fastify.supabase) {
@@ -44,10 +45,19 @@ const plansHookPlugin: FastifyPluginAsync = async (fastify) => {
   const kekHex = fastify.env.ENVELOPE_ENCRYPTION_MASTER_KEY;
   const kek = kekHex ? Buffer.from(kekHex, 'hex') : null;
   const childrenRepository = new ChildrenRepository(fastify.supabase, kek, fastify.log);
+  // Story 3.28 — lunch link suppression. Created here so both BriefStateComposer
+  // and the children route (POST /v1/children/:childId/lunch-link-pause) share
+  // the same repository instance via the lunchLinkSessionRepository decorator.
+  // Delivery job (lunch-link-delivery.job.ts, to be built in Epic 4) must call
+  // lunchLinkSessionRepository.findSuppressedForDate(date) at the start of each
+  // child's delivery loop and skip SendGrid/Twilio when suppressed_at IS NOT NULL.
+  const lunchLinkSessionRepository = new LunchLinkSessionRepository(fastify.supabase);
+
   const briefStateComposer = new BriefStateComposer({
     plansRepository: repository,
     briefStateRepository,
     childrenRepository,
+    lunchLinkSessionRepository,
     auditService: fastify.auditService,
     logger: fastify.log,
   });
@@ -122,6 +132,7 @@ const plansHookPlugin: FastifyPluginAsync = async (fastify) => {
   fastify.decorate('planAdjustmentService', planAdjustmentService);
   fastify.decorate('dayOverridesService', dayOverridesService);
   fastify.decorate('snackSkusRepository', snackSkusRepository);
+  fastify.decorate('lunchLinkSessionRepository', lunchLinkSessionRepository);
 };
 
 export const plansHook = fp(plansHookPlugin, { name: 'plans-hook' });

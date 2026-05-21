@@ -1,6 +1,6 @@
 # Story 3.28: Pause Lunch Link for Child on Day Without Altering Plan
 
-Status: ready-for-dev
+Status: done
 
 ## Story
 
@@ -345,3 +345,4 @@ _bmad-output/implementation-artifacts/deferred-work.md       + Epic 4 delivery j
 | Date | Author | Change |
 |------|--------|--------|
 | 2026-05-05 | Menon | Story 3.28 created — ready-for-dev. |
+| 2026-05-21 | Dev Agent | All tasks implemented: stub migration, contracts (LunchLinkPauseInputSchema/ResponseSchema), LunchLinkSessionRepository, POST /v1/children/:childId/lunch-link-pause, brief-state.composer suppression map, PlanTile "Pause/Resume Lunch Link" affordance, PlanTileSummarySchema lunch_link_suppressed field, audit event types, full test suites (repository + route). |

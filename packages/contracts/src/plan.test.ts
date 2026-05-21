@@ -765,6 +765,37 @@ describe('PlanTileSummarySchema — paused (Story 3.12)', () => {
   });
 });
 
+describe('PlanTileSummarySchema — lunch_link_suppressed_children (Story 3.28)', () => {
+  const validSummary = {
+    day: 'tuesday' as const,
+    items: [{ child_id: UUID1, slot: 'main', ingredients: ['pasta'] }],
+  };
+
+  it('defaults lunch_link_suppressed_children to [] when omitted', () => {
+    const parsed = PlanTileSummarySchema.safeParse(validSummary);
+    expect(parsed.success).toBe(true);
+    if (parsed.success) {
+      expect(parsed.data.lunch_link_suppressed_children).toEqual([]);
+    }
+  });
+
+  it('round-trips lunch_link_suppressed_children: [uuid]', () => {
+    const parsed = PlanTileSummarySchema.safeParse({ ...validSummary, lunch_link_suppressed_children: [UUID1] });
+    expect(parsed.success).toBe(true);
+    if (parsed.success) {
+      expect(parsed.data.lunch_link_suppressed_children).toEqual([UUID1]);
+    }
+  });
+
+  it('pre-3.28 brief_state rows without the field parse as [] (backward compat)', () => {
+    const parsed = PlanTileSummarySchema.safeParse({ ...validSummary, paused: false });
+    expect(parsed.success).toBe(true);
+    if (parsed.success) {
+      expect(parsed.data.lunch_link_suppressed_children).toEqual([]);
+    }
+  });
+});
+
 describe('PlanItemRowSchema — paused_at (Story 3.12)', () => {
   const validRow = {
     id: '00000000-0000-4000-8000-000000000010',

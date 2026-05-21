@@ -232,6 +232,9 @@ import {
   FavoriteLunchAddOutputSchema,
   RuleSetInputSchema,
   RuleSetOutputSchema,
+  // Story 3.28 — Lunch Link suppression
+  LunchLinkPauseInputSchema,
+  LunchLinkPauseResponseSchema,
 } from '@hivekitchen/contracts';
 
 // Auth
@@ -562,3 +565,7 @@ export type FavoriteLunchAddInput = z.infer<typeof FavoriteLunchAddInputSchema>;
 export type FavoriteLunchAddOutput = z.infer<typeof FavoriteLunchAddOutputSchema>;
 export type RuleSetInput = z.infer<typeof RuleSetInputSchema>;
 export type RuleSetOutput = z.infer<typeof RuleSetOutputSchema>;
+
+// Story 3.28 — Lunch Link suppression
+export type LunchLinkPauseInput = z.infer<typeof LunchLinkPauseInputSchema>;
+export type LunchLinkPauseResponse = z.infer<typeof LunchLinkPauseResponseSchema>;

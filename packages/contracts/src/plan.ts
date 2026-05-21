@@ -331,6 +331,8 @@ export const PlanTileSummarySchema = z.object({
   day: z.enum(['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday']),
   items: z.array(PlanTileItemSchema),
   paused: z.boolean().default(false),  // Story 3.12: true when all items for the day are paused
+  // Story 3.28: child UUIDs whose lunch_link_sessions row for this day has suppressed_at set.
+  lunch_link_suppressed_children: z.array(z.string().uuid()).default([]),
 });
 
 // Story 3.10 — populated by brief-state.composer; one entry per

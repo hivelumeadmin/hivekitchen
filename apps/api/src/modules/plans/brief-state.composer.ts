@@ -9,9 +9,11 @@ import type {
   DecryptedChildRow,
 } from '../children/children.repository.js';
 import type { AuditService } from '../../audit/audit.service.js';
+import type { LunchLinkSessionRepository } from './lunch-link-session.repository.js';
 import type {
   ClearedAllergyEntry,
   PlanItemRow,
+  PlanRow,
   PlanTileSummary,
   ScaffoldingDiff,
 } from '@hivekitchen/types';
@@ -20,6 +22,8 @@ export interface BriefStateComposerDeps {
   plansRepository: PlansRepository;
   briefStateRepository: BriefStateRepository;
   childrenRepository: ChildrenRepository;
+  // Story 3.28: optional so existing tests that don't wire lunch link remain valid.
+  lunchLinkSessionRepository?: LunchLinkSessionRepository;
   auditService: AuditService;
   logger: FastifyBaseLogger;
 }
@@ -41,6 +45,7 @@ export class BriefStateComposer {
   private readonly plansRepo: PlansRepository;
   private readonly briefStateRepo: BriefStateRepository;
   private readonly childrenRepo: ChildrenRepository;
+  private readonly lunchLinkSessionRepo: LunchLinkSessionRepository | undefined;
   private readonly auditService: AuditService;
   private readonly logger: FastifyBaseLogger;
 
@@ -48,6 +53,7 @@ export class BriefStateComposer {
     this.plansRepo = deps.plansRepository;
     this.briefStateRepo = deps.briefStateRepository;
     this.childrenRepo = deps.childrenRepository;
+    this.lunchLinkSessionRepo = deps.lunchLinkSessionRepository;
     this.auditService = deps.auditService;
     this.logger = deps.logger;
   }
@@ -85,6 +91,9 @@ export class BriefStateComposer {
       ]);
       const previousTileSummaries = previousBrief?.plan_tile_summaries ?? null;
 
+      // Story 3.28 — overlay lunch link suppression state per tile day.
+      const suppressionByDay = await this.buildSuppressionMap(plan);
+
       // moment_headline / lumi_note / memory_prose remain '' until the
       // planner agent (Story 3.7) and memory prose composer (Story 5.11) are
       // wired. Empty strings are the correct initial state.
@@ -94,7 +103,7 @@ export class BriefStateComposer {
         moment_headline: '',
         lumi_note: '',
         memory_prose: '',
-        plan_tile_summaries: this.buildTileSummaries(items),
+        plan_tile_summaries: this.buildTileSummaries(items, suppressionByDay),
         cleared_allergies: this.buildClearedAllergies(items, children),
         scaffolding_diff: this.buildScaffoldingDiff(
           previousTileSummaries,
@@ -139,7 +148,10 @@ export class BriefStateComposer {
   // skipping any non-school day, and emit days in canonical Mon→Sat order.
   // Days with zero items are omitted (school holidays, school-only days a
   // child does not attend, etc.).
-  private buildTileSummaries(items: PlanItemRow[]): PlanTileSummary[] {
+  private buildTileSummaries(
+    items: PlanItemRow[],
+    suppressionByDay: Map<string, string[]>,
+  ): PlanTileSummary[] {
     const byDay = new Map<
       SchoolDay,
       { items: PlanTileSummary['items']; pausedCount: number }
@@ -170,8 +182,51 @@ export class BriefStateComposer {
         // Partial-child pause (one child sick, another not) is deferred.
         paused:
           entry.items.length > 0 && entry.pausedCount === entry.items.length,
+        // Story 3.28: child UUIDs whose lunch_link_session is suppressed on this day.
+        lunch_link_suppressed_children: suppressionByDay.get(day) ?? [],
       };
     });
+  }
+
+  // Story 3.28 / D1-C — one DB query per brief refresh. Derives the calendar
+  // date for each tile day from plan.week_of (the Monday of the plan week),
+  // then returns a Map<day, childIds[]> for use in buildTileSummaries. Returns
+  // an empty map when week_of is absent or lunchLinkSessionRepo is not wired.
+  private async buildSuppressionMap(plan: PlanRow): Promise<Map<string, string[]>> {
+    const weekOf = plan.week_of;
+    if (!this.lunchLinkSessionRepo || !weekOf) {
+      return new Map();
+    }
+
+    // Date arithmetic in UTC to avoid DST surprises.
+    const monday = new Date(weekOf + 'T00:00:00Z');
+    const saturday = new Date(monday);
+    saturday.setUTCDate(monday.getUTCDate() + 5);
+    const dateTo = saturday.toISOString().split('T')[0]!;
+
+    const suppressedByDate = await this.lunchLinkSessionRepo.findSuppressedChildrenInRange(
+      plan.household_id,
+      weekOf,
+      dateTo,
+    );
+
+    const dayOffsets: Array<[SchoolDay, number]> = [
+      ['monday', 0],
+      ['tuesday', 1],
+      ['wednesday', 2],
+      ['thursday', 3],
+      ['friday', 4],
+      ['saturday', 5],
+    ];
+
+    return new Map(
+      dayOffsets.map(([day, offset]) => {
+        const d = new Date(monday);
+        d.setUTCDate(monday.getUTCDate() + offset);
+        const dateStr = d.toISOString().split('T')[0]!;
+        return [day, suppressedByDate.get(dateStr) ?? []];
+      }),
+    );
   }
 
   // Story 3.12 — detects ingredient-level changes between the previous
@@ -191,7 +246,8 @@ export class BriefStateComposer {
     if (userInitiated) return null;
     if (!previousTileSummaries || previousTileSummaries.length === 0) return null;
 
-    const currentSummaries = this.buildTileSummaries(currentItems);
+    // suppressionByDay is irrelevant for ingredient diff — pass empty map.
+    const currentSummaries = this.buildTileSummaries(currentItems, new Map<string, string[]>());
 
     // Index both sides by `(day, child_id, slot)` so we can enumerate the union
     // and detect additions (curr-only) and removals (prev-only) in addition to
