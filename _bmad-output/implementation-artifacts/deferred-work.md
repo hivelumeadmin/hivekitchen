@@ -1,5 +1,16 @@
 # Deferred Work Log
 
+## Deferred from: code review of 2.5-s8-moment-4-what-goes-in-the-bag (2026-05-21)
+
+- **`per-child` captured state always has `children: []`** — structured per-child data deferred to 2.5-s11 Kitchen Profile live read; the union type carries the `children` field but it is never populated in this slice. [`apps/web/src/features/onboarding/OnboardingText.tsx:~1091`]
+- **No server-side per-child completeness enforcement** — M4 exit condition (all declared children have `bag_composition_pattern`) is prompt-only; consistent with how M1–M3 work. [`apps/api/src/agents/prompts/onboarding.prompt.ts`]
+- **Chip selection length fragility in `else` branch** — `chipSelectionsSnapshot.length > 1` falls through to `per-child` mode with `children: []`; impossible with `mode: 'action'` single-select; only a risk if chip mode changes to 'choice'. [`apps/web/src/features/onboarding/OnboardingText.tsx:~1089`]
+- **Migration filename future-dated (20260907)** — project convention; sorts correctly given current watermark. [`supabase/migrations/20260907000000_add_bag_composition_pattern_to_children.sql`]
+- **Pre-existing: IcoHistory and IcoClock share identical SVG paths** — visual bug; both render a clock icon. Not introduced by this slice. [`apps/web/src/features/onboarding/OnboardingText.tsx`]
+- **Invalid enum value from LLM stalls agent without recovery instruction** — if the agent emits a value outside `BagCompositionPatternSchema`, Zod throws; no retry/self-correction guidance in the M4 prompt. Systemic across all tool calls. [`apps/api/src/agents/tools/onboarding.tools.ts:~99`]
+- **Resume-mode M4 card stuck at 'none'** — on mount with `initialTurns` already in M4, `currentMomentKey` starts null and the card stays hidden until the next turn response. Same pattern gap as M2/M3. [`apps/web/src/features/onboarding/OnboardingText.tsx:~981`]
+- **M4 captured transition fires on any moment advance** — `parsed.moment_key !== 'm4_bag'` is a generalization of the spec's `NEXT_MOMENT:m5_starting_line` signal; benign in current flow but would misfire if moment ordering changes. [`apps/web/src/features/onboarding/OnboardingText.tsx:~1081`]
+
 ## Deferred from: code review of 2.5-s5-moment-1-whos-at-the-table (2026-05-20)
 
 - **`m2_allergen_response` never latches true when parent explicitly says "no allergies" and stays in M2** — `advancedOutOfM2` only fires on moment exit, `child_allergen_count` stays 0 while stubs are in place. Full fix requires 2.5-s6 allergen.declare real wiring. [`apps/api/src/modules/onboarding/onboarding.service.ts`]
