@@ -1,5 +1,5 @@
 # generated: 2026-04-23
-# last_updated: 2026-05-22 (2.5-s10 → done)
+# last_updated: 2026-05-22 (3-30 → done)
 # project: hivekitchen
 # project_key: NOKEY
 # tracking_system: file-system
@@ -52,7 +52,7 @@
 # Walls (decision moments) are flagged with `# WALL:` markers.
 
 generated: 2026-04-23
-last_updated: 2026-05-22 (2.5-s10 → done)
+last_updated: 2026-05-22 (3-30 → done)
 project: hivekitchen
 project_key: NOKEY
 tracking_system: file-system
@@ -145,7 +145,7 @@ development_status:
   2.5-s8-moment-4-what-goes-in-the-bag: done                                # bag composition per child; MOCK-REF
   2.5-s9-moment-5-a-starting-line-for-lumi: done                            # 10 favorite lunches cold-start seed; MOCK-REF — FavoriteLunchesRepository + tool wiring + M5 chip catalog + override-fewer at >=4 + OnboardingText card
   2.5-s10-summary-and-finalize-gate: done                                     # WALL: EPIC MVP WALL — required-set complete, is_onboarded=true; MOCK-REF
-  2.5-s11-kitchen-profile-read-live-data: backlog                             # unblocks Epic 7 7-s1; MOCK-REF
+  2.5-s11-kitchen-profile-read-live-data: done                               # impl complete 2026-05-22; unblocks Epic 7 7-s1; MOCK-REF
   epic-2.5-retrospective: optional
 
   # Epic 3: Weekly Plan & Ready-Answer Open (unchanged — done / in-flight stories kept as-is)
@@ -188,7 +188,7 @@ development_status:
   3-27-variant-preparation-active-learning-visible-to-parent-before-delivery: backlog  # PAUSED 2026-05-19 pending food_preferences + enforcement data
   3-28-pause-lunch-link-for-child-on-day-without-altering-plan: done          # CONTINUES IN PARALLEL — infrastructure, no contract dependency
   3-29-degraded-propose-state-with-try-alternating-sovereignty-toggle: backlog  # PAUSED 2026-05-19 pending tight-constraints set knowledge
-  3-30-llm-provider-failover-circuit-breaker-audit: ready-for-dev             # CONTINUES IN PARALLEL — infrastructure, no contract dependency
+  3-30-llm-provider-failover-circuit-breaker-audit: done                      # Code review 2026-05-22: 12 patches applied (auth, retry, breaker timer-leak fix, branch-coverage tests, auth tests). 7 deferred. CONTINUES IN PARALLEL — infrastructure, no contract dependency
   epic-3-retrospective: optional
 
   # ==========================================================================
