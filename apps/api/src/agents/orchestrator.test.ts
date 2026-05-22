@@ -805,4 +805,168 @@ describe('DomainOrchestrator', () => {
       expect(capturedUserContent).not.toContain('Preparation priors');
     });
   });
+
+  // Story 3.30 — circuit-breaker health status and recovery audit.
+  describe('getProviderStatus', () => {
+    it('returns active_provider, closed circuit, and provider list when healthy', () => {
+      const primary = buildProvider('openai');
+      const secondary = buildProvider('anthropic');
+      const { orchestrator } = buildOrchestrator([primary, secondary]);
+
+      const status = orchestrator.getProviderStatus();
+
+      expect(status).toEqual({
+        active_provider: 'openai',
+        circuit_open: false,
+        providers: ['openai', 'anthropic'],
+      });
+    });
+
+    it('reports open circuit and secondary as active after failover', async () => {
+      const failingPrimary = buildProvider('openai', {
+        complete: vi.fn().mockRejectedValue(new Error('down')),
+      });
+      const secondary = buildProvider('anthropic');
+      const { orchestrator } = buildOrchestrator([failingPrimary, secondary]);
+
+      for (let i = 0; i < 5; i += 1) {
+        await expect(orchestrator.complete('hi', [], { model: 'gpt-4o' })).rejects.toThrow('down');
+      }
+
+      const status = orchestrator.getProviderStatus();
+      expect(status.active_provider).toBe('anthropic');
+      expect(status.circuit_open).toBe(true);
+      orchestrator.dispose();
+    });
+  });
+
+  describe('recovery: probe-driven audit + provider restoration', () => {
+    // Holds the orchestrator built in each test so the local afterEach can
+    // dispose timers even if an earlier expect() throws.
+    let recoveryOrchestrator: { dispose: () => void } | null = null;
+
+    afterEach(() => {
+      try {
+        recoveryOrchestrator?.dispose();
+      } finally {
+        recoveryOrchestrator = null;
+        vi.useRealTimers();
+      }
+    });
+
+    it('probe succeeds → resets to primary, writes recovered audit, closes circuit, probe was called', async () => {
+      vi.useFakeTimers();
+
+      const probe = vi.fn().mockResolvedValue(true);
+      const primary = buildProvider('openai', {
+        complete: vi.fn().mockRejectedValue(new Error('upstream-down')),
+        probe,
+      });
+      const secondary = buildProvider('anthropic');
+      const { orchestrator, audit } = buildOrchestrator([primary, secondary]);
+      recoveryOrchestrator = orchestrator;
+
+      for (let i = 0; i < 5; i += 1) {
+        await expect(orchestrator.complete('hi', [], { model: 'gpt-4o' })).rejects.toThrow(
+          'upstream-down',
+        );
+      }
+      await Promise.resolve();
+      await Promise.resolve();
+      expect(orchestrator.getActiveProvider().name).toBe('anthropic');
+
+      await vi.advanceTimersByTimeAsync(900_000);
+      await Promise.resolve();
+      await Promise.resolve();
+
+      expect(probe).toHaveBeenCalled();
+      expect(orchestrator.getActiveProvider().name).toBe('openai');
+
+      const status = orchestrator.getProviderStatus();
+      expect(status.circuit_open).toBe(false);
+
+      const calls = (audit.write as unknown as ReturnType<typeof vi.fn>).mock.calls;
+      const recoveredCall = calls.find(
+        (c: Array<{ event_type: string }>) => c[0]?.event_type === 'llm.provider.recovered',
+      );
+      expect(recoveredCall).toBeDefined();
+      expect(recoveredCall?.[0]).toMatchObject({
+        event_type: 'llm.provider.recovered',
+        household_id: 'system',
+        request_id: 'health-check',
+        metadata: expect.objectContaining({ from: 'anthropic', to: 'openai' }),
+      });
+    });
+
+    it('probe returns false → no recovered audit, stays on secondary', async () => {
+      vi.useFakeTimers();
+
+      const probe = vi.fn().mockResolvedValue(false);
+      const primary = buildProvider('openai', {
+        complete: vi.fn().mockRejectedValue(new Error('upstream-down')),
+        probe,
+      });
+      const secondary = buildProvider('anthropic');
+      const { orchestrator, audit } = buildOrchestrator([primary, secondary]);
+      recoveryOrchestrator = orchestrator;
+
+      for (let i = 0; i < 5; i += 1) {
+        await expect(orchestrator.complete('hi', [], { model: 'gpt-4o' })).rejects.toThrow(
+          'upstream-down',
+        );
+      }
+      await Promise.resolve();
+      await Promise.resolve();
+      expect(orchestrator.getActiveProvider().name).toBe('anthropic');
+
+      await vi.advanceTimersByTimeAsync(900_000);
+      await Promise.resolve();
+      await Promise.resolve();
+
+      expect(probe).toHaveBeenCalled();
+      // No swap-back; system stays on secondary.
+      expect(orchestrator.getActiveProvider().name).toBe('anthropic');
+
+      const calls = (audit.write as unknown as ReturnType<typeof vi.fn>).mock.calls;
+      const recoveredCall = calls.find(
+        (c: Array<{ event_type: string }>) => c[0]?.event_type === 'llm.provider.recovered',
+      );
+      expect(recoveredCall).toBeUndefined();
+    });
+
+    it('probe throws → swallowed, no recovered audit, no crash', async () => {
+      vi.useFakeTimers();
+
+      const probe = vi.fn().mockRejectedValue(new Error('probe-network-error'));
+      const primary = buildProvider('openai', {
+        complete: vi.fn().mockRejectedValue(new Error('upstream-down')),
+        probe,
+      });
+      const secondary = buildProvider('anthropic');
+      const { orchestrator, audit } = buildOrchestrator([primary, secondary]);
+      recoveryOrchestrator = orchestrator;
+
+      for (let i = 0; i < 5; i += 1) {
+        await expect(orchestrator.complete('hi', [], { model: 'gpt-4o' })).rejects.toThrow(
+          'upstream-down',
+        );
+      }
+      await Promise.resolve();
+      await Promise.resolve();
+
+      // Recovery callback fires here; probe throws; handler should swallow.
+      await vi.advanceTimersByTimeAsync(900_000);
+      await Promise.resolve();
+      await Promise.resolve();
+
+      expect(probe).toHaveBeenCalled();
+      expect(orchestrator.getActiveProvider().name).toBe('anthropic');
+
+      const calls = (audit.write as unknown as ReturnType<typeof vi.fn>).mock.calls;
+      const recoveredCall = calls.find(
+        (c: Array<{ event_type: string }>) => c[0]?.event_type === 'llm.provider.recovered',
+      );
+      expect(recoveredCall).toBeUndefined();
+    });
+  });
 });

@@ -1,0 +1,10 @@
+{
+  "name": "LLM provider failover",
+  "description": "OpenTelemetry log alert: fires when llm.provider.failover is written",
+  "condition": "count of structured logs WHERE event_type = 'llm.provider.failover' in last 5m > 0",
+  "severity": "high",
+  "message": "LLM provider circuit opened. Check audit_log for failover details. Ops: verify OpenAI API health.",
+  "notification_channel": "ops-slack",
+  "auto_resolve": "yes — resolves when llm.provider.recovered is emitted",
+  "recovery_check_endpoint": "GET /v1/internal/health/llm-providers"
+}

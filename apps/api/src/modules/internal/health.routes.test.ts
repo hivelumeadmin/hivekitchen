@@ -2,7 +2,9 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { Writable } from 'node:stream';
 import Fastify, { type FastifyInstance } from 'fastify';
+import fastifyJwt from '@fastify/jwt';
 import { requestIdPlugin } from '../../middleware/request-id.hook.js';
+import { isDomainError } from '../../common/errors.js';
 import { healthRoutes } from './health.routes.js';
 
 describe('health.routes (unit)', () => {
@@ -85,5 +87,88 @@ describe('health.routes (unit)', () => {
     expect(healthLog).toBeDefined();
     expect(healthLog!['module']).toBe('health');
     expect(healthLog!['reqId']).toBeDefined();
+  });
+});
+
+// Story 3.30 — auth on /v1/internal/health/llm-providers.
+describe('GET /v1/internal/health/llm-providers (auth)', () => {
+  let app: FastifyInstance;
+
+  beforeAll(async () => {
+    app = Fastify({ logger: false });
+    await app.register(fastifyJwt, { secret: 'test-secret-do-not-use-in-prod-1234567890' });
+    app.decorate('orchestrator', {
+      getProviderStatus: () => ({
+        active_provider: 'openai',
+        circuit_open: false,
+        providers: ['openai', 'anthropic'],
+      }),
+    });
+    // Mirror app.ts error mapping for the auth thrown errors so we can assert
+    // 401 vs 403 without pulling in the full app bootstrap.
+    app.setErrorHandler((err, _request, reply) => {
+      if (isDomainError(err)) {
+        return reply.status(err.status).send({ error: err.title, message: err.message });
+      }
+      return reply.status(500).send({ error: 'internal' });
+    });
+    await app.register(healthRoutes);
+    await app.ready();
+  });
+
+  afterAll(async () => {
+    await app.close();
+  });
+
+  function signToken(role: string): string {
+    return app.jwt.sign({ sub: 'user-1', hh: 'household-1', role });
+  }
+
+  it('returns 401 when Authorization header is missing', async () => {
+    const res = await app.inject({ method: 'GET', url: '/v1/internal/health/llm-providers' });
+    expect(res.statusCode).toBe(401);
+  });
+
+  it('returns 401 when Authorization header is malformed', async () => {
+    const res = await app.inject({
+      method: 'GET',
+      url: '/v1/internal/health/llm-providers',
+      headers: { authorization: 'Token abc' },
+    });
+    expect(res.statusCode).toBe(401);
+  });
+
+  it('returns 401 when the JWT is invalid', async () => {
+    const res = await app.inject({
+      method: 'GET',
+      url: '/v1/internal/health/llm-providers',
+      headers: { authorization: 'Bearer not-a-real-jwt' },
+    });
+    expect(res.statusCode).toBe(401);
+  });
+
+  it('returns 403 when the JWT role is not "ops"', async () => {
+    const token = signToken('primary_parent');
+    const res = await app.inject({
+      method: 'GET',
+      url: '/v1/internal/health/llm-providers',
+      headers: { authorization: `Bearer ${token}` },
+    });
+    expect(res.statusCode).toBe(403);
+  });
+
+  it('returns 200 with provider status for a valid ops JWT', async () => {
+    const token = signToken('ops');
+    const res = await app.inject({
+      method: 'GET',
+      url: '/v1/internal/health/llm-providers',
+      headers: { authorization: `Bearer ${token}` },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(JSON.parse(res.body)).toEqual({
+      active_provider: 'openai',
+      circuit_open: false,
+      providers: ['openai', 'anthropic'],
+    });
   });
 });

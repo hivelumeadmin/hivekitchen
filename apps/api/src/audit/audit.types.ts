@@ -78,6 +78,7 @@ export const AUDIT_EVENT_TYPES = [
   'invite.expired',
   // llm.provider
   'llm.provider.failover',
+  'llm.provider.recovered',
   // children
   'child.add',
   'child.bag_updated',

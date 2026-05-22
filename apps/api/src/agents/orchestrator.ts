@@ -554,6 +554,14 @@ export class DomainOrchestrator {
     return provider;
   }
 
+  getProviderStatus(): { active_provider: string; circuit_open: boolean; providers: string[] } {
+    return {
+      active_provider: this.providers[this.currentProviderIndex]?.name ?? 'unknown',
+      circuit_open: this.breaker.isTripped(),
+      providers: this.providers.map((p) => p.name),
+    };
+  }
+
   dispose(): void {
     this.breaker.dispose();
   }
@@ -569,9 +577,13 @@ export class DomainOrchestrator {
   }
 
   private async handleRecoveryAttempt(): Promise<void> {
+    // Guard: only attempt recovery when we are actually on a non-primary
+    // provider. This also covers the case where a stale recovery callback
+    // fires after `currentProviderIndex` was already reset.
     if (this.currentProviderIndex === 0) return;
     const primary = this.providers[0];
     if (!primary) return;
+    const previous = this.providers[this.currentProviderIndex];
     let healthy = false;
     try {
       healthy = await primary.probe();
@@ -580,7 +592,20 @@ export class DomainOrchestrator {
     }
     if (healthy) {
       this.currentProviderIndex = 0;
-      this.logger.info({ provider: primary.name }, 'primary provider recovered');
+      this.logger.info(
+        { event_type: 'llm.provider.recovered', from: previous?.name, to: primary.name },
+        'primary provider recovered',
+      );
+      void writeAuditWithRetry(
+        this.auditService,
+        {
+          event_type: 'llm.provider.recovered',
+          household_id: 'system',
+          request_id: 'health-check',
+          metadata: { from: previous?.name ?? 'unknown', to: primary.name, provider: primary.name },
+        },
+        this.logger,
+      );
     }
   }
 
@@ -597,12 +622,42 @@ export class DomainOrchestrator {
     this.currentProviderIndex = nextIndex;
     const from = this.providers[previousIndex]?.name ?? 'unknown';
     const to = this.providers[nextIndex]?.name ?? 'unknown';
-    this.logger.error({ from, to, reason }, 'llm provider failover triggered');
+    this.logger.error(
+      { event_type: 'llm.provider.failover', from, to, reason },
+      'llm provider failover triggered',
+    );
     void this.auditService.write({
       event_type: 'llm.provider.failover',
       request_id: randomUUID(),
       metadata: { from, to, reason },
     });
+  }
+}
+
+// Audit write with exponential backoff. Recovery audit drives the
+// `auto_resolve` rule in alert.json — a silent loss leaves ops paged
+// indefinitely. We attempt up to 3 writes before giving up and logging.
+async function writeAuditWithRetry(
+  auditService: AuditService,
+  input: Parameters<AuditService['write']>[0],
+  logger: FastifyBaseLogger,
+): Promise<void> {
+  const delaysMs = [100, 500, 2000];
+  for (let attempt = 0; attempt < delaysMs.length; attempt += 1) {
+    try {
+      await auditService.write(input);
+      return;
+    } catch (err) {
+      const isLast = attempt === delaysMs.length - 1;
+      if (isLast) {
+        logger.error(
+          { err, event_type: input.event_type, attempt: attempt + 1 },
+          'audit write failed after retries',
+        );
+        return;
+      }
+      await new Promise<void>((resolve) => setTimeout(resolve, delaysMs[attempt]));
+    }
   }
 }
 

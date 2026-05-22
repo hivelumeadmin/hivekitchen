@@ -1,6 +1,6 @@
 # Story 3.30: LLM-Provider Failover Circuit-Breaker + Audit
 
-Status: ready-for-dev
+Status: done
 
 ## Story
 
@@ -467,8 +467,74 @@ _bmad-output/implementation-artifacts/deferred-work.md         + Redis-backed sh
 
 ---
 
+## Implementation Notes (2026-05-22)
+
+### What existed vs what was built
+
+The `CircuitBreaker` class and provider failover logic were already implemented in `DomainOrchestrator` (Story 3.2 delivered more than its stub description implied):
+- `CircuitBreaker` at `apps/api/src/agents/circuit-breaker.ts` — callback-based, 6 tests
+- `DomainOrchestrator.handleBreakerOpen()` → `swapProvider()` already writes `llm.provider.failover` audit
+- `DomainOrchestrator.handleRecoveryAttempt()` already probes primary via `primary.probe()` after 15-min timer
+- Failover + routing tests already existed in `orchestrator.test.ts`
+
+**Tasks 1–3 (CircuitBreaker, FailoverLLMProvider, orchestrator wiring) were already done.** The BullMQ health-check job (Task 4) was satisfied by the existing `setTimeout`-based recovery in the CircuitBreaker — see deferred-work.md for the multi-pod BullMQ upgrade.
+
+### What was added in this story
+
+- `'llm.provider.recovered'` added to `AUDIT_EVENT_TYPES`
+- `DomainOrchestrator.handleRecoveryAttempt()` now emits `llm.provider.recovered` audit on probe success
+- `DomainOrchestrator.getProviderStatus()` — returns `{ active_provider, circuit_open, providers }`
+- `GET /v1/internal/health/llm-providers` endpoint in `health.routes.ts`
+- `apps/api/src/monitoring/alerts/llm-provider-failover.alert.json`
+- 3 new tests: `getProviderStatus` (closed + open states) + recovery audit path
+
+### Deferred
+
+- BullMQ cron-based health-check probe (multi-pod scenario) — see deferred-work.md
+- Full Anthropic adapter implementation — see deferred-work.md
+
+### Review Findings (2026-05-22)
+
+Adversarial 3-layer review: Blind Hunter + Edge Case Hunter + Acceptance Auditor. Triage: 4 decision-needed, 8 patches, 7 deferred, 10 dismissed.
+
+**Decisions resolved (2026-05-22):**
+
+- [x] [Review][Decision] Audit fire-and-forget for `llm.provider.recovered` → **add retry with exponential backoff** (becomes P9).
+- [x] [Review][Decision] Per-provider circuit state → **keep narrow shape** (current `{ active_provider, circuit_open, providers: string[] }`). No code change.
+- [x] [Review][Decision] CircuitBreaker stale-recovery → **fix in this story** (becomes P10 + P11).
+- [x] [Review][Decision] alert.json log-field drift → **add `event_type` to pino log alongside audit write** (becomes P12).
+
+**Patches (applied 2026-05-22):**
+
+- [x] [Review][Patch] **Add auth preHandler to `/v1/internal/health/llm-providers`** [`apps/api/src/modules/internal/health.routes.ts`] — added inline JWT-verify + `ops`-role check (the global authenticate hook skips `/v1/internal/` for k8s liveness probes, so manual verification is needed). 401 if missing/invalid token, 403 if role !== 'ops'.
+- [x] [Review][Patch] **Recovery audit metadata** [`apps/api/src/agents/orchestrator.ts:handleRecoveryAttempt`] — `request_id: randomUUID()` → `'health-check'`; added `household_id: 'system'`; added `from`/`to` to metadata for symmetry with failover audit.
+- [x] [Review][Patch] **Fix alert.json description prefix drift** — description now reads `fires when llm.provider.failover is written` (matches condition + actual emitted event_type).
+- [x] [Review][Patch] **Test: probe returns `false` → no audit emitted, stays on secondary** — added in `recovery: probe-driven audit + provider restoration` describe block.
+- [x] [Review][Patch] **Test: probe throws → no audit emitted, no crash** — added.
+- [x] [Review][Patch] **Test cleanup → `afterEach` with try/finally** — new recovery describe block uses an `afterEach` that disposes the orchestrator and resets fake timers, even if an earlier `expect` throws.
+- [x] [Review][Patch] **Assert `circuit_open === false` after recovery** — added to the happy-path test.
+- [x] [Review][Patch] **Assert `primary.probe()` was called** — added to the happy-path test.
+- [x] [Review][Patch] **P9 (from D1) — Retry with exponential backoff on recovery audit write** — added `writeAuditWithRetry()` helper: 3 attempts at 100ms / 500ms / 2s backoff; logs final failure with `event_type` + `attempt` count. Recovery audit drives the alert `auto_resolve` path, so silent loss would leave ops paged.
+- [~] [Review][Patch] **P10 (from D3) — Rescoped** [`apps/api/src/agents/circuit-breaker.ts`] — pre-existing test explicitly asserts that `recordSuccess` leaves the recovery timer running (the 15-min probe targets the *primary*, not the secondary that just succeeded — secondary success doesn't imply primary recovery). Original P10 (cancel-timer-in-recordSuccess) broke this design contract. Replaced with a defensive fix in `open()`: clear any pre-existing `recoveryTimeoutId` before arming a new one — prevents a leaked stale timer from prematurely closing a freshly-re-opened circuit (the actual E21 bug). Edge Case Hunter's stale-recovery findings (E2, E20) re-analyzed as *intentional* design: when the timer fires after self-heal, the system swaps back to primary if probe succeeds, and the `recovered` audit accurately captures that swap.
+- [x] [Review][Patch] **P11 (from D3) — Symmetric `from`/`to` in recovered audit + clarifying guard comment** [`apps/api/src/agents/orchestrator.ts:handleRecoveryAttempt`] — captured `previous` provider before swap; recovered audit metadata now includes `{ from, to, provider }`. The pre-existing `if (this.currentProviderIndex === 0) return;` guard already correctly handles the no-failover case.
+- [x] [Review][Patch] **P12 (from D4) — Structured pino log with `event_type` alongside both audit writes** — failover and recovery log lines now include `event_type: 'llm.provider.failover'` / `'llm.provider.recovered'` so OTel log-based alerts (alert.json `condition`) can match the field.
+
+**Deferred** (see `deferred-work.md` for full entries):
+
+- [x] [Review][Defer] Multi-provider failover chain (3+) doesn't recover beyond first hop [`apps/api/src/agents/orchestrator.ts: handleRecoveryAttempt`] — deferred, MVP is 2 providers
+- [x] [Review][Defer] Recovery callback can fire after `dispose()` mid-shutdown [`apps/api/src/agents/orchestrator.ts:565`] — deferred, graceful shutdown edge
+- [x] [Review][Defer] Magic strings duplicated across audit type union, orchestrator, alert.json [`apps/api/src/audit/audit.types.ts:80`] — deferred, refactor opportunity
+- [x] [Review][Defer] Test uses `await Promise.resolve(); await Promise.resolve();` microtask kludge [`apps/api/src/agents/orchestrator.test.ts:61`] — deferred, works for current implementation
+- [x] [Review][Defer] `getProviderStatus()` returns stale data during dispose race [`apps/api/src/agents/orchestrator.ts:557`] — deferred, edge case
+- [x] [Review][Defer] No contract test for `/v1/internal/health/llm-providers` response shape [`packages/contracts/`] — deferred, separate test concern
+- [x] [Review][Defer] Concurrent `complete()` during recovery may misattribute failures [`apps/api/src/agents/orchestrator.ts: complete`] — deferred, Dev Notes accept in-process MVP
+
+**Dismissed (10):** false positives from blind-context review (`fastify.orchestrator` decoration / `getActiveProvider` / `isTripped` / 900_000 constant all exist in source); `'unknown'` fallback unreachable per constructor invariant; failover audit covered by Story 3.2 pre-existing tests; opaque test helpers pre-existing convention; defensive sync-throw scenario; recovery audit no-failover case covered by `index === 0` guard; sprint-status/deferred-work updates intentionally scoped out.
+
 ## Change Log
 
 | Date | Author | Change |
 |------|--------|--------|
 | 2026-05-05 | Menon | Story 3.30 created — ready-for-dev. |
+| 2026-05-22 | Claude | Implementation complete → review. |
+| 2026-05-22 | Claude | Code review (3-layer adversarial) → 12 patches applied (auth gate on internal health endpoint, recovery audit retry + metadata, alert.json prefix, symmetric pino `event_type` logs, breaker `open()` timer-leak fix, 3 new branch-coverage tests, 5 new auth tests). 7 items deferred to `deferred-work.md`. P10 rescoped after a pre-existing test revealed the timer-keep-running behaviour is intentional; the real timer-leak fix landed in `CircuitBreaker.open()`. → done. |

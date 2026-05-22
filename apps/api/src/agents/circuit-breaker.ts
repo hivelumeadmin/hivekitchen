@@ -27,8 +27,9 @@ export class CircuitBreaker {
     this.failureTimestamps = [];
     if (this.isOpen) {
       // Close the circuit but leave the recovery timer running.
-      // onRecovered fires only via the scheduled timeout (passive 15-min probe),
-      // not immediately on a secondary success.
+      // onRecovered fires only via the scheduled timeout (passive 15-min probe
+      // of the PRIMARY provider), not immediately on a secondary success —
+      // success on secondary doesn't tell us anything about primary's health.
       this.isOpen = false;
     }
   }
@@ -54,6 +55,14 @@ export class CircuitBreaker {
   private open(): void {
     this.isOpen = true;
     this.options.onOpen();
+    // Defensive: if a prior recovery timer is still armed (recordSuccess can
+    // close the circuit without cancelling the timer, then a fresh cascade
+    // of failures re-opens), cancel it so we don't leak two timers — the
+    // stale one would fire later and could prematurely close a still-open
+    // circuit.
+    if (this.recoveryTimeoutId !== null) {
+      clearTimeout(this.recoveryTimeoutId);
+    }
     this.recoveryTimeoutId = setTimeout(() => {
       this.recoveryTimeoutId = null;
       this.close();
