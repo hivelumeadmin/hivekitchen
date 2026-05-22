@@ -13,7 +13,15 @@ dist/
 
 # Claude Code local settings — may contain secrets in allowed-command patterns
 .claude/settings.local.json
+# Claude Code runtime lock files (scheduled-task coordination, etc.)
+.claude/*.lock
 apps/web/test-results/
+
+# Scratch artifacts from bmad review sessions — review diffs and tmp captures
+# are intermediate, per-session outputs; never commit them.
+_bmad-output/.review-*.diff
+_bmad-output/**/.review-*.diff
+_bmad-output/tmp-*.txt
 
 # Defensive: stray TS build output that should never land in src/.
 # Real build artifacts go to dist/ (already ignored above).
