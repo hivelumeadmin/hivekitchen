@@ -7,6 +7,7 @@ import {
   type OnboardingServiceDeps,
 } from './onboarding.service.js';
 import type { MomentState } from './onboarding-moment.repository.js';
+import { ConflictError } from '../../common/errors.js';
 
 // ===========================================================================
 // Slice 2.5-s4 — OnboardingService new-behavior tests
@@ -166,10 +167,33 @@ describe('momentToChipConfig', () => {
   });
 
   it('returns null for moments not yet populated', () => {
-    expect(momentToChipConfig('m5_starting_line')).toBeNull();
     expect(momentToChipConfig('pre_start')).toBeNull();
     expect(momentToChipConfig('summary')).toBeNull();
     expect(momentToChipConfig('finalized')).toBeNull();
+  });
+
+  it('returns 18 multi-select chips for m5_starting_line (Slice 2.5-s9)', () => {
+    const config = momentToChipConfig('m5_starting_line');
+    expect(config).not.toBeNull();
+    expect(config?.mode).toBe('choice');
+    expect(config?.options).toHaveLength(18);
+    // M5 is a required-response gate — NOT skippable.
+    expect(config?.skip_label).toBeUndefined();
+    expect(config?.hints).toBeUndefined();
+    // First two chips match the South-Asian-leaning leading prompts in
+    // Moment5Page.tsx exactly so the agent's key→label lookup table stays
+    // in sync.
+    expect(config?.options?.[0]).toEqual({ key: 'paratha-roll', label: 'Paratha roll' });
+    expect(config?.options?.[1]).toEqual({ key: 'dal-rice-thermos', label: 'Dal + rice (thermos)' });
+  });
+
+  it('does NOT include override_fewer in the static M5 chip list (Slice 2.5-s9)', () => {
+    // override_fewer is appended dynamically in submitTextTurn when
+    // counts.favorite_lunch_count >= 4; it must never appear in the static
+    // catalog (otherwise it would show up at count 0, breaking the gate).
+    const config = momentToChipConfig('m5_starting_line');
+    const keys = config?.options?.map((o) => o.key) ?? [];
+    expect(keys).not.toContain('override_fewer');
   });
 
   it('returns 4 single-select chips for m4_bag matching BagCompositionPattern (Slice 2.5-s8)', () => {
@@ -344,35 +368,56 @@ describe('OnboardingService.submitTextTurn — directive stripping', () => {
 });
 
 describe('OnboardingService.submitTextTurn — chip_config passthrough', () => {
-  it('returns chip_config: null for moments that have not yet been populated', async () => {
+  it('returns chip_config: null for the system summary moment (no chip set yet)', async () => {
     // Slice 2.5-s5 filled m1_table; 2.5-s6 filled m2_safe; 2.5-s7 filled
-    // m3_taste; 2.5-s8 filled m4_bag. Remaining null-returning moments are
-    // 2.5-s9 (m5_starting_line) and the system summary moment.
-    const moments: Array<MomentState['current_moment']> = [
-      'm5_starting_line',
-      'summary',
-    ];
-    for (const moment of moments) {
-      const { service } = buildService({
-        agentText: 'next.',
-        preTurnMomentState: {
-          current_moment: moment,
-          required_set_status: {
-            m1_household_name: false,
-            m1_child_declared: false,
-            m2_allergen_response: false,
-            m5_favorite_count: 0,
-            m5_complete: false,
-          },
+    // m3_taste; 2.5-s8 filled m4_bag; 2.5-s9 filled m5_starting_line. The
+    // summary moment intentionally has no chip set — the client renders the
+    // finalize card from the moment_key alone.
+    const { service } = buildService({
+      agentText: 'next.',
+      preTurnMomentState: {
+        current_moment: 'summary',
+        required_set_status: {
+          m1_household_name: false,
+          m1_child_declared: false,
+          m2_allergen_response: false,
+          m5_favorite_count: 0,
+          m5_complete: false,
         },
-      });
-      const result = await service.submitTextTurn({
-        userId: USER_ID,
-        householdId: HOUSEHOLD_ID,
-        message: 'x',
-      });
-      expect(result.chip_config).toBeNull();
-    }
+      },
+    });
+    const result = await service.submitTextTurn({
+      userId: USER_ID,
+      householdId: HOUSEHOLD_ID,
+      message: 'x',
+    });
+    expect(result.chip_config).toBeNull();
+  });
+
+  it('returns the M5 choice chip set (no override_fewer) for m5_starting_line when count < 4 (Slice 2.5-s9)', async () => {
+    const { service } = buildService({
+      agentText: 'pick favorites.',
+      preTurnMomentState: {
+        current_moment: 'm5_starting_line',
+        required_set_status: {
+          m1_household_name: true,
+          m1_child_declared: true,
+          m2_allergen_response: true,
+          m5_favorite_count: 0,
+          m5_complete: false,
+        },
+      },
+    });
+    const result = await service.submitTextTurn({
+      userId: USER_ID,
+      householdId: HOUSEHOLD_ID,
+      message: 'x',
+    });
+    expect(result.chip_config).not.toBeNull();
+    expect(result.chip_config?.mode).toBe('choice');
+    expect(result.chip_config?.options).toHaveLength(18);
+    const keys = result.chip_config?.options?.map((o) => o.key) ?? [];
+    expect(keys).not.toContain('override_fewer');
   });
 
   it('returns the M1 hint chip config when current_moment advances into m1_table', async () => {
@@ -754,5 +799,326 @@ describe('OnboardingService.submitTextTurn — elevation directive (Slice 2.5-s7
     });
 
     expect(result.chip_config?.mode).toBe('hint');
+  });
+});
+
+// ===========================================================================
+// Slice 2.5-s10 — required-set surface + m5 override-path + finalize gate
+// ===========================================================================
+
+describe('OnboardingService.submitTextTurn — required_set_complete surface (Slice 2.5-s10)', () => {
+  it('returns required_set_complete=true and missing_required_set=[] when all four conditions met', async () => {
+    const { service } = buildService({
+      agentText: 'All set.',
+      preTurnMomentState: {
+        current_moment: 'summary',
+        required_set_status: {
+          m1_household_name: true,
+          m1_child_declared: true,
+          m2_allergen_response: true,
+          m5_favorite_count: 10,
+          m5_complete: true,
+        },
+      },
+      countsOverride: {
+        household_name_set: true,
+        child_count: 2,
+        child_allergen_count: 1,
+        favorite_lunch_count: 10,
+      },
+    });
+
+    const result = await service.submitTextTurn({
+      userId: USER_ID,
+      householdId: HOUSEHOLD_ID,
+      message: 'yes',
+    });
+
+    expect(result.required_set_complete).toBe(true);
+    expect(result.missing_required_set).toEqual([]);
+  });
+
+  it('returns missing_required_set=["m5_starting_line"] when m5_complete is false (count below 10, no override)', async () => {
+    const { service } = buildService({
+      agentText: 'A few more lunches?',
+      preTurnMomentState: {
+        current_moment: 'm5_starting_line',
+        required_set_status: {
+          m1_household_name: true,
+          m1_child_declared: true,
+          m2_allergen_response: true,
+          m5_favorite_count: 4,
+          m5_complete: false,
+        },
+      },
+      countsOverride: {
+        household_name_set: true,
+        child_count: 1,
+        child_allergen_count: 1,
+        favorite_lunch_count: 5,
+      },
+    });
+
+    const result = await service.submitTextTurn({
+      userId: USER_ID,
+      householdId: HOUSEHOLD_ID,
+      message: 'x',
+    });
+
+    expect(result.required_set_complete).toBe(false);
+    expect(result.missing_required_set).toContain('m5_starting_line');
+    expect(result.missing_required_set).not.toContain('m1_table');
+    expect(result.missing_required_set).not.toContain('m2_safe');
+  });
+});
+
+describe('OnboardingService.submitTextTurn — m5 override + sticky m5_complete (Slice 2.5-s10)', () => {
+  it('override path: m5_complete = true when advancing from m5_starting_line with 6 items', async () => {
+    const { service, momentRepository } = buildService({
+      agentText: "Got it — I'll start with these. [NEXT_MOMENT:summary]",
+      preTurnMomentState: {
+        current_moment: 'm5_starting_line',
+        required_set_status: {
+          m1_household_name: true,
+          m1_child_declared: true,
+          m2_allergen_response: true,
+          m5_favorite_count: 6,
+          m5_complete: false,
+        },
+      },
+      countsOverride: {
+        household_name_set: true,
+        child_count: 1,
+        child_allergen_count: 1,
+        favorite_lunch_count: 6,
+      },
+    });
+
+    const result = await service.submitTextTurn({
+      userId: USER_ID,
+      householdId: HOUSEHOLD_ID,
+      message: '[Chips selected: override_fewer]',
+    });
+
+    // Persisted state should have m5_complete=true via override-path detection.
+    const upsertCall = momentRepository.upsertState.mock.calls[0];
+    expect(upsertCall?.[1].current_moment).toBe('summary');
+    expect(upsertCall?.[1].required_set_status.m5_complete).toBe(true);
+    // Surface to client: required_set_complete true, no missing entries.
+    expect(result.required_set_complete).toBe(true);
+    expect(result.missing_required_set).toEqual([]);
+  });
+
+  it('override path: m5_complete = true at exact boundary count=4 (Slice 2.5-s10)', async () => {
+    const { service, momentRepository } = buildService({
+      agentText: "Got it — let's go. [NEXT_MOMENT:summary]",
+      preTurnMomentState: {
+        current_moment: 'm5_starting_line',
+        required_set_status: {
+          m1_household_name: true,
+          m1_child_declared: true,
+          m2_allergen_response: true,
+          m5_favorite_count: 4,
+          m5_complete: false,
+        },
+      },
+      countsOverride: {
+        household_name_set: true,
+        child_count: 1,
+        child_allergen_count: 1,
+        favorite_lunch_count: 4,
+      },
+    });
+
+    const result = await service.submitTextTurn({
+      userId: USER_ID,
+      householdId: HOUSEHOLD_ID,
+      message: '[Chips selected: override_fewer]',
+    });
+
+    const upsertCall = momentRepository.upsertState.mock.calls[0];
+    expect(upsertCall?.[1].required_set_status.m5_complete).toBe(true);
+    expect(result.required_set_complete).toBe(true);
+    expect(result.missing_required_set).toEqual([]);
+  });
+
+  it('sticky: m5_complete stays true on a second turn in summary even when count drops below 10', async () => {
+    const { service, momentRepository } = buildService({
+      agentText: 'Anything else to add?',
+      preTurnMomentState: {
+        current_moment: 'summary',
+        required_set_status: {
+          m1_household_name: true,
+          m1_child_declared: true,
+          m2_allergen_response: true,
+          m5_favorite_count: 6,
+          m5_complete: true,
+        },
+      },
+      countsOverride: {
+        household_name_set: true,
+        child_count: 1,
+        child_allergen_count: 1,
+        favorite_lunch_count: 6,
+      },
+    });
+
+    await service.submitTextTurn({
+      userId: USER_ID,
+      householdId: HOUSEHOLD_ID,
+      message: 'nope, looks good',
+    });
+
+    const upsertCall = momentRepository.upsertState.mock.calls[0];
+    expect(upsertCall?.[1].required_set_status.m5_complete).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// finalizeTextOnboarding gate + finalized write — Slice 2.5-s10
+// ---------------------------------------------------------------------------
+
+interface FinalizeBuildOpts {
+  preTurnMomentState?: MomentState | null;
+  closedSummary?: boolean;
+}
+
+function buildFinalizableService(opts: FinalizeBuildOpts = {}) {
+  // Real-message turns so the empty-thread guard doesn't fire and
+  // turnsToLlmMessages has content for the LLM call.
+  const turns = [
+    {
+      id: 'u1',
+      thread_id: THREAD_ID,
+      role: 'user',
+      modality: 'text',
+      body: { type: 'message', content: 'We are the Menons.' },
+      created_at: new Date().toISOString(),
+    },
+    {
+      id: 'l1',
+      thread_id: THREAD_ID,
+      role: 'lumi',
+      modality: 'text',
+      body: { type: 'message', content: 'Lovely.' },
+      created_at: new Date().toISOString(),
+    },
+  ];
+
+  const threads = {
+    findActiveThreadByHousehold: vi.fn().mockResolvedValue({
+      id: THREAD_ID,
+      household_id: HOUSEHOLD_ID,
+      type: 'onboarding',
+      modality: 'text',
+      status: 'active',
+      created_at: new Date().toISOString(),
+    }),
+    createThread: vi.fn(),
+    listTurns: vi.fn().mockResolvedValue(turns),
+    findClosedThreadByHousehold: vi.fn().mockResolvedValue(null),
+    appendTurnNext: vi.fn().mockResolvedValue({ id: 'summary-turn-1' }),
+    closeThread: vi.fn().mockResolvedValue(undefined),
+  };
+
+  const agent = {
+    respond: vi.fn(),
+    isSummaryConfirmed: vi.fn().mockResolvedValue(true),
+    extractSummary: vi.fn().mockResolvedValue({
+      cultural_templates: ['indian'],
+      palate_notes: ['mild'],
+      allergens_mentioned: [],
+      family_rhythms: ['weekday-mornings'],
+    }),
+    inferCulturalPriors: vi.fn(),
+    closingPhrase: vi.fn(),
+  };
+
+  const culturalPriorService = {
+    inferFromSummary: vi.fn().mockResolvedValue(undefined),
+  };
+
+  const momentRepository = {
+    getState: vi.fn().mockResolvedValue(opts.preTurnMomentState ?? null),
+    countRequiredSetSources: vi.fn(),
+    upsertState: vi.fn().mockResolvedValue(undefined),
+  };
+
+  const deps: OnboardingServiceDeps = {
+    threads: threads as unknown as OnboardingServiceDeps['threads'],
+    agent: agent as unknown as OnboardingServiceDeps['agent'],
+    culturalPriorService:
+      culturalPriorService as unknown as OnboardingServiceDeps['culturalPriorService'],
+    logger: makeLogger(),
+    momentRepository:
+      momentRepository as unknown as OnboardingServiceDeps['momentRepository'],
+  };
+
+  const service = new OnboardingService(deps);
+  return { service, threads, agent, momentRepository, culturalPriorService };
+}
+
+describe('OnboardingService.finalizeTextOnboarding — required-set gate (Slice 2.5-s10)', () => {
+  it('rejects with ConflictError when current_moment is not summary', async () => {
+    const { service } = buildFinalizableService({
+      preTurnMomentState: {
+        current_moment: 'm3_taste',
+        required_set_status: {
+          m1_household_name: true,
+          m1_child_declared: true,
+          m2_allergen_response: true,
+          m5_favorite_count: 10,
+          m5_complete: true,
+        },
+      },
+    });
+
+    await expect(
+      service.finalizeTextOnboarding({ userId: USER_ID, householdId: HOUSEHOLD_ID }),
+    ).rejects.toThrowError(/summary not reached/);
+    await expect(
+      service.finalizeTextOnboarding({ userId: USER_ID, householdId: HOUSEHOLD_ID }),
+    ).rejects.toBeInstanceOf(ConflictError);
+  });
+
+  it('rejects with ConflictError when required-set is not complete', async () => {
+    const { service } = buildFinalizableService({
+      preTurnMomentState: {
+        current_moment: 'summary',
+        required_set_status: {
+          m1_household_name: true,
+          m1_child_declared: true,
+          m2_allergen_response: true,
+          m5_favorite_count: 4,
+          m5_complete: false,
+        },
+      },
+    });
+
+    await expect(
+      service.finalizeTextOnboarding({ userId: USER_ID, householdId: HOUSEHOLD_ID }),
+    ).rejects.toThrowError(/required fields incomplete/);
+  });
+
+  it('writes current_moment=finalized to momentRepository on a clean finalize', async () => {
+    const { service, momentRepository } = buildFinalizableService({
+      preTurnMomentState: {
+        current_moment: 'summary',
+        required_set_status: {
+          m1_household_name: true,
+          m1_child_declared: true,
+          m2_allergen_response: true,
+          m5_favorite_count: 10,
+          m5_complete: true,
+        },
+      },
+    });
+
+    await service.finalizeTextOnboarding({ userId: USER_ID, householdId: HOUSEHOLD_ID });
+
+    expect(momentRepository.upsertState).toHaveBeenCalledWith(
+      HOUSEHOLD_ID,
+      expect.objectContaining({ current_moment: 'finalized' }),
+    );
   });
 });

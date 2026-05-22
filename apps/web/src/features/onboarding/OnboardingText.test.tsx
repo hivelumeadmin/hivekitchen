@@ -746,4 +746,299 @@ describe('OnboardingText', () => {
       expect(cards[0]!.textContent).toMatch(/Saved/);
     });
   });
+
+  // -------------------------------------------------------------------------
+  // Slice 2.5-s9 — Moment 5 ("A starting line for Lumi")
+  // -------------------------------------------------------------------------
+
+  const M5_STARTING_LINE_CHIP_CONFIG = {
+    mode: 'choice',
+    options: [
+      { key: 'paratha-roll', label: 'Paratha roll' },
+      { key: 'dal-rice-thermos', label: 'Dal + rice (thermos)' },
+      { key: 'sandwich', label: 'Sandwich' },
+      { key: 'wrap', label: 'Wrap' },
+      { key: 'rice-bowl', label: 'Rice bowl' },
+    ],
+  };
+
+  it('renders the M5 starting-line card in "capturing" state when the agent advances into m5_starting_line', async () => {
+    globalThis.fetch = vi.fn().mockResolvedValueOnce(
+      mockTurnResponse({
+        lumi_response: "Let's pick favourites for Lumi to start with.",
+        moment_key: 'm5_starting_line',
+        chip_config: M5_STARTING_LINE_CHIP_CONFIG,
+      }),
+    ) as unknown as typeof fetch;
+
+    render(
+      <MemoryRouter>
+        <OnboardingText />
+      </MemoryRouter>,
+    );
+
+    fireEvent.change(screen.getByLabelText(/your message to lumi/i), {
+      target: { value: 'Halal household.' },
+    });
+    fireEvent.submit(screen.getByRole('button', { name: /send/i }).closest('form')!);
+
+    await waitFor(() => {
+      const cards = screen.getAllByTestId('m5-starting-line-card');
+      expect(cards.length).toBeGreaterThan(0);
+      expect(cards[0]!.textContent).toMatch(/Still listening/);
+    });
+  });
+
+  it('renders the M5 card in "captured" state without the override suffix when the agent advances to summary', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(
+        mockTurnResponse({
+          lumi_response: "Let's pick favourites.",
+          moment_key: 'm5_starting_line',
+          chip_config: M5_STARTING_LINE_CHIP_CONFIG,
+        }),
+      )
+      .mockResolvedValueOnce(
+        mockTurnResponse({
+          lumi_response: "All set — here's what we've gathered.",
+          moment_key: 'summary',
+          chip_config: null,
+        }),
+      );
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    render(
+      <MemoryRouter>
+        <OnboardingText />
+      </MemoryRouter>,
+    );
+
+    // 1st turn → arrive at m5_starting_line.
+    fireEvent.change(screen.getByLabelText(/your message to lumi/i), {
+      target: { value: 'Halal household.' },
+    });
+    fireEvent.submit(screen.getByRole('button', { name: /send/i }).closest('form')!);
+    await waitFor(() => {
+      expect(screen.getByText(/Let's pick favourites/i)).toBeDefined();
+    });
+
+    // 2nd turn — tap two M5 chips; backend advances past m5_starting_line,
+    // flipping the card to "captured" with a count of 2.
+    fireEvent.click(screen.getByText('Paratha roll'));
+    fireEvent.click(screen.getByText('Sandwich'));
+    fireEvent.submit(screen.getByRole('button', { name: /send/i }).closest('form')!);
+
+    await waitFor(() => {
+      const cards = screen.getAllByTestId('m5-starting-line-card');
+      expect(cards[0]!.textContent).toMatch(/2 lunches — Lumi has a starting line\./);
+      expect(cards[0]!.textContent).not.toMatch(/started with fewer/);
+    });
+  });
+
+  it('renders the M5 card with "(started with fewer)" suffix when the parent invokes the override chip', async () => {
+    const M5_WITH_OVERRIDE = {
+      mode: 'choice',
+      options: [
+        ...M5_STARTING_LINE_CHIP_CONFIG.options,
+        { key: 'override_fewer', label: 'Start with fewer' },
+      ],
+    };
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(
+        mockTurnResponse({
+          lumi_response: "Let's pick favourites.",
+          moment_key: 'm5_starting_line',
+          chip_config: M5_WITH_OVERRIDE,
+        }),
+      )
+      .mockResolvedValueOnce(
+        mockTurnResponse({
+          lumi_response: "Starting strong with what we've got.",
+          moment_key: 'summary',
+          chip_config: null,
+        }),
+      );
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    render(
+      <MemoryRouter>
+        <OnboardingText />
+      </MemoryRouter>,
+    );
+
+    fireEvent.change(screen.getByLabelText(/your message to lumi/i), {
+      target: { value: 'Halal household.' },
+    });
+    fireEvent.submit(screen.getByRole('button', { name: /send/i }).closest('form')!);
+    await waitFor(() => {
+      expect(screen.getByText(/Let's pick favourites/i)).toBeDefined();
+    });
+
+    // Tap a real chip + the override chip; backend response advances to summary.
+    // The override key is NOT counted but DOES flip the overridden flag on.
+    fireEvent.click(screen.getByText('Paratha roll'));
+    fireEvent.click(screen.getByText('Start with fewer'));
+    fireEvent.submit(screen.getByRole('button', { name: /send/i }).closest('form')!);
+
+    await waitFor(() => {
+      const cards = screen.getAllByTestId('m5-starting-line-card');
+      expect(cards[0]!.textContent).toMatch(/1 lunches — Lumi has a starting line\./);
+      expect(cards[0]!.textContent).toMatch(/started with fewer/);
+    });
+  });
+
+  // =========================================================================
+  // Slice 2.5-s10 — summary finalize gate + gap callouts
+  // =========================================================================
+
+  function mockS10TurnResponse(opts: {
+    moment_key: string;
+    required_set_complete: boolean | null;
+    missing_required_set?: string[];
+    lumi_response?: string;
+  }): Response {
+    return new Response(
+      JSON.stringify({
+        thread_id: SAMPLE_THREAD_ID,
+        turn_id: SAMPLE_TURN_ID,
+        lumi_turn_id: SAMPLE_LUMI_TURN_ID,
+        lumi_response: opts.lumi_response ?? "Here's what I have.",
+        is_complete: false,
+        moment_key: opts.moment_key,
+        required_set_complete: opts.required_set_complete,
+        missing_required_set: opts.missing_required_set ?? [],
+        chip_config: null,
+      }),
+      { status: 200, headers: { 'Content-Type': 'application/json' } },
+    );
+  }
+
+  it('renders the finalize gate when moment_key is summary (Slice 2.5-s10)', async () => {
+    globalThis.fetch = vi.fn().mockResolvedValueOnce(
+      mockS10TurnResponse({
+        moment_key: 'summary',
+        required_set_complete: true,
+        missing_required_set: [],
+      }),
+    ) as unknown as typeof fetch;
+
+    render(
+      <MemoryRouter>
+        <OnboardingText />
+      </MemoryRouter>,
+    );
+
+    fireEvent.change(screen.getByLabelText(/your message to lumi/i), {
+      target: { value: 'all set' },
+    });
+    fireEvent.submit(screen.getByRole('button', { name: /send/i }).closest('form')!);
+
+    await waitFor(() => {
+      expect(screen.getByTestId('finalize-gate')).toBeDefined();
+    });
+    // Input bar is replaced by the gate when in summary.
+    expect(screen.queryByLabelText(/your message to lumi/i)).toBeNull();
+  });
+
+  it('enables the Finalize button when required-set is complete (Slice 2.5-s10)', async () => {
+    globalThis.fetch = vi.fn().mockResolvedValueOnce(
+      mockS10TurnResponse({
+        moment_key: 'summary',
+        required_set_complete: true,
+        missing_required_set: [],
+      }),
+    ) as unknown as typeof fetch;
+
+    render(
+      <MemoryRouter>
+        <OnboardingText />
+      </MemoryRouter>,
+    );
+
+    fireEvent.change(screen.getByLabelText(/your message to lumi/i), {
+      target: { value: 'all set' },
+    });
+    fireEvent.submit(screen.getByRole('button', { name: /send/i }).closest('form')!);
+
+    await waitFor(() => {
+      const btn = screen.getByTestId('finalize-button') as HTMLButtonElement;
+      expect(btn.disabled).toBe(false);
+    });
+  });
+
+  it('renders the gap callout when missing_required_set contains m5_starting_line (Slice 2.5-s10)', async () => {
+    globalThis.fetch = vi.fn().mockResolvedValueOnce(
+      mockS10TurnResponse({
+        moment_key: 'summary',
+        required_set_complete: false,
+        missing_required_set: ['m5_starting_line'],
+      }),
+    ) as unknown as typeof fetch;
+
+    render(
+      <MemoryRouter>
+        <OnboardingText />
+      </MemoryRouter>,
+    );
+
+    fireEvent.change(screen.getByLabelText(/your message to lumi/i), {
+      target: { value: 'skip ahead' },
+    });
+    fireEvent.submit(screen.getByRole('button', { name: /send/i }).closest('form')!);
+
+    await waitFor(() => {
+      expect(screen.getByTestId('gap-callout-m5_starting_line')).toBeDefined();
+    });
+  });
+
+  it('disables the Finalize button when a gap callout is visible (Slice 2.5-s10)', async () => {
+    globalThis.fetch = vi.fn().mockResolvedValueOnce(
+      mockS10TurnResponse({
+        moment_key: 'summary',
+        required_set_complete: false,
+        missing_required_set: ['m5_starting_line'],
+      }),
+    ) as unknown as typeof fetch;
+
+    render(
+      <MemoryRouter>
+        <OnboardingText />
+      </MemoryRouter>,
+    );
+
+    fireEvent.change(screen.getByLabelText(/your message to lumi/i), {
+      target: { value: 'skip ahead' },
+    });
+    fireEvent.submit(screen.getByRole('button', { name: /send/i }).closest('form')!);
+
+    await waitFor(() => {
+      const btn = screen.getByTestId('finalize-button') as HTMLButtonElement;
+      expect(btn.disabled).toBe(true);
+    });
+  });
+
+  it('shows "Summary · Lock in your kitchen" subtitle when moment_key is summary (Slice 2.5-s10)', async () => {
+    globalThis.fetch = vi.fn().mockResolvedValueOnce(
+      mockS10TurnResponse({
+        moment_key: 'summary',
+        required_set_complete: true,
+        missing_required_set: [],
+      }),
+    ) as unknown as typeof fetch;
+
+    render(
+      <MemoryRouter>
+        <OnboardingText />
+      </MemoryRouter>,
+    );
+
+    fireEvent.change(screen.getByLabelText(/your message to lumi/i), {
+      target: { value: 'all set' },
+    });
+    fireEvent.submit(screen.getByRole('button', { name: /send/i }).closest('form')!);
+
+    await waitFor(() => {
+      expect(screen.getByText(/summary · lock in your kitchen/i)).toBeDefined();
+    });
+  });
 });

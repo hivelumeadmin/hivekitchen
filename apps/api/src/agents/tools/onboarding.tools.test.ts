@@ -47,6 +47,7 @@ const ALLERGEN_ROW_ID = '66666666-6666-4666-8666-666666666666';
 const DIETARY_ROW_ID = '77777777-7777-4777-8777-777777777777';
 const FOOD_PREF_ROW_ID = '88888888-8888-4888-8888-888888888888';
 const RULE_ROW_ID = '99999999-9999-4999-9999-999999999999';
+const FAV_LUNCH_ROW_ID = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
 
 function makeDeps(overrides: Partial<OnboardingToolDeps> = {}): OnboardingToolDeps {
   return {
@@ -120,6 +121,9 @@ function makeDeps(overrides: Partial<OnboardingToolDeps> = {}): OnboardingToolDe
         was_existing: false,
       }),
     } as unknown as OnboardingToolDeps['householdRulesRepository'],
+    favoriteLunchesRepository: {
+      add: vi.fn().mockResolvedValue({ id: FAV_LUNCH_ROW_ID, position: 0 }),
+    } as unknown as OnboardingToolDeps['favoriteLunchesRepository'],
     ...overrides,
   };
 }
@@ -967,22 +971,38 @@ describe('createFoodPreferenceDeclareToolSpec (2.5-s7 wired)', () => {
   });
 });
 
-describe('createFavoriteLunchAddToolSpec (2.5-s1 stub)', () => {
-  it('happy path: item only (defaults position 0)', async () => {
-    const spec = createFavoriteLunchAddToolSpec(makeCtx(), makeDeps());
+describe('createFavoriteLunchAddToolSpec (2.5-s9 wired)', () => {
+  it('happy path: calls favoriteLunchesRepository.add and maps to output schema', async () => {
+    const deps = makeDeps();
+    const spec = createFavoriteLunchAddToolSpec(makeCtx(), deps);
     expect(spec.name).toBe('favorite_lunch.add');
-    const result = (await spec.fn({ item: 'dal chawal' })) as {
+
+    const result = (await spec.fn({ item: 'Paratha roll' })) as {
       favorite_lunch_id: string;
       position: number;
     };
-    expect(result.favorite_lunch_id).toMatch(UUID_REGEX);
+
+    expect(deps.favoriteLunchesRepository.add).toHaveBeenCalledWith(
+      HOUSEHOLD_ID,
+      'Paratha roll',
+      undefined,
+    );
+    expect(result.favorite_lunch_id).toBe(FAV_LUNCH_ROW_ID);
     expect(result.position).toBe(0);
   });
 
-  it('honors explicit position', async () => {
-    const spec = createFavoriteLunchAddToolSpec(makeCtx(), makeDeps());
-    const result = (await spec.fn({ item: 'dal chawal', position: 5 })) as { position: number };
-    expect(result.position).toBe(5);
+  it('passes explicit position through to the repository', async () => {
+    const deps = makeDeps({
+      favoriteLunchesRepository: {
+        add: vi.fn().mockResolvedValue({ id: FAV_LUNCH_ROW_ID, position: 7 }),
+      } as unknown as OnboardingToolDeps['favoriteLunchesRepository'],
+    });
+    const spec = createFavoriteLunchAddToolSpec(makeCtx(), deps);
+
+    const result = (await spec.fn({ item: 'Wrap', position: 7 })) as { position: number };
+
+    expect(deps.favoriteLunchesRepository.add).toHaveBeenCalledWith(HOUSEHOLD_ID, 'Wrap', 7);
+    expect(result.position).toBe(7);
   });
 });
 

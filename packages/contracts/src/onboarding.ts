@@ -63,6 +63,13 @@ export const TextOnboardingTurnResponseSchema = z.object({
   // clients ignore it without breaking; null/undefined falls back to the
   // legacy "Step N of ~8" subtitle.
   moment_key: z.string().nullable().optional(),
+  // Slice 2.5-s10 — required-set completion surfaced to the client so the
+  // summary moment can enable/disable the finalize gate. null = no moment
+  // repository wired (legacy/test path); true/false = computed status.
+  required_set_complete: z.boolean().nullable().optional(),
+  // Slice 2.5-s10 — moment keys ('m1_table'|'m2_safe'|'m5_starting_line')
+  // whose required answers are still missing. Empty when all complete.
+  missing_required_set: z.array(z.string()).optional(),
 });
 
 // POST /v1/onboarding/text/finalize — response (no request body)

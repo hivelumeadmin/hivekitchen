@@ -1,4 +1,3 @@
-import { randomUUID } from 'node:crypto';
 import type { FastifyBaseLogger } from 'fastify';
 import {
   AllergenDeclareInputSchema,
@@ -28,6 +27,7 @@ import type { ChildAllergensRepository } from '../../modules/children/child-alle
 import type { ChildrenService } from '../../modules/children/children.service.js';
 import type { CulturalPriorRepository } from '../../modules/cultural-priors/cultural-prior.repository.js';
 import type { DietaryPreferencesRepository } from '../../modules/dietary-preferences/dietary-preferences.repository.js';
+import type { FavoriteLunchesRepository } from '../../modules/favorite-lunches/favorite-lunches.repository.js';
 import type { FoodPreferencesRepository } from '../../modules/food-preferences/food-preferences.repository.js';
 import type { HouseholdRulesRepository, RuleType } from '../../modules/household-rules/household-rules.repository.js';
 import type { HouseholdsService } from '../../modules/households/households.service.js';
@@ -75,6 +75,8 @@ export interface OnboardingToolDeps {
   // culturalPriorRepository (shared cultural_priors table).
   foodPreferencesRepository: FoodPreferencesRepository;
   householdRulesRepository: HouseholdRulesRepository;
+  // Slice 2.5-s9 — household cold-start seed write for favorite_lunch.add (FR124).
+  favoriteLunchesRepository: FavoriteLunchesRepository;
 }
 
 // ---- child.upsert --------------------------------------------------------
@@ -756,7 +758,7 @@ export function createFoodPreferenceDeclareToolSpec(
 
 export function createFavoriteLunchAddToolSpec(
   ctx: OnboardingToolContext,
-  _deps: OnboardingToolDeps,
+  deps: OnboardingToolDeps,
 ): ToolSpec {
   return {
     name: 'favorite_lunch.add',
@@ -767,23 +769,36 @@ export function createFavoriteLunchAddToolSpec(
       'list. Idempotent on item: re-emitting the same item is a no-op.',
     inputSchema: FavoriteLunchAddInputSchema,
     outputSchema: FavoriteLunchAddOutputSchema,
-    maxLatencyMs: 120,
+    // Slice 2.5-s9 — bumped from 120 (stub) to cover DEK fetch + position
+    // lookup + upsert (single round-trip per chip in the parallel batch).
+    maxLatencyMs: 600,
     fn: async (input: unknown) => {
       const parsed = FavoriteLunchAddInputSchema.parse(input);
+
+      const result = await deps.favoriteLunchesRepository.add(
+        ctx.householdId,
+        parsed.item,
+        parsed.position,
+      );
+
+      // Item plaintext is culturally specific (e.g. "Khichdi thermos") — do
+      // NOT log it. item_length is structured and safe.
       ctx.logger.info(
         {
           module: 'onboarding-tools',
-          action: 'favorite_lunch.add.stub',
+          action: 'favorite_lunch.add',
           household_id: ctx.householdId,
           user_id: ctx.userId,
           item_length: parsed.item.length,
           position_provided: parsed.position !== undefined,
+          position: result.position,
         },
-        'favorite_lunch.add STUB — registered for slice 2.5-s4 wiring',
+        'favorite_lunch.add handled',
       );
+
       return FavoriteLunchAddOutputSchema.parse({
-        favorite_lunch_id: randomUUID(),
-        position: parsed.position ?? 0,
+        favorite_lunch_id: result.id,
+        position: result.position,
       });
     },
   };

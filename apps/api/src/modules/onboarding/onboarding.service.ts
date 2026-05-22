@@ -10,6 +10,7 @@ import type { ChildrenService } from '../children/children.service.js';
 import type { CulturalPriorRepository } from '../cultural-priors/cultural-prior.repository.js';
 import type { CulturalPriorService } from '../cultural-priors/cultural-prior.service.js';
 import type { DietaryPreferencesRepository } from '../dietary-preferences/dietary-preferences.repository.js';
+import type { FavoriteLunchesRepository } from '../favorite-lunches/favorite-lunches.repository.js';
 import type { FoodPreferencesRepository } from '../food-preferences/food-preferences.repository.js';
 import type { HouseholdRulesRepository } from '../household-rules/household-rules.repository.js';
 import type { HouseholdsService } from '../households/households.service.js';
@@ -62,6 +63,9 @@ export interface OnboardingServiceDeps {
   // pattern as the 2.5-s6 deps above.
   foodPreferencesRepository?: FoodPreferencesRepository;
   householdRulesRepository?: HouseholdRulesRepository;
+  // Slice 2.5-s9 — household cold-start seed writer for favorite_lunch.add.
+  // Optional on the type for the same reason as the 2.5-s6/s7 deps above.
+  favoriteLunchesRepository?: FavoriteLunchesRepository;
 }
 
 export interface SubmitTextTurnInput {
@@ -84,6 +88,14 @@ export interface SubmitTextTurnResult {
   // "Moment X of 5 · <name>" header from this. Defaults to 'm1_table' on
   // the first turn when the agent emits no [NEXT_MOMENT:] directive.
   moment_key: string | null;
+  // Slice 2.5-s10 — required-set completion derived from the post-turn
+  // moment state. null when momentRepository is absent (legacy/test path).
+  // The client uses this to enable/disable the summary finalize gate.
+  required_set_complete: boolean | null;
+  // Slice 2.5-s10 — moment keys whose required answers are still missing.
+  // Valid values: 'm1_table' | 'm2_safe' | 'm5_starting_line'. Empty array
+  // when all required moments are complete OR momentRepository is absent.
+  missing_required_set: string[];
   // Slice 2-S26 — internal signal for the route handler's audit emission.
   // Stripped by the response Zod schema before serialization (the wire shape
   // is TextOnboardingTurnResponseSchema, which excludes this field).
@@ -272,7 +284,36 @@ export function momentToChipConfig(moment: CurrentMoment): ChipConfig | null {
         ],
       };
     case 'm5_starting_line':
-      return null; // 2.5-s9 will fill this
+      // Slice 2.5-s9 — M5 is a required-response gate (no skip_label) capturing
+      // ≥10 favorite household lunches as the cold-start seed (FR124). The 18
+      // chip keys + labels are copied verbatim from Moment5Page.tsx so the agent
+      // can resolve key → label via its prompt-side lookup table. Multi-select
+      // (mode: 'choice'). The 'override_fewer' early-exit chip is NOT part of
+      // the static list — it is appended dynamically in submitTextTurn when
+      // counts.favorite_lunch_count >= 4.
+      return {
+        mode: 'choice',
+        options: [
+          { key: 'paratha-roll', label: 'Paratha roll' },
+          { key: 'dal-rice-thermos', label: 'Dal + rice (thermos)' },
+          { key: 'idli', label: 'Idli + chutney' },
+          { key: 'dosa', label: 'Dosa roll' },
+          { key: 'khichdi', label: 'Khichdi thermos' },
+          { key: 'biryani', label: 'Biryani (thermos)' },
+          { key: 'sandwich', label: 'Sandwich' },
+          { key: 'wrap', label: 'Wrap' },
+          { key: 'pasta-salad', label: 'Pasta salad' },
+          { key: 'rice-bowl', label: 'Rice bowl' },
+          { key: 'quesadilla', label: 'Quesadilla' },
+          { key: 'hummus-pita', label: 'Hummus + pita' },
+          { key: 'noodle-box', label: 'Noodle box' },
+          { key: 'pizza-slice', label: 'Pizza slice' },
+          { key: 'sushi-roll', label: 'Sushi roll' },
+          { key: 'bagel-spread', label: 'Bagel + spread' },
+          { key: 'bento-box', label: 'Bento box' },
+          { key: 'tortilla-pinwheels', label: 'Tortilla pinwheels' },
+        ],
+      };
     case 'pre_start':
     case 'summary':
     case 'finalized':
@@ -312,6 +353,8 @@ export class OnboardingService {
   // Slice 2.5-s7
   private readonly foodPreferencesRepository?: FoodPreferencesRepository;
   private readonly householdRulesRepository?: HouseholdRulesRepository;
+  // Slice 2.5-s9
+  private readonly favoriteLunchesRepository?: FavoriteLunchesRepository;
 
   constructor(deps: OnboardingServiceDeps) {
     this.threads = deps.threads;
@@ -330,6 +373,7 @@ export class OnboardingService {
     this.dietaryPreferencesRepository = deps.dietaryPreferencesRepository;
     this.foodPreferencesRepository = deps.foodPreferencesRepository;
     this.householdRulesRepository = deps.householdRulesRepository;
+    this.favoriteLunchesRepository = deps.favoriteLunchesRepository;
   }
 
   /**
@@ -348,7 +392,8 @@ export class OnboardingService {
       this.childAllergensRepository !== undefined &&
       this.dietaryPreferencesRepository !== undefined &&
       this.foodPreferencesRepository !== undefined &&
-      this.householdRulesRepository !== undefined
+      this.householdRulesRepository !== undefined &&
+      this.favoriteLunchesRepository !== undefined
     );
   }
 
@@ -537,7 +582,8 @@ export class OnboardingService {
         this.childAllergensRepository !== undefined &&
         this.dietaryPreferencesRepository !== undefined &&
         this.foodPreferencesRepository !== undefined &&
-        this.householdRulesRepository !== undefined
+        this.householdRulesRepository !== undefined &&
+        this.favoriteLunchesRepository !== undefined
       ) {
         const map = await this.kitchenMapService.get(input.householdId);
         const toolSpecs = createOnboardingToolSpecs(
@@ -552,6 +598,7 @@ export class OnboardingService {
             dietaryPreferencesRepository: this.dietaryPreferencesRepository,
             foodPreferencesRepository: this.foodPreferencesRepository,
             householdRulesRepository: this.householdRulesRepository,
+            favoriteLunchesRepository: this.favoriteLunchesRepository!,
           },
         );
         const reply = await this.agent.respond(agentInput, {
@@ -658,11 +705,22 @@ export class OnboardingService {
     // returns successfully (the conversation can recover next turn).
     let nextCurrentMoment: CurrentMoment =
       preTurnMomentState?.current_moment ?? 'pre_start';
+    // Hoisted so the post-moment-write chip-config block can decide whether
+    // to inject the M5 'override_fewer' chip without re-querying. If the
+    // moment-state read fails, the count stays at 0 (gate stays closed,
+    // which is the safe fallback).
+    let favoriteLunchCount = 0;
+    // Slice 2.5-s10 — surfaced to the client so the summary moment can
+    // enable/disable the finalize gate. null = no momentRepository wired
+    // (legacy/test path); the gate falls back to the legacy isComplete CTA.
+    let required_set_complete: boolean | null = null;
+    let missing_required_set: string[] = [];
     if (this.momentRepository !== undefined) {
       try {
         const counts = await this.momentRepository.countRequiredSetSources(
           input.householdId,
         );
+        favoriteLunchCount = counts.favorite_lunch_count;
         const previousMoment: CurrentMoment =
           preTurnMomentState?.current_moment ?? 'pre_start';
         const advancedKey = parseMomentKey(advanceToMoment, previousMoment);
@@ -691,18 +749,54 @@ export class OnboardingService {
           preTurnMomentState?.required_set_status.m2_allergen_response === true ||
           advancedOutOfM2;
 
+        // Slice 2.5-s10 — override path: parent explicitly advanced out of
+        // m5_starting_line with 4+ items (tapped override_fewer chip). Treat
+        // as complete even if count < 10.
+        const m5OverridePath =
+          previousMoment === 'm5_starting_line' &&
+          nextCurrentMoment !== 'm5_starting_line' &&
+          counts.favorite_lunch_count >= 4;
+
+        // Slice 2.5-s10 — sticky: once m5_complete is true (natural 10-item
+        // path OR override), preserve across subsequent turns in
+        // summary/finalized so the gate stays open.
+        const m5_complete =
+          counts.favorite_lunch_count >= 10 ||
+          m5OverridePath ||
+          preTurnMomentState?.required_set_status.m5_complete === true;
+
         const requiredSetStatus: RequiredSetStatus = {
           m1_household_name: counts.household_name_set,
           m1_child_declared: counts.child_count > 0,
           m2_allergen_response,
           m5_favorite_count: counts.favorite_lunch_count,
-          m5_complete: counts.favorite_lunch_count >= 10,
+          m5_complete,
         };
 
         await this.momentRepository.upsertState(input.householdId, {
           current_moment: nextCurrentMoment,
           required_set_status: requiredSetStatus,
         });
+
+        // Slice 2.5-s10 — surface required-set completion to the client.
+        required_set_complete =
+          requiredSetStatus.m1_household_name &&
+          requiredSetStatus.m1_child_declared &&
+          requiredSetStatus.m2_allergen_response &&
+          requiredSetStatus.m5_complete;
+        missing_required_set = [];
+        if (
+          !requiredSetStatus.m1_household_name ||
+          !requiredSetStatus.m1_child_declared
+        ) {
+          missing_required_set.push('m1_table');
+        }
+        if (!requiredSetStatus.m2_allergen_response) {
+          missing_required_set.push('m2_safe');
+        }
+        if (!requiredSetStatus.m5_complete) {
+          missing_required_set.push('m5_starting_line');
+        }
 
         this.logger.info(
           {
@@ -714,11 +808,7 @@ export class OnboardingService {
             to_moment: nextCurrentMoment,
             directive_present: advanceToMoment !== null,
             directive_valid: advancedKey !== null,
-            required_set_complete:
-              requiredSetStatus.m1_household_name &&
-              requiredSetStatus.m1_child_declared &&
-              requiredSetStatus.m2_allergen_response &&
-              requiredSetStatus.m5_complete,
+            required_set_complete,
           },
           'onboarding moment state updated',
         );
@@ -748,6 +838,27 @@ export class OnboardingService {
           { key: 'always-respect', label: 'Always respect' },
           { key: 'prefer', label: 'Prefer when possible' },
           { key: 'just-context', label: 'Just for context' },
+        ],
+      };
+    }
+
+    // Slice 2.5-s9 — M5 override chip is injected dynamically (not in the
+    // static momentToChipConfig list) so it only appears after the parent has
+    // committed to at least 4 favorites — matching the Moment5Page.tsx mock
+    // threshold. The agent treats 'override_fewer' as a control key (no
+    // favorite_lunch.add fired) and embeds [NEXT_MOMENT:summary].
+    if (
+      nextCurrentMoment === 'm5_starting_line' &&
+      favoriteLunchCount >= 4 &&
+      chip_config !== null &&
+      chip_config.mode === 'choice' &&
+      chip_config.options !== undefined
+    ) {
+      chip_config = {
+        ...chip_config,
+        options: [
+          ...chip_config.options,
+          { key: 'override_fewer', label: 'Start with fewer' },
         ],
       };
     }
@@ -787,6 +898,8 @@ export class OnboardingService {
       is_complete: isComplete,
       chip_config,
       moment_key: nextCurrentMoment,
+      required_set_complete,
+      missing_required_set,
       _was_resumed: wasResumed,
     };
   }
@@ -837,6 +950,29 @@ export class OnboardingService {
         family_rhythms: onlyStrings(payload.family_rhythms),
       };
       await this.threads.closeThread(thread.id);
+      // P2 patch — idempotent path also attempts the best-effort 'finalized'
+      // write so a prior write failure is recoverable on retry.
+      if (this.momentRepository !== undefined) {
+        try {
+          const currentState = await this.momentRepository.getState(input.householdId);
+          if (currentState !== null && currentState.current_moment !== 'finalized') {
+            await this.momentRepository.upsertState(input.householdId, {
+              current_moment: 'finalized',
+              required_set_status: currentState.required_set_status,
+            });
+          }
+        } catch (err) {
+          this.logger.warn(
+            {
+              err,
+              module: 'onboarding',
+              action: 'onboarding.finalize_moment_state_write_failed_idempotent',
+              household_id: input.householdId,
+            },
+            'moment state finalized write failed on idempotent path — thread is already closed',
+          );
+        }
+      }
       return { thread_id: thread.id, summary };
     }
 
@@ -846,6 +982,49 @@ export class OnboardingService {
     if (turns.length === 0) {
       // F17 — distinguish from the classifier-says-not-ready case.
       throw new ConflictError('no turns recorded — start the conversation first');
+    }
+
+    // 2.5-s10 — Required-set gate: the moment must be 'summary' and the
+    // required-set must be complete before the thread can be closed. This
+    // is the server-authoritative EPIC MVP WALL enforcement. Best-effort:
+    // a momentRepository read failure logs a warn and proceeds with the
+    // existing isSummaryConfirmed safety-net alone (P1 fix: readFailed flag
+    // prevents the null check from incorrectly blocking on a transient DB error).
+    let finalizeState: MomentState | null = null;
+    if (this.momentRepository !== undefined) {
+      let readFailed = false;
+      try {
+        finalizeState = await this.momentRepository.getState(input.householdId);
+      } catch (err) {
+        readFailed = true;
+        this.logger.warn(
+          {
+            err,
+            module: 'onboarding',
+            action: 'onboarding.finalize_moment_state_read_failed',
+            household_id: input.householdId,
+          },
+          'moment state read failed during finalize — proceeding with isSummaryConfirmed safety-net',
+        );
+      }
+      if (!readFailed) {
+        if (finalizeState === null || finalizeState.current_moment !== 'summary') {
+          throw new ConflictError(
+            'onboarding summary not reached — complete all five moments before finalizing',
+          );
+        }
+        const rss = finalizeState.required_set_status;
+        const reqComplete =
+          rss.m1_household_name &&
+          rss.m1_child_declared &&
+          rss.m2_allergen_response &&
+          rss.m5_complete;
+        if (!reqComplete) {
+          throw new ConflictError(
+            'required fields incomplete — finish all required onboarding moments before finalizing',
+          );
+        }
+      }
     }
 
     const history = this.turnsToLlmMessages(turns);
@@ -989,6 +1168,29 @@ export class OnboardingService {
 
     // 7. Close the thread.
     await this.threads.closeThread(thread.id);
+
+    // 2.5-s10 — Mark moment state as finalized. Best-effort: a failure here
+    // does not block the successful finalize response — the thread is
+    // already closed (the authoritative is_onboarded signal) and moment
+    // state is a secondary projection.
+    if (this.momentRepository !== undefined && finalizeState !== null) {
+      try {
+        await this.momentRepository.upsertState(input.householdId, {
+          current_moment: 'finalized',
+          required_set_status: finalizeState.required_set_status,
+        });
+      } catch (err) {
+        this.logger.warn(
+          {
+            err,
+            module: 'onboarding',
+            action: 'onboarding.finalize_moment_state_write_failed',
+            household_id: input.householdId,
+          },
+          'moment state finalized write failed — thread is closed, is_onboarded still true',
+        );
+      }
+    }
 
     this.logger.info(
       {

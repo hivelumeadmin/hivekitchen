@@ -17,6 +17,7 @@ import { ChildrenService } from '../children/children.service.js';
 import { CulturalPriorRepository } from '../cultural-priors/cultural-prior.repository.js';
 import { CulturalPriorService } from '../cultural-priors/cultural-prior.service.js';
 import { DietaryPreferencesRepository } from '../dietary-preferences/dietary-preferences.repository.js';
+import { FavoriteLunchesRepository } from '../favorite-lunches/favorite-lunches.repository.js';
 import { FoodPreferencesRepository } from '../food-preferences/food-preferences.repository.js';
 import { HouseholdRulesRepository } from '../household-rules/household-rules.repository.js';
 import { HouseholdsRepository } from '../households/households.repository.js';
@@ -73,6 +74,10 @@ const onboardingRoutesPlugin: FastifyPluginAsync = async (fastify) => {
   const foodPreferencesRepository = new FoodPreferencesRepository(fastify.supabase, kek);
   const householdRulesRepository = new HouseholdRulesRepository(fastify.supabase, kek);
 
+  // Slice 2.5-s9 — favorite-lunches repository for the wired
+  // favorite_lunch.add onboarding tool (Moment 5 — cold-start seed, FR124).
+  const favoriteLunchesRepository = new FavoriteLunchesRepository(fastify.supabase, kek);
+
   const service = new OnboardingService({
     threads,
     agent,
@@ -90,6 +95,7 @@ const onboardingRoutesPlugin: FastifyPluginAsync = async (fastify) => {
     dietaryPreferencesRepository,
     foodPreferencesRepository,
     householdRulesRepository,
+    favoriteLunchesRepository,
   });
 
   // Slice 2-S26 — fire-and-forget audit writer for resume / reset events.

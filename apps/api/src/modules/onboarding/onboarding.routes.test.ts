@@ -65,6 +65,29 @@ interface SupabaseMockOpts {
   appendTurnSpy?: (row: unknown) => void;
   closeThreadSpy?: (updates: unknown) => void;
   createThreadSpy?: (row: unknown) => void;
+  // Slice 2.5-s10 — onboarding_moment_state row returned by getState.
+  // When undefined (default), the table mock returns null (pre_start state).
+  // Finalize tests that need the required-set gate to PASS must pass a row
+  // here with current_moment='summary' and all required fields true.
+  momentState?: {
+    current_moment:
+      | 'pre_start'
+      | 'm1_table'
+      | 'm2_safe'
+      | 'm3_taste'
+      | 'm4_bag'
+      | 'm5_starting_line'
+      | 'summary'
+      | 'finalized';
+    required_set_status: {
+      m1_household_name: boolean;
+      m1_child_declared: boolean;
+      m2_allergen_response: boolean;
+      m5_favorite_count: number;
+      m5_complete: boolean;
+    };
+  };
+  momentUpsertSpy?: (row: unknown) => void;
 }
 
 function buildMockSupabase(opts: SupabaseMockOpts = {}) {
@@ -187,6 +210,67 @@ function buildMockSupabase(opts: SupabaseMockOpts = {}) {
                 if (!isListTurns) return resolve({ data: null, error: null });
                 const turns = threadFilter === ACTIVE_THREAD_ID ? activeTurns : closedTurns;
                 return resolve({ data: turns, error: null });
+              },
+            };
+            return chain;
+          },
+        };
+      }
+      if (table === 'onboarding_moment_state') {
+        // Slice 2.5-s10 — OnboardingMomentRepository support. getState uses
+        // select().eq('household_id', X).maybeSingle(); the required-set
+        // count helper uses countRequiredSetSources on other tables (children,
+        // child_allergens, favorite_lunches, households); upsertState uses
+        // upsert(...).
+        return {
+          select: () => {
+            const chain = {
+              eq: () => chain,
+              maybeSingle: vi.fn().mockImplementation(async () => {
+                if (opts.momentState === undefined) {
+                  return { data: null, error: null };
+                }
+                return {
+                  data: {
+                    household_id: SAMPLE_HOUSEHOLD_ID,
+                    current_moment: opts.momentState.current_moment,
+                    required_set_status: opts.momentState.required_set_status,
+                  },
+                  error: null,
+                };
+              }),
+              // Some queries end without maybeSingle (count-only). Resolve
+              // to count=0 so countRequiredSetSources doesn't crash.
+              then(resolve: (val: { data: unknown; error: null; count?: number }) => unknown) {
+                return resolve({ data: [], error: null, count: 0 });
+              },
+            };
+            return chain;
+          },
+          upsert: (row: unknown) => {
+            opts.momentUpsertSpy?.(row);
+            // upsert returns { error } directly — no chain follow-up.
+            return Promise.resolve({ error: null });
+          },
+        };
+      }
+      // Slice 2.5-s10 — countRequiredSetSources reads from households,
+      // children, child_allergens, favorite_lunches. Return empty/zero so
+      // existing tests don't have to set them up. The required-set gate runs
+      // in finalize on the moment-state row only.
+      if (
+        table === 'households' ||
+        table === 'children' ||
+        table === 'child_allergens' ||
+        table === 'favorite_lunches'
+      ) {
+        return {
+          select: () => {
+            const chain = {
+              eq: () => chain,
+              maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null }),
+              then(resolve: (val: { data: unknown; error: null; count: number }) => unknown) {
+                return resolve({ data: [], error: null, count: 0 });
               },
             };
             return chain;
@@ -553,6 +637,18 @@ describe('POST /v1/onboarding/text/finalize', () => {
         maxSeq: 6,
         appendTurnSpy: appendSpy,
         closeThreadSpy: closeSpy,
+        // Slice 2.5-s10 — required-set gate: must be in summary moment with
+        // all four required fields true before finalize can close the thread.
+        momentState: {
+          current_moment: 'summary',
+          required_set_status: {
+            m1_household_name: true,
+            m1_child_declared: true,
+            m2_allergen_response: true,
+            m5_favorite_count: 10,
+            m5_complete: true,
+          },
+        },
       }),
       openai: buildMockOpenAI({
         isCompleteVerdict: 'yes',
@@ -656,6 +752,19 @@ describe('POST /v1/onboarding/text/finalize', () => {
         maxSeq: 6,
         appendTurnSpy: appendSpy,
         closeThreadSpy: closeSpy,
+        // Slice 2.5-s10 — required-set gate passes; the test now verifies
+        // extractSummary failure propagates as 502 (gate passed → classifier
+        // ran → extractSummary called).
+        momentState: {
+          current_moment: 'summary',
+          required_set_status: {
+            m1_household_name: true,
+            m1_child_declared: true,
+            m2_allergen_response: true,
+            m5_favorite_count: 10,
+            m5_complete: true,
+          },
+        },
       }),
       openai: buildMockOpenAI({
         isCompleteVerdict: 'yes',

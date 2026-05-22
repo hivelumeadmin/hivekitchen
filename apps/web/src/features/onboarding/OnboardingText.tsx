@@ -46,6 +46,15 @@ type M4BagCaptureState =
   | { state: 'captured'; mode: 'household'; pattern: BagCompositionPattern }
   | { state: 'captured'; mode: 'per-child'; children: Array<{ name: string; pattern: BagCompositionPattern }> };
 
+// Slice 2.5-s9 — M5 starting-line capture state. M5 is a required-response
+// gate (no skip variant). `capturing` accumulates the parent's chip + free-text
+// selections per turn so the card surfaces a live count; `captured` records
+// whether the parent invoked the early-exit "Start with fewer" override.
+type M5StartingLineState =
+  | { state: 'none' }
+  | { state: 'capturing'; count: number }
+  | { state: 'captured'; count: number; overridden: boolean };
+
 // Slice 2.5-s5 — Moment header config. The text path knows all 7 moments the
 // agent can emit; pre_start / finalized produce number=0 so the header falls
 // back to the legacy "Step N of ~8" subtitle on the very first mount.
@@ -138,6 +147,20 @@ function IcoLunchBag({ cls }: { cls: string }) {
   return (
     <svg className={cls} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
       <path strokeLinecap="round" strokeLinejoin="round" d="M21 11.25v8.25a1.5 1.5 0 01-1.5 1.5H5.25a1.5 1.5 0 01-1.5-1.5v-8.25M12 4.875A2.625 2.625 0 109.375 7.5H12m0-2.625V7.5m0-2.625A2.625 2.625 0 1114.625 7.5H12m0 0V21m-8.625-9.75h18c.621 0 1.125-.504 1.125-1.125v-1.5c0-.621-.504-1.125-1.125-1.125h-18c-.621 0-1.125.504-1.125 1.125v1.5c0 .621.504 1.125 1.125 1.125z" />
+    </svg>
+  );
+}
+function IcoSeed({ cls }: { cls: string }) {
+  return (
+    <svg className={cls} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+      <path strokeLinecap="round" strokeLinejoin="round" d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09zM18.259 8.715L18 9.75l-.259-1.035a3.375 3.375 0 00-2.455-2.456L14.25 6l1.036-.259a3.375 3.375 0 002.455-2.456L18 2.25l.259 1.035a3.375 3.375 0 002.456 2.456L21.75 6l-1.035.259a3.375 3.375 0 00-2.456 2.456zM16.894 20.567L16.5 21.75l-.394-1.183a2.25 2.25 0 00-1.423-1.423L13.5 18.75l1.183-.394a2.25 2.25 0 001.423-1.423l.394-1.183.394 1.183a2.25 2.25 0 001.423 1.423l1.183.394-1.183.394a2.25 2.25 0 00-1.423 1.423z" />
+    </svg>
+  );
+}
+function IcoCheck({ cls }: { cls: string }) {
+  return (
+    <svg className={cls} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+      <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" />
     </svg>
   );
 }
@@ -441,12 +464,20 @@ function KitchenProfilePanel({
   m2AllergenCapture,
   m3TasteCapture,
   m4BagCapture,
+  m5StartingLine,
+  isSummary,
+  isFinalized,
 }: {
   turns: Turn[];
   currentMomentKey: string | null;
   m2AllergenCapture: M2CaptureState;
   m3TasteCapture: M3TasteCaptureState;
   m4BagCapture: M4BagCaptureState;
+  m5StartingLine: M5StartingLineState;
+  // Slice 2.5-s10 — summary/finalized moments surface foliage 100% bar.
+  // Optional so legacy call sites continue to render the progress footer.
+  isSummary?: boolean;
+  isFinalized?: boolean;
 }) {
   const topics = detectTopics(turns);
   const children = extractChildren(turns);
@@ -461,19 +492,24 @@ function KitchenProfilePanel({
   // Slice 2.5-s5 — moment-based progress when the wire surfaced a moment_key;
   // otherwise fall back to the legacy topic-detection heuristic so resume-mode
   // (initialTurns with no turn fired yet) still shows something useful.
+  // Slice 2.5-s10 — summary moment overrides to "all moments captured" / 100%.
   const momentMeta = currentMomentKey ? MOMENT_CONFIG[currentMomentKey] : undefined;
   const completedMoments =
     momentMeta !== undefined && momentMeta.number > 0
       ? Math.min(momentMeta.number - 1, 5)
       : 0;
-  const progressPct =
-    momentMeta !== undefined && momentMeta.number > 0
+  const progressPct = isSummary === true || isFinalized === true
+    ? 100
+    : momentMeta !== undefined && momentMeta.number > 0
       ? Math.round((completedMoments / 5) * 100)
       : Math.round((coveredCount / TOPIC_CONFIG.length) * 100);
-  const footerLabel =
-    momentMeta !== undefined && momentMeta.number > 0
-      ? `Moment ${completedMoments} of 5 complete`
-      : `${questionsComplete} of ~8 questions complete`;
+  const footerLabel = isFinalized === true
+    ? 'Kitchen locked in'
+    : isSummary === true
+      ? 'All moments captured'
+      : momentMeta !== undefined && momentMeta.number > 0
+        ? `Moment ${completedMoments} of 5 complete`
+        : `${questionsComplete} of ~8 questions complete`;
 
   return (
     <div className="flex flex-col h-full overflow-hidden">
@@ -849,6 +885,54 @@ function KitchenProfilePanel({
             )}
           </div>
         ) : null}
+
+        {/* Slice 2.5-s9 — M5 starting-line card. Required-response gate; the
+            count is a session-only tally of chips submitted this conversation.
+            Full structured catalog read against KitchenMapSchema is deferred
+            to 2.5-s11 (Kitchen Profile live data). */}
+        {m5StartingLine.state !== 'none' ? (
+          <div
+            key="m5-starting-line"
+            data-testid="m5-starting-line-card"
+            className={
+              m5StartingLine.state === 'capturing'
+                ? 'rounded-xl p-4 flex items-center gap-3.5'
+                : 'rounded-xl p-5'
+            }
+            style={{
+              background:
+                m5StartingLine.state === 'capturing'
+                  ? 'var(--surface)'
+                  : 'var(--surface-2, var(--surface))',
+            }}
+          >
+            {m5StartingLine.state === 'capturing' ? (
+              <>
+                <div
+                  className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full"
+                  style={{ background: 'color-mix(in srgb, var(--amber) 12%, transparent)' }}
+                >
+                  <IcoSeed cls="h-[15px] w-[15px] text-amber/50" />
+                </div>
+                <div>
+                  <p className="font-sans text-sm font-medium text-fg/55">Lumi&apos;s starting line</p>
+                  <p className="font-sans text-[11px] mt-0.5 text-fg-muted/40">Still listening…</p>
+                </div>
+              </>
+            ) : (
+              <>
+                <div className="flex items-center gap-2 mb-3">
+                  <IcoSeed cls="h-4 w-4 shrink-0 text-amber-soft" />
+                  <h3 className="font-serif text-base text-fg">Lumi&apos;s starting line</h3>
+                </div>
+                <p className="font-sans text-xs italic text-foliage">
+                  {m5StartingLine.count} lunches — Lumi has a starting line.
+                  {m5StartingLine.overridden ? ' (started with fewer)' : ''}
+                </p>
+              </>
+            )}
+          </div>
+        ) : null}
       </div>
 
       {/* Progress footer */}
@@ -857,7 +941,13 @@ function KitchenProfilePanel({
           <span className="font-sans text-[13px] text-fg-muted">
             {footerLabel}
           </span>
-          <span className="font-serif text-base text-amber">
+          <span
+            className={
+              isSummary === true || isFinalized === true
+                ? 'font-serif text-base text-foliage'
+                : 'font-serif text-base text-amber'
+            }
+          >
             {progressPct > 0 ? `${progressPct}%` : ''}
           </span>
         </div>
@@ -866,7 +956,11 @@ function KitchenProfilePanel({
           style={{ background: 'var(--surface-2, var(--surface))' }}
         >
           <div
-            className="h-full rounded-full bg-amber transition-all duration-700 ease-out"
+            className={
+              isSummary === true || isFinalized === true
+                ? 'h-full rounded-full bg-foliage transition-all duration-700 ease-out'
+                : 'h-full rounded-full bg-amber transition-all duration-700 ease-out'
+            }
             style={{ width: `${progressPct}%` }}
           />
         </div>
@@ -923,6 +1017,17 @@ export function OnboardingText({ onFinalized, initialTurns }: OnboardingTextProp
   // bag" card. Same lean approach as M3; structured per-child read lives in
   // 2.5-s11. Required-response gate, so no 'skipped' variant.
   const [m4BagCapture, setM4BagCapture] = useState<M4BagCaptureState>({ state: 'none' });
+  // Slice 2.5-s9 — Moment 5 starting-line state. Session-only count tally for
+  // the profile card; the true count lives in favorite_lunches and is read
+  // back in 2.5-s11. Required-response gate, no 'skipped' variant.
+  const [m5StartingLine, setM5StartingLine] = useState<M5StartingLineState>({ state: 'none' });
+  // Slice 2.5-s10 — required-set completion surfaced by the server on each
+  // turn. null = unknown (no turn yet). false = at least one required moment
+  // is incomplete. true = all required fields present; finalize button active.
+  const [requiredSetComplete, setRequiredSetComplete] = useState<boolean | null>(null);
+  // Slice 2.5-s10 — which required moments are incomplete, from the server.
+  // Each element is a moment key (e.g. 'm5_starting_line'). Empty = all OK.
+  const [missingRequiredSet, setMissingRequiredSet] = useState<string[]>([]);
   const abortRef = useRef<AbortController | null>(null);
   const conversationEndRef = useRef<HTMLDivElement | null>(null);
 
@@ -983,6 +1088,24 @@ export function OnboardingText({ onFinalized, initialTurns }: OnboardingTextProp
       setM4BagCapture({ state: 'capturing' });
     }
   }, [currentMomentKey, m4BagCapture.state]);
+
+  // Slice 2.5-s9 — when the agent advances into m5_starting_line for the first
+  // time, flip the starting-line card from 'none' to 'capturing' with count 0.
+  // submitTurn handles count increments and the 'captured' transition.
+  useEffect(() => {
+    if (currentMomentKey === 'm5_starting_line' && m5StartingLine.state === 'none') {
+      setM5StartingLine({ state: 'capturing', count: 0 });
+    }
+  }, [currentMomentKey, m5StartingLine.state]);
+
+  // P3 patch — clear required-set status when navigating away from summary so
+  // stale gap callouts don't re-appear if the agent later re-emits summary.
+  useEffect(() => {
+    if (currentMomentKey !== null && currentMomentKey !== 'summary') {
+      setMissingRequiredSet([]);
+      setRequiredSetComplete(null);
+    }
+  }, [currentMomentKey]);
 
   // Slice 2.5-s5 — extracted from handleSubmit so the form submit and the
   // SkipChip onClick share the same POST + optimistic-render + rollback path.
@@ -1093,11 +1216,50 @@ export function OnboardingText({ onFinalized, initialTurns }: OnboardingTextProp
             }
           }
         }
+        // Slice 2.5-s9 — M5 starting-line card transitions. Every chip that is
+        // not the 'override_fewer' control key counts toward the running tally
+        // (parents can also free-type items, which the agent captures via
+        // favorite_lunch.add — the count then catches up on the next turn via
+        // the server-side required_set, deferred to 2.5-s11). The agent
+        // advancing out of m5_starting_line — whether by count >= 10 or by the
+        // parent invoking override_fewer — flips the card to 'captured'.
+        if (currentMomentKey === 'm5_starting_line') {
+          const overrideTapped = chipSelectionsSnapshot.includes('override_fewer');
+          const addedCount = chipSelectionsSnapshot.filter((k) => k !== 'override_fewer').length;
+          const advancedOutOfM5 =
+            parsed.moment_key !== null &&
+            parsed.moment_key !== undefined &&
+            parsed.moment_key !== 'm5_starting_line';
+          if (advancedOutOfM5) {
+            setM5StartingLine((prev) => ({
+              state: 'captured',
+              count: (prev.state === 'capturing' ? prev.count : 0) + addedCount,
+              overridden: overrideTapped,
+            }));
+          } else if (addedCount > 0) {
+            setM5StartingLine((prev) =>
+              prev.state === 'capturing'
+                ? { state: 'capturing', count: prev.count + addedCount }
+                : prev,
+            );
+          }
+        }
         setChipConfig(parsed.chip_config ?? null);
         // Slice 2.5-s5 — track the post-turn moment so the header renders the
         // correct "Moment X of 5" copy. null/undefined preserves the previous
         // moment so a transient drop doesn't flicker the header.
         setCurrentMomentKey(parsed.moment_key ?? null);
+        // Slice 2.5-s10 — update required-set status from server. Skipped when
+        // the field is undefined (legacy path) or null (momentRepository absent).
+        if (
+          parsed.required_set_complete !== undefined &&
+          parsed.required_set_complete !== null
+        ) {
+          setRequiredSetComplete(parsed.required_set_complete);
+        }
+        if (parsed.missing_required_set !== undefined) {
+          setMissingRequiredSet(parsed.missing_required_set);
+        }
       } catch (err) {
         if (controller.signal.aborted) return;
         if (err instanceof DOMException && err.name === 'AbortError') return;
@@ -1176,6 +1338,13 @@ export function OnboardingText({ onFinalized, initialTurns }: OnboardingTextProp
                   // Slice 2.5-s5 — moment-based subtitle when the wire has
                   // surfaced a moment_key; otherwise fall back to the legacy
                   // step counter so resume-mode + pre-first-turn still read.
+                  // Slice 2.5-s10 — summary + finalized have bespoke copy.
+                  if (currentMomentKey === 'summary') {
+                    return 'Summary · Lock in your kitchen';
+                  }
+                  if (currentMomentKey === 'finalized') {
+                    return 'Kitchen locked in · Welcome';
+                  }
                   const meta = currentMomentKey ? MOMENT_CONFIG[currentMomentKey] : undefined;
                   if (meta !== undefined && meta.number > 0) {
                     return `Moment ${Math.min(meta.number, 5)} of 5 · ${meta.name}`;
@@ -1261,6 +1430,49 @@ export function OnboardingText({ onFinalized, initialTurns }: OnboardingTextProp
                       <p className="font-serif text-2xl md:text-[28px] leading-snug text-fg">
                         {lumiTurn?.content ?? ''}
                       </p>
+
+                      {/* Slice 2.5-s10 — gap callout for incomplete required
+                          moments while in the summary moment. Renders below
+                          Lumi's read-back prose; each callout names the missing
+                          moment and lets the parent jump back client-side to
+                          continue the conversation in that moment. */}
+                      {currentMomentKey === 'summary' && missingRequiredSet.length > 0 && (
+                        <div className="flex flex-col gap-3 w-full max-w-xl">
+                          {missingRequiredSet.map((momentKey) => {
+                            const labels: Record<string, { label: string; moment: number }> = {
+                              m1_table: { label: "Who's at the table", moment: 1 },
+                              m2_safe: { label: 'What I need to keep safe', moment: 2 },
+                              m5_starting_line: { label: 'A starting line for Lumi', moment: 5 },
+                            };
+                            const info = labels[momentKey] ?? { label: momentKey, moment: 0 };
+                            return (
+                              <div
+                                key={momentKey}
+                                data-testid={`gap-callout-${momentKey}`}
+                                className="flex flex-col gap-2 rounded-xl border border-amber-warm/50 bg-amber/5 px-4 py-3 text-left"
+                              >
+                                <div className="flex items-center justify-between gap-3">
+                                  <span className="font-sans text-sm font-medium text-amber-warm">
+                                    Still missing · {info.label}
+                                  </span>
+                                  {info.moment > 0 && (
+                                    <button
+                                      type="button"
+                                      className="inline-flex items-center gap-1 rounded-full border border-amber-warm/40 px-3 py-1 font-sans text-[11px] text-amber-warm hover:bg-amber-warm/10 transition-colors"
+                                      onClick={() => setCurrentMomentKey(momentKey)}
+                                    >
+                                      Back to Moment {info.moment}
+                                    </button>
+                                  )}
+                                </div>
+                                <p className="font-sans text-[12px] italic text-fg-muted">
+                                  Lumi needs this to build a safe, personalized plan.
+                                </p>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
 
                       {/* Slice 2.5-s3 — chip slot. Renders below Lumi's prose
                           and above the input bar. Hint chips are illustrative
@@ -1384,6 +1596,54 @@ export function OnboardingText({ onFinalized, initialTurns }: OnboardingTextProp
             </p>
           )}
 
+          {/* Slice 2.5-s10 — Summary finalize gate replaces the input bar when
+              the agent has advanced into the summary moment. The legacy
+              isComplete CTA and pill-shaped input bar render in the other
+              branches so 2-7 / 2-s24 (non-summary) flows are unaffected. */}
+          {currentMomentKey === 'summary' ? (
+            <div className="shrink-0 px-6 md:px-8 pb-10 pt-3">
+              <div className="mx-auto flex max-w-2xl flex-col gap-3">
+                <div
+                  className="flex items-center gap-3 rounded-2xl border border-border/30 bg-surface/50 px-4 py-3 backdrop-blur-md shadow-lg"
+                  data-testid="finalize-gate"
+                >
+                  <p
+                    className={[
+                      'flex-1 font-sans text-[13px] italic',
+                      missingRequiredSet.length > 0 ? 'text-amber-warm' : 'text-foliage',
+                    ].join(' ')}
+                  >
+                    {missingRequiredSet.length > 0
+                      ? 'A few things still need to be answered above.'
+                      : 'Ready when you are.'}
+                  </p>
+                  <button
+                    type="button"
+                    data-testid="finalize-button"
+                    onClick={handleFinalize}
+                    disabled={finalizing || requiredSetComplete !== true}
+                    className={[
+                      'inline-flex items-center gap-2 rounded-full px-5 py-2.5 font-sans text-sm font-medium transition-all',
+                      finalizing || requiredSetComplete !== true
+                        ? 'bg-amber/20 text-amber-warm/60 cursor-not-allowed'
+                        : 'bg-amber text-bg shadow-md hover:bg-amber-warm active:scale-[0.98]',
+                    ].join(' ')}
+                  >
+                    {!(finalizing || requiredSetComplete !== true) && (
+                      <IcoCheck cls="h-4 w-4" />
+                    )}
+                    {finalizing ? 'Finalizing…' : 'Finalize'}
+                  </button>
+                </div>
+                <p className="text-center font-sans text-xs italic text-fg-muted">
+                  {missingRequiredSet.length > 0
+                    ? 'Complete the moments above to seal your kitchen.'
+                    : 'Finalize seals your kitchen and starts your first plan.'}
+                </p>
+              </div>
+            </div>
+          ) : (
+            <>
           {/* Completion CTA — F07: keep visible even when error is set */}
           {isComplete && (
             <div className="shrink-0 flex flex-col items-center gap-2 px-6 md:px-8 pt-2 pb-6">
@@ -1508,6 +1768,8 @@ export function OnboardingText({ onFinalized, initialTurns }: OnboardingTextProp
               <span className="sr-only">Send</span>
             </form>
           )}
+            </>
+          )}
         </section>
 
         {/* RIGHT: Profile panel (desktop only, 40%) */}
@@ -1524,6 +1786,9 @@ export function OnboardingText({ onFinalized, initialTurns }: OnboardingTextProp
               m2AllergenCapture={m2AllergenCapture}
               m3TasteCapture={m3TasteCapture}
               m4BagCapture={m4BagCapture}
+              m5StartingLine={m5StartingLine}
+              isSummary={currentMomentKey === 'summary'}
+              isFinalized={currentMomentKey === 'finalized'}
             />
           </div>
         </section>
@@ -1569,6 +1834,9 @@ export function OnboardingText({ onFinalized, initialTurns }: OnboardingTextProp
               m2AllergenCapture={m2AllergenCapture}
               m3TasteCapture={m3TasteCapture}
               m4BagCapture={m4BagCapture}
+              m5StartingLine={m5StartingLine}
+              isSummary={currentMomentKey === 'summary'}
+              isFinalized={currentMomentKey === 'finalized'}
             />
           </div>
         </div>
