@@ -39,6 +39,7 @@ import HeartNoteRoute from './routes/(app)/heart-note.js';
 import EveningCheckinRoute from './routes/(app)/evening-checkin.js';
 import GroceryListRoute from './routes/(app)/grocery-list.js';
 import KitchenInspirationRoute from './routes/(app)/kitchen-inspiration.js';
+import KitchenProfileRoute from './routes/(app)/kitchen-profile.js';
 import LunchLinkRoute from './routes/(app)/lunch-link.js';
 
 function RootRedirect() {
@@ -75,6 +76,7 @@ const router = createBrowserRouter([
       { path: '/app/evening-checkin', element: <EveningCheckinRoute /> },
       { path: '/app/grocery-list', element: <GroceryListRoute /> },
       { path: '/app/inspiration', element: <KitchenInspirationRoute /> },
+      { path: '/app/kitchen-profile', element: <KitchenProfileRoute /> },
       // Lunch Link — child-scope surface. AppLayout's useMatch('/lunch/*')
       // suppresses the parent LumiOrb/LumiPanel for these routes.
       { path: '/lunch/:linkId', element: <LunchLinkRoute /> },

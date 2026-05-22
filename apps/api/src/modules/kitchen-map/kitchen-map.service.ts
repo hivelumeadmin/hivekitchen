@@ -7,7 +7,7 @@ import { composeKitchenMap } from './kitchen-map.composer.js';
 import type { KitchenMapRepository } from './kitchen-map.repository.js';
 
 const KITCHEN_MAP_CACHE_TTL_SECONDS = 60 * 60; // 1 hour
-const SCHEMA_VERSION = '1.0.0' as const;
+const SCHEMA_VERSION = '1.1.0' as const;
 
 export interface KitchenMapServiceDeps {
   repository: KitchenMapRepository;

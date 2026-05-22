@@ -31,6 +31,7 @@ import { ioredisPlugin } from './plugins/ioredis.plugin.js';
 import { bullmqPlugin } from './plugins/bullmq.plugin.js';
 import { vocabularyPlugin } from './modules/vocabulary/vocabulary.plugin.js';
 import { kitchenMapPlugin } from './modules/kitchen-map/kitchen-map.plugin.js';
+import { kitchenMapRoutes } from './modules/kitchen-map/kitchen-map.routes.js';
 import { auditPartitionRotationPlugin } from './jobs/audit-partition-rotation.job.js';
 import { planGenerationJobPlugin } from './jobs/plan-generation.job.js';
 import { planRegenerationJobPlugin } from './jobs/plan-regeneration.job.js';
@@ -204,6 +205,7 @@ export async function buildApp(opts: BuildAppOptions) {
   await app.register(lumiRoutes, { prefix: '/v1/lumi' });
   await app.register(heartNoteRoutes);
   await app.register(lunchLinkRoutes);
+  await app.register(kitchenMapRoutes);
 
   return app;
 }
