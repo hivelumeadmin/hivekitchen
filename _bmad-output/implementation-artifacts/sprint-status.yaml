@@ -1,5 +1,5 @@
 # generated: 2026-04-23
-# last_updated: 2026-05-22 (3-30 → done)
+# last_updated: 2026-05-23 (Epic 2.5 retro done; Epic 2.6 brief approved; 6 slices added)
 # project: hivekitchen
 # project_key: NOKEY
 # tracking_system: file-system
@@ -52,7 +52,7 @@
 # Walls (decision moments) are flagged with `# WALL:` markers.
 
 generated: 2026-04-23
-last_updated: 2026-05-22 (3-30 → done)
+last_updated: 2026-05-23 (Epic 2.5 retro done; Epic 2.6 brief approved; 6 slices added)
 project: hivekitchen
 project_key: NOKEY
 tracking_system: file-system
@@ -146,7 +146,30 @@ development_status:
   2.5-s9-moment-5-a-starting-line-for-lumi: done                            # 10 favorite lunches cold-start seed; MOCK-REF — FavoriteLunchesRepository + tool wiring + M5 chip catalog + override-fewer at >=4 + OnboardingText card
   2.5-s10-summary-and-finalize-gate: done                                     # WALL: EPIC MVP WALL — required-set complete, is_onboarded=true; MOCK-REF
   2.5-s11-kitchen-profile-read-live-data: done                               # impl complete 2026-05-22; unblocks Epic 7 7-s1; MOCK-REF
-  epic-2.5-retrospective: optional
+  epic-2.5-retrospective: done                                                # retro completed 2026-05-23; see epic-2.5-retro-2026-05-23.md; surfaced catalog scope collision → Epic 2.6 brief
+
+  # ==========================================================================
+  # Epic 2.6: Personalized Onboarding Catalog (Two-Layer Model)
+  # Approved 2026-05-23 by Menon. Successor sprint to Epic 2.5.
+  # See: _bmad-output/planning-artifacts/epic-2.6-brief.md (rev 2)
+  # Architectural commitment: catalog persists via existing `recipes` +
+  # `household_recipe_usage` tables (shipped via story 3-31), NOT a new
+  # lunch_catalog table. Stage 1 emits Layer 1 (name+tags only); Layer 2
+  # (full ingredients) materializes lazily via RecipeAgent.discover() at
+  # plan-commit time. Encryption dropped for parent-declared names —
+  # plaintext canonical_name + RLS + visibility='private' (matches 3-31
+  # pattern; reverses 2.5-s9 decision).
+  # MOCK-REF: every UI-touching slice must reference in-repo mocks; new
+  # M5 personalized chip mockup with cohort variants pending pre-2.6-s4.
+  # ==========================================================================
+  epic-2.6: backlog
+  2.6-s1-foundation-catalog-as-recipes-migrate-favorite-lunches: backlog       # WALL: schema wall; in-slice Kitchen Profile read swap; drops favorite_lunches table
+  2.6-s2-stage-0-curated-baseline: backlog                                     # ~50 hand-tagged seeds (content-authoring blocker) → per-household recipes rows with source='catalog_seeded'
+  2.6-s3-stage-1-async-seeding-layer-1: backlog                                # post-M2 BullMQ job; LLM emits name+tags only (NO ingredients); integrates Layer 2 trigger in PlansService.commit()
+  2.6-s4-m5-chip-personalization: backlog                                      # WALL: MVP wall; MOCK-REF (new mockup pending — cohort variants); wire-format flip (labels not keys)
+  2.6-s5-stage-2-recovery-handler: backlog                                     # floor breach (<35) + mass-block (>50% blocked) only; NOT scheduled; AC explicitly forbids cron/background-enrichment
+  2.6-s6-cold-start-fallback-conversational: backlog                           # MOCK-REF (new mockup pending); conversational tail when Stage 1 confidence below threshold
+  epic-2.6-retrospective: optional
 
   # Epic 3: Weekly Plan & Ready-Answer Open (unchanged — done / in-flight stories kept as-is)
   epic-3: in-progress
