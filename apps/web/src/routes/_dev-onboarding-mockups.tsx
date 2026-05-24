@@ -1,6 +1,7 @@
 import { AppFooter } from '../components/AppFooter.js';
 import { AppHeader } from '../components/AppHeader.js';
 import { ChipPrimitivePage } from '../features/onboarding-mockups/ChipPrimitivePage.js';
+import { Moment2PersonalizedPage } from '../features/onboarding-mockups/Moment2PersonalizedPage.js';
 import { Moment5PersonalizedPage } from '../features/onboarding-mockups/Moment5PersonalizedPage.js';
 
 export function DevOnboardingMockupsPage() {
@@ -8,6 +9,7 @@ export function DevOnboardingMockupsPage() {
     <div className="flex min-h-screen flex-col bg-bg text-fg">
       <AppHeader />
       <ChipPrimitivePage />
+      <Moment2PersonalizedPage />
       <Moment5PersonalizedPage />
       <AppFooter />
     </div>
