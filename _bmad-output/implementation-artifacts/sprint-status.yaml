@@ -1,5 +1,5 @@
 # generated: 2026-04-23
-# last_updated: 2026-05-24 (Epic 2.6 in-progress; 2.6-s1 → ready-for-dev — story authored)
+# last_updated: 2026-05-24 (Epic 2.6 in-progress; 2.6-s1 → done; 2.6-s2 → review; 2.6-s7 → done; 2.6-s8 → review; 3-23 → done; 3-24 → review)
 # project: hivekitchen
 # project_key: NOKEY
 # tracking_system: file-system
@@ -52,7 +52,7 @@
 # Walls (decision moments) are flagged with `# WALL:` markers.
 
 generated: 2026-04-23
-last_updated: 2026-05-24 (Epic 2.6 in-progress; 2.6-s1 → ready-for-dev)
+last_updated: 2026-05-24 (Epic 2.6 in-progress; 2.6-s1 → done; 2.6-s2 → review; 2.6-s7 → done; 2.6-s8 → review; 3-23 → done; 3-24 → review)
 project: hivekitchen
 project_key: NOKEY
 tracking_system: file-system
@@ -163,12 +163,14 @@ development_status:
   # M5 personalized chip mockup with cohort variants pending pre-2.6-s4.
   # ==========================================================================
   epic-2.6: in-progress
-  2.6-s1-foundation-catalog-as-recipes-migrate-favorite-lunches: ready-for-dev # WALL: schema wall; in-slice Kitchen Profile read swap; drops favorite_lunches table — story authored 2026-05-24
-  2.6-s2-stage-0-curated-baseline: backlog                                     # ~50 hand-tagged seeds (content-authoring blocker) → per-household recipes rows with source='catalog_seeded'
+  2.6-s1-foundation-catalog-as-recipes-migrate-favorite-lunches: done          # code review complete 2026-05-24 — 3-layer adversarial pass; 6 decisions resolved; 11 patches applied + committed; 1 false positive (P8) dismissed
+  2.6-s2-stage-0-curated-baseline: review                                      # dev complete 2026-05-24 — 50 hand-tagged seeds, materialization worker + 2 triggers (auth.service household-creation + onboarding.service M3 exit); 18 new tests pass; awaiting code review
   2.6-s3-stage-1-async-seeding-layer-1: backlog                                # post-M2 BullMQ job; LLM emits name+tags only (NO ingredients); integrates Layer 2 trigger in PlansService.commit()
   2.6-s4-m5-chip-personalization: backlog                                      # WALL: MVP wall; MOCK-REF (new mockup pending — cohort variants); wire-format flip (labels not keys)
   2.6-s5-stage-2-recovery-handler: backlog                                     # floor breach (<35) + mass-block (>50% blocked) only; NOT scheduled; AC explicitly forbids cron/background-enrichment
   2.6-s6-cold-start-fallback-conversational: backlog                           # MOCK-REF (new mockup pending); conversational tail when Stage 1 confidence below threshold
+  2.6-s7-allergy-rules-drop-guardrail-swap-to-allergen-tags: done              # impl complete 2026-05-24; code review complete 2026-05-24 — 3 patches applied (stale keys in 4 test files, mock filter-arg validation + is_active coverage test, stale test title strings); 44/44 guardrail tests pass
+  2.6-s8-allergen-storage-cutover-children-declared-allergens-to-child-allergens: review          # impl complete 2026-05-24 — backfill script + tests; ChildrenRepository routes declared_allergens through child_allergens (insert/updateProfile + findById/findByHouseholdId); guardrail + kitchen-map cutovers; legacy column written as encrypted [] for shape parity; 286/286 module tests pass; awaiting code review
   epic-2.6-retrospective: optional
 
   # Epic 3: Weekly Plan & Ready-Answer Open (unchanged — done / in-flight stories kept as-is)
@@ -204,13 +206,13 @@ development_status:
   # See: _bmad-output/implementation-artifacts/3-31-recipe-agent-tavily-structured-fetch.md
   # ==========================================================================
   3-31-recipe-agent-tavily-structured-fetch: done                        # SHIP FIRST — unblocks 3-23, 3-24
-  3-23-per-slot-policy-scoping-bag-wide-allergy-rule: backlog                 # PAUSED 2026-05-19 pending Epic 2.5 enforcement contract; depends on child_allergens table + enforcement_level enum
-  3-24-allergy-uncertainty-flagging-safe-substitution: backlog                # PAUSED 2026-05-19 pending FR122 (allergens-without-severity) contract
-  3-25-hard-fail-escalation-no-safe-plan-possible: backlog                    # PAUSED 2026-05-19 pending conflict precedence rules + enforcement gradient
-  3-26-graceful-degradation-state-ux: backlog                                 # PAUSED 2026-05-19 pending enforcement strength data being populated
-  3-27-variant-preparation-active-learning-visible-to-parent-before-delivery: backlog  # PAUSED 2026-05-19 pending food_preferences + enforcement data
+  3-23-per-slot-policy-scoping-bag-wide-allergy-rule: done                    # code review complete 2026-05-24 — 2 patches applied (jobId dedup gap + stale comment); 2 deferred (item_sku_id in retry, test harness sig); 9/10 tests pass (1 pre-existing)
+  3-24-allergy-uncertainty-flagging-safe-substitution: review                 # impl complete 2026-05-24; engine compound scan + 2 FALCPA synonyms; PlansService.commit split; trySurgicalSwap + planWeek/swapBlockedItems uncertainContext; AllergyUncertaintyBanner shipped; 27 new tests pass; awaiting code review
+  3-25-hard-fail-escalation-no-safe-plan-possible: backlog                    # unblocked by Epic 2.5 (conflict precedence + enforcement gradient shipped)
+  3-26-graceful-degradation-state-ux: backlog                                 # unblocked by Epic 2.5 (enforcement-strength data populated)
+  3-27-variant-preparation-active-learning-visible-to-parent-before-delivery: backlog  # unblocked by Epic 2.5 (food_preferences + enforcement shipped)
   3-28-pause-lunch-link-for-child-on-day-without-altering-plan: done          # CONTINUES IN PARALLEL — infrastructure, no contract dependency
-  3-29-degraded-propose-state-with-try-alternating-sovereignty-toggle: backlog  # PAUSED 2026-05-19 pending tight-constraints set knowledge
+  3-29-degraded-propose-state-with-try-alternating-sovereignty-toggle: backlog  # unblocked by Epic 2.5 (tight-constraints set knowledge shipped)
   3-30-llm-provider-failover-circuit-breaker-audit: done                      # Code review 2026-05-22: 12 patches applied (auth, retry, breaker timer-leak fix, branch-coverage tests, auth tests). 7 deferred. CONTINUES IN PARALLEL — infrastructure, no contract dependency
   epic-3-retrospective: optional
 
