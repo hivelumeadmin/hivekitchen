@@ -278,8 +278,6 @@ export const FoodPreferenceDeclareOutputSchema = z.object({
 
 export const FavoriteLunchAddInputSchema = z.object({
   item: z.string().trim().min(1).max(128),
-  /** Display ordering. Omit to append at the end of the current list. */
-  position: z.number().int().nonnegative().optional(),
 });
 
 export const FavoriteLunchAddOutputSchema = z.object({

@@ -208,13 +208,13 @@ describe('FoodPreferenceDeclareInputSchema', () => {
 });
 
 describe('FavoriteLunchAddInputSchema', () => {
-  it('accepts item without position', () => {
+  it('accepts item', () => {
     const r = FavoriteLunchAddInputSchema.safeParse({ item: 'dal chawal' });
     expect(r.success).toBe(true);
   });
 
-  it('rejects negative position', () => {
-    const r = FavoriteLunchAddInputSchema.safeParse({ item: 'dal chawal', position: -1 });
+  it('rejects empty item', () => {
+    const r = FavoriteLunchAddInputSchema.safeParse({ item: '' });
     expect(r.success).toBe(false);
   });
 });

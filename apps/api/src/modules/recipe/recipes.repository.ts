@@ -37,7 +37,7 @@ export interface RecipeRow {
   cuisine_tags: string[];
   applicable_slots: string[];
   prep_time_minutes: number | null;
-  source: 'agent_generated' | 'curated' | 'imported';
+  source: 'agent_generated' | 'curated' | 'imported' | 'catalog_seeded' | 'parent_declared';
   created_by_household_id: string | null;
   visibility: 'private' | 'shared';
   community_use_count: number;
@@ -92,9 +92,20 @@ export interface InsertRecipeInput {
   cuisine_tags: string[];
   applicable_slots: Array<'main' | 'snack' | 'extra'>;
   prep_time_minutes: number | null;
-  source: 'agent_generated' | 'curated' | 'imported';
+  source: 'agent_generated' | 'curated' | 'imported' | 'catalog_seeded' | 'parent_declared';
   created_by_household_id: string;
   visibility: 'private' | 'shared';
+}
+
+/**
+ * Slice 2.6-s1 — parent-declared lunch from Moment 5 (FR124) / in-app
+ * recipe.declare. Result tuple distinguishes a fresh INSERT from a re-use of
+ * an existing row (idempotency surfaced to callers for audit purposes).
+ */
+export interface DeclareForHouseholdResult {
+  recipeId: string;
+  usageWasExisting: boolean;
+  recipeWasInserted: boolean;
 }
 
 export class RecipesRepository extends BaseRepository {
@@ -142,6 +153,284 @@ export class RecipesRepository extends BaseRepository {
       .single();
     if (error) throw error;
     return data as RecipeRowMinimal;
+  }
+
+  /**
+   * Slice 2.6-s1 — parent-declared lunch write path.
+   *
+   * Used by the M5 cold-start seed (`favorite_lunch.add` agent tool) and by
+   * any future in-app "declare a favorite lunch" surface. Folds the dropped
+   * `favorite_lunches` standalone table into the canonical recipes catalog.
+   *
+   * Behaviour:
+   *   1. INSERT a `recipes` row with source='parent_declared',
+   *      visibility='private', empty ingredients/tags, applicable_slots=['main'].
+   *      On the per-household normalized-name UNIQUE conflict (Stage 0/1 or
+   *      a prior call already inserted this item under the same household),
+   *      REUSE the existing recipes.id.
+   *   2. INSERT a `household_recipe_usage` row with
+   *      catalog_provenance='declared', is_household_favorite=true,
+   *      confidence_score=80. On the (household_id, recipe_id) PK conflict
+   *      (planner already promoted this recipe), UPDATE only the stable
+   *      signals: catalog_provenance='declared' (declared wins over
+   *      plan_promoted — parent intent is stronger than planner inference)
+   *      and is_household_favorite=true.
+   *
+   * SECURITY: writes the trimmed, NFC-normalized label as plaintext
+   * `recipes.canonical_name` (visibility='private'). Per Epic 2.6 brief §3
+   * "Encryption decision," RLS + visibility='private' + created_by_household_id
+   * are the access controls. Reversible via an encrypted_canonical_name
+   * column if a future security review flags it — no shape change required.
+   *
+   * Atomicity: best-effort across the two writes. If the recipes INSERT
+   * succeeds but the household_recipe_usage upsert fails, the just-inserted
+   * recipes row is rolled back (only when freshly inserted — never delete a
+   * row that Stage 0/1 created). A repeated call hits the unique index,
+   * reuses the existing recipes.id, retries the usage upsert, and converges.
+   */
+  async declareForHousehold(
+    householdId: string,
+    label: string,
+  ): Promise<DeclareForHouseholdResult> {
+    // Mirrors the SQL unique index: regexp_replace(lower(name), '[\s\-'']+', '', 'g').
+    // Stripping hyphens and apostrophes here means the stored canonical_name and the
+    // ilike conflict-recovery lookup both use the same normalized form.
+    const canonicalName = label.trim().normalize('NFC').replace(/[-']+/g, '');
+    if (canonicalName.length === 0) {
+      throw new Error('declareForHousehold: label is empty after normalization');
+    }
+
+    // ---- Step 1: recipes INSERT (or reuse) -----
+    const insertRecipe = await this.client
+      .from('recipes')
+      .insert({
+        canonical_name: canonicalName,
+        ingredients: [],
+        ingredient_keys: [],
+        primary_ingredient_key: null,
+        allergen_flags: [],
+        dietary_flags: [],
+        cultural_tags: [],
+        cuisine_tags: [],
+        applicable_slots: ['main'],
+        prep_time_minutes: null,
+        source: 'parent_declared',
+        created_by_household_id: householdId,
+        visibility: 'private',
+      })
+      .select('id')
+      .single();
+
+    let recipeId: string;
+    let recipeWasInserted: boolean;
+
+    if (insertRecipe.error === null) {
+      recipeId = (insertRecipe.data as { id: string }).id;
+      recipeWasInserted = true;
+    } else {
+      const code = (insertRecipe.error as { code?: string }).code;
+      if (code !== '23505') throw insertRecipe.error;
+      const existing = await this.client
+        .from('recipes')
+        .select('id')
+        .eq('created_by_household_id', householdId)
+        .ilike('canonical_name', canonicalName)
+        .limit(1)
+        .maybeSingle();
+      if (existing.error) throw existing.error;
+      if (existing.data === null) {
+        throw new Error(
+          `recipes UNIQUE conflict on household ${householdId} but no matching row found ` +
+            `for canonical_name="${canonicalName}" — schema or normalization mismatch`,
+        );
+      }
+      recipeId = (existing.data as { id: string }).id;
+      recipeWasInserted = false;
+    }
+
+    // ---- Step 2: household_recipe_usage upsert ('declared') -----
+    const nowIso = new Date().toISOString();
+    const insertUsage = await this.client.from('household_recipe_usage').insert({
+      household_id: householdId,
+      recipe_id: recipeId,
+      catalog_provenance: 'declared',
+      is_household_favorite: true,
+      confidence_score: 80,
+      use_count: 0,
+      first_used_at: nowIso,
+      last_used_at: nowIso,
+    });
+
+    if (insertUsage.error === null) {
+      return { recipeId, usageWasExisting: false, recipeWasInserted };
+    }
+
+    const usageCode = (insertUsage.error as { code?: string }).code;
+    if (usageCode !== '23505') {
+      if (recipeWasInserted) {
+        // Best-effort rollback. D1 decision: orphaned recipes rows are benign;
+        // don't swallow the original insertUsage.error even if DELETE fails.
+        await this.client.from('recipes').delete().eq('id', recipeId);
+      }
+      throw insertUsage.error;
+    }
+
+    const update = await this.client
+      .from('household_recipe_usage')
+      .update({
+        catalog_provenance: 'declared',
+        is_household_favorite: true,
+        confidence_score: 80,
+      })
+      .eq('household_id', householdId)
+      .eq('recipe_id', recipeId);
+    if (update.error) throw update.error;
+
+    return { recipeId, usageWasExisting: true, recipeWasInserted };
+  }
+
+  /**
+   * Slice 2.6-s2 — Stage 0 catalog materialization write path.
+   *
+   * For each input baseline item, inserts a `recipes` row with
+   * source='catalog_seeded', visibility='private', empty ingredients (Layer 2
+   * materializes lazily at plan-commit time), and the FULL tag arrays from
+   * the curated baseline; then inserts a `household_recipe_usage` row with
+   * catalog_provenance='inferred', is_household_favorite=false,
+   * confidence_score=60, use_count=0.
+   *
+   * Differences from {@link declareForHousehold} (the M5 / declared path):
+   *   - provenance 'inferred' (not 'declared') + confidence 60 (not 80)
+   *   - usage UPSERT is ON CONFLICT DO NOTHING — never downgrade an existing
+   *     'declared' row to 'inferred', never lower 80 → 60
+   *   - recipes carry the full tag arrays from the baseline (M5 path inserts
+   *     empty tags because the parent only types a name)
+   *   - per-item errors are caught + logged; the batch completes regardless
+   *
+   * Returns the count of items whose usage row ended up persisted (fresh
+   * INSERT OR existing row preserved by ON CONFLICT DO NOTHING). Per-item
+   * errors reduce the count but do not throw — Stage 0 must never block
+   * household creation or M3 completion.
+   */
+  async seedFromCatalogBaseline(
+    householdId: string,
+    items: ReadonlyArray<{
+      canonical_name: string;
+      allergen_flags: string[];
+      dietary_flags: string[];
+      cultural_tags: string[];
+      cuisine_tags: string[];
+      applicable_slots: Array<'main' | 'snack' | 'extra'>;
+    }>,
+    onItemError?: (err: unknown, itemIndex: number) => void,
+  ): Promise<number> {
+    let persisted = 0;
+
+    for (let i = 0; i < items.length; i++) {
+      const item = items[i]!;
+      try {
+        const canonicalName = item.canonical_name.trim().normalize('NFC');
+        if (canonicalName.length === 0) continue;
+
+        // ---- Step 1: recipes INSERT (or reuse) -----
+        const insertRecipe = await this.client
+          .from('recipes')
+          .insert({
+            canonical_name: canonicalName,
+            ingredients: [],
+            ingredient_keys: [],
+            primary_ingredient_key: null,
+            allergen_flags: item.allergen_flags,
+            dietary_flags: item.dietary_flags,
+            cultural_tags: item.cultural_tags,
+            cuisine_tags: item.cuisine_tags,
+            applicable_slots: item.applicable_slots,
+            prep_time_minutes: null,
+            source: 'catalog_seeded',
+            created_by_household_id: householdId,
+            visibility: 'private',
+          })
+          .select('id')
+          .single();
+
+        let recipeId: string;
+        if (insertRecipe.error === null) {
+          recipeId = (insertRecipe.data as { id: string }).id;
+        } else {
+          const code = (insertRecipe.error as { code?: string }).code;
+          if (code !== '23505') throw insertRecipe.error;
+          // UNIQUE conflict on recipes_household_normalized_name_uniq — reuse
+          // the existing row. The SQL index normalizes via
+          // regexp_replace(lower(name), '[\s\-'']+', '', 'g'); we approximate
+          // the lookup with ilike on the trimmed/NFC form. For curator-
+          // authored baseline names (no hyphens / apostrophes / multi-space),
+          // ilike matches the existing row. If ilike misses (rare), throw
+          // with the same surface message as declareForHousehold so the
+          // failure is debuggable in logs.
+          const existing = await this.client
+            .from('recipes')
+            .select('id')
+            .eq('created_by_household_id', householdId)
+            .ilike('canonical_name', canonicalName)
+            .limit(1)
+            .maybeSingle();
+          if (existing.error) throw existing.error;
+          if (existing.data === null) {
+            throw new Error(
+              `recipes UNIQUE conflict on household ${householdId} but no matching row found ` +
+                `for canonical_name="${canonicalName}" — schema or normalization mismatch`,
+            );
+          }
+          recipeId = (existing.data as { id: string }).id;
+        }
+
+        // ---- Step 2: household_recipe_usage INSERT (DO NOTHING on conflict) -----
+        // Stage 0 NEVER downgrades an existing row — if the planner or M5
+        // already created a usage row at provenance 'declared' /
+        // 'plan_promoted' with a higher confidence_score, leave it alone.
+        const nowIso = new Date().toISOString();
+        const insertUsage = await this.client.from('household_recipe_usage').insert({
+          household_id: householdId,
+          recipe_id: recipeId,
+          catalog_provenance: 'inferred',
+          is_household_favorite: false,
+          confidence_score: 60,
+          use_count: 0,
+          first_used_at: nowIso,
+          last_used_at: nowIso,
+        });
+
+        if (insertUsage.error !== null) {
+          const code = (insertUsage.error as { code?: string }).code;
+          if (code !== '23505') throw insertUsage.error;
+          // Row already exists — that's the intended idempotent path; counts
+          // toward `persisted` because the household DOES have this item in
+          // catalog after this call.
+        }
+
+        persisted += 1;
+      } catch (err) {
+        if (onItemError !== undefined) onItemError(err, i);
+        // Continue to next item; one bad row never fails the batch.
+      }
+    }
+
+    return persisted;
+  }
+
+  /**
+   * Slice 2.6-s1 — count of declared favourite rows for a household. Used by
+   * `favorite_lunch.add` to derive the agent-facing position field after the
+   * cold-start seed write (FR124's "10 items" progress UX).
+   */
+  async countDeclaredFavorites(householdId: string): Promise<number> {
+    const { count, error } = await this.client
+      .from('household_recipe_usage')
+      .select('recipe_id', { count: 'exact', head: true })
+      .eq('household_id', householdId)
+      .eq('catalog_provenance', 'declared');
+    if (error) throw error;
+    return count ?? 0;
   }
 
   /**

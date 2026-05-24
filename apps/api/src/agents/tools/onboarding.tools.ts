@@ -27,8 +27,8 @@ import type { ChildAllergensRepository } from '../../modules/children/child-alle
 import type { ChildrenService } from '../../modules/children/children.service.js';
 import type { CulturalPriorRepository } from '../../modules/cultural-priors/cultural-prior.repository.js';
 import type { DietaryPreferencesRepository } from '../../modules/dietary-preferences/dietary-preferences.repository.js';
-import type { FavoriteLunchesRepository } from '../../modules/favorite-lunches/favorite-lunches.repository.js';
 import type { FoodPreferencesRepository } from '../../modules/food-preferences/food-preferences.repository.js';
+import type { RecipesRepository } from '../../modules/recipe/recipes.repository.js';
 import type { HouseholdRulesRepository, RuleType } from '../../modules/household-rules/household-rules.repository.js';
 import type { HouseholdsService } from '../../modules/households/households.service.js';
 import type { MemoryService } from '../../modules/memory/memory.service.js';
@@ -75,8 +75,11 @@ export interface OnboardingToolDeps {
   // culturalPriorRepository (shared cultural_priors table).
   foodPreferencesRepository: FoodPreferencesRepository;
   householdRulesRepository: HouseholdRulesRepository;
-  // Slice 2.5-s9 — household cold-start seed write for favorite_lunch.add (FR124).
-  favoriteLunchesRepository: FavoriteLunchesRepository;
+  // Slice 2.6-s1 — replaced FavoriteLunchesRepository (2.5-s9). The M5 hot
+  // path now writes to the canonical recipes catalog via RecipesRepository
+  // .declareForHousehold(); the standalone favorite_lunches table is dropped
+  // by migration 20260908000200.
+  recipesRepository: RecipesRepository;
 }
 
 // ---- child.upsert --------------------------------------------------------
@@ -765,21 +768,32 @@ export function createFavoriteLunchAddToolSpec(
     description:
       'Append a favorite lunch item to the household cold-start seed ' +
       '(Moment 5). Household-scoped only. Target: 10 items to satisfy FR124 ' +
-      'completion gate. Omit position to append at the end of the current ' +
-      'list. Idempotent on item: re-emitting the same item is a no-op.',
+      'completion gate. Idempotent on item: re-emitting the same item is a no-op.',
     inputSchema: FavoriteLunchAddInputSchema,
     outputSchema: FavoriteLunchAddOutputSchema,
-    // Slice 2.5-s9 — bumped from 120 (stub) to cover DEK fetch + position
-    // lookup + upsert (single round-trip per chip in the parallel batch).
-    maxLatencyMs: 600,
+    // Slice 2.6-s1 — backing store moved from `favorite_lunches` to the
+    // canonical `recipes` + `household_recipe_usage` infrastructure (story
+    // 3-31). Latency budget covers two writes (recipes INSERT + usage
+    // upsert) and an idempotency conflict-recovery path.
+    maxLatencyMs: 800,
     fn: async (input: unknown) => {
       const parsed = FavoriteLunchAddInputSchema.parse(input);
 
-      const result = await deps.favoriteLunchesRepository.add(
+      // SECURITY: writes the trimmed, NFC-normalized label as plaintext
+      // `recipes.canonical_name` (visibility='private'). Plaintext acceptance
+      // documented in Epic 2.6 brief §3 "Encryption decision"; RLS +
+      // visibility='private' + created_by_household_id are the access controls.
+      const result = await deps.recipesRepository.declareForHousehold(
         ctx.householdId,
         parsed.item,
-        parsed.position,
       );
+
+      // Position is derived from the declared-favourite count. household_recipe_usage
+      // has no per-row position column; the 0-based index is a display hint only.
+      const declaredCount = await deps.recipesRepository.countDeclaredFavorites(
+        ctx.householdId,
+      );
+      const position = Math.max(0, declaredCount - 1);
 
       // Item plaintext is culturally specific (e.g. "Khichdi thermos") — do
       // NOT log it. item_length is structured and safe.
@@ -790,15 +804,19 @@ export function createFavoriteLunchAddToolSpec(
           household_id: ctx.householdId,
           user_id: ctx.userId,
           item_length: parsed.item.length,
-          position_provided: parsed.position !== undefined,
-          position: result.position,
+          position,
+          recipe_id: result.recipeId,
+          recipe_was_inserted: result.recipeWasInserted,
+          usage_was_existing: result.usageWasExisting,
         },
         'favorite_lunch.add handled',
       );
 
       return FavoriteLunchAddOutputSchema.parse({
-        favorite_lunch_id: result.id,
-        position: result.position,
+        // Slice 2.6-s1 — `favorite_lunch_id` field now carries the recipes.id.
+        // Output field name preserved for stability of the agent's tool surface.
+        favorite_lunch_id: result.recipeId,
+        position,
       });
     },
   };
