@@ -48,6 +48,7 @@ export const tokenPresets = {
       surface: {
         DEFAULT: 'var(--surface)',
         2: 'var(--surface-2)',
+        3: 'var(--surface-3)',
       },
       fg: {
         DEFAULT: 'var(--fg)',

@@ -78,15 +78,20 @@ describe('warm-neutral convention (canonical: low = bg, high = fg)', () => {
   });
 });
 
-describe('v2.0 semantic aliases resolve to v2.0-exact hex per theme', () => {
+describe('v2.0 semantic aliases — repo-pinned hex per theme', () => {
+  // Light-mode surface chain was refined 2026-05-24: original Stitch
+  // v2.0 hexes had washed-out card hierarchy (tight L gaps, border ==
+  // surface-2). Widened gaps, added surface-3 for elevated panels,
+  // distinct border. Dark mode unchanged (it was the authored baseline).
   const v20 = {
     light: {
-      '--bg': '#faf7f2',
-      '--surface': '#f2ede4',
-      '--surface-2': '#e8e3d8',
+      '--bg': '#f7f2e9',
+      '--surface': '#ebe2d0',
+      '--surface-2': '#dccfb5',
+      '--surface-3': '#c8b791',
       '--fg': '#141210',
       '--fg-muted': '#56524a',
-      '--border': '#e8e3d8',
+      '--border': '#b5a784',
       '--lumi-terracotta': '#a15838',
       '--lumi-terracotta-dim': '#753a24',
       '--sacred-plum': '#6b4a5a',
@@ -104,6 +109,7 @@ describe('v2.0 semantic aliases resolve to v2.0-exact hex per theme', () => {
       '--bg': '#1c1a17',
       '--surface': '#262420',
       '--surface-2': '#2f2d27',
+      '--surface-3': '#383530',
       '--fg': '#faf7f2',
       '--fg-muted': '#b0a99d',
       '--border': '#2f2d27',

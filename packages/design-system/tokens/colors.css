@@ -114,17 +114,20 @@
   --focus-indicator-offset: 2px;
 
   /* ============================================================
-     v2.0 semantic aliases — mirrors Stitch ux-design-directions.html
-     (locked Step 8, refined Step 12). Hexes are v2.0-exact and may
-     differ from corresponding scale stops by chroma-reduction.
-     Consumers should prefer these aliases over raw scale stops.
+     v2.0 semantic aliases — repo-refined (light mode, 2026-05-24).
+     Originally mirrored Stitch v2.0 hexes; refined to widen surface
+     lightness gaps (washed-out card hierarchy was masking depth in
+     light mode), add --surface-3 for elevated panels, and surface a
+     visible --border distinct from --surface-2. Dark mode unchanged.
+     Hexes pinned by convention.test.ts.
      ============================================================ */
-  --bg: #faf7f2;
-  --surface: #f2ede4;
-  --surface-2: #e8e3d8;
+  --bg: #f7f2e9;
+  --surface: #ebe2d0;
+  --surface-2: #dccfb5;
+  --surface-3: #c8b791;
   --fg: #141210;
   --fg-muted: #56524a;
-  --border: #e8e3d8;
+  --border: #b5a784;
 
   /* Single-value channel tokens (v2.0) */
   --lumi-terracotta: #a15838;
@@ -134,9 +137,9 @@
   --foliage: #5f7a67;
   --foliage-soft: #46604f;
   --safety-cleared-teal: #3d6b5f;
-  --safety-cleared-fill: rgba(61, 107, 95, 0.10);
+  --safety-cleared-fill: rgba(61, 107, 95, 0.18);
   --safety-red: #a84236;
-  --safety-red-fill: rgba(168, 66, 54, 0.10);
+  --safety-red-fill: rgba(168, 66, 54, 0.18);
 
   /* Accent — amber / honey-accent (recognition only; NEVER button hover) */
   --amber: #b97730;
@@ -237,11 +240,13 @@
 
   /* ============================================================
      v2.0 semantic aliases — dark theme. See light-theme block for
-     authoring notes. Hexes are v2.0-exact.
+     authoring notes. Hexes are v2.0-exact (dark theme is the
+     authored baseline; light mode was refined separately).
      ============================================================ */
   --bg: #1c1a17;
   --surface: #262420;
   --surface-2: #2f2d27;
+  --surface-3: #383530;
   --fg: #faf7f2;
   --fg-muted: #b0a99d;
   --border: #2f2d27;
