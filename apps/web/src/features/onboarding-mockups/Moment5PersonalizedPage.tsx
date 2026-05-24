@@ -1,34 +1,46 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { ChoiceChip } from '@/features/onboarding/components/ChoiceChip.js';
+import { HistoryView } from './components/HistoryView.js';
+import type { ChatTurn } from './data/conversation-history.js';
 
 // Mockup — Moment 5 personalized chip card with cohort toggle.
 //
 // Pre-flight for Epic 2.6-s4 (M5 chip card personalization + wire-format flip).
-// Demonstrates the "same layout, different chips" promise — Stage 1 LLM seeds
-// the catalog per-household from M1-M4 signals, M5 renders ~18 personalized
-// chips from that household's catalog. Two cohort fixtures show the design's
-// range: Anglo (served-by-precedent baseline) and Somali (lowest-confidence
-// to-validate cohort). The frame is identical; the content is wholly per-
-// household.
+// Mirrors the production OnboardingText.tsx behavior + the other moment dev
+// routes:
+//   - Focused mode (Lumi orb + prose + chips + input) OR history mode
+//     (chat bubbles) — toggled via the history button
+//   - Auto-grow textarea
+//   - Text submit goes through a SIMULATED /turns API → tool call → SSE
+//     round trip. There is NO direct local add of typed text — the typed
+//     text becomes a parent turn in the history, Lumi acknowledges, and
+//     a new chip with provenance='parent_added' is appended to the catalog
+//     after a short delay (simulating the agent-tool round trip)
+//
+// Two cohort fixtures show the design's range: Anglo (served-by-precedent
+// baseline) and Somali (lowest-confidence to-validate cohort). The frame
+// is identical; the content is wholly per-household.
 //
 // Out of scope here: the cold-start fallback path (separate mockup for
-// 2.6-s6). Both cohorts in this mockup render successful Stage 1 chip output
-// — the Somali cohort shows the *aspirational success state* for under-
-// represented cohorts.
+// 2.6-s6). Both cohorts in this mockup render successful Stage 1 chip output.
 //
 // CULTURAL-ADVISOR REVIEW REQUIRED for production: the Somali cohort chip
-// content below is internal pre-flight design, drawn from best-effort
-// research on Somali / East African lunch staples. Before any of this
-// rendering pattern surfaces in a real Somali household's onboarding,
-// the seed content + Stage 1 prompt outputs must be reviewed by a
-// cultural advisor for accuracy and representation.
+// content is internal pre-flight design; accuracy + representation must
+// be verified before this pattern surfaces in real onboarding.
 
-// ─── Inline SVG icons — match OnboardingText.tsx pattern ──────────────────
+// ─── Inline SVG icons (match OnboardingText.tsx pattern) ──────────────────
 
 function IcoWaveform({ cls }: { cls: string }) {
   return (
     <svg className={cls} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
       <path strokeLinecap="round" strokeLinejoin="round" d="M3 8.25v7.5m3-10.5v13.5M9 6.75v10.5m3-13.5v16.5m3-13.5v10.5m3-7.5v4.5" />
+    </svg>
+  );
+}
+function IcoHistory({ cls }: { cls: string }) {
+  return (
+    <svg className={cls} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+      <path strokeLinecap="round" strokeLinejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 11-18 0 9 9 0 0118 0z" />
     </svg>
   );
 }
@@ -104,7 +116,111 @@ interface CohortFixture {
   taste: { cultural: Array<{ label: string; enforcement: 'always' | 'prefer' | 'context' }> };
   bag: { household: string };
   chips: ChipFixture[];
+  priorHistory: ChatTurn[];
+  lumiTurn: ChatTurn;
 }
+
+// Anglo cohort history (Miller family) — leading up to Moment 5.
+const ANGLO_PRIOR: ChatTurn[] = [
+  {
+    id: 'a-m1-lumi',
+    role: 'lumi',
+    content:
+      "Hi, welcome to your kitchen. Let's start with who's at the table — what should I call your household, and who are you creating lunches for?",
+  },
+  {
+    id: 'a-m1-parent',
+    role: 'parent',
+    content: 'Miller family. Just my son Sam, he&rsquo;s eight, about to turn nine.',
+  },
+  {
+    id: 'a-m2-lumi',
+    role: 'lumi',
+    content: 'Got it — Sam, eight. Anything I have to keep safe from? Any food allergies or sensitivities for him?',
+  },
+  { id: 'a-m2-parent', role: 'parent', content: 'No allergies — we&rsquo;re lucky there.' },
+  {
+    id: 'a-m3-lumi',
+    role: 'lumi',
+    content:
+      'Now tell me how your kitchen tastes — what flavors live in your house? Anything I should lean into or stay clear of?',
+  },
+  {
+    id: 'a-m3-parent',
+    role: 'parent',
+    content:
+      'Pretty straightforward — Anglo, some Mediterranean. Sandwiches, pasta, grilled chicken. Sam likes anything with cheese.',
+  },
+  {
+    id: 'a-m4-lumi',
+    role: 'lumi',
+    content: 'And how does lunch travel for Sam? One main plus a side, or something different?',
+  },
+  { id: 'a-m4-parent', role: 'parent', content: 'Main + one side. Usually a piece of fruit and a small treat.' },
+];
+
+const ANGLO_LUMI_TURN: ChatTurn = {
+  id: 'a-m5-lumi',
+  role: 'lumi',
+  content:
+    "Last one — give me a starting line. Ten lunches you&rsquo;d happily pack tomorrow. Tap from the list, or type your own. Lumi will mix it up from here.",
+};
+
+// Somali cohort history (Hassan family) — leading up to Moment 5.
+const SOMALI_PRIOR: ChatTurn[] = [
+  {
+    id: 's-m1-lumi',
+    role: 'lumi',
+    content:
+      "Hi, welcome to your kitchen. Let's start with who's at the table — what should I call your household, and who are you creating lunches for?",
+  },
+  {
+    id: 's-m1-parent',
+    role: 'parent',
+    content: 'Hassan family. Two kids — Amina, she&rsquo;s nine and a half, and Yusuf, six.',
+  },
+  {
+    id: 's-m2-lumi',
+    role: 'lumi',
+    content: 'Got it — Amina and Yusuf. Any food allergies or sensitivities for either of them?',
+  },
+  {
+    id: 's-m2-parent',
+    role: 'parent',
+    content: 'Yusuf has an egg allergy — it&rsquo;s medical, his throat closes. Amina is fine.',
+  },
+  {
+    id: 's-m3-lumi',
+    role: 'lumi',
+    content:
+      'Tell me how your kitchen tastes — what flavors live in your house? Anything I should lean into or stay clear of?',
+  },
+  {
+    id: 's-m3-parent',
+    role: 'parent',
+    content:
+      'We&rsquo;re Somali. Halal of course. Cooking is mostly traditional — anjero, sambusas, basbaas, suugo on the bariis. The kids will eat plain rice or fruit on a slow day, but I want them eating what they grew up with.',
+  },
+  {
+    id: 's-m3-lumi-followup',
+    role: 'lumi',
+    content: 'Got it — &ldquo;strictly Halal.&rdquo; Should I treat that as a hard rule I always respect, or more like a preference?',
+  },
+  { id: 's-m3-parent-followup', role: 'parent', content: 'Always respect — Halal is non-negotiable.' },
+  { id: 's-m4-lumi', role: 'lumi', content: 'How does lunch travel for Amina and Yusuf?' },
+  {
+    id: 's-m4-parent',
+    role: 'parent',
+    content: 'Same for both — main + one side. They take a thermos for the warm dishes.',
+  },
+];
+
+const SOMALI_LUMI_TURN: ChatTurn = {
+  id: 's-m5-lumi',
+  role: 'lumi',
+  content:
+    "Last one — give me a starting line. Ten lunches you&rsquo;d happily pack tomorrow. Tap from the list, or type your own. Lumi will mix it up from here.",
+};
 
 const COHORTS: Record<CohortId, CohortFixture> = {
   anglo: {
@@ -122,6 +238,8 @@ const COHORTS: Record<CohortId, CohortFixture> = {
       ],
     },
     bag: { household: 'Main + 1 side' },
+    priorHistory: ANGLO_PRIOR,
+    lumiTurn: ANGLO_LUMI_TURN,
     chips: [
       { key: 'turkey-sandwich', label: 'Turkey sandwich', provenance: 'inferred' },
       { key: 'veg-wrap', label: 'Veg wrap', provenance: 'inferred' },
@@ -145,8 +263,6 @@ const COHORTS: Record<CohortId, CohortFixture> = {
   },
   somali: {
     // CULTURAL-ADVISOR REVIEW REQUIRED before any production use of this content.
-    // Items drawn from best-effort research on Somali / East African lunch staples;
-    // accuracy and representation must be verified before this pattern ships.
     id: 'somali',
     label: 'Somali · East African',
     desc: 'Lowest-confidence to-validate cohort. Demonstrates Stage 1 succeeding at the edge of the bet.',
@@ -165,8 +281,10 @@ const COHORTS: Record<CohortId, CohortFixture> = {
       ],
     },
     bag: { household: 'Main + 1 side' },
+    priorHistory: SOMALI_PRIOR,
+    lumiTurn: SOMALI_LUMI_TURN,
     chips: [
-      { key: 'anjero-suqaar', label: 'Anjero + suqaar', provenance: 'declared' },
+      { key: 'anjero-suqaar', label: 'Anjero + suqaar', provenance: 'inferred' },
       { key: 'bariis-iskukaris', label: 'Bariis iskukaris', provenance: 'inferred' },
       { key: 'sambusa', label: 'Sambusa (beef)', provenance: 'inferred' },
       { key: 'ful-medames', label: 'Ful medames thermos', provenance: 'inferred' },
@@ -175,36 +293,37 @@ const COHORTS: Record<CohortId, CohortFixture> = {
       { key: 'maraq-thermos', label: 'Maraq broth thermos', provenance: 'inferred' },
       { key: 'malawah', label: 'Malawah + honey', provenance: 'inferred' },
       { key: 'suqaar-wrap', label: 'Suqaar wrap', provenance: 'inferred' },
-      { key: 'basbaas-chicken', label: 'Basbaas chicken + rice', provenance: 'declared' },
+      { key: 'basbaas-chicken', label: 'Basbaas chicken + rice', provenance: 'inferred' },
       { key: 'cambabuur', label: 'Cambabuur (spiced flatbread)', provenance: 'inferred' },
       { key: 'shorbat-lentil', label: 'Shorbat lentil thermos', provenance: 'inferred' },
       { key: 'baasto-iyo-suugo', label: 'Baasto iyo suugo', provenance: 'inferred' },
       { key: 'hilib-shiilan', label: 'Hilib shiilan + rice', provenance: 'inferred' },
-      { key: 'date-bread', label: 'Date bread + halib', provenance: 'parent_added' },
       { key: 'veg-wrap', label: 'Veg wrap', provenance: 'inferred' },
       { key: 'rice-bowl', label: 'Rice bowl', provenance: 'inferred' },
       { key: 'fruit-kabob', label: 'Fruit kabob', provenance: 'inferred' },
+      { key: 'datebread-halib', label: 'Date bread + halib', provenance: 'inferred' },
     ],
   },
 };
 
 const TARGET_COUNT = 10;
 const COHORT_ORDER: CohortId[] = ['anglo', 'somali'];
+const TURN_ROUNDTRIP_MS = 700;
 
-const LUMI_PROSE =
-  "Last one — give me a starting line. Ten lunches you'd happily pack tomorrow. Tap from the list, or type your own. Lumi will mix it up from here.";
-
-// ─── Per-cohort state holder ──────────────────────────────────────────────
+// ─── Per-cohort state ─────────────────────────────────────────────────────
 
 interface CohortState {
   selectedChips: string[];
-  customItems: string[];
+  /** Chips added through the simulated /turns → tool → SSE flow. */
+  parentAddedChips: ChipFixture[];
+  /** Turns appended after the M5 Lumi turn (parent submissions + Lumi acks). */
+  additionalTurns: ChatTurn[];
   override: boolean;
 }
 
 const initialState: Record<CohortId, CohortState> = {
-  anglo: { selectedChips: [], customItems: [], override: false },
-  somali: { selectedChips: ['anjero-suqaar', 'basbaas-chicken'], customItems: ['Date bread + halib'], override: false },
+  anglo: { selectedChips: [], parentAddedChips: [], additionalTurns: [], override: false },
+  somali: { selectedChips: [], parentAddedChips: [], additionalTurns: [], override: false },
 };
 
 // ─── Page ─────────────────────────────────────────────────────────────────
@@ -213,11 +332,14 @@ export function Moment5PersonalizedPage() {
   const [activeCohort, setActiveCohort] = useState<CohortId>('anglo');
   const [cohortStates, setCohortStates] = useState<Record<CohortId, CohortState>>(initialState);
   const [draft, setDraft] = useState('');
+  const [showHistory, setShowHistory] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
+  const [pendingTurn, setPendingTurn] = useState<{ cohort: CohortId; label: string } | null>(null);
 
   const cohort = COHORTS[activeCohort];
   const state = cohortStates[activeCohort];
 
+  // Auto-grow textarea — height tracks content up to a ~5-line cap.
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   useEffect(() => {
     const el = textareaRef.current;
@@ -226,53 +348,114 @@ export function Moment5PersonalizedPage() {
     el.style.height = `${el.scrollHeight}px`;
   }, [draft, activeCohort]);
 
-  // Compute provenance with parent-tap → 'declared' override.
-  const chipsWithProvenance: ChipFixture[] = useMemo(
-    () =>
-      cohort.chips.map((c) =>
-        state.selectedChips.includes(c.key) && c.provenance === 'inferred'
-          ? { ...c, provenance: 'declared' as const }
-          : c,
-      ),
-    [cohort, state.selectedChips],
-  );
+  // Combine inferred catalog with parent_added chips. Tapping an inferred
+  // chip flips its provenance to 'declared' (mirrors production wire-format).
+  const renderedChips: ChipFixture[] = useMemo(() => {
+    const inferredFlipped = cohort.chips.map((c) =>
+      state.selectedChips.includes(c.key) && c.provenance === 'inferred' ? { ...c, provenance: 'declared' as const } : c,
+    );
+    return [...inferredFlipped, ...state.parentAddedChips];
+  }, [cohort.chips, state.selectedChips, state.parentAddedChips]);
 
-  const totalCount = state.selectedChips.length + state.customItems.length;
+  // Count = chips currently selected (chip-tap on inferred → declared, AND
+  // every parent_added chip is auto-selected on creation). The count IS the
+  // declared-set.
+  const totalCount = state.selectedChips.length;
   const gateMet = totalCount >= TARGET_COUNT || (state.override && totalCount >= 4);
   const remaining = Math.max(0, TARGET_COUNT - totalCount);
 
-  function updateState(next: Partial<CohortState>) {
-    setCohortStates((prev) => ({ ...prev, [activeCohort]: { ...prev[activeCohort], ...next } }));
+  // History view = prior + M5 Lumi turn + any subsequent parent/Lumi turns.
+  const historyTurns: ChatTurn[] = useMemo(
+    () => [...cohort.priorHistory, cohort.lumiTurn, ...state.additionalTurns],
+    [cohort.priorHistory, cohort.lumiTurn, state.additionalTurns],
+  );
+
+  function updateCohortState(cohortId: CohortId, next: Partial<CohortState>) {
+    setCohortStates((prev) => ({ ...prev, [cohortId]: { ...prev[cohortId], ...next } }));
   }
 
   function handleChipTap(key: string) {
     const selected = state.selectedChips.includes(key)
       ? state.selectedChips.filter((k) => k !== key)
       : [...state.selectedChips, key];
-    updateState({ selectedChips: selected });
+    updateCohortState(activeCohort, { selectedChips: selected });
   }
 
-  function handleAddCustom() {
+  /**
+   * Simulate the production /turns → tools → SSE roundtrip.
+   *
+   * In production:
+   *   1. Parent's typed text POSTs to /v1/onboarding/text/turn
+   *   2. OnboardingService dispatches the agent + emits relevant tool calls
+   *      (e.g., `recipe.declare(label, provenance='parent_added')`)
+   *   3. DB upserts the new recipe + household_recipe_usage row
+   *   4. SSE pushes the updated state back to the client
+   *   5. Client re-renders with the new chip in the catalog
+   *
+   * Here we fake it with a setTimeout so the mockup feels like the real flow.
+   */
+  function handleSubmitText() {
     const text = draft.trim();
     if (text.length === 0) return;
-    updateState({ customItems: [...state.customItems, text] });
+
+    // Capture the current cohort id at submission time — toggling cohorts
+    // during the pending window should NOT misroute the response.
+    const submittedCohort = activeCohort;
+    const turnIdBase = `usr-${Date.now()}`;
+
+    // 1. Append parent turn immediately (optimistic UI — what the production
+    //    SSE channel echoes back from the user's own message).
+    const parentTurn: ChatTurn = {
+      id: `${turnIdBase}-parent`,
+      role: 'parent',
+      content: text,
+    };
+    updateCohortState(submittedCohort, {
+      additionalTurns: [...cohortStates[submittedCohort].additionalTurns, parentTurn],
+    });
     setDraft('');
+    if (textareaRef.current) textareaRef.current.style.height = 'auto';
+
+    setPendingTurn({ cohort: submittedCohort, label: text });
+
+    // 2. Simulate API + tool roundtrip with a delay; on settle, Lumi
+    //    acknowledges and the new chip materializes in the catalog.
+    setTimeout(() => {
+      // Read current state via functional update so we don't race with
+      // other interleaved updates.
+      setCohortStates((prev) => {
+        const current = prev[submittedCohort];
+        const lumiTurn: ChatTurn = {
+          id: `${turnIdBase}-lumi`,
+          role: 'lumi',
+          content: `Added &ldquo;${text}&rdquo; to your starting line.`,
+        };
+        const chipKey = `parent-${turnIdBase}`;
+        const newChip: ChipFixture = { key: chipKey, label: text, provenance: 'parent_added' };
+        return {
+          ...prev,
+          [submittedCohort]: {
+            ...current,
+            additionalTurns: [...current.additionalTurns, lumiTurn],
+            parentAddedChips: [...current.parentAddedChips, newChip],
+            // Auto-select parent_added chips — parent declared them by typing.
+            selectedChips: [...current.selectedChips, chipKey],
+          },
+        };
+      });
+      setPendingTurn((p) => (p && p.cohort === submittedCohort && p.label === text ? null : p));
+    }, TURN_ROUNDTRIP_MS);
   }
 
-  function handleRemoveCustom(idx: number) {
-    updateState({ customItems: state.customItems.filter((_, i) => i !== idx) });
-  }
-
-  const placeholder =
-    state.customItems.length > 0 ? 'Add another, or hit return to keep going…' : 'Type any lunch — yours or theirs…';
+  const placeholder = pendingTurn?.cohort === activeCohort
+    ? 'Lumi is processing your message…'
+    : "Type any lunch — yours or theirs…";
 
   const startingLinePreview = useMemo(() => {
-    const allItems = [
-      ...state.selectedChips.map((k) => cohort.chips.find((c) => c.key === k)?.label ?? k),
-      ...state.customItems,
-    ];
-    return allItems.slice(0, 6);
-  }, [state.selectedChips, state.customItems, cohort.chips]);
+    return state.selectedChips
+      .map((k) => renderedChips.find((c) => c.key === k)?.label ?? k)
+      .slice(0, 6);
+  }, [state.selectedChips, renderedChips]);
 
   return (
     <>
@@ -289,84 +472,85 @@ export function Moment5PersonalizedPage() {
                 Moment 5 of 5 · A starting line for Lumi · <span className="text-fg">personalized</span>
               </span>
             </div>
-            <button
-              type="button"
-              onClick={() => setProfileOpen(true)}
-              aria-label="Open your kitchen profile"
-              className="md:hidden flex items-center gap-2 rounded-full border border-neutral-400/30 px-4 py-2 font-sans text-sm font-medium text-fg-muted hover:bg-surface transition-colors"
-            >
-              View Profile
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setShowHistory((v) => !v)}
+                title={showHistory ? 'Collapse history' : 'Show conversation history'}
+                aria-pressed={showHistory}
+                className={[
+                  'flex h-9 w-9 items-center justify-center rounded-full border transition-colors',
+                  showHistory
+                    ? 'border-amber/40 text-amber'
+                    : 'border-neutral-400/30 text-fg-muted hover:text-fg',
+                ].join(' ')}
+              >
+                <IcoHistory cls="h-[18px] w-[18px]" />
+              </button>
+              <button
+                type="button"
+                onClick={() => setProfileOpen(true)}
+                aria-label="Open your kitchen profile"
+                className="md:hidden flex items-center gap-2 rounded-full border border-neutral-400/30 px-4 py-2 font-sans text-sm font-medium text-fg-muted hover:bg-surface transition-colors"
+              >
+                View Profile
+              </button>
+            </div>
           </header>
 
-          {/* Lumi area */}
-          <div className="flex flex-1 flex-col items-center justify-start overflow-y-auto px-6 md:px-8 py-6 min-h-0">
-            <div className="flex flex-col items-center gap-5 text-center max-w-2xl w-full">
-              <div className="flex h-12 w-12 items-center justify-center rounded-full border border-amber/20 bg-amber/10">
-                <IcoWaveform cls="h-6 w-6 animate-pulse text-amber" />
-              </div>
-              <p className="font-serif text-2xl md:text-[28px] leading-snug text-fg">{LUMI_PROSE}</p>
-
-              <CountIndicator count={totalCount} target={TARGET_COUNT} override={state.override} />
-
-              {state.customItems.length > 0 && (
-                <div className="flex flex-wrap justify-center gap-1.5">
-                  {state.customItems.map((item, idx) => (
-                    <span
-                      key={idx}
-                      className="flex items-center gap-1 rounded-md border border-foliage bg-foliage-soft px-2.5 py-1 font-sans text-xs text-fg"
-                    >
-                      {item}
-                      <button
-                        type="button"
-                        onClick={() => handleRemoveCustom(idx)}
-                        className="text-fg-muted hover:text-fg"
-                        aria-label={`Remove ${item}`}
-                      >
-                        ×
-                      </button>
-                    </span>
-                  ))}
+          {/* Lumi area — focused mode OR history */}
+          {showHistory ? (
+            <HistoryView turns={historyTurns} />
+          ) : (
+            <div className="flex flex-1 flex-col items-center justify-start overflow-y-auto px-6 md:px-8 py-6 min-h-0">
+              <div className="flex flex-col items-center gap-5 text-center max-w-2xl w-full">
+                <div className="flex h-12 w-12 items-center justify-center rounded-full border border-amber/20 bg-amber/10">
+                  <IcoWaveform cls="h-6 w-6 animate-pulse text-amber" />
                 </div>
-              )}
+                <p
+                  className="font-serif text-2xl md:text-[28px] leading-snug text-fg"
+                  dangerouslySetInnerHTML={{ __html: cohort.lumiTurn.content }}
+                />
 
-              <div className="flex w-full flex-col items-center gap-2 pt-1">
-                <p className="font-sans text-[10px] uppercase tracking-[0.18em] text-memory-provenance-500">
-                  Tap any that fit
-                </p>
-                <div
-                  role="group"
-                  aria-label="Personalized lunch catalog"
-                  className="flex flex-wrap justify-center gap-2"
-                >
-                  {cohort.chips.map((opt) => (
-                    <ChoiceChip
-                      key={opt.key}
-                      label={opt.label}
-                      mode="multi"
-                      selected={state.selectedChips.includes(opt.key)}
-                      onClick={() => handleChipTap(opt.key)}
-                    />
-                  ))}
+                <CountIndicator count={totalCount} target={TARGET_COUNT} override={state.override} />
+
+                {pendingTurn?.cohort === activeCohort && (
+                  <p className="font-sans text-[12px] italic text-amber/80">
+                    Lumi is adding &ldquo;{pendingTurn.label}&rdquo; through your kitchen tools…
+                  </p>
+                )}
+
+                <div className="flex w-full flex-col items-center gap-2 pt-1">
+                  <p className="font-sans text-[10px] uppercase tracking-[0.18em] text-memory-provenance-500">
+                    Tap any that fit
+                  </p>
+                  <div role="group" aria-label="Personalized lunch catalog" className="flex flex-wrap justify-center gap-2">
+                    {renderedChips.map((opt) => (
+                      <ChipWithProvenance
+                        key={opt.key}
+                        chip={opt}
+                        selected={state.selectedChips.includes(opt.key)}
+                        onTap={() => handleChipTap(opt.key)}
+                      />
+                    ))}
+                  </div>
                 </div>
-              </div>
 
-              <ProvenanceBreakdown chips={chipsWithProvenance} />
+                <ProvenanceBreakdown chips={renderedChips} />
+              </div>
             </div>
-          </div>
+          )}
 
-          {/* Input bar */}
+          {/* Input bar — text goes through simulated /turns → tools → SSE */}
           <form
             onSubmit={(e) => {
               e.preventDefault();
-              if (draft.trim().length > 0) {
-                handleAddCustom();
-              }
+              if (draft.trim().length > 0) handleSubmitText();
             }}
             className="shrink-0 px-6 md:px-8 pb-10 pt-2"
           >
             <label htmlFor="onboarding-message" className="sr-only">
-              Add a lunch item
+              Type a lunch
             </label>
             <div className="flex items-end gap-2 rounded-2xl border border-neutral-400/30 bg-surface/50 px-2 py-1.5 backdrop-blur-md focus-within:border-amber/50 transition-colors shadow-lg">
               <textarea
@@ -382,34 +566,24 @@ export function Moment5PersonalizedPage() {
                 rows={1}
                 maxLength={400}
                 placeholder={placeholder}
+                disabled={pendingTurn?.cohort === activeCohort}
                 onKeyDown={(e) => {
                   if (e.key === 'Enter' && !e.shiftKey) {
                     e.preventDefault();
-                    if (draft.trim().length > 0) handleAddCustom();
+                    if (draft.trim().length > 0) handleSubmitText();
                   }
                 }}
                 style={{ maxHeight: '9.5rem' }}
-                className="flex-1 resize-none overflow-y-auto bg-transparent px-4 py-2 font-sans text-[17px] leading-snug text-fg placeholder:text-fg-muted/40 focus:outline-none transition-[height] duration-150 ease-out"
+                className="flex-1 resize-none overflow-y-auto bg-transparent px-4 py-2 font-sans text-[17px] leading-snug text-fg placeholder:text-fg-muted/40 focus:outline-none disabled:opacity-50 transition-[height] duration-150 ease-out"
               />
-              {draft.trim().length > 0 ? (
-                <button
-                  type="button"
-                  onClick={handleAddCustom}
-                  className="rounded-full bg-foliage px-4 py-2 font-sans text-sm font-medium text-bg hover:bg-foliage-soft hover:text-fg transition-colors"
-                  aria-label="Add this item"
-                >
-                  Add
-                </button>
-              ) : (
-                <button
-                  type="submit"
-                  disabled={!gateMet}
-                  className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-amber text-bg shadow-md hover:bg-amber-warm disabled:cursor-not-allowed disabled:opacity-50 transition-colors"
-                  aria-label="Send"
-                >
-                  <IcoSend cls="h-5 w-5" />
-                </button>
-              )}
+              <button
+                type="submit"
+                disabled={draft.trim().length === 0 || pendingTurn?.cohort === activeCohort}
+                className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-amber text-bg shadow-md hover:bg-amber-warm disabled:cursor-not-allowed disabled:opacity-50 transition-colors"
+                aria-label="Send"
+              >
+                <IcoSend cls="h-5 w-5" />
+              </button>
             </div>
 
             <GateLine
@@ -417,7 +591,7 @@ export function Moment5PersonalizedPage() {
               remaining={remaining}
               gateMet={gateMet}
               override={state.override}
-              onToggleOverride={() => updateState({ override: !state.override })}
+              onToggleOverride={() => updateCohortState(activeCohort, { override: !state.override })}
             />
           </form>
         </section>
@@ -483,6 +657,33 @@ export function Moment5PersonalizedPage() {
       </div>
     </>
   );
+}
+
+// ─── ChipWithProvenance — visual accent for parent_added ──────────────────
+
+interface ChipWithProvenanceProps {
+  chip: ChipFixture;
+  selected: boolean;
+  onTap: () => void;
+}
+
+function ChipWithProvenance({ chip, selected, onTap }: ChipWithProvenanceProps) {
+  // Parent_added chips show a leading "+" badge in amber to mark them as
+  // the parent's free-text contribution.
+  if (chip.provenance === 'parent_added') {
+    return (
+      <span className="inline-flex items-center">
+        <ChoiceChip
+          label={chip.label}
+          mode="multi"
+          selected={selected}
+          onClick={onTap}
+          icon={<span className="text-amber font-bold leading-none">＋</span>}
+        />
+      </span>
+    );
+  }
+  return <ChoiceChip label={chip.label} mode="multi" selected={selected} onClick={onTap} />;
 }
 
 // ─── Count indicator ──────────────────────────────────────────────────────
@@ -561,7 +762,7 @@ function GateLine({ totalCount, remaining, gateMet, override, onToggleOverride }
   );
 }
 
-// ─── Provenance breakdown — internal-only signal ──────────────────────────
+// ─── Provenance breakdown ─────────────────────────────────────────────────
 
 function ProvenanceBreakdown({ chips }: { chips: ChipFixture[] }) {
   const declared = chips.filter((c) => c.provenance === 'declared').length;
@@ -587,7 +788,7 @@ function ProvenanceBreakdown({ chips }: { chips: ChipFixture[] }) {
   );
 }
 
-// ─── Kitchen Profile panel — cohort-driven ────────────────────────────────
+// ─── Kitchen Profile panel ────────────────────────────────────────────────
 
 interface KitchenProfilePanelProps {
   cohort: CohortFixture;
@@ -634,7 +835,10 @@ function KitchenProfilePanel({ cohort, startingLine }: KitchenProfilePanelProps)
             {cohort.allergens.items.length > 0 ? (
               <div className="flex flex-wrap gap-1.5">
                 {cohort.allergens.items.map((a) => (
-                  <span key={a} className="flex items-center gap-1 rounded-md bg-safety-cleared-fill px-2.5 py-1 font-sans text-xs text-safety-cleared">
+                  <span
+                    key={a}
+                    className="flex items-center gap-1 rounded-md bg-safety-cleared-fill px-2.5 py-1 font-sans text-xs text-safety-cleared"
+                  >
                     <IcoShield cls="h-3 w-3 shrink-0" />
                     {a}
                   </span>
@@ -769,9 +973,7 @@ function CohortToggle({ current, onChange }: CohortToggleProps) {
           </span>
           <span className="font-serif text-sm text-fg">
             {active.label}
-            <span className="ml-2 font-sans text-[11px] uppercase tracking-wide text-fg-muted">
-              {active.cohortClass}
-            </span>
+            <span className="ml-2 font-sans text-[11px] uppercase tracking-wide text-fg-muted">{active.cohortClass}</span>
           </span>
           <span className="font-sans text-[12px] text-fg-muted">{active.desc}</span>
         </div>
