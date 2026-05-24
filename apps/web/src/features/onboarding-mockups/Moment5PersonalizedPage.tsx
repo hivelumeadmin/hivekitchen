@@ -10,16 +10,23 @@ import type { ChatTurn } from './data/conversation-history.js';
 // routes:
 //   - Focused mode (Lumi orb + prose + chips + input) OR history mode
 //     (chat bubbles) — toggled via the history button
-//   - Auto-grow textarea
-//   - Text submit goes through a SIMULATED /turns API → tool call → SSE
-//     round trip. There is NO direct local add of typed text — the typed
-//     text becomes a parent turn in the history, Lumi acknowledges, and
-//     a new chip with provenance='parent_added' is appended to the catalog
-//     after a short delay (simulating the agent-tool round trip)
+//   - Auto-grow textarea — same component shape as all other moments
+//   - Textarea is a generic chat input. The typed message is part of the
+//     turn submitted to /v1/onboarding/text/turn. It is NOT directly
+//     mapped to a chip. The agent on the server decides whether to call
+//     a tool (e.g., recipe.declare) based on what the parent said. Any
+//     resulting chip changes flow back via SSE — they are not synthesized
+//     client-side.
+//   - In this mockup, send appends a parent turn to history + a brief
+//     Lumi acknowledgment. Chip catalog is NEVER mutated from the
+//     textarea — chips are the rendered output of Stage 1 + chip-tap
+//     state, period.
 //
 // Two cohort fixtures show the design's range: Anglo (served-by-precedent
-// baseline) and Somali (lowest-confidence to-validate cohort). The frame
-// is identical; the content is wholly per-household.
+// baseline) and Somali (lowest-confidence to-validate cohort). Each
+// cohort pre-includes whatever provenance mix Stage 1 + earlier turns
+// would have produced — Somali has one `parent_added` chip seeded by
+// a prior turn during M5 to demonstrate that provenance state visually.
 //
 // Out of scope here: the cold-start fallback path (separate mockup for
 // 2.6-s6). Both cohorts in this mockup render successful Stage 1 chip output.
@@ -301,29 +308,33 @@ const COHORTS: Record<CohortId, CohortFixture> = {
       { key: 'veg-wrap', label: 'Veg wrap', provenance: 'inferred' },
       { key: 'rice-bowl', label: 'Rice bowl', provenance: 'inferred' },
       { key: 'fruit-kabob', label: 'Fruit kabob', provenance: 'inferred' },
-      { key: 'datebread-halib', label: 'Date bread + halib', provenance: 'inferred' },
+      // Seeded parent_added — represents an earlier turn during M5 where
+      // the parent typed "Date bread + halib", the agent called
+      // recipe.declare(provenance='parent_added'), and the catalog re-
+      // rendered. The mockup pre-includes this state to demonstrate the
+      // parent_added provenance visually.
+      { key: 'datebread-halib', label: 'Date bread + halib', provenance: 'parent_added' },
     ],
   },
 };
 
 const TARGET_COUNT = 10;
 const COHORT_ORDER: CohortId[] = ['anglo', 'somali'];
-const TURN_ROUNDTRIP_MS = 700;
 
 // ─── Per-cohort state ─────────────────────────────────────────────────────
 
 interface CohortState {
   selectedChips: string[];
-  /** Chips added through the simulated /turns → tool → SSE flow. */
-  parentAddedChips: ChipFixture[];
   /** Turns appended after the M5 Lumi turn (parent submissions + Lumi acks). */
   additionalTurns: ChatTurn[];
   override: boolean;
 }
 
+// Somali cohort starts with the parent_added 'datebread-halib' chip already
+// selected — represents the prior turn that introduced it being committed.
 const initialState: Record<CohortId, CohortState> = {
-  anglo: { selectedChips: [], parentAddedChips: [], additionalTurns: [], override: false },
-  somali: { selectedChips: [], parentAddedChips: [], additionalTurns: [], override: false },
+  anglo: { selectedChips: [], additionalTurns: [], override: false },
+  somali: { selectedChips: ['datebread-halib'], additionalTurns: [], override: false },
 };
 
 // ─── Page ─────────────────────────────────────────────────────────────────
@@ -334,7 +345,6 @@ export function Moment5PersonalizedPage() {
   const [draft, setDraft] = useState('');
   const [showHistory, setShowHistory] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
-  const [pendingTurn, setPendingTurn] = useState<{ cohort: CohortId; label: string } | null>(null);
 
   const cohort = COHORTS[activeCohort];
   const state = cohortStates[activeCohort];
@@ -348,23 +358,28 @@ export function Moment5PersonalizedPage() {
     el.style.height = `${el.scrollHeight}px`;
   }, [draft, activeCohort]);
 
-  // Combine inferred catalog with parent_added chips. Tapping an inferred
-  // chip flips its provenance to 'declared' (mirrors production wire-format).
-  const renderedChips: ChipFixture[] = useMemo(() => {
-    const inferredFlipped = cohort.chips.map((c) =>
-      state.selectedChips.includes(c.key) && c.provenance === 'inferred' ? { ...c, provenance: 'declared' as const } : c,
-    );
-    return [...inferredFlipped, ...state.parentAddedChips];
-  }, [cohort.chips, state.selectedChips, state.parentAddedChips]);
+  // Tapping an inferred chip flips its provenance to 'declared' for the
+  // provenance breakdown read-out (mirrors production wire-format: chip-tap
+  // is a parent declaration). The chip catalog itself is fixed per cohort —
+  // typed text NEVER mutates it; chips are the rendered output of Stage 1
+  // + chip-tap state. Any production-time parent_added additions arrive
+  // via SSE from the agent's tool calls, not from client-side string-to-chip.
+  const renderedChips: ChipFixture[] = useMemo(
+    () =>
+      cohort.chips.map((c) =>
+        state.selectedChips.includes(c.key) && c.provenance === 'inferred'
+          ? { ...c, provenance: 'declared' as const }
+          : c,
+      ),
+    [cohort.chips, state.selectedChips],
+  );
 
-  // Count = chips currently selected (chip-tap on inferred → declared, AND
-  // every parent_added chip is auto-selected on creation). The count IS the
-  // declared-set.
   const totalCount = state.selectedChips.length;
   const gateMet = totalCount >= TARGET_COUNT || (state.override && totalCount >= 4);
   const remaining = Math.max(0, TARGET_COUNT - totalCount);
 
-  // History view = prior + M5 Lumi turn + any subsequent parent/Lumi turns.
+  // History view = prior + M5 Lumi turn + any subsequent parent/Lumi turns
+  // accumulated through textarea sends during the demo.
   const historyTurns: ChatTurn[] = useMemo(
     () => [...cohort.priorHistory, cohort.lumiTurn, ...state.additionalTurns],
     [cohort.priorHistory, cohort.lumiTurn, state.additionalTurns],
@@ -382,74 +397,52 @@ export function Moment5PersonalizedPage() {
   }
 
   /**
-   * Simulate the production /turns → tools → SSE roundtrip.
+   * Submit the textarea content as a turn message.
    *
-   * In production:
-   *   1. Parent's typed text POSTs to /v1/onboarding/text/turn
-   *   2. OnboardingService dispatches the agent + emits relevant tool calls
-   *      (e.g., `recipe.declare(label, provenance='parent_added')`)
-   *   3. DB upserts the new recipe + household_recipe_usage row
-   *   4. SSE pushes the updated state back to the client
-   *   5. Client re-renders with the new chip in the catalog
+   * Same shape as every other moment-page textarea. The typed text is
+   * a chat message bound for /v1/onboarding/text/turn — it is NOT a
+   * client-side chip-create. In production:
+   *   1. POST to /v1/onboarding/text/turn with the message text
+   *   2. OnboardingAgent processes the turn server-side. It may call
+   *      tools (e.g., recipe.declare) — or it may not, depending on
+   *      content. The agent decides.
+   *   3. Server emits SSE events: the parent's turn (echoed), Lumi's
+   *      response turn, and any state updates resulting from tool calls.
+   *   4. Client re-renders from SSE-pushed state.
    *
-   * Here we fake it with a setTimeout so the mockup feels like the real flow.
+   * For the mockup, send appends the parent turn to history (matching
+   * the SSE echo) and a brief Lumi acknowledgment turn. The chip
+   * catalog is NEVER mutated from here — chips only change via chip-tap
+   * (parent declares from suggestion) or, in production, via tool-driven
+   * SSE updates.
    */
-  function handleSubmitText() {
+  function handleSendTurn() {
     const text = draft.trim();
     if (text.length === 0) return;
-
-    // Capture the current cohort id at submission time — toggling cohorts
-    // during the pending window should NOT misroute the response.
     const submittedCohort = activeCohort;
     const turnIdBase = `usr-${Date.now()}`;
-
-    // 1. Append parent turn immediately (optimistic UI — what the production
-    //    SSE channel echoes back from the user's own message).
     const parentTurn: ChatTurn = {
       id: `${turnIdBase}-parent`,
       role: 'parent',
       content: text,
     };
+    const lumiTurn: ChatTurn = {
+      id: `${turnIdBase}-lumi`,
+      role: 'lumi',
+      content: 'Got it — &rsquo;ll keep that in mind. Anything else for the starting line?',
+    };
     updateCohortState(submittedCohort, {
-      additionalTurns: [...cohortStates[submittedCohort].additionalTurns, parentTurn],
+      additionalTurns: [
+        ...cohortStates[submittedCohort].additionalTurns,
+        parentTurn,
+        lumiTurn,
+      ],
     });
     setDraft('');
     if (textareaRef.current) textareaRef.current.style.height = 'auto';
-
-    setPendingTurn({ cohort: submittedCohort, label: text });
-
-    // 2. Simulate API + tool roundtrip with a delay; on settle, Lumi
-    //    acknowledges and the new chip materializes in the catalog.
-    setTimeout(() => {
-      // Read current state via functional update so we don't race with
-      // other interleaved updates.
-      setCohortStates((prev) => {
-        const current = prev[submittedCohort];
-        const lumiTurn: ChatTurn = {
-          id: `${turnIdBase}-lumi`,
-          role: 'lumi',
-          content: `Added &ldquo;${text}&rdquo; to your starting line.`,
-        };
-        const chipKey = `parent-${turnIdBase}`;
-        const newChip: ChipFixture = { key: chipKey, label: text, provenance: 'parent_added' };
-        return {
-          ...prev,
-          [submittedCohort]: {
-            ...current,
-            additionalTurns: [...current.additionalTurns, lumiTurn],
-            parentAddedChips: [...current.parentAddedChips, newChip],
-            // Auto-select parent_added chips — parent declared them by typing.
-            selectedChips: [...current.selectedChips, chipKey],
-          },
-        };
-      });
-      setPendingTurn((p) => (p && p.cohort === submittedCohort && p.label === text ? null : p));
-    }, TURN_ROUNDTRIP_MS);
   }
 
-  const placeholder = pendingTurn?.cohort === activeCohort
-    ? 'Lumi is processing your message…'
-    : "Type any lunch — yours or theirs…";
+  const placeholder = "Type a message — yours or theirs…";
 
   const startingLinePreview = useMemo(() => {
     return state.selectedChips
@@ -514,12 +507,6 @@ export function Moment5PersonalizedPage() {
 
                 <CountIndicator count={totalCount} target={TARGET_COUNT} override={state.override} />
 
-                {pendingTurn?.cohort === activeCohort && (
-                  <p className="font-sans text-[12px] italic text-amber/80">
-                    Lumi is adding &ldquo;{pendingTurn.label}&rdquo; through your kitchen tools…
-                  </p>
-                )}
-
                 <div className="flex w-full flex-col items-center gap-2 pt-1">
                   <p className="font-sans text-[10px] uppercase tracking-[0.18em] text-memory-provenance-500">
                     Tap any that fit
@@ -541,16 +528,18 @@ export function Moment5PersonalizedPage() {
             </div>
           )}
 
-          {/* Input bar — text goes through simulated /turns → tools → SSE */}
+          {/* Input bar — text is a chat turn bound for /v1/onboarding/text/turn.
+              Same textarea shape as every other moment page. The typed text
+              is NOT mapped to a chip; chips arrive via SSE in production. */}
           <form
             onSubmit={(e) => {
               e.preventDefault();
-              if (draft.trim().length > 0) handleSubmitText();
+              if (draft.trim().length > 0) handleSendTurn();
             }}
             className="shrink-0 px-6 md:px-8 pb-10 pt-2"
           >
             <label htmlFor="onboarding-message" className="sr-only">
-              Type a lunch
+              Send a message
             </label>
             <div className="flex items-end gap-2 rounded-2xl border border-neutral-400/30 bg-surface/50 px-2 py-1.5 backdrop-blur-md focus-within:border-amber/50 transition-colors shadow-lg">
               <textarea
@@ -566,19 +555,18 @@ export function Moment5PersonalizedPage() {
                 rows={1}
                 maxLength={400}
                 placeholder={placeholder}
-                disabled={pendingTurn?.cohort === activeCohort}
                 onKeyDown={(e) => {
                   if (e.key === 'Enter' && !e.shiftKey) {
                     e.preventDefault();
-                    if (draft.trim().length > 0) handleSubmitText();
+                    if (draft.trim().length > 0) handleSendTurn();
                   }
                 }}
                 style={{ maxHeight: '9.5rem' }}
-                className="flex-1 resize-none overflow-y-auto bg-transparent px-4 py-2 font-sans text-[17px] leading-snug text-fg placeholder:text-fg-muted/40 focus:outline-none disabled:opacity-50 transition-[height] duration-150 ease-out"
+                className="flex-1 resize-none overflow-y-auto bg-transparent px-4 py-2 font-sans text-[17px] leading-snug text-fg placeholder:text-fg-muted/40 focus:outline-none transition-[height] duration-150 ease-out"
               />
               <button
                 type="submit"
-                disabled={draft.trim().length === 0 || pendingTurn?.cohort === activeCohort}
+                disabled={draft.trim().length === 0}
                 className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-amber text-bg shadow-md hover:bg-amber-warm disabled:cursor-not-allowed disabled:opacity-50 transition-colors"
                 aria-label="Send"
               >
