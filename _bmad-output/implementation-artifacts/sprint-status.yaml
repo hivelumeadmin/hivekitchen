@@ -1,5 +1,5 @@
 # generated: 2026-04-23
-# last_updated: 2026-05-23 (Epic 2.5 retro done; Epic 2.6 brief approved; 6 slices added)
+# last_updated: 2026-05-24 (Epic 2.6 in-progress; 2.6-s1 → ready-for-dev — story authored)
 # project: hivekitchen
 # project_key: NOKEY
 # tracking_system: file-system
@@ -52,7 +52,7 @@
 # Walls (decision moments) are flagged with `# WALL:` markers.
 
 generated: 2026-04-23
-last_updated: 2026-05-23 (Epic 2.5 retro done; Epic 2.6 brief approved; 6 slices added)
+last_updated: 2026-05-24 (Epic 2.6 in-progress; 2.6-s1 → ready-for-dev)
 project: hivekitchen
 project_key: NOKEY
 tracking_system: file-system
@@ -162,8 +162,8 @@ development_status:
   # MOCK-REF: every UI-touching slice must reference in-repo mocks; new
   # M5 personalized chip mockup with cohort variants pending pre-2.6-s4.
   # ==========================================================================
-  epic-2.6: backlog
-  2.6-s1-foundation-catalog-as-recipes-migrate-favorite-lunches: backlog       # WALL: schema wall; in-slice Kitchen Profile read swap; drops favorite_lunches table
+  epic-2.6: in-progress
+  2.6-s1-foundation-catalog-as-recipes-migrate-favorite-lunches: ready-for-dev # WALL: schema wall; in-slice Kitchen Profile read swap; drops favorite_lunches table — story authored 2026-05-24
   2.6-s2-stage-0-curated-baseline: backlog                                     # ~50 hand-tagged seeds (content-authoring blocker) → per-household recipes rows with source='catalog_seeded'
   2.6-s3-stage-1-async-seeding-layer-1: backlog                                # post-M2 BullMQ job; LLM emits name+tags only (NO ingredients); integrates Layer 2 trigger in PlansService.commit()
   2.6-s4-m5-chip-personalization: backlog                                      # WALL: MVP wall; MOCK-REF (new mockup pending — cohort variants); wire-format flip (labels not keys)
