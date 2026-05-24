@@ -474,7 +474,7 @@ export function Moment5PersonalizedPage() {
           ) : (
             <div className="flex flex-1 flex-col items-center justify-start overflow-y-auto px-6 md:px-8 py-6 min-h-0">
               <div className="flex flex-col items-center gap-5 text-center max-w-2xl w-full">
-                <div className="flex h-12 w-12 items-center justify-center rounded-full border border-amber/20 bg-amber/10">
+                <div className="flex h-12 w-12 items-center justify-center rounded-full border border-amber/30 bg-amber/15">
                   <IcoWaveform cls="h-6 w-6 animate-pulse text-amber" />
                 </div>
                 <p
@@ -568,7 +568,7 @@ export function Moment5PersonalizedPage() {
           className="relative hidden md:flex md:w-[40%] flex-col bg-surface overflow-hidden"
           aria-label="Your Kitchen Profile"
         >
-          <div className="pointer-events-none absolute inset-0 bg-gradient-to-br from-surface to-bg opacity-50" />
+          <div className="pointer-events-none absolute inset-0 bg-gradient-to-br from-surface-2/30 to-transparent" />
           <div className="relative flex flex-1 flex-col overflow-hidden z-10">
             <KitchenProfilePanel
               cohort={cohort}
@@ -667,7 +667,7 @@ function CountIndicator({ count, target, override }: { count: number; target: nu
           <span className="ml-2 font-sans text-[10px] uppercase tracking-wide text-fg-muted">· starting with fewer</span>
         )}
       </div>
-      <div className="h-1 w-full overflow-hidden rounded-full bg-warm-neutral-100/40">
+      <div className="h-1 w-full overflow-hidden rounded-full bg-surface-2/50">
         <div
           className={['h-full rounded-full transition-all duration-500 ease-out', isComplete ? 'bg-foliage' : 'bg-amber'].join(' ')}
           style={{ width: `${pct}%` }}
@@ -834,8 +834,8 @@ function KitchenProfilePanel({ cohort, startingLine }: KitchenProfilePanelProps)
                     c.enforcement === 'always'
                       ? 'border-2 border-foliage bg-foliage-soft text-fg font-medium'
                       : c.enforcement === 'prefer'
-                        ? 'border border-foliage/60 bg-foliage-soft/50 text-fg'
-                        : 'bg-warm-neutral-100/60 text-fg-muted italic',
+                        ? 'border border-foliage bg-foliage-soft/70 text-fg'
+                        : 'bg-surface-2/50 text-fg-muted italic',
                   ].join(' ')}
                 >
                   {c.label}
@@ -872,7 +872,7 @@ function KitchenProfilePanel({ cohort, startingLine }: KitchenProfilePanelProps)
                 </p>
                 <div className="flex flex-wrap gap-1.5">
                   {startingLine.preview.map((item) => (
-                    <span key={item} className="rounded-md bg-warm-neutral-100/60 px-2.5 py-1 font-sans text-xs text-fg">
+                    <span key={item} className="rounded-md bg-surface-2/50 px-2.5 py-1 font-sans text-xs text-fg">
                       {item}
                     </span>
                   ))}

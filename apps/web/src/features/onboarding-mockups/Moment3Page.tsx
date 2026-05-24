@@ -291,7 +291,7 @@ export function Moment3Page() {
           ) : (
             <div className="flex flex-1 flex-col items-center justify-start overflow-y-auto px-6 md:px-8 py-8 min-h-0">
               <div className="flex flex-col items-center gap-6 text-center max-w-2xl w-full">
-                <div className="flex h-12 w-12 items-center justify-center rounded-full border border-amber/20 bg-amber/10">
+                <div className="flex h-12 w-12 items-center justify-center rounded-full border border-amber/30 bg-amber/15">
                   <IcoWaveform cls="h-6 w-6 animate-pulse text-amber" />
                 </div>
                 <p
@@ -422,7 +422,7 @@ export function Moment3Page() {
           className="relative hidden md:flex md:w-[40%] flex-col bg-surface overflow-hidden"
           aria-label="Your Kitchen Profile"
         >
-          <div className="pointer-events-none absolute inset-0 bg-gradient-to-br from-surface to-bg opacity-50" />
+          <div className="pointer-events-none absolute inset-0 bg-gradient-to-br from-surface-2/30 to-transparent" />
           <div className="relative flex flex-1 flex-col overflow-hidden z-10">
             <KitchenProfilePanel captured={captured} />
           </div>
@@ -549,8 +549,8 @@ function KitchenProfilePanel({ captured }: { captured: CapturedProfile }) {
                           c.enforcement === 'always'
                             ? 'border-2 border-foliage bg-foliage-soft text-fg font-medium'
                             : c.enforcement === 'prefer'
-                              ? 'border border-foliage/60 bg-foliage-soft/50 text-fg'
-                              : 'bg-warm-neutral-100/60 text-fg-muted italic',
+                              ? 'border border-foliage bg-foliage-soft/70 text-fg'
+                              : 'bg-surface-2/50 text-fg-muted italic',
                         ].join(' ')}
                       >
                         {c.label}
@@ -573,7 +573,7 @@ function KitchenProfilePanel({ captured }: { captured: CapturedProfile }) {
                     {captured.taste.cuisine.map((c) => (
                       <span
                         key={c}
-                        className="rounded-md bg-warm-neutral-100/60 px-2.5 py-1 font-sans text-xs text-fg"
+                        className="rounded-md bg-surface-2/50 px-2.5 py-1 font-sans text-xs text-fg"
                       >
                         {c}
                       </span>
@@ -633,7 +633,7 @@ function ProfileCard({ icon, title, active, waitingLabel, children }: ProfileCar
   }
   return (
     <div className="rounded-xl p-4 flex items-center gap-3.5 bg-surface">
-      <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-amber/10">
+      <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-amber/15">
         {icon ?? <IcoUsers cls="h-[15px] w-[15px] text-amber/50" />}
       </div>
       <div>
