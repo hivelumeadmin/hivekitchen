@@ -17,14 +17,17 @@ v2.0 uses **flat semantic tokens** at the consumer level. The repo provides 50�
 ### Surfaces & text (semantic aliases — recommended for consumers)
 | v2.0 token | Role | Resolves to (dark) | Resolves to (light) |
 |---|---|---|---|
-| `--bg` | Page background | `warm-neutral-900` (#1C1A17) | `warm-neutral-900` (#FAF7F2) |
-| `--surface` | Cards, panels | `warm-neutral-800` (#262420) | `warm-neutral-800` (#F2EDE4) |
-| `--surface-2` | Elevated surfaces | `warm-neutral-700` (#2F2D27) | `warm-neutral-700` (#E8E3D8) |
-| `--fg` | Primary text | `warm-neutral-50` (#FAF7F2) | `warm-neutral-50` (#141210) |
+| `--bg` | Page background | `#1C1A17` | `#F7F2E9` |
+| `--surface` | Cards, panels | `#262420` | `#EBE2D0` |
+| `--surface-2` | Elevated surfaces | `#2F2D27` | `#DCCFB5` |
+| `--surface-3` | Modals, max-elevation panels (Layer 1 — 2026-05-24) | `#383530` | `#C8B791` |
+| `--fg` | Primary text | `#FAF7F2` | `#141210` |
 | `--fg-muted` | Secondary text | `#B0A99D` | `#56524A` |
-| `--border` | Hairline dividers | `warm-neutral-700` | `warm-neutral-700` |
+| `--border` | Hairline dividers | `#2F2D27` (= `--surface-2`) | `#B5A784` (distinct from `--surface-2`) |
 
-> **Note on scale inversion conflict:** v2.0 treats `warm-neutral-50` as "lightest tone in light mode, lightest tone in dark mode" and `--warm-neutral-900` as a theme-specific bg. The repo's `packages/design-system/tokens/colors.css` **flips 50↔900 hex values between themes** (50 = always-darkest-surface, 900 = always-lightest-surface). This conflict must be resolved before tokens are wired through Tailwind; recommended fix is to expose semantic aliases (`bg`, `surface`, `fg`, `border`) in the repo and migrate consumers to those, leaving the raw scale for color-math only.
+> **Light-mode surface chain refined 2026-05-24 (Layer 1):** the original Stitch v2.0 light hexes (#FAF7F2 / #F2EDE4 / #E8E3D8) had washed-out card hierarchy — `--bg`/`--surface`/`--surface-2` were only ~5 OKLCH lightness points apart and `--border` literally equaled `--surface-2`. Widened the gaps (~5–8 L points between each), added `--surface-3` for elevated/modal surfaces, and gave `--border` a distinct value visible against `--surface-2`. Dark mode untouched (it was the authored baseline). Pinned by `packages/design-system/src/tokens/convention.test.ts`. See §6 drift status item 5.
+
+> **Note on scale inversion convention:** the repo's `packages/design-system/tokens/colors.css` treats raw `warm-neutral-50` as **always the dominant theme surface** (light: #FAF7F2; dark: #2A2724) and `warm-neutral-900` as **always the highest-contrast foreground** (light: #2A2724; dark: #FAF7F2). The semantic aliases above (`--bg`, `--surface`, etc.) are now resolved as their own theme-tuned hexes — not pinned to a specific warm-neutral stop. Consumers should always reach for the semantic alias; the raw scale is for color-math only.
 
 ### Warm-neutral scale (full — only scale that's expanded)
 50, 100, 200, 300, 400, 500, 600, 700, 800, 900, 950.
@@ -51,9 +54,11 @@ See `ux-design-directions.html` for exact hexes per theme.
 | `--foliage` | Confirmations, focus, freshness | `#7A9681` | `foliage-500` |
 | `--foliage-soft` | Calmer confirmations | `#5F7A67` | *(missing — add to repo)* |
 | `--safety-cleared-teal` | Allergy cleared | `#5A9C8B` | `safety-cleared-teal-500` |
-| `--safety-cleared-fill` | Badge background tint | `rgba(90,156,139,0.10)` | *(missing — add to repo)* |
-| `--safety-red` | Safety block only | `#C65A4E` | *(missing — add to repo)* |
-| `--safety-red-fill` | Block-state tint | `rgba(198,90,78,0.12)` | *(missing — add to repo)* |
+| `--safety-cleared-fill` | Badge background tint | `rgba(90,156,139,0.10)` dark · `rgba(61,107,95,0.18)` light | repo-resolved per theme |
+| `--safety-red` | Safety block only | `#C65A4E` | repo `--safety-red` |
+| `--safety-red-fill` | Block-state tint | `rgba(198,90,78,0.12)` dark · `rgba(168,66,54,0.18)` light | repo-resolved per theme |
+
+> **Fill-opacity refinement 2026-05-24 (Layer 1):** light-mode fill opacities raised from `0.10` to `0.18`. At 10% on the pale light bg (#F7F2E9), state badges washed out to near-invisible; 18% reads as a soft state-tint without becoming chromatic noise. Dark-mode opacities unchanged (10% / 12% read well on dark bg).
 
 ### Focus
 - `--focus: var(--foliage)` (matches repo `--focus-indicator-color`)
@@ -222,12 +227,13 @@ If a generated component genuinely needs a raw scale stop (e.g., for mid-range t
 
 1. **Font question** — **closed.** Inter removed from `typography.css` and `apps/web/public/fonts/`. Replaced with self-hosted Public Sans variable font (latin + latin-ext subsets, weights 100–900). `fonts.test.ts` and `_dev-tokens.tsx` updated. CLAUDE.md rule now actually honored.
 2. **Stitch design system upstream** — **partial.** A new Stitch design system asset has been created via MCP from this DESIGN.md: `assets/2c15138c1b194ac2aba44cbc405bb729` ("HiveKitchen v2.0 — Editorial Hearth"). The project's original `designTheme.designMd` field still contains v1.0 vocabulary (MCP cannot overwrite it directly). The new asset can be applied to screens via `mcp__stitch__apply_design_system` when ready. Manual cleanup of the legacy field in Stitch UI is still desirable.
-3. **Hex drift between v2.0 spec, repo, and Stitch's auto-generated asset** — **documented, accepted.** Three sources now have slightly different hex values for `bg`/`surface`/etc.:
-   - **Repo (this codebase)** — the authoritative implementation. v2.0-exact hexes (`bg: #1c1a17` dark, `#faf7f2` light) tied into the semantic aliases. Enforced by `convention.test.ts`.
+3. **Hex drift between v2.0 spec, repo, and Stitch's auto-generated asset** — **documented, accepted.** Three sources now have different hex values for `bg`/`surface`/etc.:
+   - **Repo (this codebase)** — the authoritative implementation. Dark theme uses v2.0-exact hexes (`bg: #1c1a17`). Light theme intentionally diverged 2026-05-24 (`bg: #f7f2e9`, `surface: #ebe2d0`, `surface-2: #dccfb5`, new `surface-3: #c8b791`, distinct `border: #b5a784`) — see item 5 below. All hexes pinned by `convention.test.ts`.
    - **Stitch's auto-generated design system asset** — Material-3-style schema with its own hex choices (`bg: #121212`, `surface: #1E1E1E`). Drift originates from Stitch's interpreter, not from any decision on our side.
-   - **`ux-design-directions.html` (the v2.0 reference doc)** — original v2.0 spec hexes. Matches the repo.
+   - **`ux-design-directions.html` (the v2.0 reference doc)** — original v2.0 spec hexes (light `bg: #FAF7F2`). Repo's light theme now diverges intentionally.
    When generated screens are converted to React via the `react-components` skill, the repo's values win (semantic aliases). The Stitch-side drift only affects what new Stitch-generated screens look like before conversion.
 4. **Mid-scale warm-neutral hex drift** (300–500) — **deferred.** The repo's spec-anchored scale already passes `contrast-audit.test.ts`. v2.0's mid stops are intentionally darker. Since generated React uses semantic aliases for surfaces (not raw mid-scale stops), the practical impact is negligible. Re-audit only if a future component reaches for raw `warm-neutral-{300..500}` from a Stitch design.
+5. **Light-mode surface chain refined 2026-05-24** — **intentional repo divergence.** Stitch v2.0's light hexes for `--bg`/`--surface`/`--surface-2` were only ~5 OKLCH lightness points apart and `--border` equaled `--surface-2`. The result was washed-out card hierarchy + no visible borders in light mode. Repo-side fix (Layer 1): widened the surface lightness gaps to ~5–8 L points each, added `--surface-3` for max-elevation surfaces, gave `--border` a distinct value, bumped light-mode safety-fill opacities from 0.10/0.12 to 0.18. New pinned light-mode hexes in §1 surface table; pinning enforced by `convention.test.ts`. Dark mode untouched. **A complementary Layer 2 pass** swapped opacity-on-pale-base Tailwind patterns (`bg-amber/10`, `from-surface to-bg opacity-50`, `bg-warm-neutral-100/60`) in the 11 onboarding mockup pages for higher-opacity / explicit-surface tokens — those patterns are dark-mode habits that disappear on light bg. See `feat(2.6-s4): light-mode opacity audit` commit for the full pattern list.
 
 ---
 
