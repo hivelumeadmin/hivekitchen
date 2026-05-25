@@ -88,6 +88,16 @@ export interface PlannerExtraProposal {
   override_type: 'sport_practice' | 'field_trip';
 }
 
+// Story 3.27 — children whose `variant_eligible` flag is true (Epic 4 will
+// derive this from real lunch_link_sessions rating counts; today it is a
+// manually-flipped MVP stub). The planner may include AT MOST ONE
+// variant_proposal in the plan output for these children — see
+// PlanVariantProposalOutputSchema.
+export interface PlannerVariantEligibleChild {
+  child_id: string;
+  child_name: string;
+}
+
 // Slice E — input shape for DomainOrchestrator.swapBlockedItems. One entry
 // per slot the deterministic allergy guardrail blocked, carrying the
 // original ingredients so the agent can reason about minimal-edit
@@ -257,6 +267,7 @@ export class DomainOrchestrator {
     extraProposals?: readonly PlannerExtraProposal[],  // Story 3.22 — high-activity Extra proposals (FR119)
     slotScopeContext?: string,  // Story 3.23 — slot-scoped regen instruction; prepended to contextLines
     uncertainContext?: string,  // Story 3.24 — compound-uncertain substitution instruction; highest priority
+    variantEligibleChildren?: readonly PlannerVariantEligibleChild[],  // Story 3.27 — active-learning variant proposals
   ): Promise<PlanComposeOutput> {
     const MAX_PLAN_ITERATIONS = 20;
     // Story 3-31 — recipe.discover needs the per-run requestId in its deps
@@ -284,6 +295,7 @@ export class DomainOrchestrator {
     const bagCompositionLines = buildBagCompositionLines(bagCompositions);
     const extraRulesLines = buildExtraRulesLines(extraRules, extraLibraryItems);
     const extraProposalLines = buildExtraProposalLines(extraProposals);
+    const variantEligibilityLines = buildVariantEligibilityLines(variantEligibleChildren);
 
     const contextLines = [
       `Household ID: ${householdId}`,
@@ -293,6 +305,7 @@ export class DomainOrchestrator {
       ...bagCompositionLines,
       ...extraRulesLines,
       ...extraProposalLines,
+      ...variantEligibilityLines,
       dayScope !== undefined
         ? `Regeneration scope: DAY ONLY. Only generate a new plan for ${dayScope.toUpperCase()}. Keep all other days exactly as previously composed. Only call plan.compose with items for ${dayScope} — do not include other days.`
         : undefined,
@@ -840,5 +853,26 @@ export function buildExtraProposalLines(
     );
   }
   return lines;
+}
+
+// Story 3.27 — invites the planner to include AT MOST ONE preparation-method
+// variant proposal in the plan output, targeting an item one of these children
+// has rated before. Variants are preparation-method changes (baked vs.
+// pan-fried, raw vs. roasted) — NEVER ingredient substitutions. The proposal
+// is rendered on the affected day's PlanTile in `pending-input` state until
+// the parent confirms or rejects it.
+export function buildVariantEligibilityLines(
+  children: readonly PlannerVariantEligibleChild[] | undefined,
+): string[] {
+  if (children === undefined || children.length === 0) return [];
+  const names = children.map((c) => `${c.child_name} (${c.child_id})`).join(', ');
+  return [
+    `Variant active-learning candidates: ${names}.`,
+    'If you can identify a preparation-method variant for an item these children have had before ' +
+      '(e.g., "baked" instead of "pan-fried", "roasted" instead of "raw"), include it as `variant_proposal` ' +
+      'in your plan output with fields: child_id, day, slot, base_method, variant_method, variant_description. ' +
+      'ONE proposal MAXIMUM per plan. Do NOT propose ingredient substitutions — variants are preparation-method ' +
+      'changes only.',
+  ];
 }
 

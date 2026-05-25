@@ -21,6 +21,7 @@ import {
   loadExtraLibraryForHousehold,
   loadExtraRulesForChildren,
   loadHighActivityExtraProposalsForHousehold,
+  loadVariantEligibleChildrenForHousehold,
 } from './planner-context.loader.js';
 import { trySurgicalSwap } from './swap-retry.helper.js';
 
@@ -125,10 +126,11 @@ const planRegenerationPlugin: FastifyPluginAsync = async (fastify) => {
         'plan-regeneration job started',
       );
 
-      const [culturalContext, bagCompositions, extraLibraryItems] = await Promise.all([
+      const [culturalContext, bagCompositions, extraLibraryItems, variantEligibleChildren] = await Promise.all([
         loadCulturalContextForHousehold(household_id, week_of, culturalPriorRepository, culturalCalendarService, memoryContextService),
         loadBagCompositionsForHousehold(household_id, childrenRepository),
         loadExtraLibraryForHousehold(household_id, extraLibraryRepository),
+        loadVariantEligibleChildrenForHousehold(household_id, childrenRepository),
       ]);
       // Story 3.22 — extra_rules read fans out per-child; depends on bagCompositions.
       // High-activity proposals also depend on bagCompositions, so both are loaded
@@ -159,6 +161,8 @@ const planRegenerationPlugin: FastifyPluginAsync = async (fastify) => {
         extraLibraryItems,
         extraProposals,
         slotScopeContext,
+        undefined,
+        variantEligibleChildren,
       );
 
       // For day-scope: filter the output to only include items for the target day.
@@ -213,7 +217,8 @@ const planRegenerationPlugin: FastifyPluginAsync = async (fastify) => {
       // most recent commit input across retries so the swap path has the
       // exact ingredients to minimally edit.
       let lastAttemptCommit = commitInput;
-      await fastify.plansService.commit(
+      let lastAttemptComposeOutput = filteredOutput;
+      const committedPlanId = await fastify.plansService.commit(
         commitInput,
         request_id,
         async (rejections: GuardrailResult[]): Promise<CommitPlanInput> => {
@@ -229,6 +234,11 @@ const planRegenerationPlugin: FastifyPluginAsync = async (fastify) => {
             // Surgical swap covers all blocked slots and the merge already
             // preserves non-blocked items (including the day-scope other-day
             // items captured into commitInput above). No extra merge needed.
+            // P5 (review) — clear variant_proposal conservatively since we
+            // have no new PlanComposeOutput for the surgical path.
+            if (lastAttemptComposeOutput.variant_proposal !== undefined) {
+              lastAttemptComposeOutput = { ...lastAttemptComposeOutput, variant_proposal: undefined };
+            }
             const swapCommit = { ...surgical, revision: current_revision + 1 };
             lastAttemptCommit = swapCommit;
             return swapCommit;
@@ -278,6 +288,7 @@ const planRegenerationPlugin: FastifyPluginAsync = async (fastify) => {
             extraProposals,
             slotScopeContext,
             uncertainContext,
+            variantEligibleChildren,
           );
 
           const filteredRetry =
@@ -303,9 +314,26 @@ const planRegenerationPlugin: FastifyPluginAsync = async (fastify) => {
           }
 
           lastAttemptCommit = retryCommit;
+          lastAttemptComposeOutput = filteredRetry;
           return retryCommit;
         },
       );
+
+      // P4 (review) — persist any variant proposal the planner emitted during
+      // regen. Failure must not surface as a regen failure.
+      try {
+        await fastify.variantProposalService.createFromPlanOutput({
+          planOutput: lastAttemptComposeOutput,
+          planId: committedPlanId,
+          householdId: household_id,
+          requestId: request_id,
+        });
+      } catch (err) {
+        fastify.log.error(
+          { err, household_id, plan_id: committedPlanId },
+          'variant proposal persistence failed after regen — regen committed',
+        );
+      }
 
       // Audit successful regeneration. Failures here don't roll back the commit.
       try {

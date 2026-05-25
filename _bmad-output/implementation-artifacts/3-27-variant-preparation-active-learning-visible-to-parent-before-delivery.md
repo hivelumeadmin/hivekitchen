@@ -1,6 +1,6 @@
 # Story 3.27: Variant Preparation Active-Learning (Visible to Parent Before Delivery)
 
-Status: ready-for-dev
+Status: done
 
 ## Story
 
@@ -451,8 +451,81 @@ _bmad-output/implementation-artifacts/deferred-work.md     + Epic 4 variant_elig
 
 ---
 
+## Dev Agent Record
+
+### Implementation Notes (2026-05-25)
+
+**Deviations from story spec:**
+- `PlanVariantProposalOutputSchema` references the target item by `(child_id, day, slot)` rather than a synthetic `plan_item_id`. The planner's `PlanComposeItem` doesn't carry recipe name and `item_id` is optional — `(child_id, day, slot)` is the only unambiguous, contract-stable identifier. The service maps to the committed `plan_items.id` via `PlansRepository.findItemsByPlanId`.
+- Migration timestamp moved from `20260830000000` (would land before existing 09xx files) to `20260911000000` (newer than the last migration, `20260910000000_2_6_s3_stage1_schema.sql`).
+- `GetPlansResponse.variant_proposals` is `.optional()` rather than `.default([])` so existing fixtures and test paths that omit the field stay valid. Consumers use `?? []` at the read site.
+- `base_recipe_name` is derived from `item.ingredients.slice(0,3).join(', ')` since `plan_items` has no `recipe_name` column. Forward-compatible — a future migration adding `recipe_name` would replace the derivation.
+- Post-commit variant persistence runs from `plan-generation.job.ts` (not from inside `PlansService.commit`) using the latest `PlanComposeOutput` captured during the guardrail retry loop. Keeps `PlansService.commit` unchanged and uses the FINAL accepted plan rather than the first attempt that may have been rewritten.
+- Story spec's Task 4 talks about `variant_eligible` as a fresh DB column. Migration bundles it with the `variant_proposals` table so both ship atomically; no separate stub migration.
+
+**Validation:**
+- API: 13 new variant-proposal tests pass (`variant-proposal.repository.test.ts`, `variant-proposal.service.test.ts`).
+- API: existing plan-generation/context/routes regression suite (61 tests) — all green.
+- API: orchestrator regression suite (45 tests) — all green.
+- Web: existing PlanTile suite extended to 32 tests (5 new for variant proposal) — all green.
+- `pnpm typecheck`: all pre-existing failures unchanged by this story; no new errors introduced (verified by `git stash` → typecheck → restore baseline diff).
+
+**Audit event types added:** `plan.variant_proposal_created`, `plan.variant_proposal_confirmed`, `plan.variant_proposal_rejected`.
+
+**Deferred (out of scope, per Dev Notes):**
+- Real `variant_eligible` derivation from `lunch_link_sessions.rating` counts (Epic 4 / Story 4.14).
+- Rating delta tracking via `variant_proposals.base_rating` / `variant_proposals.variant_rating` — columns exist but are not populated by this story.
+- `recipe_name` column on `plan_items` (deferred — derivation from ingredients is the MVP).
+
+## File List
+
+**New files:**
+- `supabase/migrations/20260911000000_create_variant_proposals.sql`
+- `apps/api/src/modules/plans/variant-proposal.repository.ts`
+- `apps/api/src/modules/plans/variant-proposal.service.ts`
+- `apps/api/src/modules/plans/variant-proposal.repository.test.ts`
+- `apps/api/src/modules/plans/variant-proposal.service.test.ts`
+
+**Modified files:**
+- `packages/contracts/src/plan.ts` — added `VariantProposalSchema`, `ConfirmVariantProposalInputSchema`, `PlanVariantProposalOutputSchema`; extended `PlanComposeOutputSchema` and `GetPlansResponseSchema`.
+- `packages/types/src/index.ts` — exported `VariantProposal`, `ConfirmVariantProposalInput`, `PlanVariantProposalOutput`.
+- `apps/api/src/audit/audit.types.ts` — added 3 new audit event types.
+- `apps/api/src/types/fastify.d.ts` — added `variantProposalService` decorator type.
+- `apps/api/src/agents/orchestrator.ts` — added `PlannerVariantEligibleChild`, `buildVariantEligibilityLines`, threaded through `planWeek`.
+- `apps/api/src/modules/children/children.repository.ts` — added `findVariantEligibleByHousehold`.
+- `apps/api/src/jobs/planner-context.loader.ts` — added `loadVariantEligibleChildrenForHousehold`.
+- `apps/api/src/jobs/plan-generation.job.ts` — load variant-eligible children, pass to `planWeek`, persist post-commit.
+- `apps/api/src/modules/plans/plans.service.ts` — accept optional `variantProposalService` dependency.
+- `apps/api/src/modules/plans/plans.hook.ts` — wire `VariantProposalRepository` + `VariantProposalService`, decorate Fastify.
+- `apps/api/src/modules/plans/plans.routes.ts` — `POST /v1/plans/:planId/variant-proposals/:proposalId/confirm`; include `variant_proposals` in `GET /v1/plans` response.
+- `apps/web/src/features/plan/PlanTile.tsx` — render variant-proposal pills + `pending-input` border when a proposal is active.
+- `apps/web/src/features/plan/PlanTile.test.tsx` — 5 new variant-proposal tests.
+- `apps/web/src/features/plan/mutations.ts` — `useConfirmVariantProposalMutation`.
+- `apps/web/src/features/plan/PlanPage.tsx` — index active proposals by `plan_item_id`, dispatch confirm mutation per tile.
+- `_bmad-output/implementation-artifacts/sprint-status.yaml` — 3-27 → review.
+
+### Review Findings (2026-05-25 — 3-layer adversarial review)
+
+- [x] [Review][Patch] **P1 — `confirm`/`reject` silently succeed on zero-row update** — No row-count check after UPDATE; adversary can POST any proposalId and receive 204 with no indication the operation was a no-op. Fix: inspect PostgREST `count` field; throw 404 if zero rows matched. [`apps/api/src/modules/plans/variant-proposal.repository.ts:53–73`]
+- [x] [Review][Patch] **P2 — `commitInput.plan_id` passed to `createFromPlanOutput`, not the committed plan's actual UUID** — `plansService.commit()` may upsert to an existing plan row (different UUID); variant is stored against stale `plan_id`, so `findActiveByPlan` never returns it. Fix: use the plan_id returned from `commit()` rather than `commitInput.plan_id`. [`apps/api/src/jobs/plan-generation.job.ts:~434`]
+- [x] [Review][Patch] **P3 — `findVariantEligibleByHousehold` reads `children.name` without decryption** — DISMISSED: `children.name` is stored plaintext; decryptRow confirms no decryption applied to name field in any path. — `children.name` is envelope-encrypted; every other repository path decrypts before returning. Raw ciphertext is injected as `child_name` into the planner prompt. Fix: apply `decryptField` to `row.name` consistent with the rest of the repository. [`apps/api/src/modules/children/children.repository.ts:204–216`]
+- [x] [Review][Patch] **P4 — `plan-regeneration.job.ts` never calls `createFromPlanOutput`** — Variant proposals from user-triggered regenerations are silently discarded; no pending-input pills appear after manual regen. Fix: call `variantProposalService.createFromPlanOutput` post-commit in plan-regeneration.job.ts, matching the plan-generation pattern. [`apps/api/src/jobs/plan-regeneration.job.ts`]
+- [x] [Review][Patch] **P5 — Surgical-swap retry path never updates `lastAttemptComposeOutput`** — `lastAttemptCommit` is updated but `lastAttemptComposeOutput` is not; `createFromPlanOutput` receives stale output when the swap rewrites the variant-proposal slot. Fix: set `lastAttemptComposeOutput = surgicalOutput` alongside `lastAttemptCommit` in the surgical-swap branch. [`apps/api/src/jobs/plan-generation.job.ts:~375`]
+- [x] [Review][Patch] **P6 — Variant pills render unconditionally regardless of tile state** — Pills render whenever `variantProposal !== undefined`, including during `swap-in-progress` (keyboard-accessible behind the spinner overlay). Fix: guard pill rendering on `effectiveState === 'pending-input'` so pills only appear when the tile is in an interactable state. [`apps/web/src/features/plan/PlanTile.tsx:~190`]
+- [x] [Review][Patch] **P7 — `PlanVariantProposalOutputSchema.day` allows `'saturday'`; plan items are Mon–Fri only** — A Saturday proposal passes Zod, matches no plan item, is silently skipped, and stays active indefinitely. Fix: narrow the enum to `['monday','tuesday','wednesday','thursday','friday']` to match `PlanComposeDaySchema`. [`packages/contracts/src/plan.ts:~720`]
+- [x] [Review][Patch] **P8 — No test asserting `pending-input` border class when `variantProposal` is present** — Five new PlanTile tests confirm pill rendering and callbacks but none assert the `border-dashed border-amber-warm` treatment. Fix: add a test checking that the article element carries `border-dashed` when `variantProposal` is supplied with `state='decided'`. [`apps/web/src/features/plan/PlanTile.test.tsx`]
+
+- [x] [Review][Defer] **D1 — No DB unique constraint preventing duplicate active proposals per plan** — Service-layer dedup is codebase norm; concurrent race is low probability. — deferred, pre-existing pattern
+- [x] [Review][Defer] **D2 — Fresh `safeRandomUuid()` per mutation call** — Established pattern; server-side `.is('confirmed_at', null)` guard makes double-confirm a no-op. — deferred, pre-existing pattern
+- [x] [Review][Defer] **D3 — No FK `plan_id → plans(id)` in `variant_proposals`** — Intentional design choice; UUID non-reuse makes orphans benign. — deferred, pre-existing
+- [x] [Review][Defer] **D4 — `VariantProposalSchema` omits `base_rating`, `variant_rating`, `rating_delta_at`** — Explicitly deferred to Epic 4 per spec Dev Notes. — deferred, Epic 4
+- [x] [Review][Defer] **D5 — `deriveBaseRecipeName` returns ingredient join, not a dish name** — Documented MVP deviation; forward-compatible once `plan_items.recipe_name` lands. — deferred, pre-existing
+- [x] [Review][Defer] **D6 — `planId` URL param unused in confirm route** — Security invariant maintained via `householdId` check on proposal row; URL follows REST convention. — deferred, pre-existing
+
 ## Change Log
 
 | Date | Author | Change |
 |------|--------|--------|
 | 2026-05-05 | Menon | Story 3.27 created — ready-for-dev. |
+| 2026-05-25 | Amelia (Dev Agent) | Implementation complete — all 9 tasks done; 13 new API tests + 5 new web tests pass; status → review. |
+| 2026-05-25 | Code Review | 3-layer adversarial review: 8 patches, 6 deferred, 6 dismissed. Status → in-progress. |

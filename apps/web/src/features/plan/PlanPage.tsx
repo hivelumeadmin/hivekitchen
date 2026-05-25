@@ -18,6 +18,7 @@ import { PlanActionSection } from './PlanActionSection.js';
 import { PlanPageFooter } from './PlanPageFooter.js';
 import { usePlanQuery } from './queries.js';
 import { useBriefStateQuery } from './useBriefStateQuery.js';
+import { useConfirmVariantProposalMutation } from './mutations.js';
 
 // Story 3.14 — FR21 enables the next-week tab on Friday afternoon. UTC for
 // MVP (per Dev Notes); per-timezone enforcement is a future server-side move
@@ -109,16 +110,53 @@ function PlanWeekContent({
   childColorMap: ReadonlyMap<string, ChildInfo>;
 }) {
   const summaries = useMemo(() => toPlanTileSummaries(data.plan_items), [data.plan_items]);
+  const confirmVariant = useConfirmVariantProposalMutation();
+
+  // Story 3.27 — index active proposals by plan_item_id so each tile finds its
+  // own proposal without a second pass per render.
+  const proposalsByItem = useMemo(() => {
+    const out = new Map<string, NonNullable<GetPlansResponse['variant_proposals']>[number]>();
+    for (const p of data.variant_proposals ?? []) {
+      out.set(p.plan_item_id, p);
+    }
+    return out;
+  }, [data.variant_proposals]);
+
+  function findProposalForDay(summary: PlanTileSummary) {
+    for (const item of summary.items) {
+      if (item.plan_item_id === null) continue;
+      const p = proposalsByItem.get(item.plan_item_id);
+      if (p !== undefined) return p;
+    }
+    return undefined;
+  }
+
+  const planId = data.plan?.id ?? null;
+
   return (
     <div className="flex flex-col gap-4" aria-label="Weekly plan">
       <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
-        {summaries.map((summary) => (
-          <PlanTile
-            key={summary.day}
-            summary={summary}
-            childColorMap={childColorMap}
-          />
-        ))}
+        {summaries.map((summary) => {
+          const proposal = findProposalForDay(summary);
+          return (
+            <PlanTile
+              key={summary.day}
+              summary={summary}
+              childColorMap={childColorMap}
+              variantProposal={proposal}
+              onVariantChoice={
+                proposal !== undefined && planId !== null
+                  ? (proposalId, choice) =>
+                      confirmVariant.mutate({
+                        planId,
+                        proposalId,
+                        input: { choice },
+                      })
+                  : undefined
+              }
+            />
+          );
+        })}
       </div>
       {data.is_draft && (
         <p

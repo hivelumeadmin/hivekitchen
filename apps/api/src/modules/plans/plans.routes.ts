@@ -15,6 +15,7 @@ import {
   SetDayOverrideResponseSchema,
   DayOverridePlanItemParamSchema,
   DayOverrideRevertParamSchema,
+  ConfirmVariantProposalInputSchema,
 } from '@hivekitchen/contracts';
 import type {
   PausePlanDayInput,
@@ -23,6 +24,8 @@ import type {
   RegeneratePlanQuery,
   GetPlansQuery,
   SetDayOverrideInput,
+  ConfirmVariantProposalInput,
+  VariantProposal,
 } from '@hivekitchen/types';
 import { ValidationError } from '../../common/errors.js';
 import { authorize } from '../../middleware/authorize.hook.js';
@@ -85,13 +88,61 @@ const plansRoutesPlugin: FastifyPluginAsync = async (fastify) => {
         }
       }
 
+      // Story 3.27 — active variant proposals for the resolved plan so the
+      // PlanTile can render pending-input pills. Failure to load is non-fatal:
+      // the proposal is a learning signal, not safety state.
+      let variantProposals: VariantProposal[] = [];
+      if (plan !== null) {
+        try {
+          variantProposals = await fastify.variantProposalService.findActiveByPlan(plan.id);
+        } catch (err) {
+          request.log.error({ err, householdId, planId: plan.id }, 'findActiveByPlan failed — omitting variant_proposals');
+        }
+      }
+
       return reply.status(200).send({
         plan: plan ?? null,
         plan_items: planItems,
         is_draft: isDraft,
         week_of: weekOf,
         ...(hardFail !== null ? { hard_fail: hardFail } : {}),
+        variant_proposals: variantProposals,
       });
+    },
+  );
+
+  // POST /v1/plans/:planId/variant-proposals/:proposalId/confirm
+  // Story 3.27 — parent confirms or rejects a Lumi-proposed preparation
+  // variant. 204 on success. The proposal becomes inactive (no longer surfaced
+  // in GET /v1/plans) regardless of choice, so the next pill the parent sees
+  // is a fresh proposal from a future plan.
+  fastify.post(
+    '/v1/plans/:planId/variant-proposals/:proposalId/confirm',
+    {
+      preHandler: authorize(['primary_parent']),
+      schema: {
+        params: z.object({
+          planId: z.string().uuid(),
+          proposalId: z.string().uuid(),
+        }),
+        body: ConfirmVariantProposalInputSchema,
+      },
+    },
+    async (request, reply) => {
+      const requestId = requireIdempotencyKey(
+        request.headers['idempotency-key'],
+      );
+      const { proposalId } = request.params as { planId: string; proposalId: string };
+      const body = request.body as ConfirmVariantProposalInput;
+
+      await fastify.variantProposalService.confirmProposal({
+        proposalId,
+        householdId: request.user.household_id,
+        choice: body.choice,
+        requestId,
+      });
+
+      return reply.status(204).send();
     },
   );
 

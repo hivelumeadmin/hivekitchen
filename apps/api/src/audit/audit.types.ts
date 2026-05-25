@@ -13,6 +13,10 @@ export const AUDIT_EVENT_TYPES = [
   'plan.day_override_reverted',
   'plan.extra_bias_applied',
   'plan.extra_proposal_created',
+  // Story 3.27 — preparation-method variant active learning
+  'plan.variant_proposal_created',
+  'plan.variant_proposal_confirmed',
+  'plan.variant_proposal_rejected',
   'brief.projection.failure',
   // memory
   'memory.forgotten',

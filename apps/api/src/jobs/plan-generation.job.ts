@@ -25,6 +25,7 @@ import {
   loadExtraLibraryForHousehold,
   loadExtraRulesForChildren,
   loadHighActivityExtraProposalsForHousehold,
+  loadVariantEligibleChildrenForHousehold,
 } from './planner-context.loader.js';
 import { trySurgicalSwap } from './swap-retry.helper.js';
 
@@ -282,10 +283,11 @@ const planGenerationPlugin: FastifyPluginAsync = async (fastify) => {
         'plan-generation job started',
       );
 
-      const [culturalContext, bagCompositions, extraLibraryItems] = await Promise.all([
+      const [culturalContext, bagCompositions, extraLibraryItems, variantEligibleChildren] = await Promise.all([
         loadCulturalContextForHousehold(household_id, week_of, culturalPriorRepository, culturalCalendarService, memoryContextService),
         loadBagCompositionsForHousehold(household_id, childrenRepository),
         loadExtraLibraryForHousehold(household_id, extraLibraryRepository),
+        loadVariantEligibleChildrenForHousehold(household_id, childrenRepository),
       ]);
       // extra_rules read fans out per-child; depends on bagCompositions for
       // {child_id, child_name} pairs, so it's sequenced after the parallel batch.
@@ -339,6 +341,9 @@ const planGenerationPlugin: FastifyPluginAsync = async (fastify) => {
         extraRules,
         extraLibraryItems,
         extraProposals,
+        undefined,
+        undefined,
+        variantEligibleChildren,
       );
       const commitInput = buildCommitInput(composeOutput, weekId, request_id);
 
@@ -350,7 +355,12 @@ const planGenerationPlugin: FastifyPluginAsync = async (fastify) => {
       // slot. Captures the previous attempt's commitInput in closure so the
       // swap path has the original ingredients to minimally edit.
       let lastAttemptCommit = commitInput;
-      await fastify.plansService.commit(
+      // Story 3.27 — track the most recent planner output so the post-commit
+      // variant-proposal persistence reflects the final accepted plan rather
+      // than the first attempt that may have been rewritten on guardrail
+      // retry.
+      let lastAttemptComposeOutput: PlanComposeOutput = composeOutput;
+      const committedPlanId = await fastify.plansService.commit(
         commitInput,
         request_id,
         async (rejections: GuardrailResult[]) => {
@@ -363,6 +373,12 @@ const planGenerationPlugin: FastifyPluginAsync = async (fastify) => {
             logger: fastify.log,
           });
           if (surgical !== null) {
+            // P5 (review) — surgical swap may have replaced the variant-proposal
+            // slot. Since we have no new PlanComposeOutput here, clear the
+            // proposal conservatively. It will surface on the next generation.
+            if (lastAttemptComposeOutput.variant_proposal !== undefined) {
+              lastAttemptComposeOutput = { ...lastAttemptComposeOutput, variant_proposal: undefined };
+            }
             lastAttemptCommit = surgical;
             return surgical;
           }
@@ -405,12 +421,32 @@ const planGenerationPlugin: FastifyPluginAsync = async (fastify) => {
             extraProposals,
             undefined,
             uncertainContext,
+            variantEligibleChildren,
           );
           const retryCommit = buildCommitInput(retryOutput, weekId, request_id);
           lastAttemptCommit = retryCommit;
+          lastAttemptComposeOutput = retryOutput;
           return retryCommit;
         },
       );
+
+      // Story 3.27 — after commit clears, persist any planner-emitted variant
+      // proposal so the PlanTile can render the pending-input pills. Failure
+      // here must not surface as a planning failure — the proposal is a
+      // forward-looking learning signal, not a safety constraint.
+      try {
+        await fastify.variantProposalService.createFromPlanOutput({
+          planOutput: lastAttemptComposeOutput,
+          planId: committedPlanId,
+          householdId: household_id,
+          requestId: request_id,
+        });
+      } catch (err) {
+        fastify.log.error(
+          { err, household_id, plan_id: commitInput.plan_id },
+          'variant proposal persistence failed — plan is committed',
+        );
+      }
 
       fastify.log.info(
         { module: 'plan-generation', action: 'generate.complete', household_id, week_of, weekId },

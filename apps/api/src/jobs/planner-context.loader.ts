@@ -11,8 +11,18 @@ import type {
   PlannerExtraLibraryItem,
   PlannerExtraProposal,
   PlannerExtraRules,
+  PlannerVariantEligibleChild,
 } from '../agents/orchestrator.js';
 import type { CulturalTemplateKey } from '../services/cultural-calendar.service.js';
+
+// Story 3.27 — children whose variant_eligible flag is true.
+export async function loadVariantEligibleChildrenForHousehold(
+  householdId: string,
+  childrenRepository: ChildrenRepository,
+): Promise<PlannerVariantEligibleChild[]> {
+  const rows = await childrenRepository.findVariantEligibleByHousehold(householdId);
+  return rows.map((r) => ({ child_id: r.child_id, child_name: r.name }));
+}
 
 export async function loadBagCompositionsForHousehold(
   householdId: string,

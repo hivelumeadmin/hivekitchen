@@ -300,6 +300,93 @@ describe('PlanTile trust chips', () => {
   });
 });
 
+describe('PlanTile — variant proposal (Story 3.27)', () => {
+  const baseProposal = {
+    id: '99999999-9999-4999-8999-999999999999',
+    household_id: '11111111-1111-4111-8111-111111111111',
+    child_id: CHILD_ID,
+    plan_item_id: '22222222-2222-4222-8222-222222222222',
+    plan_id: '33333333-3333-4333-8333-333333333333',
+    base_recipe_name: 'chicken, rice, peas',
+    base_method: 'pan-fried',
+    variant_description: 'oven-baked instead of pan-fried',
+    variant_method: 'oven-baked',
+    proposed_at: '2026-05-04T12:00:00.000Z',
+    confirmed_at: null,
+    rejected_at: null,
+  };
+
+  it('renders the variant description and both choice pills when a proposal is active', () => {
+    render(
+      <PlanTile
+        summary={makeSummary()}
+        variantProposal={baseProposal}
+      />,
+    );
+    expect(screen.getByText('oven-baked instead of pan-fried')).toBeDefined();
+    expect(screen.getByRole('button', { name: 'Try the variant' })).toBeDefined();
+    expect(screen.getByRole('button', { name: 'Keep the original' })).toBeDefined();
+  });
+
+  it('omits the pills when no proposal is provided', () => {
+    render(<PlanTile summary={makeSummary()} />);
+    expect(screen.queryByRole('button', { name: 'Try the variant' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Keep the original' })).toBeNull();
+  });
+
+  it('fires onVariantChoice with try_variant + proposalId when the variant pill is clicked', () => {
+    const onVariantChoice = vi.fn();
+    render(
+      <PlanTile
+        summary={makeSummary()}
+        variantProposal={baseProposal}
+        onVariantChoice={onVariantChoice}
+      />,
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Try the variant' }));
+    expect(onVariantChoice).toHaveBeenCalledWith(baseProposal.id, 'try_variant');
+  });
+
+  it('fires onVariantChoice with keep_original when the original pill is clicked', () => {
+    const onVariantChoice = vi.fn();
+    render(
+      <PlanTile
+        summary={makeSummary()}
+        variantProposal={baseProposal}
+        onVariantChoice={onVariantChoice}
+      />,
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Keep the original' }));
+    expect(onVariantChoice).toHaveBeenCalledWith(baseProposal.id, 'keep_original');
+  });
+
+  it('applies pending-input border treatment (border-dashed) when a variant proposal is present', () => {
+    const { container } = render(
+      <PlanTile
+        summary={makeSummary()}
+        variantProposal={baseProposal}
+      />,
+    );
+    const article = container.querySelector('article');
+    expect(article?.className).toContain('border-dashed');
+  });
+
+  it('does not bubble pill clicks to the tile-level onSwapIntent handler', () => {
+    const onSwapIntent = vi.fn();
+    const onVariantChoice = vi.fn();
+    render(
+      <PlanTile
+        summary={makeSummary()}
+        variantProposal={baseProposal}
+        onSwapIntent={onSwapIntent}
+        onVariantChoice={onVariantChoice}
+      />,
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Try the variant' }));
+    expect(onSwapIntent).not.toHaveBeenCalled();
+  });
+});
+
 describe('PlanTile — paused state (Story 3.12)', () => {
   it('renders the "Paused" copy with the day-paused aria label', () => {
     render(<PlanTile summary={makeSummary({ day: 'monday' })} state="paused" />);

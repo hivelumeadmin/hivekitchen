@@ -109,6 +109,21 @@ export const PlanComposeInputSchema = z.object({
   prompt_version: z.string().min(1),
 });
 
+// Story 3.27 — Lumi-proposed preparation-method variant. The planner may
+// include ONE proposal per plan output when at least one child has
+// `variant_eligible=true`. Variants are method changes (baked vs pan-fried),
+// not ingredient swaps — that is Story 3.24. The (child_id, day, slot) tuple
+// uniquely identifies the plan item being varied — the service layer maps it
+// to the committed plan_items row id at persist time.
+export const PlanVariantProposalOutputSchema = z.object({
+  child_id: z.string().uuid(),
+  day: z.enum(['monday', 'tuesday', 'wednesday', 'thursday', 'friday']),
+  slot: z.string().min(1).max(SLOT_MAX),
+  base_method: z.string().min(1),
+  variant_method: z.string().min(1),
+  variant_description: z.string().min(1),
+});
+
 // plan.compose output — carries plan_id so the BullMQ worker can build CommitPlanInput.
 export const PlanComposeOutputSchema = z.object({
   plan_id: z.string().uuid(),
@@ -116,6 +131,30 @@ export const PlanComposeOutputSchema = z.object({
   week_of: z.string().date(),
   days: z.array(PlanComposeDaySchema).min(1),
   prompt_version: z.string().min(1),
+  // Story 3.27 — present only when the planner identified a preparation-method
+  // variant for a variant-eligible child. At most one per plan.
+  variant_proposal: PlanVariantProposalOutputSchema.optional(),
+});
+
+// Story 3.27 — DB row + confirm endpoint shapes.
+export const VariantProposalSchema = z.object({
+  id: z.string().uuid(),
+  household_id: z.string().uuid(),
+  child_id: z.string().uuid(),
+  plan_item_id: z.string().uuid(),
+  plan_id: z.string().uuid(),
+  base_recipe_name: z.string(),
+  base_method: z.string(),
+  variant_description: z.string(),
+  variant_method: z.string(),
+  proposed_at: z.string().datetime({ offset: true }),
+  confirmed_at: z.string().datetime({ offset: true }).nullable(),
+  rejected_at: z.string().datetime({ offset: true }).nullable(),
+});
+
+// POST /v1/plans/:planId/variant-proposals/:proposalId/confirm body.
+export const ConfirmVariantProposalInputSchema = z.object({
+  choice: z.enum(['try_variant', 'keep_original']),
 });
 
 export const ConflictSchema = z.object({
@@ -411,12 +450,17 @@ export const HardFailStatusSchema = z.object({
 // recompute date math; week_of is always the ISO Monday for the resolved week.
 // Story 3.25 — hard_fail is optional + nullable; the route handler omits the
 // key entirely on the non-hard-fail path so existing clients see no change.
+// Story 3.27 — variant_proposals carries the household's active (unconfirmed,
+// unrejected) variant proposals for this plan. Optional + nullable so pre-3.27
+// fixtures and route paths that omit the key remain valid; consumers should
+// `?? []` it at the read site.
 export const GetPlansResponseSchema = z.object({
   plan: PlanRowSchema.nullable(),
   plan_items: z.array(PlanItemRowSchema),
   is_draft: z.boolean(),
   week_of: z.string().date(),
   hard_fail: HardFailStatusSchema.nullable().optional(),
+  variant_proposals: z.array(VariantProposalSchema).optional(),
 });
 
 // --- Story 3.15 — historical plans + outcomes view (FR25) ---

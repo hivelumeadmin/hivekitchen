@@ -18,6 +18,8 @@ import { RecipeService } from '../recipe/recipe.service.js';
 import { RecipesRepository } from '../recipe/recipes.repository.js';
 import { LunchLinkSessionRepository } from './lunch-link-session.repository.js';
 import { RecipeAgent } from '../../agents/recipe-agent.js';
+import { VariantProposalRepository } from './variant-proposal.repository.js';
+import { VariantProposalService } from './variant-proposal.service.js';
 
 const plansHookPlugin: FastifyPluginAsync = async (fastify) => {
   if (!fastify.supabase) {
@@ -114,6 +116,18 @@ const plansHookPlugin: FastifyPluginAsync = async (fastify) => {
     logger: fastify.log,
   });
 
+  // Story 3.27 — variant proposal active learning. The repository, service,
+  // and Fastify decorator are wired here so the plan-generation worker can
+  // call createFromPlanOutput after commit, and the confirm route can resolve
+  // the service via fastify.variantProposalService.
+  const variantProposalRepository = new VariantProposalRepository(fastify.supabase);
+  const variantProposalService = new VariantProposalService({
+    repo: variantProposalRepository,
+    plansRepo: repository,
+    auditService: fastify.auditService,
+    logger: fastify.log,
+  });
+
   const plansService = new PlansService({
     repository,
     briefStateRepository,
@@ -128,6 +142,7 @@ const plansHookPlugin: FastifyPluginAsync = async (fastify) => {
     recipeService,                                     // Slice D
     recipesRepo: recipesRepository,                    // Slice 2.6-s3
     recipeAgent,                                        // Slice 2.6-s3
+    variantProposalService,                            // Story 3.27
   });
   if (fastify.hasDecorator('planAdjustmentService')) {
     throw new Error(
@@ -168,6 +183,7 @@ const plansHookPlugin: FastifyPluginAsync = async (fastify) => {
   fastify.decorate('dayOverridesService', dayOverridesService);
   fastify.decorate('snackSkusRepository', snackSkusRepository);
   fastify.decorate('lunchLinkSessionRepository', lunchLinkSessionRepository);
+  fastify.decorate('variantProposalService', variantProposalService);
 };
 
 export const plansHook = fp(plansHookPlugin, { name: 'plans-hook' });

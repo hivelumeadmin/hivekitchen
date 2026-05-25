@@ -18,6 +18,7 @@ import type { PlanAdjustmentService } from '../modules/plans/plan-adjustment.ser
 import type { DayOverridesService } from '../modules/plans/day-overrides.service.js';
 import type { SnackSkusRepository } from '../modules/plans/snack-skus.repository.js';
 import type { LunchLinkSessionRepository } from '../modules/plans/lunch-link-session.repository.js';
+import type { VariantProposalService } from '../modules/plans/variant-proposal.service.js';
 import type { DomainOrchestrator } from '../agents/orchestrator.js';
 
 interface BullMQFacade {
@@ -46,6 +47,7 @@ declare module 'fastify' {
     dayOverridesService: DayOverridesService;
     snackSkusRepository: SnackSkusRepository;
     lunchLinkSessionRepository: LunchLinkSessionRepository;
+    variantProposalService: VariantProposalService;
     orchestrator: DomainOrchestrator;
   }
 

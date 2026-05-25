@@ -1,5 +1,5 @@
 # generated: 2026-04-23
-# last_updated: 2026-05-25 (Epic 2.6 in-progress; 2.6-s1 → done; 2.6-s2 → done; 2.6-s7 → done; 2.6-s8 → done; 3-23 → done; 3-24 → done; 3-25 → done; 3-26 → done; 2.6-s3 → done; 3-27 → ready-for-dev; 3-29 → ready-for-dev)
+# last_updated: 2026-05-25 (Epic 2.6 in-progress; 2.6-s1..s3,s7,s8 → done; 2.6-s4 → review; 3-23..3-26 → done; 3-27 → review; 3-29 → ready-for-dev)
 # project: hivekitchen
 # project_key: NOKEY
 # tracking_system: file-system
@@ -52,7 +52,7 @@
 # Walls (decision moments) are flagged with `# WALL:` markers.
 
 generated: 2026-04-23
-last_updated: 2026-05-25 (Epic 2.6 in-progress; 2.6-s1 → done; 2.6-s2 → done; 2.6-s7 → done; 2.6-s8 → done; 3-23 → done; 3-24 → done; 3-25 → done; 3-26 → done; 2.6-s3 → done; 3-27 → ready-for-dev; 3-29 → ready-for-dev)
+last_updated: 2026-05-25 (Epic 2.6 in-progress; 2.6-s1..s3,s7,s8 → done; 2.6-s4 → review; 3-23..3-26 → done; 3-27 → review; 3-29 → ready-for-dev)
 project: hivekitchen
 project_key: NOKEY
 tracking_system: file-system
@@ -166,7 +166,7 @@ development_status:
   2.6-s1-foundation-catalog-as-recipes-migrate-favorite-lunches: done          # code review complete 2026-05-24 — 3-layer adversarial pass; 6 decisions resolved; 11 patches applied + committed; 1 false positive (P8) dismissed
   2.6-s2-stage-0-curated-baseline: done                                         # code review complete 2026-05-24 — 3-layer adversarial pass; 6 decisions resolved; 4 patches applied (F1 Buffer import, F3 persisted log, F4 no_candidates test, F5 timestamp-skip assertion); 1 dismissed (F2); 1 deferred (F6 below_floor threshold); 14/14 tests pass
   2.6-s3-stage-1-async-seeding-layer-1: done                                   # code review complete 2026-05-25 — 3-layer adversarial pass; 5 patches applied (void.add catch, empty-ingredients guard, markDiscoverFailed 0-row warn, below_floor TODO, 50→48→43 test shape); 5 deferred; 11 dismissed
-  2.6-s4-m5-chip-personalization: backlog                                      # WALL: MVP wall; MOCK-REF (new mockup pending — cohort variants); wire-format flip (labels not keys)
+  2.6-s4-m5-chip-personalization: review                                       # WALL: MVP wall; impl complete 2026-05-25 — ChipOption.provenance contract, CatalogProjectionService (Stage 1 poll, sort, diversity cap-3/relax-5), momentToChipConfig('m5_starting_line')=null, submitTextTurn injection, prompt KEY_LABEL deleted, web ＋ badge; 12+44+32+3 new tests pass
   2.6-s5-stage-2-recovery-handler: backlog                                     # floor breach (<35) + mass-block (>50% blocked) only; NOT scheduled; AC explicitly forbids cron/background-enrichment
   2.6-s6-cold-start-fallback-conversational: backlog                           # MOCK-REF (new mockup pending); conversational tail when Stage 1 confidence below threshold
   2.6-s7-allergy-rules-drop-guardrail-swap-to-allergen-tags: done              # impl complete 2026-05-24; code review complete 2026-05-24 — 3 patches applied (stale keys in 4 test files, mock filter-arg validation + is_active coverage test, stale test title strings); 44/44 guardrail tests pass
@@ -210,7 +210,7 @@ development_status:
   3-24-allergy-uncertainty-flagging-safe-substitution: done                   # code review complete 2026-05-24 — 8 patches applied (' blend' false-positive, onSwapSlot child_id, AC6 audit omit, slot-dedup+full-UUID in uncertainContext, slot_scope filter on regen retry, no_rules_loaded test, empty-flagged_items guard); 5 deferred; 129/129 tests pass
   3-25-hard-fail-escalation-no-safe-plan-possible: done                       # code review complete 2026-05-25 — 5 patches applied (try/catch on getHardFailStatus route, tautology assertion fix, infra-uncertain hard_fail lock tests ×2, plan-present body assertion); 7/7 E2E pass
   3-26-graceful-degradation-state-ux: done                                  # impl complete 2026-05-25; AC1–AC11 satisfied; FreshnessState variant=reworking shipped; awaiting code review
-  3-27-variant-preparation-active-learning-visible-to-parent-before-delivery: ready-for-dev  # unblocked by Epic 2.5 (food_preferences + enforcement shipped)
+  3-27-variant-preparation-active-learning-visible-to-parent-before-delivery: done    # code review complete 2026-05-25 — 7 patches applied (zero-row confirm/reject guard, committedPlanId fix, regen job wired, surgical-swap clear, pills state guard, day enum Saturday removed, border test added); 1 false positive dismissed (P3 name encryption); 6 deferred
   3-28-pause-lunch-link-for-child-on-day-without-altering-plan: done          # CONTINUES IN PARALLEL — infrastructure, no contract dependency
   3-29-degraded-propose-state-with-try-alternating-sovereignty-toggle: ready-for-dev  # unblocked by Epic 2.5 (tight-constraints set knowledge shipped)
   3-30-llm-provider-failover-circuit-breaker-audit: done                      # Code review 2026-05-22: 12 patches applied (auth, retry, breaker timer-leak fix, branch-coverage tests, auth tests). 7 deferred. CONTINUES IN PARALLEL — infrastructure, no contract dependency

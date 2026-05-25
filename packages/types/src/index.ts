@@ -239,6 +239,10 @@ import {
   // Story 3.28 — Lunch Link suppression
   LunchLinkPauseInputSchema,
   LunchLinkPauseResponseSchema,
+  // Story 3.27 — variant proposal active-learning
+  PlanVariantProposalOutputSchema,
+  VariantProposalSchema,
+  ConfirmVariantProposalInputSchema,
 } from '@hivekitchen/contracts';
 
 // Auth
@@ -580,3 +584,8 @@ export type RuleSetOutput = z.infer<typeof RuleSetOutputSchema>;
 // Story 3.28 — Lunch Link suppression
 export type LunchLinkPauseInput = z.infer<typeof LunchLinkPauseInputSchema>;
 export type LunchLinkPauseResponse = z.infer<typeof LunchLinkPauseResponseSchema>;
+
+// Story 3.27 — variant proposal active-learning
+export type PlanVariantProposalOutput = z.infer<typeof PlanVariantProposalOutputSchema>;
+export type VariantProposal = z.infer<typeof VariantProposalSchema>;
+export type ConfirmVariantProposalInput = z.infer<typeof ConfirmVariantProposalInputSchema>;

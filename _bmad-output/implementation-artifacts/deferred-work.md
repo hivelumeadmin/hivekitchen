@@ -1,5 +1,20 @@
 # Deferred Work Log
 
+## Deferred from: code review of 2.6-s4-m5-chip-personalization (2026-05-25)
+
+- **Elevation prompt block overwrites M5 personalized chip_config on agent misbehavior** — `submitTextTurn`'s elevation block is moment-agnostic; an agent-emitted `[CHIP_PROMPT:elevation:]` at M5 would throw away the personalized chip set. Pre-existing behavior; add `nextCurrentMoment !== 'm5_starting_line'` guard if seen in practice. [`apps/api/src/modules/onboarding/onboarding.service.ts — elevation block`]
+- **Concurrent M5 turns spawn parallel stage1 poll loops (N × 20 DB reads)** — Each simultaneous `submitTextTurn` at M5 runs its own independent `waitForStage1` poll. Bounded by Stage 0 guaranteeing stage1 is usually complete by M5; add per-householdId dedup if DB read costs appear in billing. [`apps/api/src/modules/catalog/catalog-projection.service.ts:155–173`]
+- **`override_fewer` sole chip on empty catalog at M5** — `getM5Chips` returning `[]` with `favoriteLunchCount >= 4` yields only the "Start with fewer" control chip. Deferred to 2.6-s6 cold-start conversational fallback. [`apps/api/src/modules/onboarding/onboarding.service.ts — override_fewer injection`]
+
+## Deferred from: code review of 3-27-variant-preparation-active-learning-visible-to-parent-before-delivery (2026-05-25)
+
+- **No DB unique constraint preventing duplicate active proposals per plan** — Service-layer `findActiveByPlan` dedup guards the common case; concurrent job race could bypass it. Fix if concurrent generation becomes a real scheduling pattern. [`apps/api/src/modules/plans/variant-proposal.service.ts:53–59`]
+- **Fresh `safeRandomUuid()` per mutation call defeats idempotency key intent** — Server-side `.is('confirmed_at', null)` guard makes double-confirm a no-op in practice. Revisit if retry storms emerge. [`apps/web/src/features/plan/mutations.ts:~135`]
+- **No FK `plan_id → plans(id)` in `variant_proposals` migration** — UUID non-reuse makes orphaned rows benign; add FK if plan deletion or backfill operations become real. [`supabase/migrations/20260911000000_create_variant_proposals.sql`]
+- **`VariantProposalSchema` omits `base_rating`, `variant_rating`, `rating_delta_at` columns** — Columns exist in DB for Story 4.14; API contract will need a schema change when Epic 4 populates them. [`packages/contracts/src/plan.ts:~742`]
+- **`deriveBaseRecipeName` returns ingredient join (`'chicken, rice, peas'`), not a dish name** — Forward-compatible; replace with `plan_items.recipe_name` when that column lands. [`apps/api/src/modules/plans/variant-proposal.service.ts:151–154`]
+- **`planId` URL parameter unused in confirm route** — REST-conventional; `householdId` guard on the proposal row is the security boundary. Add explicit `planId` ownership check if the REST contract needs to be fully self-documenting. [`apps/api/src/modules/plans/plans.routes.ts:~338`]
+
 ## Deferred from: code review of 2.6-s3-stage-1-async-seeding-layer-1 (2026-05-25)
 
 - **Per-child allergen rules bypass via `householdId` as `child_id` proxy** — `catalogItemToPlanItem` passes `householdId` as `child_id`; child-scoped allergen rules in `child_allergens` are silently skipped during Stage 1 guardrail filtering. Pre-existing design tradeoff from 2.6-s2 `baselineToPlanItem`; FALCPA + household-wide rules (child_id=null) cover the common case. Fix: pass each real child UUID or introduce a multi-child batch evaluate path. [`apps/api/src/modules/catalog/catalog-guardrail-helper.ts`]

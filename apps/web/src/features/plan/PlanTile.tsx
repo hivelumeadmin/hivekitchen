@@ -1,6 +1,6 @@
 import { useRef, useState } from 'react';
 import type { KeyboardEvent as ReactKeyboardEvent } from 'react';
-import type { PlanTileSummary } from '@hivekitchen/types';
+import type { PlanTileSummary, VariantProposal } from '@hivekitchen/types';
 import { PauseCircleIcon } from '@/components/icons.js';
 import { PresenceIndicator } from '../thread/PresenceIndicator.js';
 import { TrustChip, type TrustChipVariant } from './TrustChip.js';
@@ -36,6 +36,12 @@ export interface PlanTileProps {
   // regardless of day-of-week. Default behavior (deriveVariant) compares the
   // tile's day to today, which is wrong when rendering a prior week's plan.
   forceVariant?: PlanTileVariant;
+  // Story 3.27 — Lumi-proposed preparation variant for one of this day's
+  // items. When present (and the tile is interactive), the tile renders two
+  // pills [Try the variant] [Keep the original] under the dish line. The
+  // parent's choice is dispatched via onVariantChoice.
+  variantProposal?: VariantProposal;
+  onVariantChoice?: (proposalId: string, choice: 'try_variant' | 'keep_original') => void;
 }
 
 function ChildChip({ name, color }: { name: string; color: ChildDotColor }) {
@@ -96,6 +102,8 @@ export function PlanTile({
   onSwapIntent,
   onPauseLunchLink,
   forceVariant,
+  variantProposal,
+  onVariantChoice,
 }: PlanTileProps) {
   const variant = forceVariant ?? deriveVariant(summary.day);
   const tileRef = useRef<HTMLElement>(null);
@@ -122,9 +130,16 @@ export function PlanTile({
     }
   }
 
+  // Story 3.27 — an active variant proposal puts the tile in the pending-input
+  // visual state (dashed amber-warm border) so the parent's eye lands on the
+  // single decision they need to make.
+  const hasVariantProposal = variantProposal !== undefined;
+  const effectiveState: PlanTileState =
+    hasVariantProposal && state === 'decided' ? 'pending-input' : state;
+
   // Border treatment by state. v2.0 tokens — pending uses amber-warm dashed.
   const borderClass =
-    state === 'pending-input'
+    effectiveState === 'pending-input'
       ? 'border-2 border-dashed border-amber-warm'
       : 'border border-border';
 
@@ -175,6 +190,36 @@ export function PlanTile({
         <p className="text-[15px] leading-[1.4] text-fg-muted/60 mb-6 flex-grow">
           Plan pending
         </p>
+      )}
+
+      {effectiveState === 'pending-input' && variantProposal !== undefined && (
+        <div className="mt-2 mb-4 flex flex-col gap-2">
+          <p className="font-sans text-[13px] leading-relaxed text-fg-muted">
+            {variantProposal.variant_description}
+          </p>
+          <div className="flex flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                onVariantChoice?.(variantProposal.id, 'try_variant');
+              }}
+              className="rounded-full border border-amber-warm bg-amber-warm/10 px-3 py-1 font-sans text-[13px] text-fg hover:bg-amber-warm/20 transition-colors motion-reduce:transition-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-warm"
+            >
+              Try the variant
+            </button>
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                onVariantChoice?.(variantProposal.id, 'keep_original');
+              }}
+              className="rounded-full border border-border px-3 py-1 font-sans text-[13px] text-fg-muted hover:bg-surface-2 transition-colors motion-reduce:transition-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-warm"
+            >
+              Keep the original
+            </button>
+          </div>
+        </div>
       )}
 
       {childColorMap !== undefined && childColorMap.size > 0 && (() => {

@@ -22,6 +22,7 @@ import type { RecipeService } from '../recipe/recipe.service.js';
 import type { RecipesRepository } from '../recipe/recipes.repository.js';
 import type { RecipeAgent } from '../../agents/recipe-agent.js';
 import type { PlanRegenerationJobData } from '../../jobs/plan-regeneration.job.js';
+import type { VariantProposalService } from './variant-proposal.service.js';
 import type {
   BriefStateRow,
   CommitPlanInput,
@@ -64,6 +65,11 @@ export interface PlansServiceDeps {
   // pass through unchanged — only the legacy slice D path runs).
   recipesRepo?: RecipesRepository;
   recipeAgent?: RecipeAgent;
+  // Story 3.27 — persists Lumi-proposed preparation-method variants after a
+  // plan clears the guardrail. Optional so pre-3.27 tests continue to compose;
+  // when omitted, planner-emitted variant_proposal is silently ignored at
+  // commit time.
+  variantProposalService?: VariantProposalService;
 }
 
 // Story 3.13 — regeneration rate limit (architecture §3.6).
@@ -88,6 +94,7 @@ export class PlansService {
   private readonly recipeService: RecipeService | null;
   private readonly recipesRepo: RecipesRepository | null;
   private readonly recipeAgent: RecipeAgent | null;
+  private readonly variantProposalService: VariantProposalService | null;
 
   constructor(deps: PlansServiceDeps) {
     this.repo = deps.repository;
@@ -103,6 +110,7 @@ export class PlansService {
     this.recipeService = deps.recipeService ?? null;
     this.recipesRepo = deps.recipesRepo ?? null;
     this.recipeAgent = deps.recipeAgent ?? null;
+    this.variantProposalService = deps.variantProposalService ?? null;
   }
 
   // Single-row read from brief_state. Never composes at request time

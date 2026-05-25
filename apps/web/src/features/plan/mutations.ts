@@ -6,6 +6,7 @@ import type {
   RegeneratePlanResponse,
   SetDayOverrideInput,
   SetDayOverrideResponse,
+  ConfirmVariantProposalInput,
 } from '@hivekitchen/types';
 
 // Browser crypto.randomUUID() is available in all modern browsers in secure contexts.
@@ -120,6 +121,32 @@ export function useRevertDayOverrideMutation() {
       ),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ['brief'] });
+    },
+  });
+}
+
+// POST /v1/plans/:planId/variant-proposals/:proposalId/confirm with Idempotency-Key.
+// Story 3.27 — parent confirms or rejects a Lumi-proposed preparation variant.
+// On success the proposal stops being active, so we invalidate ['plans'] to
+// drop the pending-input pills from the tile on the next render.
+export function useConfirmVariantProposalMutation() {
+  const queryClient = useQueryClient();
+  return useMutation<
+    void,
+    Error,
+    { planId: string; proposalId: string; input: ConfirmVariantProposalInput }
+  >({
+    mutationFn: ({ planId, proposalId, input }) =>
+      hkFetch(
+        `/v1/plans/${planId}/variant-proposals/${proposalId}/confirm`,
+        {
+          method: 'POST',
+          body: input,
+          headers: { 'Idempotency-Key': safeRandomUuid() },
+        },
+      ),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['plan'] });
     },
   });
 }
