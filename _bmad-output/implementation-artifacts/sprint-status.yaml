@@ -1,5 +1,5 @@
 # generated: 2026-04-23
-# last_updated: 2026-05-24 (Epic 2.6 in-progress; 2.6-s1 → done; 2.6-s2 → review; 2.6-s7 → done; 2.6-s8 → review; 3-23 → done; 3-24 → review)
+# last_updated: 2026-05-24 (Epic 2.6 in-progress; 2.6-s1 → done; 2.6-s2 → done; 2.6-s7 → done; 2.6-s8 → review; 3-23 → done; 3-24 → done)
 # project: hivekitchen
 # project_key: NOKEY
 # tracking_system: file-system
@@ -52,7 +52,7 @@
 # Walls (decision moments) are flagged with `# WALL:` markers.
 
 generated: 2026-04-23
-last_updated: 2026-05-24 (Epic 2.6 in-progress; 2.6-s1 → done; 2.6-s2 → review; 2.6-s7 → done; 2.6-s8 → review; 3-23 → done; 3-24 → review)
+last_updated: 2026-05-24 (Epic 2.6 in-progress; 2.6-s1 → done; 2.6-s2 → done; 2.6-s7 → done; 2.6-s8 → review; 3-23 → done; 3-24 → done)
 project: hivekitchen
 project_key: NOKEY
 tracking_system: file-system
@@ -164,7 +164,7 @@ development_status:
   # ==========================================================================
   epic-2.6: in-progress
   2.6-s1-foundation-catalog-as-recipes-migrate-favorite-lunches: done          # code review complete 2026-05-24 — 3-layer adversarial pass; 6 decisions resolved; 11 patches applied + committed; 1 false positive (P8) dismissed
-  2.6-s2-stage-0-curated-baseline: review                                      # dev complete 2026-05-24 — 50 hand-tagged seeds, materialization worker + 2 triggers (auth.service household-creation + onboarding.service M3 exit); 18 new tests pass; awaiting code review
+  2.6-s2-stage-0-curated-baseline: done                                         # code review complete 2026-05-24 — 3-layer adversarial pass; 6 decisions resolved; 4 patches applied (F1 Buffer import, F3 persisted log, F4 no_candidates test, F5 timestamp-skip assertion); 1 dismissed (F2); 1 deferred (F6 below_floor threshold); 14/14 tests pass
   2.6-s3-stage-1-async-seeding-layer-1: backlog                                # post-M2 BullMQ job; LLM emits name+tags only (NO ingredients); integrates Layer 2 trigger in PlansService.commit()
   2.6-s4-m5-chip-personalization: backlog                                      # WALL: MVP wall; MOCK-REF (new mockup pending — cohort variants); wire-format flip (labels not keys)
   2.6-s5-stage-2-recovery-handler: backlog                                     # floor breach (<35) + mass-block (>50% blocked) only; NOT scheduled; AC explicitly forbids cron/background-enrichment
@@ -207,7 +207,7 @@ development_status:
   # ==========================================================================
   3-31-recipe-agent-tavily-structured-fetch: done                        # SHIP FIRST — unblocks 3-23, 3-24
   3-23-per-slot-policy-scoping-bag-wide-allergy-rule: done                    # code review complete 2026-05-24 — 2 patches applied (jobId dedup gap + stale comment); 2 deferred (item_sku_id in retry, test harness sig); 9/10 tests pass (1 pre-existing)
-  3-24-allergy-uncertainty-flagging-safe-substitution: review                 # impl complete 2026-05-24; engine compound scan + 2 FALCPA synonyms; PlansService.commit split; trySurgicalSwap + planWeek/swapBlockedItems uncertainContext; AllergyUncertaintyBanner shipped; 27 new tests pass; awaiting code review
+  3-24-allergy-uncertainty-flagging-safe-substitution: done                   # code review complete 2026-05-24 — 8 patches applied (' blend' false-positive, onSwapSlot child_id, AC6 audit omit, slot-dedup+full-UUID in uncertainContext, slot_scope filter on regen retry, no_rules_loaded test, empty-flagged_items guard); 5 deferred; 129/129 tests pass
   3-25-hard-fail-escalation-no-safe-plan-possible: backlog                    # unblocked by Epic 2.5 (conflict precedence + enforcement gradient shipped)
   3-26-graceful-degradation-state-ux: backlog                                 # unblocked by Epic 2.5 (enforcement-strength data populated)
   3-27-variant-preparation-active-learning-visible-to-parent-before-delivery: backlog  # unblocked by Epic 2.5 (food_preferences + enforcement shipped)

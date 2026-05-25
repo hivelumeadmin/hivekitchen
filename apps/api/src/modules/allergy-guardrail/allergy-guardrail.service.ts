@@ -74,21 +74,40 @@ export class AllergyGuardrailService {
         },
       });
     } else if (result.verdict === 'uncertain') {
-      this.logger.error(
-        {
-          household_id: householdId,
-          request_id: requestId,
-          reason: result.reason,
-          guardrail_version: GUARDRAIL_VERSION,
-        },
-        'allergy guardrail returned uncertain — refusing to render',
-      );
+      // Story 3.24 — compound-uncertain is a recoverable data-quality signal
+      // (substitution will be attempted), not an infrastructure failure. Lower
+      // the log level to warn and surface flagged_items in the audit metadata
+      // so post-hoc analysis can trace which compounds drove the substitution.
+      const isCompound = result.reason === 'compound_ingredient_unverified';
+      if (isCompound) {
+        this.logger.warn(
+          {
+            household_id: householdId,
+            request_id: requestId,
+            reason: result.reason,
+            flagged_count: result.flagged_items?.length ?? 0,
+            guardrail_version: GUARDRAIL_VERSION,
+          },
+          'allergy guardrail: compound ingredients flagged — substitution will be attempted',
+        );
+      } else {
+        this.logger.error(
+          {
+            household_id: householdId,
+            request_id: requestId,
+            reason: result.reason,
+            guardrail_version: GUARDRAIL_VERSION,
+          },
+          'allergy guardrail returned uncertain — refusing to render',
+        );
+      }
       await this.auditService.write({
         event_type: 'allergy.uncertainty',
         household_id: householdId,
         request_id: requestId,
         metadata: {
           reason: result.reason,
+          ...(isCompound ? { flagged_items: result.flagged_items ?? [] } : {}),
           guardrail_version: GUARDRAIL_VERSION,
         },
       });
@@ -103,11 +122,20 @@ export class AllergyGuardrailService {
       );
     }
 
+    // Story 3.24 — compound-uncertain decisions carry flagged_items (not
+    // allergen+ingredient conflicts). The JSONB `conflicts` column accepts
+    // either shape; preserving flagged_items here keeps the audit trail
+    // complete without a schema change.
     await this.repo.writeDecision({
       household_id: householdId,
       verdict: result.verdict,
       guardrail_version: GUARDRAIL_VERSION,
-      conflicts: result.conflicts,
+      conflicts:
+        result.verdict === 'blocked'
+          ? result.conflicts
+          : result.verdict === 'uncertain'
+            ? result.flagged_items ?? []
+            : [],
       request_id: requestId,
     });
 

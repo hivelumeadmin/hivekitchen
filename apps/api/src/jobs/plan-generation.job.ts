@@ -9,6 +9,7 @@ import type {
   PlanItemWrite,
 } from '@hivekitchen/types';
 import { HouseholdsRepository } from '../modules/households/households.repository.js';
+import { ChildAllergensRepository } from '../modules/children/child-allergens.repository.js';
 import { ChildrenRepository } from '../modules/children/children.repository.js';
 import { CulturalPriorRepository } from '../modules/cultural-priors/cultural-prior.repository.js';
 import { CulturalCalendarService } from '../services/cultural-calendar.service.js';
@@ -156,7 +157,16 @@ const planGenerationPlugin: FastifyPluginAsync = async (fastify) => {
   const memoryContextService = new MemoryContextService(fastify.supabase);
   // Story 3.20 — bag composition lookup for the planner. kek=null is fine:
   // findBagCompositionsByHousehold() does not touch encrypted columns.
-  const childrenRepository = new ChildrenRepository(fastify.supabase, null, fastify.log);
+  // Slice 2.6-s8 — ChildrenRepository now requires ChildAllergensRepository;
+  // the planner only calls findBagCompositionsByHousehold (which never touches
+  // allergens), but the dependency is required at construction time.
+  const childAllergensRepository = new ChildAllergensRepository(fastify.supabase, null);
+  const childrenRepository = new ChildrenRepository(
+    fastify.supabase,
+    null,
+    fastify.log,
+    childAllergensRepository,
+  );
   // Story 3.21 — Extra slot pin/ban rules + household custom Extra library.
   const extraRulesRepository = new ExtraRulesRepository(fastify.supabase);
   const extraLibraryRepository = new ExtraLibraryRepository(fastify.supabase);
@@ -362,6 +372,25 @@ const planGenerationPlugin: FastifyPluginAsync = async (fastify) => {
             .map((c) => `allergen: ${c.allergen}, ingredient: ${c.ingredient}`)
             .join('; ');
 
+          // Story 3.24 — when compound-uncertain rejections exist alongside or
+          // instead of blocked conflicts, surface them to the planner via the
+          // dedicated uncertainContext channel so it knows to choose single-
+          // ingredient items rather than another compound product.
+          const compoundFlagged = rejections.flatMap((r) =>
+            r.verdict === 'uncertain' && r.reason === 'compound_ingredient_unverified'
+              ? r.flagged_items ?? []
+              : [],
+          );
+          const uncertainContext = (() => {
+            if (compoundFlagged.length === 0) return undefined;
+            const seen = new Set<string>();
+            const slots = compoundFlagged
+              .map((f) => `${f.child_id}|${f.day}|${f.slot}`)
+              .filter((s) => { const fresh = !seen.has(s); seen.add(s); return fresh; })
+              .join(', ');
+            return `ALLERGEN-UNCERTAIN: Replace the following items — use only single-ingredient items of unambiguous provenance (no sauces, spice blends, pastes, or compound products): ${slots}`;
+          })();
+
           const retryOutput = await fastify.orchestrator.planWeek(
             household_id,
             week_of,
@@ -373,6 +402,8 @@ const planGenerationPlugin: FastifyPluginAsync = async (fastify) => {
             extraRules,
             extraLibraryItems,
             extraProposals,
+            undefined,
+            uncertainContext,
           );
           const retryCommit = buildCommitInput(retryOutput, weekId, request_id);
           lastAttemptCommit = retryCommit;

@@ -7,6 +7,7 @@ import type {
   PlanItemWrite,
 } from '@hivekitchen/types';
 import { buildCommitInput } from './plan-generation.job.js';
+import { ChildAllergensRepository } from '../modules/children/child-allergens.repository.js';
 import { ChildrenRepository } from '../modules/children/children.repository.js';
 import { CulturalPriorRepository } from '../modules/cultural-priors/cultural-prior.repository.js';
 import { CulturalCalendarService } from '../services/cultural-calendar.service.js';
@@ -34,6 +35,11 @@ export interface PlanRegenerationJobData {
   scope: 'week' | 'day';
   day?: string;           // Required when scope='day'
   request_id: string;
+  // Story 3.23 — slot-scoped regen context. Omitted for 'bag_wide' or null;
+  // present only for 'main' | 'snack' | 'extra'. The planner prompt uses this
+  // to preserve non-target slots; the allergy guardrail evaluates every slot
+  // regardless (bag-wide invariant — see allergy-rules.engine.test.ts).
+  slot_scope?: 'main' | 'snack' | 'extra';
 }
 
 // Per-job BullMQ options: 2 attempts (regeneration is user-initiated;
@@ -76,14 +82,35 @@ const planRegenerationPlugin: FastifyPluginAsync = async (fastify) => {
   const memoryContextService = new MemoryContextService(fastify.supabase);
   // Story 3.20 — kek=null is fine: findBagCompositionsByHousehold() does not
   // touch encrypted columns.
-  const childrenRepository = new ChildrenRepository(fastify.supabase, null, fastify.log);
+  // Slice 2.6-s8 — ChildrenRepository now requires ChildAllergensRepository
+  // at construction (planner only uses findBagCompositionsByHousehold; the
+  // allergens dep is never exercised on this hot path).
+  const childAllergensRepository = new ChildAllergensRepository(fastify.supabase, null);
+  const childrenRepository = new ChildrenRepository(
+    fastify.supabase,
+    null,
+    fastify.log,
+    childAllergensRepository,
+  );
   const extraRulesRepository = new ExtraRulesRepository(fastify.supabase);
   const extraLibraryRepository = new ExtraLibraryRepository(fastify.supabase);
   const dayOverridesRepository = new DayOverridesRepository(fastify.supabase);
   const regenWorker = fastify.bullmq.getWorker(
     REGEN_QUEUE,
     async (job: Job<PlanRegenerationJobData>) => {
-      const { plan_id, household_id, week_of, week_id, current_revision, scope, day, request_id } = job.data;
+      const { plan_id, household_id, week_of, week_id, current_revision, scope, day, request_id, slot_scope } = job.data;
+
+      // Story 3.23 — when slot_scope is set, push a high-priority context
+      // line into planWeek() so the planner regenerates only the target slot
+      // and leaves the others intact. The allergy guardrail still evaluates
+      // the full output bag-wide; slot_scope governs regen, not safety.
+      let slotScopeContext: string | undefined;
+      if (slot_scope !== undefined) {
+        const slotLabel = slot_scope.charAt(0).toUpperCase() + slot_scope.slice(1);
+        slotScopeContext =
+          `SLOT-SCOPED REGENERATION: Regenerate ONLY the ${slotLabel} slot items. ` +
+          `Keep ALL other slot items (Main/Snack/Extra as applicable) identical to the previous plan.`;
+      }
 
       fastify.log.info(
         {
@@ -131,6 +158,7 @@ const planRegenerationPlugin: FastifyPluginAsync = async (fastify) => {
         extraRules,
         extraLibraryItems,
         extraProposals,
+        slotScopeContext,
       );
 
       // For day-scope: filter the output to only include items for the target day.
@@ -213,6 +241,30 @@ const planRegenerationPlugin: FastifyPluginAsync = async (fastify) => {
           // "first generation attempt" context line when no blocked verdicts exist.
           const rejectionContext = conflictLines.length > 0 ? conflictLines.join('; ') : undefined;
 
+          // Story 3.24 — propagate compound-uncertain flagged items through the
+          // dedicated uncertainContext channel so the planner picks single-
+          // ingredient replacements on retry.
+          const compoundFlagged = rejections.flatMap((r) =>
+            r.verdict === 'uncertain' && r.reason === 'compound_ingredient_unverified'
+              ? r.flagged_items ?? []
+              : [],
+          );
+          // Story 3.24 (patch) — slot-scoped regen: only surface compound flags for
+          // the slot being regenerated. Flags in preserved slots cannot be addressed
+          // in this pass and would produce conflicting LLM instructions.
+          const addressableCompound = slot_scope !== undefined
+            ? compoundFlagged.filter((f) => f.slot === slot_scope)
+            : compoundFlagged;
+          const uncertainContext = (() => {
+            if (addressableCompound.length === 0) return undefined;
+            const seen = new Set<string>();
+            const slots = addressableCompound
+              .map((f) => `${f.child_id}|${f.day}|${f.slot}`)
+              .filter((s) => { const fresh = !seen.has(s); seen.add(s); return fresh; })
+              .join(', ');
+            return `ALLERGEN-UNCERTAIN: Replace the following items — use only single-ingredient items of unambiguous provenance (no sauces, spice blends, pastes, or compound products): ${slots}`;
+          })();
+
           const retryOutput = await fastify.orchestrator.planWeek(
             household_id,
             week_of,
@@ -224,6 +276,8 @@ const planRegenerationPlugin: FastifyPluginAsync = async (fastify) => {
             extraRules,
             extraLibraryItems,
             extraProposals,
+            slotScopeContext,
+            uncertainContext,
           );
 
           const filteredRetry =

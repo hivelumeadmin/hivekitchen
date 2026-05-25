@@ -1,6 +1,7 @@
 import type { FastifyBaseLogger } from 'fastify';
 import type {
   CommitPlanInput,
+  FlaggedCompoundItem,
   GuardrailResult,
   PlanComposeOutput,
   PlanItemWrite,
@@ -47,28 +48,81 @@ export async function trySurgicalSwap(opts: {
     r.verdict === 'blocked' ? r.conflicts : [],
   );
 
-  if (blockedConflicts.length === 0) {
-    // Only 'uncertain' verdicts — swap can't help (no specific allergen +
-    // ingredient pair to substitute). Fall through to caller's full-regen
-    // path so the planner gets to re-attempt with the uncertainty context.
+  // Story 3.24 — compound-uncertain rejections expose (child_id, day, slot,
+  // ingredient) tuples whose allergen provenance the engine can't verify.
+  // These are recoverable via substitution: we feed them to the swap agent
+  // alongside blocked conflicts and ask it to replace each flagged slot with
+  // a single-ingredient item of unambiguous provenance.
+  const compoundFlagged: FlaggedCompoundItem[] = opts.rejections.flatMap((r) =>
+    r.verdict === 'uncertain' && r.reason === 'compound_ingredient_unverified'
+      ? r.flagged_items ?? []
+      : [],
+  );
+
+  if (blockedConflicts.length === 0 && compoundFlagged.length === 0) {
+    // Only infrastructure-uncertain verdicts (or no rejections at all) — swap
+    // can't help. Fall through to caller's full-regen path.
     return null;
   }
 
-  // Dedup blocked keys — a single item can block on multiple allergens.
-  const blockedKeys = new Set<SlotKey>(
-    blockedConflicts.map((c) => makeKey(c.child_id, c.day, c.slot)),
-  );
+  // Dedup blocked keys — a single item can block on multiple allergens or
+  // be flagged for compound uncertainty.
+  const blockedKeys = new Set<SlotKey>([
+    ...blockedConflicts.map((c) => makeKey(c.child_id, c.day, c.slot)),
+    ...compoundFlagged.map((f) => makeKey(f.child_id, f.day, f.slot)),
+  ]);
 
-  const blockedItems = buildBlockedItems(opts.previousCommit, blockedConflicts);
+  // Synthesize conflict entries for compound-flagged slots so buildBlockedItems
+  // can resolve them against previousCommit.items. allergen='unknown_compound'
+  // is a sentinel — the swap prompt phrasing only signals "compound product;
+  // replace with single-ingredient items," so the allergen field is advisory.
+  const allConflictsForSwap: Array<{
+    child_id: string;
+    day: string;
+    slot: string;
+    allergen: string;
+    ingredient: string;
+  }> = [
+    ...blockedConflicts,
+    ...compoundFlagged.map((f) => ({
+      child_id: f.child_id,
+      day: f.day,
+      slot: f.slot,
+      allergen: 'unknown_compound',
+      ingredient: f.ingredient,
+    })),
+  ];
+
+  const blockedItems = buildBlockedItems(opts.previousCommit, allConflictsForSwap);
   if (blockedItems.length === 0) {
     // Rejections referenced (child_id, day, slot) tuples that don't exist
     // in previousCommit.items — bug in the caller or stale data. Refuse
     // the swap rather than send the agent garbage context.
     opts.logger.warn(
-      { rejections: blockedConflicts.length, commitItems: opts.previousCommit.items.length },
+      {
+        rejections: allConflictsForSwap.length,
+        commitItems: opts.previousCommit.items.length,
+      },
       'trySurgicalSwap: no blocked items matched commitInput — falling back',
     );
     return null;
+  }
+
+  // Story 3.24 — assemble an uncertainty-context line for the swap agent
+  // when compound-flagged items are present. Listing the (child|day|slot)
+  // tuples mirrors the "blocked items" framing the swap prompt already
+  // handles, without requiring a separate prompt template.
+  let uncertainContext: string | undefined;
+  if (compoundFlagged.length > 0) {
+    const seen = new Set<string>();
+    const slots = compoundFlagged
+      .map((f) => `${f.child_id}|${f.day}|${f.slot}`)
+      .filter((s) => { const fresh = !seen.has(s); seen.add(s); return fresh; })
+      .join(', ');
+    uncertainContext =
+      `ALLERGEN-UNCERTAIN: Replace the following items — use only single-ingredient ` +
+      `items of unambiguous provenance (no sauces, spice blends, pastes, or compound ` +
+      `products): ${slots}`;
   }
 
   let swap: PlanComposeOutput;
@@ -78,6 +132,7 @@ export async function trySurgicalSwap(opts: {
       weekOf: opts.weekOf,
       requestId: opts.requestId,
       blockedItems,
+      ...(uncertainContext !== undefined ? { uncertainContext } : {}),
     });
   } catch (err) {
     opts.logger.warn(

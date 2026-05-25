@@ -161,7 +161,7 @@ describe('trySurgicalSwap', () => {
       rejections: [
         blocked(
           { child_id: CHILD_ID_A, day: 'monday', slot: 'main', allergen: 'peanut', ingredient: 'peanut butter' },
-          { child_id: CHILD_ID_A, day: 'tuesday', slot: 'main', allergen: 'milk', ingredient: 'milk' },
+          { child_id: CHILD_ID_A, day: 'tuesday', slot: 'main', allergen: 'dairy', ingredient: 'milk' },
         ),
       ],
       weekOf: '2026-05-18',
@@ -259,6 +259,173 @@ describe('trySurgicalSwap', () => {
     expect(childB?.ingredients).toEqual(['pasta', 'tomato']);
   });
 
+  // -------------------- Story 3.24 — compound-uncertain swap path --------------------
+
+  function compoundUncertain(
+    ...flagged: Array<{ child_id: string; day: string; slot: string; ingredient: string }>
+  ): GuardrailResult {
+    return {
+      verdict: 'uncertain',
+      conflicts: [],
+      reason: 'compound_ingredient_unverified',
+      flagged_items: flagged,
+    };
+  }
+
+  it('attempts swap for compound-uncertain rejections (does NOT early-return null)', async () => {
+    const orchestrator = buildOrchestrator(
+      buildSwapOutput([
+        {
+          day: 'tuesday',
+          items: [
+            { child_id: CHILD_ID_A, slot: 'main', ingredients: ['rice', 'broccoli'] },
+          ],
+        },
+      ]),
+    );
+    const commit = buildCommit([
+      { child_id: CHILD_ID_A, day: 'tuesday', slot: 'main', ingredients: ['rice', 'garam masala'] },
+    ]);
+    const result = await trySurgicalSwap({
+      orchestrator,
+      previousCommit: commit,
+      rejections: [
+        compoundUncertain({
+          child_id: CHILD_ID_A,
+          day: 'tuesday',
+          slot: 'main',
+          ingredient: 'garam masala',
+        }),
+      ],
+      weekOf: '2026-05-18',
+      requestId: 'req-1',
+      logger: buildLogger(),
+    });
+
+    expect(result).not.toBeNull();
+    expect(orchestrator.swapBlockedItems).toHaveBeenCalledTimes(1);
+    expect(result?.items[0]?.ingredients).toEqual(['rice', 'broccoli']);
+  });
+
+  it('passes uncertainContext containing ALLERGEN-UNCERTAIN to the swap agent', async () => {
+    const orchestrator = buildOrchestrator(
+      buildSwapOutput([
+        {
+          day: 'tuesday',
+          items: [
+            { child_id: CHILD_ID_A, slot: 'main', ingredients: ['rice'] },
+          ],
+        },
+      ]),
+    );
+    const commit = buildCommit([
+      { child_id: CHILD_ID_A, day: 'tuesday', slot: 'main', ingredients: ['curry paste', 'rice'] },
+    ]);
+    await trySurgicalSwap({
+      orchestrator,
+      previousCommit: commit,
+      rejections: [
+        compoundUncertain({
+          child_id: CHILD_ID_A,
+          day: 'tuesday',
+          slot: 'main',
+          ingredient: 'curry paste',
+        }),
+      ],
+      weekOf: '2026-05-18',
+      requestId: 'req-1',
+      logger: buildLogger(),
+    });
+
+    const callArg = orchestrator.swapBlockedItems.mock.calls[0]?.[0] as {
+      uncertainContext?: string;
+    };
+    expect(callArg.uncertainContext).toBeDefined();
+    expect(callArg.uncertainContext).toContain('ALLERGEN-UNCERTAIN');
+    expect(callArg.uncertainContext).toContain('tuesday');
+  });
+
+  it('returns null when only infrastructure-uncertain rejections exist (no flagged_items)', async () => {
+    const orchestrator = buildOrchestrator();
+    const commit = buildCommit([
+      { child_id: CHILD_ID_A, day: 'monday', slot: 'main', ingredients: ['rice'] },
+    ]);
+    const result = await trySurgicalSwap({
+      orchestrator,
+      previousCommit: commit,
+      rejections: [
+        { verdict: 'uncertain', conflicts: [], reason: 'falcpa_baseline_missing' },
+      ],
+      weekOf: '2026-05-18',
+      requestId: 'req-1',
+      logger: buildLogger(),
+    });
+    expect(result).toBeNull();
+    expect(orchestrator.swapBlockedItems).not.toHaveBeenCalled();
+  });
+
+  it('returns null for infrastructure-uncertain reason: no_rules_loaded', async () => {
+    const orchestrator = buildOrchestrator();
+    const commit = buildCommit([
+      { child_id: CHILD_ID_A, day: 'monday', slot: 'main', ingredients: ['rice'] },
+    ]);
+    const result = await trySurgicalSwap({
+      orchestrator,
+      previousCommit: commit,
+      rejections: [
+        { verdict: 'uncertain', conflicts: [], reason: 'no_rules_loaded' },
+      ],
+      weekOf: '2026-05-18',
+      requestId: 'req-1',
+      logger: buildLogger(),
+    });
+    expect(result).toBeNull();
+    expect(orchestrator.swapBlockedItems).not.toHaveBeenCalled();
+  });
+
+  it('merges blocked + compound-uncertain into a single swap request', async () => {
+    const orchestrator = buildOrchestrator(
+      buildSwapOutput([
+        {
+          day: 'monday',
+          items: [
+            { child_id: CHILD_ID_A, slot: 'main', ingredients: ['sunflower seed butter', 'bread'] },
+          ],
+        },
+        {
+          day: 'tuesday',
+          items: [
+            { child_id: CHILD_ID_A, slot: 'main', ingredients: ['rice', 'broccoli'] },
+          ],
+        },
+      ]),
+    );
+    const commit = buildCommit([
+      { child_id: CHILD_ID_A, day: 'monday',  slot: 'main', ingredients: ['peanut butter', 'bread'] },
+      { child_id: CHILD_ID_A, day: 'tuesday', slot: 'main', ingredients: ['rice', 'garam masala'] },
+    ]);
+    const result = await trySurgicalSwap({
+      orchestrator,
+      previousCommit: commit,
+      rejections: [
+        blocked({ child_id: CHILD_ID_A, day: 'monday', slot: 'main', allergen: 'peanut', ingredient: 'peanut butter' }),
+        compoundUncertain({ child_id: CHILD_ID_A, day: 'tuesday', slot: 'main', ingredient: 'garam masala' }),
+      ],
+      weekOf: '2026-05-18',
+      requestId: 'req-1',
+      logger: buildLogger(),
+    });
+    expect(result).not.toBeNull();
+    expect(result?.items).toHaveLength(2);
+    expect(orchestrator.swapBlockedItems).toHaveBeenCalledTimes(1);
+    const callArg = orchestrator.swapBlockedItems.mock.calls[0]?.[0] as {
+      blockedItems: Array<{ child_id: string; day: string; slot: string }>;
+      uncertainContext?: string;
+    };
+    expect(callArg.blockedItems).toHaveLength(2);
+    expect(callArg.uncertainContext).toBeDefined();
+  });
+
   it('passes the agent the original ingredients + aggregated blocked_by reasons', async () => {
     const orchestrator = buildOrchestrator(
       buildSwapOutput([
@@ -281,7 +448,7 @@ describe('trySurgicalSwap', () => {
         // BlockedItem with blocked_by length 2.
         blocked(
           { child_id: CHILD_ID_A, day: 'monday', slot: 'main', allergen: 'peanut', ingredient: 'peanut butter' },
-          { child_id: CHILD_ID_A, day: 'monday', slot: 'main', allergen: 'milk',   ingredient: 'milk' },
+          { child_id: CHILD_ID_A, day: 'monday', slot: 'main', allergen: 'dairy',  ingredient: 'milk' },
         ),
       ],
       weekOf: '2026-05-18',
@@ -296,6 +463,6 @@ describe('trySurgicalSwap', () => {
     expect(callArg.blockedItems[0]?.original_ingredients).toEqual([
       'peanut butter', 'milk', 'bread',
     ]);
-    expect(callArg.blockedItems[0]?.blocked_by.map((r) => r.allergen).sort()).toEqual(['milk', 'peanut']);
+    expect(callArg.blockedItems[0]?.blocked_by.map((r) => r.allergen).sort()).toEqual(['dairy', 'peanut']);
   });
 });

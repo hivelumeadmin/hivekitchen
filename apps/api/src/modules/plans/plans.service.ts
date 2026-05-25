@@ -238,6 +238,16 @@ export class PlansService {
                 stage: 'guardrail_rejection',
                 attempt: i + 1,
                 conflicts: r.verdict === 'blocked' ? r.conflicts : [],
+                // Story 3.24 — compound-uncertain rejections carry flagged_items
+                // (not allergen+ingredient conflicts). Preserve them in the audit
+                // trail so post-hoc analysis can reconstruct which compounds
+                // triggered each retry.
+                ...(r.verdict === 'uncertain' && r.reason === 'compound_ingredient_unverified'
+                  ? {
+                      reason: r.reason,
+                      flagged_items: r.flagged_items ?? [],
+                    }
+                  : {}),
               })),
               {
                 stage: 'guardrail_verdict',
@@ -261,16 +271,37 @@ export class PlansService {
       }
 
       if (result.verdict === 'uncertain') {
-        // Infrastructure failure (e.g. empty_ingredients, no_rules_loaded) — not a
-        // safety conflict. Regeneration cannot fix this; exit immediately.
-        throw new GuardrailRejectionError(planId, attempt);
+        // Story 3.24 — compound-uncertain is recoverable via substitution; falls
+        // through to the same retry path as 'blocked'. Infrastructure-uncertain
+        // (empty_ingredients, no_rules_loaded, falcpa_baseline_missing, decrypt
+        // failure, …) cannot be repaired by regeneration — exit immediately.
+        // Guard: compound reason with no flagged_items is a vacuous result — treat
+        // as infrastructure failure (engine invariant violated; regeneration won't help).
+        if (
+          result.reason !== 'compound_ingredient_unverified' ||
+          !(result.flagged_items?.length)
+        ) {
+          throw new GuardrailRejectionError(planId, attempt);
+        }
       }
 
       rejections.push(result);
-      this.logger.warn(
-        { plan_id: planId, attempt, verdict: result.verdict },
-        'guardrail blocked plan — attempting regeneration',
-      );
+      if (result.verdict === 'uncertain') {
+        this.logger.warn(
+          {
+            plan_id: planId,
+            attempt,
+            reason: result.reason,
+            flagged_count: result.flagged_items?.length ?? 0,
+          },
+          'compound-uncertain ingredients flagged — attempting substitution via regenerate',
+        );
+      } else {
+        this.logger.warn(
+          { plan_id: planId, attempt, verdict: result.verdict },
+          'guardrail blocked plan — attempting regeneration',
+        );
+      }
 
       if (attempt < MAX_GUARDRAIL_RETRIES) {
         try {
