@@ -17,11 +17,14 @@ import { ChildrenService } from '../children/children.service.js';
 import { CulturalPriorRepository } from '../cultural-priors/cultural-prior.repository.js';
 import { CulturalPriorService } from '../cultural-priors/cultural-prior.service.js';
 import { DietaryPreferencesRepository } from '../dietary-preferences/dietary-preferences.repository.js';
-import { FavoriteLunchesRepository } from '../favorite-lunches/favorite-lunches.repository.js';
 import { FoodPreferencesRepository } from '../food-preferences/food-preferences.repository.js';
+import { RecipesRepository } from '../recipe/recipes.repository.js';
 import { HouseholdRulesRepository } from '../household-rules/household-rules.repository.js';
 import { HouseholdsRepository } from '../households/households.repository.js';
 import { HouseholdsService } from '../households/households.service.js';
+import { AllergyGuardrailRepository } from '../allergy-guardrail/allergy-guardrail.repository.js';
+import { CuratedBaselineRepository } from '../catalog/curated-baseline.repository.js';
+import { CuratedBaselineMaterializationService } from '../catalog/curated-baseline.service.js';
 import { AuditRepository } from '../../audit/audit.repository.js';
 import { AuditService } from '../../audit/audit.service.js';
 import { OnboardingMomentRepository } from './onboarding-moment.repository.js';
@@ -46,7 +49,16 @@ const onboardingRoutesPlugin: FastifyPluginAsync = async (fastify) => {
   // plugin to eliminate the duplication; out of scope for slice C.
   const kekHex = fastify.env.ENVELOPE_ENCRYPTION_MASTER_KEY;
   const kek = kekHex ? Buffer.from(kekHex, 'hex') : null;
-  const childrenRepository = new ChildrenRepository(fastify.supabase, kek, fastify.log);
+  // Slice 2.6-s8 — ChildrenRepository depends on ChildAllergensRepository for
+  // declared_allergens reads + writes. Construct child-allergens first so the
+  // 2.5-s6 declare path AND the children-routes path share the same instance.
+  const childAllergensRepository = new ChildAllergensRepository(fastify.supabase, kek);
+  const childrenRepository = new ChildrenRepository(
+    fastify.supabase,
+    kek,
+    fastify.log,
+    childAllergensRepository,
+  );
   const childrenService = new ChildrenService(childrenRepository);
 
   // Slice 2-s27 — household-level food-identity service for the new
@@ -66,7 +78,7 @@ const onboardingRoutesPlugin: FastifyPluginAsync = async (fastify) => {
 
   // Slice 2.5-s6 — structured allergen + dietary repositories for the wired
   // allergen.declare / dietary.declare onboarding tools (Moment 2).
-  const childAllergensRepository = new ChildAllergensRepository(fastify.supabase, kek);
+  // childAllergensRepository is constructed above (shared with childrenRepository).
   const dietaryPreferencesRepository = new DietaryPreferencesRepository(fastify.supabase);
 
   // Slice 2.5-s7 — food-preferences + household-rules repositories for the
@@ -74,9 +86,22 @@ const onboardingRoutesPlugin: FastifyPluginAsync = async (fastify) => {
   const foodPreferencesRepository = new FoodPreferencesRepository(fastify.supabase, kek);
   const householdRulesRepository = new HouseholdRulesRepository(fastify.supabase, kek);
 
-  // Slice 2.5-s9 — favorite-lunches repository for the wired
-  // favorite_lunch.add onboarding tool (Moment 5 — cold-start seed, FR124).
-  const favoriteLunchesRepository = new FavoriteLunchesRepository(fastify.supabase, kek);
+  // Slice 2.6-s1 — recipes repository powers favorite_lunch.add (Moment 5 —
+  // cold-start seed, FR124). The 2.5-s9 favorite_lunches table is dropped;
+  // the new M5 hot path is RecipesRepository.declareForHousehold().
+  const recipesRepository = new RecipesRepository(fastify.supabase);
+
+  // Slice 2.6-s2 — Stage 0 catalog re-materialization wired into
+  // OnboardingService so M3 exit triggers a fire-and-forget rematerialize().
+  // Same KEK is shared with the existing childAllergens / household /
+  // child-rules wires above.
+  const curatedBaseline = new CuratedBaselineMaterializationService({
+    curatedBaselineRepo: new CuratedBaselineRepository(fastify.supabase),
+    recipesRepo: recipesRepository,
+    householdsRepo: householdsRepository,
+    guardrailRepo: new AllergyGuardrailRepository(fastify.supabase, kek),
+    logger: fastify.log,
+  });
 
   const service = new OnboardingService({
     threads,
@@ -95,7 +120,8 @@ const onboardingRoutesPlugin: FastifyPluginAsync = async (fastify) => {
     dietaryPreferencesRepository,
     foodPreferencesRepository,
     householdRulesRepository,
-    favoriteLunchesRepository,
+    recipesRepository,
+    curatedBaseline,
   });
 
   // Slice 2-S26 — fire-and-forget audit writer for resume / reset events.

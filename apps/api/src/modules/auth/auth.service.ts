@@ -1,7 +1,9 @@
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { JWT } from '@fastify/jwt';
+import type { FastifyBaseLogger } from 'fastify';
 import { LinkExpiredError, UnauthorizedError } from '../../common/errors.js';
+import type { CuratedBaselineMaterializationService } from '../catalog/curated-baseline.service.js';
 import type { AuthRepository, UserRow } from './auth.repository.js';
 
 const REFRESH_TOKEN_TTL_SECONDS = 30 * 24 * 60 * 60;
@@ -39,6 +41,11 @@ export class AuthService {
     private readonly repository: AuthRepository,
     private readonly supabase: SupabaseClient,
     private readonly jwt: JWT,
+    // Slice 2.6-s2 — Stage 0 catalog materialization trigger. Optional so
+    // existing tests that construct AuthService without the catalog wiring
+    // still work; production composition in auth.routes.ts always provides it.
+    private readonly curatedBaseline: CuratedBaselineMaterializationService | null = null,
+    private readonly logger: FastifyBaseLogger | null = null,
   ) {}
 
   async loginWithPassword(input: { email: string; password: string }): Promise<LoginResult> {
@@ -166,6 +173,23 @@ export class AuthService {
         email: input.email,
         display_name: input.display_name,
       });
+
+      // Slice 2.6-s2 — Stage 0 catalog materialization (Trigger 1: household
+      // creation). Fire-and-forget; never blocks login. The service is
+      // idempotent (households.stage0_materialized_at gate) so a duplicate
+      // call across a race is safe. NOTE: household creation actually lives
+      // here in AuthService rather than HouseholdsService — the story's
+      // suggested wire point (households.service.ts) has no create method.
+      if (this.curatedBaseline !== null && user.current_household_id !== null) {
+        const householdId = user.current_household_id;
+        const log = this.logger;
+        void this.curatedBaseline.materialize(householdId).catch((err: unknown) => {
+          log?.error(
+            { module: 'auth', action: 'stage0.materialize_kickoff_failed', household_id: householdId, err },
+            'stage 0 materialize promise rejected',
+          );
+        });
+      }
     }
 
     if (!user.current_household_id) {

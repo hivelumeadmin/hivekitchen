@@ -10,10 +10,11 @@ import type { ChildrenService } from '../children/children.service.js';
 import type { CulturalPriorRepository } from '../cultural-priors/cultural-prior.repository.js';
 import type { CulturalPriorService } from '../cultural-priors/cultural-prior.service.js';
 import type { DietaryPreferencesRepository } from '../dietary-preferences/dietary-preferences.repository.js';
-import type { FavoriteLunchesRepository } from '../favorite-lunches/favorite-lunches.repository.js';
 import type { FoodPreferencesRepository } from '../food-preferences/food-preferences.repository.js';
+import type { RecipesRepository } from '../recipe/recipes.repository.js';
 import type { HouseholdRulesRepository } from '../household-rules/household-rules.repository.js';
 import type { HouseholdsService } from '../households/households.service.js';
+import type { CuratedBaselineMaterializationService } from '../catalog/curated-baseline.service.js';
 import type { KitchenMapService } from '../kitchen-map/kitchen-map.service.js';
 import type { MemoryService } from '../memory/memory.service.js';
 import type { VocabularyService } from '../vocabulary/vocabulary.service.js';
@@ -63,9 +64,15 @@ export interface OnboardingServiceDeps {
   // pattern as the 2.5-s6 deps above.
   foodPreferencesRepository?: FoodPreferencesRepository;
   householdRulesRepository?: HouseholdRulesRepository;
-  // Slice 2.5-s9 — household cold-start seed writer for favorite_lunch.add.
-  // Optional on the type for the same reason as the 2.5-s6/s7 deps above.
-  favoriteLunchesRepository?: FavoriteLunchesRepository;
+  // Slice 2.6-s1 — replaces favoriteLunchesRepository (2.5-s9). The M5 hot
+  // path now writes to the canonical recipes catalog via RecipesRepository
+  // .declareForHousehold(); the standalone favorite_lunches table is dropped
+  // by migration 20260908000200.
+  recipesRepository?: RecipesRepository;
+  // Slice 2.6-s2 — Stage 0 catalog re-materialization fires fire-and-forget
+  // when the parent advances out of m3_taste. Optional so legacy tests that
+  // don't wire the catalog still pass; production composition provides it.
+  curatedBaseline?: CuratedBaselineMaterializationService;
 }
 
 export interface SubmitTextTurnInput {
@@ -353,8 +360,10 @@ export class OnboardingService {
   // Slice 2.5-s7
   private readonly foodPreferencesRepository?: FoodPreferencesRepository;
   private readonly householdRulesRepository?: HouseholdRulesRepository;
-  // Slice 2.5-s9
-  private readonly favoriteLunchesRepository?: FavoriteLunchesRepository;
+  // Slice 2.6-s1 (replaces 2.5-s9 favoriteLunchesRepository)
+  private readonly recipesRepository?: RecipesRepository;
+  // Slice 2.6-s2 — Stage 0 catalog re-seed at M3 exit
+  private readonly curatedBaseline?: CuratedBaselineMaterializationService;
 
   constructor(deps: OnboardingServiceDeps) {
     this.threads = deps.threads;
@@ -373,7 +382,8 @@ export class OnboardingService {
     this.dietaryPreferencesRepository = deps.dietaryPreferencesRepository;
     this.foodPreferencesRepository = deps.foodPreferencesRepository;
     this.householdRulesRepository = deps.householdRulesRepository;
-    this.favoriteLunchesRepository = deps.favoriteLunchesRepository;
+    this.recipesRepository = deps.recipesRepository;
+    this.curatedBaseline = deps.curatedBaseline;
   }
 
   /**
@@ -393,7 +403,7 @@ export class OnboardingService {
       this.dietaryPreferencesRepository !== undefined &&
       this.foodPreferencesRepository !== undefined &&
       this.householdRulesRepository !== undefined &&
-      this.favoriteLunchesRepository !== undefined
+      this.recipesRepository !== undefined
     );
   }
 
@@ -583,7 +593,7 @@ export class OnboardingService {
         this.dietaryPreferencesRepository !== undefined &&
         this.foodPreferencesRepository !== undefined &&
         this.householdRulesRepository !== undefined &&
-        this.favoriteLunchesRepository !== undefined
+        this.recipesRepository !== undefined
       ) {
         const map = await this.kitchenMapService.get(input.householdId);
         const toolSpecs = createOnboardingToolSpecs(
@@ -598,7 +608,7 @@ export class OnboardingService {
             dietaryPreferencesRepository: this.dietaryPreferencesRepository,
             foodPreferencesRepository: this.foodPreferencesRepository,
             householdRulesRepository: this.householdRulesRepository,
-            favoriteLunchesRepository: this.favoriteLunchesRepository!,
+            recipesRepository: this.recipesRepository,
           },
         );
         const reply = await this.agent.respond(agentInput, {
@@ -777,6 +787,41 @@ export class OnboardingService {
           current_moment: nextCurrentMoment,
           required_set_status: requiredSetStatus,
         });
+
+        // Slice 2.6-s2 — Trigger 2: parent just advanced OUT of m3_taste.
+        // Fire-and-forget Stage 0 re-materialization with the cuisine tags
+        // derived from the cultural_priors written during M3. Cultural keys
+        // mixed into the array are harmless — the SQL `cuisine_tags &&`
+        // overlap filter naturally drops any key that isn't in the
+        // curated_baseline_items.cuisine_tags vocabulary.
+        if (
+          previousMoment === 'm3_taste' &&
+          nextCurrentMoment !== 'm3_taste' &&
+          this.curatedBaseline !== undefined &&
+          this.culturalPriorRepository !== undefined
+        ) {
+          const curatedBaseline = this.curatedBaseline;
+          const culturalPriorRepository = this.culturalPriorRepository;
+          const householdId = input.householdId;
+          const logger = this.logger;
+          void (async (): Promise<void> => {
+            try {
+              const priors = await culturalPriorRepository.findByHousehold(householdId);
+              const cuisineTags = priors.map((p) => p.key);
+              await curatedBaseline.rematerialize(householdId, cuisineTags);
+            } catch (err) {
+              logger.error(
+                {
+                  module: 'onboarding',
+                  action: 'stage0.rematerialize_kickoff_failed',
+                  household_id: householdId,
+                  err,
+                },
+                'stage 0 rematerialize promise rejected',
+              );
+            }
+          })();
+        }
 
         // Slice 2.5-s10 — surface required-set completion to the client.
         required_set_complete =

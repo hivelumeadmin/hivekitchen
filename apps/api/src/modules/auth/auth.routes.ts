@@ -12,6 +12,11 @@ import { AuthRepository } from './auth.repository.js';
 import { AuthService, type LoginResult } from './auth.service.js';
 import { AuditRepository } from '../../audit/audit.repository.js';
 import { AuditService } from '../../audit/audit.service.js';
+import { AllergyGuardrailRepository } from '../allergy-guardrail/allergy-guardrail.repository.js';
+import { CuratedBaselineRepository } from '../catalog/curated-baseline.repository.js';
+import { CuratedBaselineMaterializationService } from '../catalog/curated-baseline.service.js';
+import { HouseholdsRepository } from '../households/households.repository.js';
+import { RecipesRepository } from '../recipe/recipes.repository.js';
 
 type LoginBody = z.infer<typeof LoginRequestSchema>;
 type CallbackBody = z.infer<typeof OAuthCallbackRequestSchema>;
@@ -24,10 +29,27 @@ export const authRoutes: FastifyPluginAsync = async (fastify) => {
   // client. Routing them through a dedicated client keeps
   // fastify.supabase pinned to service-role for DB writes (see
   // supabase.plugin.ts header for the full rationale).
+  // Slice 2.6-s2 — Stage 0 catalog materialization wired into AuthService so
+  // first-login household creation triggers a fire-and-forget materialize().
+  // The KEK is needed because AllergyGuardrailRepository decrypts
+  // households.declared_allergens / children.declared_allergens when fetching
+  // rules for the guardrail engine.
+  const kekHex = fastify.env.ENVELOPE_ENCRYPTION_MASTER_KEY;
+  const kek = kekHex ? Buffer.from(kekHex, 'hex') : null;
+  const curatedBaseline = new CuratedBaselineMaterializationService({
+    curatedBaselineRepo: new CuratedBaselineRepository(fastify.supabase),
+    recipesRepo: new RecipesRepository(fastify.supabase),
+    householdsRepo: new HouseholdsRepository(fastify.supabase, kek),
+    guardrailRepo: new AllergyGuardrailRepository(fastify.supabase, kek),
+    logger: fastify.log,
+  });
+
   const service = new AuthService(
     new AuthRepository(fastify.supabase),
     fastify.supabaseAuth,
     fastify.jwt,
+    curatedBaseline,
+    fastify.log,
   );
   const auditService = new AuditService(new AuditRepository(fastify.supabase));
 

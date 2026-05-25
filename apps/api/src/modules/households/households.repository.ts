@@ -109,6 +109,30 @@ export class HouseholdsRepository extends BaseRepository {
     return Date.now() - new Date(row.created_at).getTime();
   }
 
+  // Slice 2.6-s2 — Stage 0 catalog materialization idempotency gate.
+  // NULL = initial materialization has not yet run for this household; a
+  // non-null timestamp means CuratedBaselineMaterializationService.materialize
+  // has already populated the catalog and another call must be a no-op.
+  async getStage0MaterializedAt(householdId: string): Promise<string | null> {
+    const { data, error } = await this.client
+      .from('households')
+      .select('stage0_materialized_at')
+      .eq('id', householdId)
+      .maybeSingle();
+    if (error) throw error;
+    const row = data as { stage0_materialized_at: string | null } | null;
+    if (row === null) return null;
+    return row.stage0_materialized_at;
+  }
+
+  async setStage0MaterializedAt(householdId: string): Promise<void> {
+    const { error } = await this.client
+      .from('households')
+      .update({ stage0_materialized_at: new Date().toISOString() })
+      .eq('id', householdId);
+    if (error) throw error;
+  }
+
   // ---- Slice 2-s27 — household-level food identity ------------------------
   //
   // Three encrypted columns added by migration 20260902000000:
