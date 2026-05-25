@@ -1,5 +1,11 @@
 import { describe, it, expect } from 'vitest';
-import { evaluate, evaluateSnackSku, type AllergyRule } from './allergy-rules.engine.js';
+import {
+  COMPOUND_SUSPECT_TOKENS,
+  evaluate,
+  evaluateSnackSku,
+  isSuspectCompound,
+  type AllergyRule,
+} from './allergy-rules.engine.js';
 import type { PlanItemForGuardrail, SnackSku } from '@hivekitchen/types';
 
 const HOUSEHOLD_ID = '11111111-1111-4111-8111-111111111111';
@@ -27,10 +33,10 @@ function item(overrides: Partial<PlanItemForGuardrail> = {}): PlanItemForGuardra
 }
 
 const FALCPA_BASELINE: AllergyRule[] = [
-  rule({ allergen: 'peanuts' }),
-  rule({ allergen: 'tree_nuts' }),
-  rule({ allergen: 'milk' }),
-  rule({ allergen: 'eggs' }),
+  rule({ allergen: 'peanut' }),
+  rule({ allergen: 'tree_nut' }),
+  rule({ allergen: 'dairy' }),
+  rule({ allergen: 'egg' }),
   rule({ allergen: 'wheat' }),
   rule({ allergen: 'soy' }),
   rule({ allergen: 'fish' }),
@@ -58,7 +64,7 @@ describe('allergy-rules.engine.evaluate', () => {
       expect(result.conflicts).toEqual([
         {
           child_id: CHILD_A,
-          allergen: 'peanuts',
+          allergen: 'peanut',
           ingredient: 'crushed peanuts',
           slot: 'main',
           day: 'monday',
@@ -88,7 +94,7 @@ describe('allergy-rules.engine.evaluate', () => {
     if (result.verdict === 'blocked') {
       expect(result.conflicts).toHaveLength(2);
       const allergens = result.conflicts.map((c) => c.allergen).sort();
-      expect(allergens).toEqual(['fish', 'peanuts']);
+      expect(allergens).toEqual(['fish', 'peanut']);
     }
   });
 
@@ -116,7 +122,7 @@ describe('allergy-rules.engine.evaluate', () => {
     }
   });
 
-  it('matching is case-insensitive ("Peanuts" in ingredient matches "peanuts" rule)', () => {
+  it('matching is case-insensitive ("Peanuts" in ingredient matches "peanut" rule)', () => {
     const items = [item({ ingredients: ['Roasted Peanuts'] })];
     const result = evaluate(items, FALCPA_BASELINE);
     expect(result.verdict).toBe('blocked');
@@ -136,12 +142,12 @@ describe('allergy-rules.engine.evaluate', () => {
 
   // -------------------- D1: FALCPA synonym/alias matching (P15) --------------------
 
-  it('FALCPA "tree_nuts" rule blocks "almonds" (synonym match)', () => {
+  it('FALCPA "tree_nut" rule blocks "almonds" (synonym match)', () => {
     const items = [item({ ingredients: ['almonds'] })];
     const result = evaluate(items, FALCPA_BASELINE);
     expect(result.verdict).toBe('blocked');
     if (result.verdict === 'blocked') {
-      expect(result.conflicts[0].allergen).toBe('tree_nuts');
+      expect(result.conflicts[0].allergen).toBe('tree_nut');
       expect(result.conflicts[0].ingredient).toBe('almonds');
     }
   });
@@ -160,7 +166,7 @@ describe('allergy-rules.engine.evaluate', () => {
     const result = evaluate(items, FALCPA_BASELINE);
     expect(result.verdict).toBe('blocked');
     if (result.verdict === 'blocked') {
-      expect(result.conflicts.some((c) => c.allergen === 'milk')).toBe(true);
+      expect(result.conflicts.some((c) => c.allergen === 'dairy')).toBe(true);
     }
   });
 
@@ -194,7 +200,7 @@ describe('allergy-rules.engine.evaluate', () => {
     expect(result.verdict).toBe('blocked');
   });
 
-  it('FALCPA "peanuts" rule blocks "groundnut paste" (synonym match)', () => {
+  it('FALCPA "peanut" rule blocks "groundnut paste" (synonym match)', () => {
     const items = [item({ ingredients: ['groundnut paste'] })];
     const result = evaluate(items, FALCPA_BASELINE);
     expect(result.verdict).toBe('blocked');
@@ -298,6 +304,172 @@ describe('allergy-rules.engine.evaluate', () => {
     const items = [item({ ingredients: ['ピーナッツバター'] })];
     const result = evaluate(items, rules);
     expect(result.verdict).toBe('blocked');
+  });
+
+  // Story 3.23 — bag-wide allergy invariant (FR113). The engine never reads
+  // school_policies; `school_policies.slot_scope` governs which slot the
+  // planner regenerates, NOT which slots the guardrail evaluates. A peanut in
+  // the Snack slot is still blocked even when the school's "no peanut" policy
+  // is scoped to Main only.
+  it('blocks peanut in snack slot even when school policy scope is main-only', () => {
+    const rules: AllergyRule[] = [
+      ...FALCPA_BASELINE,
+      rule({ allergen: 'peanut', child_id: CHILD_A, rule_type: 'parent_declared' }),
+    ];
+    const items = [
+      item({ child_id: CHILD_A, day: 'monday', slot: 'snack', ingredients: ['peanut butter'] }),
+    ];
+    expect(evaluate(items, rules).verdict).toBe('blocked');
+  });
+
+  // -------------------- Story 3.24 — FALCPA synonym extensions --------------------
+
+  it('FALCPA "fish" rule blocks "worcestershire" (3.24 synonym, anchovy-based)', () => {
+    // Use the bare token rather than "worcestershire sauce" — the latter also
+    // matches "soy" via the "sauce" token (engine is intentionally over-strict;
+    // "soy sauce" is already a known synonym). The 3.24 addition is the
+    // worcestershire → fish path specifically.
+    const items = [item({ ingredients: ['worcestershire'] })];
+    const result = evaluate(items, FALCPA_BASELINE);
+    expect(result.verdict).toBe('blocked');
+    if (result.verdict === 'blocked') {
+      expect(result.conflicts.some((c) => c.allergen === 'fish')).toBe(true);
+    }
+  });
+
+  it('FALCPA "sesame" rule blocks "za\'atar" (3.24 synonym)', () => {
+    const items = [item({ ingredients: ["za'atar"] })];
+    const result = evaluate(items, FALCPA_BASELINE);
+    expect(result.verdict).toBe('blocked');
+    if (result.verdict === 'blocked') {
+      expect(result.conflicts[0].allergen).toBe('sesame');
+    }
+  });
+
+  it('FALCPA "sesame" rule blocks "zaatar" (3.24 synonym, unaccented)', () => {
+    const items = [item({ ingredients: ['zaatar blend'] })];
+    const result = evaluate(items, FALCPA_BASELINE);
+    expect(result.verdict).toBe('blocked');
+  });
+
+  // -------------------- Story 3.24 — compound detection --------------------
+
+  it('isSuspectCompound returns true for "garam masala"', () => {
+    expect(isSuspectCompound('garam masala')).toBe(true);
+  });
+
+  it('isSuspectCompound returns true for "ranch dressing"', () => {
+    expect(isSuspectCompound('ranch dressing')).toBe(true);
+  });
+
+  it('isSuspectCompound returns true for "spice blend"', () => {
+    expect(isSuspectCompound('spice blend')).toBe(true);
+  });
+
+  it('isSuspectCompound returns false for "blended" (false-positive guard on " blend" with leading space)', () => {
+    expect(isSuspectCompound('blended smoothie')).toBe(false);
+  });
+
+  it('isSuspectCompound returns false for a plain ingredient like "chicken"', () => {
+    expect(isSuspectCompound('chicken')).toBe(false);
+  });
+
+  it('COMPOUND_SUSPECT_TOKENS covers the documented set', () => {
+    expect(COMPOUND_SUSPECT_TOKENS).toContain('masala');
+    expect(COMPOUND_SUSPECT_TOKENS).toContain('curry paste');
+    expect(COMPOUND_SUSPECT_TOKENS).toContain('chutney');
+  });
+
+  it('flags compound ingredient as uncertain when child has a parent_declared rule', () => {
+    const rules: AllergyRule[] = [
+      ...FALCPA_BASELINE,
+      rule({ allergen: 'cilantro', child_id: CHILD_A, rule_type: 'parent_declared' }),
+    ];
+    const items = [
+      item({ child_id: CHILD_A, day: 'tuesday', slot: 'main', ingredients: ['rice', 'garam masala', 'broccoli'] }),
+    ];
+    const result = evaluate(items, rules);
+    expect(result.verdict).toBe('uncertain');
+    if (result.verdict === 'uncertain') {
+      expect(result.reason).toBe('compound_ingredient_unverified');
+      expect(result.flagged_items).toBeDefined();
+      expect(result.flagged_items).toHaveLength(1);
+      expect(result.flagged_items?.[0]).toEqual({
+        child_id: CHILD_A,
+        ingredient: 'garam masala',
+        slot: 'main',
+        day: 'tuesday',
+      });
+    }
+  });
+
+  it('FALCPA-only child sees compound ingredient as cleared (no parent_declared scope)', () => {
+    const items = [
+      item({ child_id: CHILD_A, ingredients: ['rice', 'garam masala'] }),
+    ];
+    const result = evaluate(items, FALCPA_BASELINE);
+    expect(result.verdict).toBe('cleared');
+  });
+
+  it('blocked takes priority over compound: peanut + masala in same plan returns blocked', () => {
+    const rules: AllergyRule[] = [
+      ...FALCPA_BASELINE,
+      rule({ allergen: 'cilantro', child_id: CHILD_A, rule_type: 'parent_declared' }),
+    ];
+    const items = [
+      item({ child_id: CHILD_A, day: 'monday', slot: 'main', ingredients: ['crushed peanuts'] }),
+      item({ child_id: CHILD_A, day: 'tuesday', slot: 'main', ingredients: ['garam masala'] }),
+    ];
+    const result = evaluate(items, rules);
+    expect(result.verdict).toBe('blocked');
+    if (result.verdict === 'blocked') {
+      // Compound scan never runs because blocked short-circuits the cleared return.
+      expect(result.conflicts.some((c) => c.allergen === 'peanut')).toBe(true);
+    }
+  });
+
+  it('compound scan skips children without parent_declared rules even when parent_declared rule exists for another child', () => {
+    const rules: AllergyRule[] = [
+      ...FALCPA_BASELINE,
+      rule({ allergen: 'cilantro', child_id: CHILD_A, rule_type: 'parent_declared' }),
+    ];
+    const items = [
+      item({ child_id: CHILD_B, day: 'monday', slot: 'main', ingredients: ['garam masala'] }),
+    ];
+    const result = evaluate(items, rules);
+    expect(result.verdict).toBe('cleared');
+  });
+
+  it('deduplicates identical compound flags across iterations', () => {
+    const rules: AllergyRule[] = [
+      ...FALCPA_BASELINE,
+      rule({ allergen: 'cilantro', child_id: CHILD_A, rule_type: 'parent_declared' }),
+      rule({ allergen: 'mango', child_id: CHILD_A, rule_type: 'parent_declared' }),
+    ];
+    const items = [
+      item({ child_id: CHILD_A, day: 'monday', slot: 'main', ingredients: ['garam masala'] }),
+    ];
+    const result = evaluate(items, rules);
+    expect(result.verdict).toBe('uncertain');
+    if (result.verdict === 'uncertain') {
+      expect(result.flagged_items).toHaveLength(1);
+    }
+  });
+
+  it('flags multiple compound ingredients in the same plan (one entry per slot)', () => {
+    const rules: AllergyRule[] = [
+      ...FALCPA_BASELINE,
+      rule({ allergen: 'cilantro', child_id: CHILD_A, rule_type: 'parent_declared' }),
+    ];
+    const items = [
+      item({ child_id: CHILD_A, day: 'monday', slot: 'main', ingredients: ['garam masala'] }),
+      item({ child_id: CHILD_A, day: 'wednesday', slot: 'main', ingredients: ['ranch dressing'] }),
+    ];
+    const result = evaluate(items, rules);
+    expect(result.verdict).toBe('uncertain');
+    if (result.verdict === 'uncertain') {
+      expect(result.flagged_items).toHaveLength(2);
+    }
   });
 });
 

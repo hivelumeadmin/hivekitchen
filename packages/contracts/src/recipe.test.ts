@@ -272,6 +272,14 @@ describe('RecipeRowSchema / RecipeFetchOutputSchema', () => {
     expect(r.success).toBe(false);
   });
 
+  it('accepts catalog_seeded and parent_declared source values (slice 2.6-s1)', () => {
+    for (const source of ['catalog_seeded', 'parent_declared'] as const) {
+      const row: Record<string, unknown> = { ...makeRecipeRow(), source };
+      const r = RecipeRowSchema.safeParse(row);
+      expect(r.success).toBe(true);
+    }
+  });
+
   it('rejects empty applicable_slots', () => {
     const row: Record<string, unknown> = { ...makeRecipeRow(), applicable_slots: [] };
     const r = RecipeRowSchema.safeParse(row);

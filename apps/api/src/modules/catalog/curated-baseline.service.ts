@@ -1,5 +1,4 @@
 import type { FastifyBaseLogger } from 'fastify';
-import type { PlanItemForGuardrail } from '@hivekitchen/types';
 import {
   AllergyGuardrailRepository,
   AllergyGuardrailDecryptError,
@@ -10,6 +9,7 @@ import {
 } from '../allergy-guardrail/allergy-rules.engine.js';
 import type { HouseholdsRepository } from '../households/households.repository.js';
 import type { RecipesRepository } from '../recipe/recipes.repository.js';
+import { catalogItemToPlanItem } from './catalog-guardrail-helper.js';
 import type {
   CuratedBaselineItemRow,
   CuratedBaselineRepository,
@@ -229,7 +229,7 @@ export class CuratedBaselineMaterializationService {
     const survivors: CuratedBaselineItemRow[] = [];
     for (let i = 0; i < items.length; i++) {
       const item = items[i]!;
-      const planItem = baselineToPlanItem(item, householdId);
+      const planItem = catalogItemToPlanItem(item, householdId);
       const verdict = evaluateGuardrail([planItem], rules);
       if (verdict.verdict === 'cleared') {
         survivors.push(item);
@@ -305,29 +305,6 @@ export class CuratedBaselineMaterializationService {
   }
 }
 
-// PlanItemForGuardrail is the engine's input shape. For Stage 0, we feed
-// canonical_name as the SOLE ingredient string — the engine's substring +
-// synonym match against FALCPA categories then runs against the recipe
-// name. baseline items honor the broad-safe-seed invariant (no FALCPA
-// allergens in their authored content), so this is a belt-and-suspenders
-// check that catches accidental curator slip-ups.
-//
-// child_id is required to be a UUID by the schema. At household-creation
-// time no children exist; FALCPA rules carry child_id=null and apply to
-// any child UUID via ruleAppliesToChild's null-check. Passing householdId
-// satisfies the UUID constraint without inventing data; the engine never
-// dereferences this as a real child id.
-function baselineToPlanItem(
-  item: CuratedBaselineItemRow,
-  householdId: string,
-): PlanItemForGuardrail {
-  // Engine requires at least one ingredient string. canonical_name is
-  // trimmed to satisfy max(200) and min(1).
-  const slot = item.applicable_slots[0] ?? 'main';
-  return {
-    child_id: householdId,
-    day: 'stage0',
-    slot,
-    ingredients: [item.canonical_name.slice(0, 200)],
-  };
-}
+// Slice 2.6-s3 — the local baselineToPlanItem helper was extracted to
+// catalog-guardrail-helper.ts so Stage 1 (CatalogSeedService) can share it.
+// Stage 0 callers now use catalogItemToPlanItem from that module.

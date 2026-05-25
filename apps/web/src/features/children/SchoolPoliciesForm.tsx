@@ -19,6 +19,17 @@ const COMMON_POLICY_TYPES = [
   { type: 'vegetarian_only', label: 'Vegetarian only', helper: "No meat or fish" },
 ] as const;
 
+// Story 3.23 — per-policy slot scope. The school's "no peanuts" rule may only
+// apply to the Snack slot (e.g. nut-free snacks shared in class). The allergy
+// guardrail still evaluates bag-wide regardless — slot_scope only narrows
+// regeneration. Default 'bag_wide' preserves existing behaviour.
+const SLOT_SCOPE_OPTIONS: ReadonlyArray<{ value: SlotScope; label: string }> = [
+  { value: 'bag_wide', label: 'All slots' },
+  { value: 'main', label: 'Main only' },
+  { value: 'snack', label: 'Snack only' },
+  { value: 'extra', label: 'Extra only' },
+];
+
 // Story 3.16 — School-policy toggle list.
 // Activation triggers regeneration of cleared future plans (FR22); the parent
 // sees a quiet confirmation rather than a refresh prompt.
@@ -35,11 +46,11 @@ export function SchoolPoliciesForm({ childId, childName }: SchoolPoliciesFormPro
     return map;
   }, [policies]);
 
-  async function togglePolicy(policyType: string, isActive: boolean) {
+  async function writePolicy(policyType: string, isActive: boolean, slotScope: SlotScope) {
     setStatusMessage(null);
     const outcome = await update({
       policy_type: policyType,
-      slot_scope: 'bag_wide',
+      slot_scope: slotScope,
       is_active: isActive,
     });
     if (!outcome.ok) {
@@ -51,6 +62,15 @@ export function SchoolPoliciesForm({ childId, childName }: SchoolPoliciesFormPro
     } else {
       setStatusMessage('Saved.');
     }
+  }
+
+  function togglePolicy(policyType: string, isActive: boolean) {
+    const currentScope = activeByType.get(policyType) ?? 'bag_wide';
+    return writePolicy(policyType, isActive, currentScope);
+  }
+
+  function changeSlotScope(policyType: string, slotScope: SlotScope) {
+    return writePolicy(policyType, true, slotScope);
   }
 
   return (
@@ -82,23 +102,49 @@ export function SchoolPoliciesForm({ childId, childName }: SchoolPoliciesFormPro
         <ul className="flex flex-col gap-3">
           {COMMON_POLICY_TYPES.map(({ type, label, helper }) => {
             const isActive = activeByType.has(type);
+            const slotScope = activeByType.get(type) ?? 'bag_wide';
             return (
               <li
                 key={type}
-                className="flex items-center justify-between px-4 py-3 rounded-2xl bg-white border border-stone-200"
+                className="flex flex-col gap-2 px-4 py-3 rounded-2xl bg-white border border-stone-200"
               >
-                <label htmlFor={`policy-${type}`} className="flex flex-col cursor-pointer gap-0.5">
-                  <span className="text-base text-stone-800">{label}</span>
-                  <span className="text-xs text-stone-500">{helper}</span>
-                </label>
-                <input
-                  id={`policy-${type}`}
-                  type="checkbox"
-                  checked={isActive}
-                  disabled={pending}
-                  onChange={(e) => void togglePolicy(type, e.target.checked)}
-                  className="h-5 w-5 accent-amber-600 disabled:opacity-50"
-                />
+                <div className="flex items-center justify-between">
+                  <label htmlFor={`policy-${type}`} className="flex flex-col cursor-pointer gap-0.5">
+                    <span className="text-base text-stone-800">{label}</span>
+                    <span className="text-xs text-stone-500">{helper}</span>
+                  </label>
+                  <input
+                    id={`policy-${type}`}
+                    type="checkbox"
+                    checked={isActive}
+                    disabled={pending}
+                    onChange={(e) => void togglePolicy(type, e.target.checked)}
+                    className="h-5 w-5 accent-amber-600 disabled:opacity-50"
+                  />
+                </div>
+                {isActive && (
+                  <label
+                    htmlFor={`policy-${type}-scope`}
+                    className="flex items-center justify-between gap-2 text-xs text-stone-600"
+                  >
+                    <span>Applies to</span>
+                    <select
+                      id={`policy-${type}-scope`}
+                      value={slotScope}
+                      disabled={pending}
+                      onChange={(e) =>
+                        void changeSlotScope(type, e.target.value as SlotScope)
+                      }
+                      className="text-xs text-stone-700 bg-white border border-stone-200 rounded-md px-2 py-1 disabled:opacity-50"
+                    >
+                      {SLOT_SCOPE_OPTIONS.map((opt) => (
+                        <option key={opt.value} value={opt.value}>
+                          {opt.label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                )}
               </li>
             );
           })}

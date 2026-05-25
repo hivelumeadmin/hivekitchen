@@ -482,3 +482,49 @@ describe('PlansRepository.commit', () => {
     );
   });
 });
+
+describe('PlansRepository.findHardFailAudit (Story 3.25 / 3.26)', () => {
+  it('returns { failedAt } when a matching plan.hard_fail row exists for (householdId, weekOf)', async () => {
+    const { client, steps } = buildSelectClient({
+      data: { id: 'audit-1', created_at: '2026-05-25T08:00:00Z' },
+      error: null,
+    });
+    const repo = new PlansRepository(client);
+
+    const out = await repo.findHardFailAudit(HOUSEHOLD_ID, '2026-05-04');
+
+    expect(out).toEqual({ failedAt: '2026-05-25T08:00:00Z' });
+    expect(steps).toEqual(
+      expect.arrayContaining([
+        { op: 'from', args: ['audit_log'] },
+        { op: 'select', args: ['id, created_at'] },
+        { op: 'eq', args: ['event_type', 'plan.hard_fail'] },
+        { op: 'eq', args: ['household_id', HOUSEHOLD_ID] },
+        { op: 'eq', args: ['metadata->>week_of', '2026-05-04'] },
+        { op: 'order', args: ['created_at', { ascending: false }] },
+        { op: 'limit', args: [1] },
+      ]),
+    );
+  });
+
+  it('returns null when no matching row exists', async () => {
+    const { client } = buildSelectClient({ data: null, error: null });
+    const repo = new PlansRepository(client);
+
+    const out = await repo.findHardFailAudit(HOUSEHOLD_ID, '2026-05-04');
+
+    expect(out).toBeNull();
+  });
+
+  it('throws when the supabase client returns an error', async () => {
+    const { client } = buildSelectClient({
+      data: null,
+      error: { code: 'PGRST116', message: 'permission denied' },
+    });
+    const repo = new PlansRepository(client);
+
+    await expect(repo.findHardFailAudit(HOUSEHOLD_ID, '2026-05-04')).rejects.toMatchObject({
+      code: 'PGRST116',
+    });
+  });
+});

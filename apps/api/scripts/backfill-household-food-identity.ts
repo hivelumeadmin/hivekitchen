@@ -27,6 +27,7 @@
  */
 import { Buffer } from 'node:buffer';
 import { createClient } from '@supabase/supabase-js';
+import { ChildAllergensRepository } from '../src/modules/children/child-allergens.repository.js';
 import { ChildrenRepository } from '../src/modules/children/children.repository.js';
 import { encryptField } from '../src/lib/envelope-encryption.js';
 import { getOrCreateHouseholdDek } from '../src/lib/household-key.js';
@@ -72,7 +73,13 @@ async function main(): Promise<void> {
     },
   };
 
-  const childrenRepo = new ChildrenRepository(supabase, kek, logger);
+  // Slice 2.6-s8 — ChildrenRepository now requires a ChildAllergensRepository
+  // because declared_allergens is sourced from child_allergens. The 2-s27
+  // backfill reads children.declared_allergens via findByHouseholdId; with
+  // the cutover that read now returns the child_allergens-backed list, which
+  // is the desired union source for the household-level rollup.
+  const childAllergensRepo = new ChildAllergensRepository(supabase, kek);
+  const childrenRepo = new ChildrenRepository(supabase, kek, logger, childAllergensRepo);
 
   // Paginate to avoid hitting Supabase/PostgREST's default 1 000-row result cap.
   const BATCH_SIZE = 500;

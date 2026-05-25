@@ -163,6 +163,26 @@ export const KitchenMapHouseholdExtrasSchema = z.object({
   library: z.array(KitchenMapExtraLibraryItemSchema),
 });
 
+// ---- Catalog provenance enum (slice 2.6-s1) ------------------------------
+//
+// How a household_recipe_usage row entered the catalog. Replaces the
+// 2.5-s9 favorite_lunches.provenance enum after the folding migration.
+//   'declared'      — parent stated it in onboarding (Moment 5 / FR124)
+//                     OR in-app via recipe.declare. Was 'onboarding_seed'.
+//   'inferred'      — Stage 1 LLM seeding from household profile (slice 2.6-s3).
+//                     Layer 1 only (name + tags, no ingredients yet).
+//   'parent_added'  — parent added it in-app after onboarding (Epic 7+).
+//   'plan_promoted' — surfaced by the planner; default for backfill of
+//                     existing household_recipe_usage rows.
+
+export const CatalogProvenanceSchema = z.enum([
+  'declared',
+  'inferred',
+  'parent_added',
+  'plan_promoted',
+]);
+export type CatalogProvenance = z.infer<typeof CatalogProvenanceSchema>;
+
 // ---- Favourite recipes (projected from household_recipe_usage table) ----
 //
 // Lightweight projection of the household's high-confidence recipes — gives
@@ -176,6 +196,10 @@ export const KitchenMapFavouriteRecipeSchema = z.object({
   cuisine_tags: z.array(z.string().min(1).max(64)),
   confidence_score: z.number().int().min(0).max(100),
   is_household_favorite: z.boolean(),
+  // Slice 2.6-s1 — surfaces household_recipe_usage.catalog_provenance so the
+  // planner / personalization layer can distinguish parent-declared favorites
+  // from inferred / plan-promoted ones.
+  catalog_provenance: CatalogProvenanceSchema,
   use_count: z.number().int().min(0),
   last_used_at: z.string().datetime({ offset: true }),
 });
@@ -241,10 +265,15 @@ export const KitchenMapFoodPreferenceSchema = z.object({
 });
 
 // favorite_lunches — household-scoped cold-start seed (FR124). Ordered by
-// position for stable rendering.
+// position for stable rendering. Slice 2.6-s1 — backing store moved from the
+// dropped `favorite_lunches` table to `household_recipe_usage` joined with
+// `recipes`. `provenance` now uses the catalog-wide CatalogProvenance enum
+// ('declared' replaces 'onboarding_seed' as the parent-stated provenance).
+// Shape preserved at the projection boundary (still { item, provenance,
+// position }); only the value domain of `provenance` evolved.
 export const KitchenMapFavoriteLunchSchema = z.object({
   item: z.string().min(1).max(128),
-  provenance: z.enum(['onboarding_seed', 'parent_added', 'plan_promoted']),
+  provenance: CatalogProvenanceSchema,
   position: z.number().int().nonnegative(),
 });
 

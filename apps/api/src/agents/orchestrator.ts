@@ -255,6 +255,8 @@ export class DomainOrchestrator {
     extraRules?: readonly PlannerExtraRules[],  // Story 3.21 — per-child Extra pins/bans
     extraLibraryItems?: readonly PlannerExtraLibraryItem[],  // Story 3.21 — household custom Extras
     extraProposals?: readonly PlannerExtraProposal[],  // Story 3.22 — high-activity Extra proposals (FR119)
+    slotScopeContext?: string,  // Story 3.23 — slot-scoped regen instruction; prepended to contextLines
+    uncertainContext?: string,  // Story 3.24 — compound-uncertain substitution instruction; highest priority
   ): Promise<PlanComposeOutput> {
     const MAX_PLAN_ITERATIONS = 20;
     // Story 3-31 — recipe.discover needs the per-run requestId in its deps
@@ -298,6 +300,21 @@ export class DomainOrchestrator {
         ? `Previous attempt was blocked by the allergy guardrail. Blocked ingredients/reasons:\n${rejectionContext}\nCompose a revised plan that avoids these.`
         : 'This is the first generation attempt for this household and week.',
     ].filter((line): line is string => line !== undefined);
+
+    // Story 3.23 — slot-scoped regen takes priority over all other framing so
+    // the planner treats it as the primary constraint. The bag-wide allergy
+    // guardrail still evaluates every slot post-compose; slot scope only
+    // controls which slots the planner is asked to rewrite.
+    if (slotScopeContext !== undefined) {
+      contextLines.unshift(slotScopeContext);
+    }
+
+    // Story 3.24 — compound-uncertain substitution is a safety constraint and
+    // ranks higher than slot scope. Unshifting after slotScopeContext leaves
+    // it at position 0 so the planner sees it first.
+    if (uncertainContext !== undefined) {
+      contextLines.unshift(uncertainContext);
+    }
 
     const messages: LLMMessage[] = [
       { role: 'system', content: PLANNER_PROMPT.text },
@@ -418,6 +435,12 @@ export class DomainOrchestrator {
     weekOf: string;
     requestId: string;
     blockedItems: readonly BlockedItem[];
+    // Story 3.24 — when set, the swap agent receives the compound-uncertain
+    // instruction as the first context line. Prepended (not appended) so it
+    // ranks above the BlockedItems list — the swap is still expected to cover
+    // those slots, but compound-uncertain items demand single-ingredient
+    // replacements regardless of any allergen reasoning.
+    uncertainContext?: string;
   }): Promise<PlanComposeOutput> {
     const MAX_SWAP_ITERATIONS = 5;
     const tools = Array.from(TOOL_MANIFEST.values());
@@ -445,6 +468,13 @@ export class DomainOrchestrator {
       ...blockedLines,
       'Call plan.compose with ONLY these slots replaced. Other days/slots are already cleared and must not appear in your output.',
     ];
+
+    // Story 3.24 — compound-uncertain instruction ranks above all other lines
+    // so the swap agent treats single-ingredient replacement as the controlling
+    // constraint when applicable.
+    if (opts.uncertainContext !== undefined) {
+      contextLines.unshift(opts.uncertainContext);
+    }
 
     const messages: LLMMessage[] = [
       { role: 'system', content: SWAP_PROMPT.text },

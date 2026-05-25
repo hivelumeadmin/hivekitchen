@@ -30,6 +30,7 @@ import { authorize } from '../../middleware/authorize.hook.js';
 import { ForbiddenError, NotFoundError } from '../../common/errors.js';
 import { ComplianceRepository } from '../compliance/compliance.repository.js';
 import { ComplianceService } from '../compliance/compliance.service.js';
+import { ChildAllergensRepository } from './child-allergens.repository.js';
 import { ChildrenRepository } from './children.repository.js';
 import { ChildrenService } from './children.service.js';
 import { SchoolPoliciesRepository } from './school-policies.repository.js';
@@ -40,7 +41,16 @@ const childrenRoutesPlugin: FastifyPluginAsync = async (fastify) => {
   const kekHex = fastify.env.ENVELOPE_ENCRYPTION_MASTER_KEY;
   const kek = kekHex ? Buffer.from(kekHex, 'hex') : null;
 
-  const childrenRepository = new ChildrenRepository(fastify.supabase, kek, fastify.log);
+  // Slice 2.6-s8 — ChildrenRepository now requires a ChildAllergensRepository
+  // because declared_allergens reads + writes route through child_allergens
+  // (the legacy children.declared_allergens column is a zombie).
+  const childAllergensRepository = new ChildAllergensRepository(fastify.supabase, kek);
+  const childrenRepository = new ChildrenRepository(
+    fastify.supabase,
+    kek,
+    fastify.log,
+    childAllergensRepository,
+  );
   const childrenService = new ChildrenService(childrenRepository);
 
   // Reuse the compliance service so that the parental-notice gate is enforced

@@ -85,6 +85,11 @@ export interface RawFavouriteRecipeRow {
   confidence_score: number;
   is_household_favorite: boolean;
   is_household_banned: boolean;
+  // Slice 2.6-s1 — household-level catalog provenance from
+  // household_recipe_usage.catalog_provenance. Surfaces into KitchenMap.recipes
+  // entries AND drives the favorite_lunches projection (parent-stated rows
+  // are the cold-start seed).
+  catalog_provenance: string;
   use_count: number;
   last_used_at: string;
 }
@@ -126,12 +131,6 @@ export interface RawFoodPreferenceRow {
     | 'backfill_migration';
 }
 
-export interface RawFavoriteLunchRow {
-  item: string; // decrypted by the repository
-  provenance: 'onboarding_seed' | 'parent_added' | 'plan_promoted';
-  position: number;
-}
-
 export interface RawRuleRow {
   rule_type:
     | 'no_pork'
@@ -163,7 +162,6 @@ export interface RawKitchenMapData {
   allergens: RawAllergenRow[];
   dietary: RawDietaryRow[];
   food_preferences: RawFoodPreferenceRow[];
-  favorite_lunches: RawFavoriteLunchRow[];
   rules: RawRuleRow[];
 }
 
@@ -193,6 +191,8 @@ interface UsageJoinRow {
   confidence_score: number;
   is_household_favorite: boolean;
   is_household_banned: boolean;
+  // Slice 2.6-s1 — exposed for the favorite_lunches projection derivation.
+  catalog_provenance: string;
   use_count: number;
   last_used_at: string;
   // PostgREST returns the joined relation as an array (or null) regardless
@@ -222,12 +222,6 @@ interface DietaryRow {
   source: RawDietaryRow['source'];
 }
 
-interface EncryptedFavoriteLunchRow {
-  item: string;
-  provenance: RawFavoriteLunchRow['provenance'];
-  position: number;
-}
-
 interface EncryptedHouseholdRuleRow {
   rule_type: RawRuleRow['rule_type'];
   custom_label: string | null;
@@ -248,12 +242,13 @@ const CULTURAL_PRIOR_COLUMNS = 'key, label, tier, state, confidence, presence, e
 const MEMORY_COLUMNS = 'node_type, facet, prose_text, subject_child_id';
 const SCHOOL_POLICY_COLUMNS = 'child_id, policy_type, policy_description, slot_scope';
 const EXTRA_LIBRARY_COLUMNS = 'id, name, component_type';
+// Slice 2.6-s1 — catalog_provenance added so the composer can derive both
+// the recipes block AND the favorite_lunches projection from a single query.
 const USAGE_JOIN_COLUMNS =
-  'recipe_id, confidence_score, is_household_favorite, is_household_banned, use_count, last_used_at, recipes(canonical_name, primary_ingredient_key, cuisine_tags)';
+  'recipe_id, confidence_score, is_household_favorite, is_household_banned, catalog_provenance, use_count, last_used_at, recipes(canonical_name, primary_ingredient_key, cuisine_tags)';
 const CHILD_ALLERGEN_COLUMNS = 'child_id, allergen, source';
 const FOOD_PREFERENCE_COLUMNS = 'child_id, item, valence, enforcement, source';
 const DIETARY_COLUMNS = 'child_id, tag, enforcement, source';
-const FAVORITE_LUNCH_COLUMNS = 'item, provenance, position';
 const HOUSEHOLD_RULE_COLUMNS = 'rule_type, custom_label, enforcement, source';
 
 /**
@@ -295,7 +290,6 @@ export class KitchenMapRepository extends BaseRepository {
       allergensRes,
       foodPreferencesRes,
       dietaryRes,
-      favoriteLunchesRes,
       rulesRes,
     ] = await Promise.all([
       this.client.from('households').select(HOUSEHOLD_COLUMNS).eq('id', householdId).maybeSingle(),
@@ -310,6 +304,9 @@ export class KitchenMapRepository extends BaseRepository {
         .eq('hard_forgotten', false),
       this.fetchSchoolPoliciesForHousehold(householdId),
       this.client.from('extra_library').select(EXTRA_LIBRARY_COLUMNS).eq('household_id', householdId),
+      // Slice 2.6-s1 — single source of truth: the favorite_lunches projection
+      // is derived in the composer from these same usage rows. The standalone
+      // favorite_lunches table is dropped (migration 20260908000200).
       this.client
         .from('household_recipe_usage')
         .select(USAGE_JOIN_COLUMNS)
@@ -317,7 +314,6 @@ export class KitchenMapRepository extends BaseRepository {
       this.client.from('child_allergens').select(CHILD_ALLERGEN_COLUMNS).eq('household_id', householdId),
       this.client.from('food_preferences').select(FOOD_PREFERENCE_COLUMNS).eq('household_id', householdId),
       this.client.from('dietary_preferences').select(DIETARY_COLUMNS).eq('household_id', householdId),
-      this.client.from('favorite_lunches').select(FAVORITE_LUNCH_COLUMNS).eq('household_id', householdId).order('position', { ascending: true }),
       this.client.from('household_rules').select(HOUSEHOLD_RULE_COLUMNS).eq('household_id', householdId),
     ]);
 
@@ -331,7 +327,6 @@ export class KitchenMapRepository extends BaseRepository {
     if (allergensRes.error) throw allergensRes.error;
     if (foodPreferencesRes.error) throw foodPreferencesRes.error;
     if (dietaryRes.error) throw dietaryRes.error;
-    if (favoriteLunchesRes.error) throw favoriteLunchesRes.error;
     if (rulesRes.error) throw rulesRes.error;
 
     if (householdRes.data === null) {
@@ -339,6 +334,15 @@ export class KitchenMapRepository extends BaseRepository {
     }
 
     const dek = await dekPromise;
+
+    // Slice 2.6-s8 — decrypt child_allergens once; the projection is consumed
+    // BOTH by the top-level `allergens` array AND by the per-child
+    // declared_allergens read source.
+    const decryptedAllergens = this.decryptAllergens(
+      (allergensRes.data ?? []) as EncryptedChildAllergenRow[],
+      dek,
+      householdId,
+    );
 
     // Slice 2-s27 — decrypt the three household-level columns. NULL on
     // any column reads back as []. A decrypt failure is logged and treated
@@ -394,7 +398,15 @@ export class KitchenMapRepository extends BaseRepository {
         display_name: u.display_name,
         cultural_language: u.cultural_language,
       })),
-      children: this.decryptChildren((childrenRes.data ?? []) as EncryptedChildRow[], dek),
+      children: this.decryptChildren(
+        (childrenRes.data ?? []) as EncryptedChildRow[],
+        dek,
+        // Slice 2.6-s8 — declared_allergens come from the child_allergens
+        // projection (grouped per child) instead of the legacy children
+        // column. The legacy column is still selected for shape parity but
+        // its plaintext is discarded.
+        decryptedAllergens,
+      ),
       cultural_priors: (culturalRes.data ?? []) as RawCulturalPriorRow[],
       memory_nodes: (memoryRes.data ?? []) as RawMemoryNodeRow[],
       school_policies: schoolPoliciesRes,
@@ -403,19 +415,11 @@ export class KitchenMapRepository extends BaseRepository {
       // Slice 2.5-s1 — five new top-level arrays. Decrypt the encrypted
       // text columns inline; rows that fail decryption are dropped with
       // a warn log, matching the children decryption skip pattern.
-      allergens: this.decryptAllergens(
-        (allergensRes.data ?? []) as EncryptedChildAllergenRow[],
-        dek,
-        householdId,
-      ),
+      // Slice 2.6-s8 — decryptedAllergens is computed above and reused.
+      allergens: decryptedAllergens,
       dietary: (dietaryRes.data ?? []) as DietaryRow[],
       food_preferences: this.decryptFoodPreferences(
         (foodPreferencesRes.data ?? []) as EncryptedFoodPreferenceRow[],
-        dek,
-        householdId,
-      ),
-      favorite_lunches: this.decryptFavoriteLunches(
-        (favoriteLunchesRes.data ?? []) as EncryptedFavoriteLunchRow[],
         dek,
         householdId,
       ),
@@ -464,11 +468,27 @@ export class KitchenMapRepository extends BaseRepository {
     return (data ?? []) as RawSchoolPolicyRow[];
   }
 
-  private decryptChildren(rows: EncryptedChildRow[], dek: Buffer | null): RawChildRow[] {
+  private decryptChildren(
+    rows: EncryptedChildRow[],
+    dek: Buffer | null,
+    childAllergens: RawAllergenRow[],
+  ): RawChildRow[] {
     // decryptField() handles both real AES-GCM ciphertext (dek required) and
     // NOOP-prefixed dev-mode rows (dek may be null) internally — call it
     // unconditionally rather than branching on dek === null, otherwise
     // NOOP-prefixed payloads get JSON.parse'd as a literal string.
+    //
+    // Slice 2.6-s8 — declared_allergens is sourced from the structured
+    // child_allergens projection (grouped per child), NOT the legacy
+    // children.declared_allergens column (still selected for shape parity
+    // but value discarded).
+    const allergensByChild = new Map<string, string[]>();
+    for (const r of childAllergens) {
+      const list = allergensByChild.get(r.child_id) ?? [];
+      list.push(r.allergen);
+      allergensByChild.set(r.child_id, list);
+    }
+
     const out: RawChildRow[] = [];
     for (const row of rows) {
       try {
@@ -476,7 +496,7 @@ export class KitchenMapRepository extends BaseRepository {
           id: row.id,
           name: decryptField<string>(row.name, dek),
           age_band: row.age_band,
-          declared_allergens: decryptField<string[]>(row.declared_allergens, dek),
+          declared_allergens: allergensByChild.get(row.id) ?? [],
           cultural_identifiers: decryptField<string[]>(row.cultural_identifiers, dek),
           dietary_preferences: decryptField<string[]>(row.dietary_preferences, dek),
           bag_composition: this.normaliseBagComposition(row.bag_composition),
@@ -553,34 +573,6 @@ export class KitchenMapRepository extends BaseRepository {
     return out;
   }
 
-  private decryptFavoriteLunches(
-    rows: EncryptedFavoriteLunchRow[],
-    dek: Buffer | null,
-    householdId: string,
-  ): RawFavoriteLunchRow[] {
-    const out: RawFavoriteLunchRow[] = [];
-    for (const row of rows) {
-      try {
-        out.push({
-          item: decryptField<string>(row.item, dek),
-          provenance: row.provenance,
-          position: row.position,
-        });
-      } catch (err) {
-        this.logger.error(
-          {
-            err,
-            module: 'kitchen-map',
-            action: 'kitchen_map.favorite_lunch_decrypt_failed',
-            household_id: householdId,
-          },
-          'kitchen-map favorite_lunches decryption failed — row skipped',
-        );
-      }
-    }
-    return out;
-  }
-
   private decryptHouseholdRules(
     rows: EncryptedHouseholdRuleRow[],
     dek: Buffer | null,
@@ -632,6 +624,8 @@ export class KitchenMapRepository extends BaseRepository {
         confidence_score: r.confidence_score,
         is_household_favorite: r.is_household_favorite,
         is_household_banned: r.is_household_banned,
+        // Slice 2.6-s1 — pass through; composer coerces rogue values.
+        catalog_provenance: r.catalog_provenance,
         use_count: r.use_count,
         last_used_at: r.last_used_at,
       });

@@ -25,6 +25,9 @@ import { HouseholdsService } from '../households/households.service.js';
 import { AllergyGuardrailRepository } from '../allergy-guardrail/allergy-guardrail.repository.js';
 import { CuratedBaselineRepository } from '../catalog/curated-baseline.repository.js';
 import { CuratedBaselineMaterializationService } from '../catalog/curated-baseline.service.js';
+import { CATALOG_SEED_QUEUE } from '../../jobs/catalog-seed.job.js';
+import type { CatalogSeedJobData } from '../../jobs/catalog-seed.job.js';
+import type { Queue } from 'bullmq';
 import { AuditRepository } from '../../audit/audit.repository.js';
 import { AuditService } from '../../audit/audit.service.js';
 import { OnboardingMomentRepository } from './onboarding-moment.repository.js';
@@ -103,6 +106,17 @@ const onboardingRoutesPlugin: FastifyPluginAsync = async (fastify) => {
     logger: fastify.log,
   });
 
+  // Slice 2.6-s3 — BullMQ queue handle for the Stage 1 catalog-seed job.
+  // OnboardingService fires the enqueue when the parent advances out of m2_safe.
+  // The job plugin (catalog-seed.job.ts) provides the queue under
+  // CATALOG_SEED_QUEUE — register order in app.ts guarantees availability in
+  // the real Fastify app. Route-level unit tests construct a minimal Fastify
+  // instance without the bullmq decorator; treat its absence as a no-op (the
+  // M2 trigger in OnboardingService also guards on queue presence).
+  const catalogSeedQueue: Queue<CatalogSeedJobData> | undefined = fastify.bullmq
+    ? (fastify.bullmq.getQueue(CATALOG_SEED_QUEUE) as Queue<CatalogSeedJobData>)
+    : undefined;
+
   const service = new OnboardingService({
     threads,
     agent,
@@ -122,6 +136,7 @@ const onboardingRoutesPlugin: FastifyPluginAsync = async (fastify) => {
     householdRulesRepository,
     recipesRepository,
     curatedBaseline,
+    catalogSeedQueue,
   });
 
   // Slice 2-S26 — fire-and-forget audit writer for resume / reset events.

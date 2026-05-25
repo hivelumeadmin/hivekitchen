@@ -6,6 +6,7 @@ import { PlansService } from './plans.service.js';
 import { PlanAdjustmentService } from './plan-adjustment.service.js';
 import { BriefStateRepository } from './brief-state.repository.js';
 import { BriefStateComposer } from './brief-state.composer.js';
+import { ChildAllergensRepository } from '../children/child-allergens.repository.js';
 import { ChildrenRepository } from '../children/children.repository.js';
 import { REGEN_QUEUE } from '../../jobs/plan-regeneration.job.js';
 import { DayOverridesRepository } from './day-overrides.repository.js';
@@ -16,6 +17,7 @@ import { ExtraRemovalSignalService } from './extra-removal-signal.service.js';
 import { RecipeService } from '../recipe/recipe.service.js';
 import { RecipesRepository } from '../recipe/recipes.repository.js';
 import { LunchLinkSessionRepository } from './lunch-link-session.repository.js';
+import { RecipeAgent } from '../../agents/recipe-agent.js';
 
 const plansHookPlugin: FastifyPluginAsync = async (fastify) => {
   if (!fastify.supabase) {
@@ -32,6 +34,17 @@ const plansHookPlugin: FastifyPluginAsync = async (fastify) => {
   if (!fastify.auditService) {
     throw new Error('plansHook requires auditService decorator — register auditHook first');
   }
+  if (!fastify.openai) {
+    throw new Error('plansHook requires openai decorator — register openaiPlugin first');
+  }
+  if (!fastify.tavily) {
+    throw new Error('plansHook requires tavily decorator — register tavilyPlugin first');
+  }
+  if (!fastify.vocabularyService) {
+    throw new Error(
+      'plansHook requires vocabularyService decorator — register vocabularyPlugin first',
+    );
+  }
   if (fastify.hasDecorator('briefStateComposer')) {
     throw new Error(
       'briefStateComposer already decorated — check plugin registration order',
@@ -44,7 +57,16 @@ const plansHookPlugin: FastifyPluginAsync = async (fastify) => {
   // child.name is envelope-encrypted at rest; ChildrenRepository decrypts via KEK.
   const kekHex = fastify.env.ENVELOPE_ENCRYPTION_MASTER_KEY;
   const kek = kekHex ? Buffer.from(kekHex, 'hex') : null;
-  const childrenRepository = new ChildrenRepository(fastify.supabase, kek, fastify.log);
+  // Slice 2.6-s8 — ChildrenRepository now requires ChildAllergensRepository
+  // so declared_allergens reads go through child_allergens (the legacy
+  // children.declared_allergens column is a zombie).
+  const childAllergensRepository = new ChildAllergensRepository(fastify.supabase, kek);
+  const childrenRepository = new ChildrenRepository(
+    fastify.supabase,
+    kek,
+    fastify.log,
+    childAllergensRepository,
+  );
   // Story 3.28 — lunch link suppression. Created here so both BriefStateComposer
   // and the children route (POST /v1/children/:childId/lunch-link-pause) share
   // the same repository instance via the lunchLinkSessionRepository decorator.
@@ -81,6 +103,17 @@ const plansHookPlugin: FastifyPluginAsync = async (fastify) => {
   const recipesRepository = new RecipesRepository(fastify.supabase);
   const recipeService = new RecipeService(recipesRepository, fastify.log);
 
+  // Slice 2.6-s3 — Layer 2 materialization stack. RecipeAgent is stateless;
+  // PlansService uses it directly at plan-commit time when a catalog_seeded
+  // recipe row needs its ingredients populated. Mirrors the construction
+  // pattern in orchestrator.hook (single shared instance, no per-call setup).
+  const recipeAgent = new RecipeAgent({
+    tavily: fastify.tavily,
+    openai: fastify.openai,
+    vocabulary: fastify.vocabularyService,
+    logger: fastify.log,
+  });
+
   const plansService = new PlansService({
     repository,
     briefStateRepository,
@@ -93,6 +126,8 @@ const plansHookPlugin: FastifyPluginAsync = async (fastify) => {
     extraRemovalSignalService,                         // Story 3.22
     snackSkusRepository,                               // Story 3.22
     recipeService,                                     // Slice D
+    recipesRepo: recipesRepository,                    // Slice 2.6-s3
+    recipeAgent,                                        // Slice 2.6-s3
   });
   if (fastify.hasDecorator('planAdjustmentService')) {
     throw new Error(

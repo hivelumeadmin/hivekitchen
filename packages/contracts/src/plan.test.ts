@@ -24,6 +24,9 @@ import {
   PlanWeekIdParamSchema,
   PlanHistoryResponseSchema,
   SnackSkuSchema,
+  FlaggedCompoundItemSchema,
+  GuardrailResultSchema,
+  HardFailStatusSchema,
 } from './plan.js';
 
 const UUID1 = '00000000-0000-4000-8000-000000000001';
@@ -1202,6 +1205,81 @@ describe('GetPlansResponseSchema (Story 3.14)', () => {
       }).success,
     ).toBe(false);
   });
+
+  // Story 3.25 / 3.26 — hard_fail surface
+  it('accepts the hard-fail shape (plan: null, hard_fail: { week_of, failed_at })', () => {
+    const parsed = GetPlansResponseSchema.safeParse({
+      plan: null,
+      plan_items: [],
+      is_draft: false,
+      week_of: '2026-05-26',
+      hard_fail: {
+        week_of: '2026-05-26',
+        failed_at: '2026-05-25T08:00:00Z',
+      },
+    });
+    expect(parsed.success).toBe(true);
+    if (parsed.success) {
+      expect(parsed.data.hard_fail).toEqual({
+        week_of: '2026-05-26',
+        failed_at: '2026-05-25T08:00:00Z',
+      });
+    }
+  });
+
+  it('accepts the response without hard_fail (field absent)', () => {
+    const parsed = GetPlansResponseSchema.safeParse({
+      plan: null,
+      plan_items: [],
+      is_draft: false,
+      week_of: '2026-05-26',
+    });
+    expect(parsed.success).toBe(true);
+    if (parsed.success) {
+      expect(parsed.data.hard_fail).toBeUndefined();
+    }
+  });
+
+  it('rejects a hard_fail entry with a non-ISO-date week_of', () => {
+    expect(
+      GetPlansResponseSchema.safeParse({
+        plan: null,
+        plan_items: [],
+        is_draft: false,
+        week_of: '2026-05-26',
+        hard_fail: {
+          week_of: '05/26/2026',
+          failed_at: '2026-05-25T08:00:00Z',
+        },
+      }).success,
+    ).toBe(false);
+  });
+});
+
+describe('HardFailStatusSchema (Story 3.26)', () => {
+  it('parses { week_of, failed_at }', () => {
+    expect(
+      HardFailStatusSchema.safeParse({
+        week_of: '2026-05-26',
+        failed_at: '2026-05-25T08:00:00Z',
+      }).success,
+    ).toBe(true);
+  });
+
+  it('rejects a payload that has week_of but is missing failed_at', () => {
+    expect(
+      HardFailStatusSchema.safeParse({ week_of: '2026-05-26' }).success,
+    ).toBe(false);
+  });
+
+  it('rejects a payload with a non-ISO-datetime failed_at', () => {
+    expect(
+      HardFailStatusSchema.safeParse({
+        week_of: '2026-05-26',
+        failed_at: 'yesterday',
+      }).success,
+    ).toBe(false);
+  });
 });
 
 describe('PausePlanDayInputSchema (Story 3.12)', () => {
@@ -1518,5 +1596,63 @@ describe('PlanItemRowSchema — item_sku_id (Story 3.20)', () => {
     expect(
       PlanItemRowSchema.safeParse({ ...baseRow, item_sku_id: 'not-a-uuid' }).success,
     ).toBe(false);
+  });
+});
+
+// Story 3.24 — FlaggedCompoundItemSchema + GuardrailResultSchema.uncertain.flagged_items
+describe('FlaggedCompoundItemSchema (Story 3.24)', () => {
+  const valid = {
+    child_id: UUID1,
+    ingredient: 'garam masala',
+    slot: 'main',
+    day: 'monday',
+  };
+
+  it('parses a valid flagged compound item', () => {
+    const r = FlaggedCompoundItemSchema.safeParse(valid);
+    expect(r.success).toBe(true);
+  });
+
+  it('rejects a non-UUID child_id', () => {
+    expect(
+      FlaggedCompoundItemSchema.safeParse({ ...valid, child_id: 'not-a-uuid' }).success,
+    ).toBe(false);
+  });
+
+  it('rejects an empty ingredient', () => {
+    expect(
+      FlaggedCompoundItemSchema.safeParse({ ...valid, ingredient: '' }).success,
+    ).toBe(false);
+  });
+});
+
+describe('GuardrailResultSchema uncertain variant (Story 3.24)', () => {
+  it('accepts an uncertain verdict with flagged_items populated', () => {
+    const r = GuardrailResultSchema.safeParse({
+      verdict: 'uncertain',
+      conflicts: [],
+      reason: 'compound_ingredient_unverified',
+      flagged_items: [
+        { child_id: UUID1, ingredient: 'garam masala', slot: 'main', day: 'monday' },
+      ],
+    });
+    expect(r.success).toBe(true);
+  });
+
+  it('accepts an uncertain verdict without flagged_items (backward-compat)', () => {
+    const r = GuardrailResultSchema.safeParse({
+      verdict: 'uncertain',
+      conflicts: [],
+      reason: 'no_rules_loaded',
+    });
+    expect(r.success).toBe(true);
+  });
+
+  it('still rejects an uncertain verdict missing the reason field', () => {
+    const r = GuardrailResultSchema.safeParse({
+      verdict: 'uncertain',
+      conflicts: [],
+    });
+    expect(r.success).toBe(false);
   });
 });

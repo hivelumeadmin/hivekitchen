@@ -323,6 +323,9 @@ export class RecipesRepository extends BaseRepository {
       applicable_slots: Array<'main' | 'snack' | 'extra'>;
     }>,
     onItemError?: (err: unknown, itemIndex: number) => void,
+    // Slice 2.6-s3 — Stage 1 LLM items use confidence 50 (slightly lower
+    // than the hand-curated baseline's 60). Default preserves 2.6-s2 callers.
+    confidenceScore: number = 60,
   ): Promise<number> {
     let persisted = 0;
 
@@ -394,7 +397,7 @@ export class RecipesRepository extends BaseRepository {
           recipe_id: recipeId,
           catalog_provenance: 'inferred',
           is_household_favorite: false,
-          confidence_score: 60,
+          confidence_score: confidenceScore,
           use_count: 0,
           first_used_at: nowIso,
           last_used_at: nowIso,
@@ -416,6 +419,91 @@ export class RecipesRepository extends BaseRepository {
     }
 
     return persisted;
+  }
+
+  /**
+   * Slice 2.6-s3 — minimal recipe lookup for Layer 2 materialization at plan
+   * commit time. Returns only the columns PlansService.materializeBeforeCommit
+   * needs to decide whether a Layer 2 RecipeAgent.discover() fetch is required:
+   * `source` (filter to catalog_seeded only) and `ingredients` (empty array =
+   * Layer 1 row that has not yet been materialized).
+   *
+   * Projection is deliberately narrow — the recipes table carries heavy JSONB
+   * columns elsewhere and this is a hot read per main-slot plan item.
+   */
+  async findById(id: string): Promise<{
+    source: string;
+    canonical_name: string;
+    ingredients: unknown[];
+  } | null> {
+    const { data, error } = await this.client
+      .from('recipes')
+      .select('source, canonical_name, ingredients')
+      .eq('id', id)
+      .maybeSingle();
+    if (error) throw error;
+    if (data === null) return null;
+    const row = data as {
+      source: string;
+      canonical_name: string;
+      ingredients: unknown;
+    };
+    const ingredients = Array.isArray(row.ingredients) ? row.ingredients : [];
+    return {
+      source: row.source,
+      canonical_name: row.canonical_name,
+      ingredients,
+    };
+  }
+
+  /**
+   * Slice 2.6-s3 — Layer 2 in-place ingredient population. Used after
+   * RecipeAgent.discover() succeeds for a catalog_seeded row that started
+   * empty. Updates ingredients + ingredient_keys atomically so the planner's
+   * subsequent commit sees the populated row.
+   */
+  async updateIngredients(
+    id: string,
+    ingredients: ReadonlyArray<{
+      key: string;
+      modifier: string | null;
+      display: string;
+      quantity: number | null;
+      unit: string | null;
+      optional: boolean;
+      substitutes: ReadonlyArray<{ key: string; modifier: string | null }>;
+    }>,
+    ingredientKeys: readonly string[],
+  ): Promise<void> {
+    const { error } = await this.client
+      .from('recipes')
+      .update({
+        ingredients,
+        ingredient_keys: ingredientKeys,
+      })
+      .eq('id', id);
+    if (error) throw error;
+  }
+
+  /**
+   * Slice 2.6-s3 — mark a (household, recipe) pair as having failed Layer 2
+   * discovery. Used when RecipeAgent.discover() returns no candidates for a
+   * catalog_seeded row; the planner reads this flag on retry to skip the
+   * permanently-unfetchable item.
+   */
+  async markDiscoverFailed(recipeId: string, householdId: string): Promise<void> {
+    const { data, error } = await this.client
+      .from('household_recipe_usage')
+      .update({ discover_failed_at: new Date().toISOString() })
+      .eq('recipe_id', recipeId)
+      .eq('household_id', householdId)
+      .select('recipe_id');
+    if (error) throw error;
+    if (!data || data.length === 0) {
+      console.warn(
+        `[recipes.markDiscoverFailed] 0 rows updated — usage row missing for recipe=${recipeId} household=${householdId}`,
+      );
+    }
   }
 
   /**

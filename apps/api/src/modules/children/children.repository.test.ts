@@ -55,6 +55,47 @@ function rowFixture(overrides: Record<string, unknown> = {}): Record<string, unk
 
 const silentLogger = { error: vi.fn() };
 
+// Slice 2.6-s8 — ChildrenRepository depends on ChildAllergensRepository.
+// These tests target updateProfile's column-write behaviour only; the
+// allergen write paths are exercised by children.routes.test and the
+// dedicated child-allergens.repository.test.
+function stubChildAllergensRepo() {
+  return {
+    declare: vi.fn().mockResolvedValue({ child_allergen_id: 'stub', was_existing: false }),
+    declareIfNew: vi.fn().mockResolvedValue({ inserted: true }),
+    deleteByChild: vi.fn().mockResolvedValue(undefined),
+    findByHousehold: vi.fn().mockResolvedValue([]),
+  } as unknown as ConstructorParameters<typeof ChildrenRepository>[3];
+}
+
+// Slice 2.6-s8 — updateProfile must wipe then re-declare allergens (replace
+// semantics). Removing 'peanut' from the parent's list must actually remove it.
+describe('ChildrenRepository.updateProfile — allergen replacement (Slice 2.6-s8)', () => {
+  it('calls deleteByChild before declareIfNew, passing source=parent_edited', async () => {
+    const { client } = buildChainClient({ data: rowFixture(), error: null });
+    const stub = stubChildAllergensRepo();
+    const repo = new ChildrenRepository(client, null, silentLogger, stub);
+
+    await repo.updateProfile({
+      id: CHILD_ID,
+      household_id: HOUSEHOLD_ID,
+      name: 'Layla',
+      age_band: 'child',
+      school_policy_notes: null,
+      declared_allergens: ['peanut', 'tree_nut'],
+      cultural_identifiers: [],
+      dietary_preferences: [],
+    });
+
+    expect(stub.deleteByChild).toHaveBeenCalledOnce();
+    expect(stub.deleteByChild).toHaveBeenCalledWith(HOUSEHOLD_ID, CHILD_ID);
+
+    expect(stub.declareIfNew).toHaveBeenCalledTimes(2);
+    expect(stub.declareIfNew).toHaveBeenCalledWith(HOUSEHOLD_ID, CHILD_ID, 'peanut', 'parent_edited');
+    expect(stub.declareIfNew).toHaveBeenCalledWith(HOUSEHOLD_ID, CHILD_ID, 'tree_nut', 'parent_edited');
+  });
+});
+
 // Slice 2.5-s8 — Repository must write `bag_composition_pattern` to the
 // `children.bag_composition_pattern` column on the UPDATE statement when the
 // caller supplies a value, and must omit the column entirely when undefined
@@ -66,7 +107,7 @@ describe('ChildrenRepository.updateProfile — bag_composition_pattern (Slice 2.
       data: rowFixture({ bag_composition_pattern: 'main_plus_snack' }),
       error: null,
     });
-    const repo = new ChildrenRepository(client, null, silentLogger);
+    const repo = new ChildrenRepository(client, null, silentLogger, stubChildAllergensRepo());
 
     await repo.updateProfile({
       id: CHILD_ID,
@@ -98,7 +139,7 @@ describe('ChildrenRepository.updateProfile — bag_composition_pattern (Slice 2.
       data: rowFixture(),
       error: null,
     });
-    const repo = new ChildrenRepository(client, null, silentLogger);
+    const repo = new ChildrenRepository(client, null, silentLogger, stubChildAllergensRepo());
 
     await repo.updateProfile({
       id: CHILD_ID,

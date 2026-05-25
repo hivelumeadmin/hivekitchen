@@ -1,6 +1,12 @@
+import { randomUUID } from 'node:crypto';
 import type { FastifyBaseLogger } from 'fastify';
+import type { Queue } from 'bullmq';
 import { OPENING_GREETING, type ChipConfig } from '@hivekitchen/contracts';
 import type { KitchenMap } from '@hivekitchen/types';
+import {
+  CATALOG_SEED_JOB_OPTS,
+  type CatalogSeedJobData,
+} from '../../jobs/catalog-seed.job.js';
 import { ConflictError, UpstreamError } from '../../common/errors.js';
 import { stripExpressionTags } from '../../common/strip-expression-tags.js';
 import type { OnboardingAgent, LlmMessage } from '../../agents/onboarding.agent.js';
@@ -73,6 +79,10 @@ export interface OnboardingServiceDeps {
   // when the parent advances out of m3_taste. Optional so legacy tests that
   // don't wire the catalog still pass; production composition provides it.
   curatedBaseline?: CuratedBaselineMaterializationService;
+  // Slice 2.6-s3 — BullMQ queue handle for the Stage 1 catalog-seed job.
+  // Fire-and-forget enqueue at m2_safe exit. Optional so legacy tests that
+  // don't wire the queue still compile.
+  catalogSeedQueue?: Queue<CatalogSeedJobData>;
 }
 
 export interface SubmitTextTurnInput {
@@ -364,6 +374,8 @@ export class OnboardingService {
   private readonly recipesRepository?: RecipesRepository;
   // Slice 2.6-s2 — Stage 0 catalog re-seed at M3 exit
   private readonly curatedBaseline?: CuratedBaselineMaterializationService;
+  // Slice 2.6-s3 — Stage 1 catalog seed fire-and-forget queue at M2 exit
+  private readonly catalogSeedQueue?: Queue<CatalogSeedJobData>;
 
   constructor(deps: OnboardingServiceDeps) {
     this.threads = deps.threads;
@@ -384,6 +396,7 @@ export class OnboardingService {
     this.householdRulesRepository = deps.householdRulesRepository;
     this.recipesRepository = deps.recipesRepository;
     this.curatedBaseline = deps.curatedBaseline;
+    this.catalogSeedQueue = deps.catalogSeedQueue;
   }
 
   /**
@@ -787,6 +800,44 @@ export class OnboardingService {
           current_moment: nextCurrentMoment,
           required_set_status: requiredSetStatus,
         });
+
+        // Slice 2.6-s3 — Stage 1 trigger: parent just advanced OUT of m2_safe.
+        // Fire-and-forget BullMQ enqueue — do NOT await. queue.add is
+        // synchronous from the JS event loop's perspective; wrap in try/catch
+        // so a queue.add error logs and lets the onboarding turn proceed
+        // (M2 advance is the user-visible signal; Stage 1 is best-effort and
+        // its absence falls through to the cold-start fallback in 2.6-s4).
+        if (advancedOutOfM2 && this.catalogSeedQueue !== undefined) {
+          try {
+            this.catalogSeedQueue
+              .add(
+                'seed-catalog',
+                { household_id: input.householdId, request_id: randomUUID() },
+                CATALOG_SEED_JOB_OPTS,
+              )
+              .catch((err: unknown) => {
+                this.logger.error(
+                  {
+                    module: 'onboarding',
+                    action: 'stage1.enqueue_failed',
+                    household_id: input.householdId,
+                    err,
+                  },
+                  'Stage 1 catalog seed job enqueue failed (async) — M2 completion not blocked',
+                );
+              });
+          } catch (err) {
+            this.logger.error(
+              {
+                module: 'onboarding',
+                action: 'stage1.enqueue_failed',
+                household_id: input.householdId,
+                err,
+              },
+              'Stage 1 catalog seed job enqueue failed — M2 completion not blocked',
+            );
+          }
+        }
 
         // Slice 2.6-s2 — Trigger 2: parent just advanced OUT of m3_taste.
         // Fire-and-forget Stage 0 re-materialization with the cuisine tags

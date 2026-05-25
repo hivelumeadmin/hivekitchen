@@ -1,7 +1,11 @@
 ---
-stepsCompleted: ['step-01-init', 'step-02-discovery', 'step-02b-vision', 'step-02c-executive-summary', 'step-03-success', 'step-04-journeys', 'step-05-domain', 'step-06-innovation', 'step-07-project-type', 'step-08-scoping', 'step-09-functional', 'step-10-nonfunctional', 'step-11-polish', 'step-12-complete']
+stepsCompleted: ['step-01-init', 'step-02-discovery', 'step-02b-vision', 'step-02c-executive-summary', 'step-03-success', 'step-04-journeys', 'step-05-domain', 'step-06-innovation', 'step-07-project-type', 'step-08-scoping', 'step-09-functional', 'step-10-nonfunctional', 'step-11-polish', 'step-12-complete', 'step-e-01-discovery', 'step-e-02-review', 'step-e-03-edit']
 workflowComplete: true
 completedDate: '2026-04-20'
+lastEdited: '2026-05-23'
+editHistory:
+  - date: '2026-05-23'
+    changes: 'Added FR128 (user-supplied recipe ingestion via URL paste or name search, guardrail-gated) to Weekly Plan Lifecycle subsection; added matching Security NFR for user-initiated ingestion safety. Anchors slice 3-32.'
 inputDocuments:
   - '_bmad-output/planning-artifacts/product-brief-2026-04-18.md'
   - '_bmad-output/brainstorming/brainstorming-session-2026-04-17-1940.md'
@@ -929,6 +933,7 @@ Composition is **parent-owned, per child**. Lumi fills declared slots with plan 
 - **FR24:** System surfaces an explicit graceful-degradation state when it cannot generate a safe plan for a household given the constraint set.
 - **FR25:** Primary Parent or Secondary Caregiver can view historical plans and their outcomes (emoji ratings, swaps made) for any prior week.
 - **FR26:** System maintains cultural-calendar awareness for all active household cultural-template compositions and weights upcoming-event-adjacent meals into plan generation without requiring parent prompting.
+- **FR128:** Primary Parent can add a specific recipe into the swap flow by pasting a source URL from an approved recipe source or typing a recipe name; the system extracts the structured recipe and evaluates it against the allergy guardrail (FR76) for every child in the household before presenting it as a swap candidate. When the guardrail clears the recipe for all children, the parent can select it as the slot's content. When the guardrail blocks for any child, the parent is shown the affected child and the matched allergens, and the recipe is not selectable as a swap candidate.
 
 ### Household Coordination
 
@@ -1073,6 +1078,7 @@ Composition is **parent-owned, per child**. Lumi fills declared slots with plan 
 - **Secret management:** environment variables only; no secrets in git, no secrets in code. Rotation quarterly for all processor credentials; ad-hoc on suspected compromise.
 - **Audit logs:** immutable append-only; cover allergy decisions, plan generations, Heart Note authorship and delivery, Visible Memory edits, billing changes, and account deletions. Retained for the regulatory minimum (varies by category; no less than 12 months).
 - **Vulnerability posture:** dependency scanning on every build; annual external penetration test beginning before public launch; quarterly internal security review.
+- **User-initiated recipe ingestion safety (FR128):** Any recipe entering the plan via parent-supplied URL or name search is subject to the same deterministic allergy guardrail (FR76), audit logging (FR78), vocabulary controls, and source-domain whitelist applied to system-initiated recipe discovery. A recipe blocked by the guardrail at any ingredient-confidence level — including unverified compound ingredients — is not selectable as a swap candidate. No parent override is provided in v1.
 
 ### Privacy & Data Handling
 

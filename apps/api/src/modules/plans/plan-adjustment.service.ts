@@ -79,12 +79,21 @@ export class PlanAdjustmentService {
         scope,
         request_id: trigger.requestId,
         ...(trigger.dayScope !== null ? { day: trigger.dayScope } : {}),
+        // Story 3.23 — slot-scoped regen plumbing. 'bag_wide' (and null) mean
+        // the planner regenerates the full bag; only narrow slot scopes are
+        // propagated downstream as a context line.
+        ...(trigger.slotScope !== null && trigger.slotScope !== 'bag_wide'
+          ? { slot_scope: trigger.slotScope }
+          : {}),
       };
       // jobId dedupes identical triggers within a BullMQ retention window so a
       // duplicate webhook or a retried policy PATCH does not enqueue twice for
-      // the same (plan, day). request_id is intentionally NOT in the key —
-      // that would defeat dedup across retries.
-      const jobId = `adjust-${trigger.type}-${trigger.householdId}-${plan.week_id}-${trigger.dayScope ?? 'week'}`;
+      // the same (plan, day, slot). request_id is intentionally NOT in the key —
+      // that would defeat dedup across retries. slot_scope IS in the key so
+      // rapid successive scope changes (snack → main) produce distinct jobs.
+      const slotScopeSegment =
+        trigger.slotScope && trigger.slotScope !== 'bag_wide' ? `-${trigger.slotScope}` : '';
+      const jobId = `adjust-${trigger.type}-${trigger.householdId}-${plan.week_id}-${trigger.dayScope ?? 'week'}${slotScopeSegment}`;
       try {
         await this.regenQueue.add(`regen-${trigger.type}`, jobData, {
           attempts: 2,

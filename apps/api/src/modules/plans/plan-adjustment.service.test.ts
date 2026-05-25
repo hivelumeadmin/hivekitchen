@@ -206,6 +206,40 @@ describe('PlanAdjustmentService.triggerAdjustment', () => {
     expect(mocks.auditService.write).not.toHaveBeenCalled();
   });
 
+  // Story 3.23 — slot_scope propagation into PlanRegenerationJobData.
+  it('slotScope=snack enqueues job with slot_scope=snack', async () => {
+    mocks.plansRepo.findActiveFuturePlanIds.mockResolvedValueOnce([
+      { id: PLAN_A, week_id: 'week-a', week_of: '2026-05-04', revision: 1 },
+    ]);
+
+    await service.triggerAdjustment({ ...baseTrigger, slotScope: 'snack' });
+
+    const [, jobData] = mocks.regenQueue.add.mock.calls[0]!;
+    expect(jobData).toMatchObject({ slot_scope: 'snack' });
+  });
+
+  it('slotScope=bag_wide enqueues job without slot_scope field', async () => {
+    mocks.plansRepo.findActiveFuturePlanIds.mockResolvedValueOnce([
+      { id: PLAN_A, week_id: 'week-a', week_of: '2026-05-04', revision: 1 },
+    ]);
+
+    await service.triggerAdjustment({ ...baseTrigger, slotScope: 'bag_wide' });
+
+    const [, jobData] = mocks.regenQueue.add.mock.calls[0]!;
+    expect(jobData).not.toHaveProperty('slot_scope');
+  });
+
+  it('slotScope=null enqueues job without slot_scope field', async () => {
+    mocks.plansRepo.findActiveFuturePlanIds.mockResolvedValueOnce([
+      { id: PLAN_A, week_id: 'week-a', week_of: '2026-05-04', revision: 1 },
+    ]);
+
+    await service.triggerAdjustment({ ...baseTrigger, slotScope: null });
+
+    const [, jobData] = mocks.regenQueue.add.mock.calls[0]!;
+    expect(jobData).not.toHaveProperty('slot_scope');
+  });
+
   it('does NOT throw when audit write fails — fire-and-forget at this boundary', async () => {
     mocks.plansRepo.findActiveFuturePlanIds.mockResolvedValueOnce([
       { id: PLAN_A, week_id: 'week-a', week_of: '2026-05-04', revision: 1 },

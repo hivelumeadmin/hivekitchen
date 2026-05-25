@@ -133,6 +133,30 @@ export class HouseholdsRepository extends BaseRepository {
     if (error) throw error;
   }
 
+  // Slice 2.6-s3 — Stage 1 catalog seeding completion gate. NULL = Stage 1
+  // has not yet completed (or the failure path took the silent NULL branch).
+  // 2.6-s4 polls this column to decide whether to show the personalized M5
+  // chip card or route to the cold-start fallback.
+  async getStage1CompletedAt(householdId: string): Promise<string | null> {
+    const { data, error } = await this.client
+      .from('households')
+      .select('stage1_completed_at')
+      .eq('id', householdId)
+      .maybeSingle();
+    if (error) throw error;
+    const row = data as { stage1_completed_at: string | null } | null;
+    if (row === null) return null;
+    return row.stage1_completed_at;
+  }
+
+  async setStage1CompletedAt(householdId: string): Promise<void> {
+    const { error } = await this.client
+      .from('households')
+      .update({ stage1_completed_at: new Date().toISOString() })
+      .eq('id', householdId);
+    if (error) throw error;
+  }
+
   // ---- Slice 2-s27 — household-level food identity ------------------------
   //
   // Three encrypted columns added by migration 20260902000000:

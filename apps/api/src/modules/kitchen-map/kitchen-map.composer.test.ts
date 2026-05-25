@@ -31,7 +31,6 @@ function makeRaw(overrides: Partial<RawKitchenMapData> = {}): RawKitchenMapData 
     allergens: [],
     dietary: [],
     food_preferences: [],
-    favorite_lunches: [],
     rules: [],
     ...overrides,
   };
@@ -422,15 +421,29 @@ describe('composeKitchenMap — Epic 2.5 structured signal arrays', () => {
     expect(m.food_preferences[0]?.enforcement).toBe('soft');
   });
 
-  it('projects favorite_lunch rows preserving position', () => {
+  it('projects favorite_lunches derived from recipe_usage (slice 2.6-s1)', () => {
     const m = composeKitchenMap(
       makeRaw({
-        favorite_lunches: [
-          { item: 'dal chawal', provenance: 'onboarding_seed', position: 2 },
+        recipe_usage: [
+          {
+            recipe_id: UUID(20),
+            canonical_name: 'dal chawal',
+            primary_ingredient_key: null,
+            cuisine_tags: [],
+            confidence_score: 80,
+            is_household_favorite: true,
+            is_household_banned: false,
+            catalog_provenance: 'declared',
+            use_count: 0,
+            last_used_at: NOW,
+          },
         ],
       }),
     );
-    expect(m.favorite_lunches[0]?.position).toBe(2);
+    expect(m.favorite_lunches).toHaveLength(1);
+    expect(m.favorite_lunches[0]?.item).toBe('dal chawal');
+    expect(m.favorite_lunches[0]?.provenance).toBe('declared');
+    expect(m.favorite_lunches[0]?.position).toBe(0);
   });
 
   it('projects household_rule rows verbatim with null custom_label for non-custom', () => {
@@ -517,6 +530,7 @@ describe('composeKitchenMap — recipes bucketing', () => {
     favorite?: boolean;
     banned?: boolean;
     name?: string;
+    provenance?: 'declared' | 'inferred' | 'parent_added' | 'plan_promoted';
   }) {
     return {
       recipe_id: UUID(100 + opts.confidence),
@@ -526,6 +540,9 @@ describe('composeKitchenMap — recipes bucketing', () => {
       confidence_score: opts.confidence,
       is_household_favorite: opts.favorite ?? false,
       is_household_banned: opts.banned ?? false,
+      // Slice 2.6-s1 — defaults to 'plan_promoted' (the column's backfill
+      // default), matching the existing-row semantics in production.
+      catalog_provenance: opts.provenance ?? 'plan_promoted',
       use_count: 3,
       last_used_at: NOW,
     };
@@ -573,5 +590,144 @@ describe('composeKitchenMap — recipes bucketing', () => {
       }),
     );
     expect(m.recipes.favourites.map((f) => f.canonical_name)).toEqual(['A', 'B', 'C']);
+  });
+
+  it('surfaces catalog_provenance on each favourites entry (slice 2.6-s1)', () => {
+    const m = composeKitchenMap(
+      makeRaw({
+        recipe_usage: [
+          usageRow({ confidence: 80, favorite: true, name: 'Dal', provenance: 'declared' }),
+        ],
+      }),
+    );
+    expect(m.recipes.favourites[0]?.catalog_provenance).toBe('declared');
+  });
+
+  it('coerces rogue catalog_provenance to plan_promoted (defensive read)', () => {
+    const m = composeKitchenMap(
+      makeRaw({
+        recipe_usage: [
+          {
+            ...usageRow({ confidence: 80, favorite: true, name: 'Dal' }),
+            catalog_provenance: 'totally_bogus_value',
+          },
+        ],
+      }),
+    );
+    expect(m.recipes.favourites[0]?.catalog_provenance).toBe('plan_promoted');
+  });
+});
+
+// Slice 2.6-s1 — favorite_lunches projection is now derived from
+// household_recipe_usage rows (was a standalone table query).
+describe('composeKitchenMap — favorite_lunches derivation from usage', () => {
+  function lunchRow(opts: {
+    name: string;
+    provenance: 'declared' | 'inferred' | 'parent_added' | 'plan_promoted';
+    favorite?: boolean;
+    banned?: boolean;
+    lastUsedAt?: string;
+  }) {
+    return {
+      recipe_id: UUID(100 + opts.name.length),
+      canonical_name: opts.name,
+      primary_ingredient_key: null,
+      cuisine_tags: [],
+      confidence_score: 50,
+      is_household_favorite: opts.favorite ?? false,
+      is_household_banned: opts.banned ?? false,
+      catalog_provenance: opts.provenance,
+      use_count: 0,
+      last_used_at: opts.lastUsedAt ?? NOW,
+    };
+  }
+
+  it("includes 'declared' rows (cold-start seed from Moment 5)", () => {
+    const m = composeKitchenMap(
+      makeRaw({
+        recipe_usage: [lunchRow({ name: 'dal chawal', provenance: 'declared' })],
+      }),
+    );
+    expect(m.favorite_lunches.map((l) => l.item)).toEqual(['dal chawal']);
+  });
+
+  it("includes 'parent_added' rows (post-onboarding additions)", () => {
+    const m = composeKitchenMap(
+      makeRaw({
+        recipe_usage: [lunchRow({ name: 'wrap', provenance: 'parent_added' })],
+      }),
+    );
+    expect(m.favorite_lunches).toHaveLength(1);
+  });
+
+  it("includes is_household_favorite rows regardless of provenance", () => {
+    const m = composeKitchenMap(
+      makeRaw({
+        recipe_usage: [
+          lunchRow({ name: 'pasta', provenance: 'plan_promoted', favorite: true }),
+        ],
+      }),
+    );
+    expect(m.favorite_lunches.map((l) => l.item)).toEqual(['pasta']);
+  });
+
+  it("excludes 'inferred' / 'plan_promoted' rows that aren't favorited", () => {
+    const m = composeKitchenMap(
+      makeRaw({
+        recipe_usage: [
+          lunchRow({ name: 'inferred-only', provenance: 'inferred' }),
+          lunchRow({ name: 'plan-only', provenance: 'plan_promoted' }),
+        ],
+      }),
+    );
+    expect(m.favorite_lunches).toEqual([]);
+  });
+
+  it('excludes banned rows even when favorited', () => {
+    const m = composeKitchenMap(
+      makeRaw({
+        recipe_usage: [
+          lunchRow({
+            name: 'avoid',
+            provenance: 'declared',
+            favorite: true,
+            banned: true,
+          }),
+        ],
+      }),
+    );
+    expect(m.favorite_lunches).toEqual([]);
+  });
+
+  it('orders favorited first, then by last_used_at DESC; emits 0-based positions', () => {
+    const m = composeKitchenMap(
+      makeRaw({
+        recipe_usage: [
+          lunchRow({
+            name: 'older-fav',
+            provenance: 'plan_promoted',
+            favorite: true,
+            lastUsedAt: '2026-01-01T00:00:00.000Z',
+          }),
+          lunchRow({
+            name: 'newer-fav',
+            provenance: 'plan_promoted',
+            favorite: true,
+            lastUsedAt: '2026-05-01T00:00:00.000Z',
+          }),
+          lunchRow({
+            name: 'non-fav-declared',
+            provenance: 'declared',
+            lastUsedAt: '2026-04-01T00:00:00.000Z',
+          }),
+        ],
+      }),
+    );
+    expect(m.favorite_lunches.map((l) => l.item)).toEqual([
+      'newer-fav',
+      'older-fav',
+      'non-fav-declared',
+    ]);
+    expect(m.favorite_lunches.map((l) => l.position)).toEqual([0, 1, 2]);
   });
 });

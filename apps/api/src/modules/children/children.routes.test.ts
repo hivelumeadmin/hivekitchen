@@ -60,6 +60,18 @@ interface LunchLinkSession {
   suppressed_by_user_id: string | null;
 }
 
+interface ChildAllergenRowDb {
+  id: string;
+  household_id: string;
+  child_id: string;
+  // NOOP-prefixed ciphertext of the allergen plaintext.
+  allergen: string;
+  allergen_hash: string;
+  source: string;
+  created_at: string;
+  updated_at: string;
+}
+
 interface MockDbState {
   children: ChildRowDb[];
   ackedUserIds: Set<string>;
@@ -69,6 +81,10 @@ interface MockDbState {
   plans: PlanRowForPropagation[];
   // Story 3.28
   lunchLinkSessions: Map<string, LunchLinkSession>;  // key: `${childId}:${date}`
+  // Slice 2.6-s8 — structured per-child allergen storage. ChildrenRepository
+  // now writes through ChildAllergensRepository.declareIfNew and reads via
+  // ChildAllergensRepository.findByHousehold.
+  childAllergens: ChildAllergenRowDb[];
 }
 
 // In-memory Supabase mock — children + users (for parental_notice gate).
@@ -84,6 +100,7 @@ function buildMockSupabase(state: MockDbState) {
       if (table === 'vpc_consents') return vpcConsentsNoop();
       if (table === 'school_policies') return schoolPoliciesTable(state);
       if (table === 'plans') return plansTable(state);
+      if (table === 'child_allergens') return childAllergensTable(state);
       throw new Error(`unexpected table: ${table}`);
     },
     rpc(_fnName: string) {
@@ -465,6 +482,82 @@ function emptyState(opts: {
     plans: opts.plans ?? [],
     schoolPolicies: opts.schoolPolicies ?? [],
     lunchLinkSessions: new Map(),
+    childAllergens: [],
+  };
+}
+
+// Slice 2.6-s8 — mock for the structured child_allergens table. Implements
+// the exact PostgREST shapes ChildAllergensRepository exercises:
+//   - upsert({...}, { onConflict, ignoreDuplicates }).select(...).maybeSingle()
+//     (used by declare AND declareIfNew; ignoreDuplicates=true skips conflicts)
+//   - select(cols).eq('household_id', id) (used by findByHousehold)
+function childAllergensTable(state: MockDbState) {
+  return {
+    upsert(
+      payload: {
+        household_id: string;
+        child_id: string;
+        allergen: string;
+        allergen_hash: string;
+        source: string;
+        updated_at: string;
+      },
+      opts: { onConflict?: string; ignoreDuplicates?: boolean },
+    ) {
+      return {
+        select(_cols: string) {
+          return {
+            maybeSingle: async () => {
+              const existing = state.childAllergens.find(
+                (a) =>
+                  a.child_id === payload.child_id && a.allergen_hash === payload.allergen_hash,
+              );
+              if (existing) {
+                if (opts.ignoreDuplicates === true) {
+                  return { data: null, error: null };
+                }
+                existing.updated_at = payload.updated_at;
+                existing.source = payload.source;
+                return {
+                  data: {
+                    id: existing.id,
+                    created_at: existing.created_at,
+                    updated_at: existing.updated_at,
+                  },
+                  error: null,
+                };
+              }
+              const now = payload.updated_at;
+              const stored: ChildAllergenRowDb = {
+                id: randomUUID(),
+                household_id: payload.household_id,
+                child_id: payload.child_id,
+                allergen: payload.allergen,
+                allergen_hash: payload.allergen_hash,
+                source: payload.source,
+                created_at: now,
+                updated_at: now,
+              };
+              state.childAllergens.push(stored);
+              return {
+                data: { id: stored.id, created_at: stored.created_at, updated_at: stored.updated_at },
+                error: null,
+              };
+            },
+          };
+        },
+      };
+    },
+    select(_cols: string) {
+      return {
+        eq(_col: string, householdId: string) {
+          const rows = state.childAllergens
+            .filter((a) => a.household_id === householdId)
+            .map((a) => ({ child_id: a.child_id, allergen: a.allergen }));
+          return Promise.resolve({ data: rows, error: null });
+        },
+      };
+    },
   };
 }
 
@@ -559,6 +652,36 @@ describe('POST /v1/households/:id/children', () => {
     expect(metaJson).not.toContain('south_asian');
     expect(metaJson).not.toContain('vegetarian');
     expect(metaJson).not.toContain('Asha');
+  });
+
+  it('declared_allergens land in child_allergens with source=onboarding_declared (2.6-s8 cutover)', async () => {
+    const state = emptyState({ acked: [SAMPLE_USER_ID] });
+    app = await buildTestApp({ state });
+    const token = signPrimaryParentToken(app);
+
+    const res = await app.inject({
+      method: 'POST',
+      url: `/v1/households/${SAMPLE_HOUSEHOLD_ID}/children`,
+      headers: { authorization: `Bearer ${token}` },
+      payload: VALID_BODY,
+    });
+    expect(res.statusCode).toBe(201);
+
+    // Two structured rows in child_allergens, one per allergen, all flagged
+    // as onboarding-declared (REST POST is treated as initial onboarding).
+    expect(state.childAllergens).toHaveLength(2);
+    expect(state.childAllergens.every((a) => a.source === 'onboarding_declared')).toBe(true);
+    // Each row's `allergen` is NOOP-prefixed ciphertext over the plaintext —
+    // the canonical store never holds plaintext at rest.
+    expect(state.childAllergens.every((a) => a.allergen.startsWith('NOOP:'))).toBe(true);
+    expect(state.childAllergens.every((a) => a.allergen_hash.length === 64)).toBe(true);
+
+    // Legacy children.declared_allergens column is written as encrypted []
+    // for shape parity but no longer carries authoritative data.
+    const childRow = state.children[0];
+    expect(childRow).toBeDefined();
+    // NOOP-encrypted "[]" decodes to base64 of "[]" = "W10=" → "NOOP:W10="
+    expect(childRow!.declared_allergens).toBe('NOOP:W10=');
   });
 
   it('encrypted storage → raw inserted row uses NOOP: prefix in encrypted columns (never plaintext)', async () => {

@@ -70,7 +70,19 @@ export const RecipeIngredientSchema = z.object({
 
 // ---- Recipe row (catalog) -------------------------------------------------
 
-export const RecipeSourceSchema = z.enum(['agent_generated', 'curated', 'imported']);
+// Slice 2.6-s1 — extended with two values to fold the M5 catalog into recipes:
+//   'catalog_seeded'   — Stage 0/1 catalog rows (curated baseline + LLM-
+//                        inferred Layer 1; rows whose ingredients=[] until
+//                        Layer 2 materialization).
+//   'parent_declared'  — parent-stated lunch name from Moment 5 / FR124
+//                        (replaces the dropped favorite_lunches table).
+export const RecipeSourceSchema = z.enum([
+  'agent_generated',
+  'curated',
+  'imported',
+  'catalog_seeded',
+  'parent_declared',
+]);
 export const RecipeVisibilitySchema = z.enum(['private', 'shared']);
 export const RecipeSlotSchema = z.enum(['main', 'snack', 'extra']);
 

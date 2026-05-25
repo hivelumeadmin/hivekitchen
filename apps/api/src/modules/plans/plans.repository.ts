@@ -304,6 +304,28 @@ export class PlansRepository extends BaseRepository {
       }));
   }
 
+  // Story 3.25 — slow-path lookup that returns the failed_at timestamp when at
+  // least one plan.hard_fail audit row exists for the given household+week, or
+  // null when none. Only invoked by GET /v1/plans when plan===null && !isDraft,
+  // so the cost is bounded. Story 3.26 extended the SELECT to include
+  // created_at so the API can surface the ETA to the parent UI.
+  async findHardFailAudit(
+    householdId: string,
+    weekOf: string,
+  ): Promise<{ failedAt: string } | null> {
+    const { data, error } = await this.client
+      .from('audit_log')
+      .select('id, created_at')
+      .eq('event_type', 'plan.hard_fail')
+      .eq('household_id', householdId)
+      .eq('metadata->>week_of', weekOf)
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (error) throw error;
+    return data !== null ? { failedAt: data.created_at as string } : null;
+  }
+
   // Atomic write: plan row + plan_items + guardrail_cleared_at + guardrail_version
   // are committed in one Postgres transaction via the commit_plan() function.
   // supabase-js has no client-side BEGIN/COMMIT, so the RPC is the only way to

@@ -65,15 +65,32 @@ const plansRoutesPlugin: FastifyPluginAsync = async (fastify) => {
     },
     async (request, reply) => {
       const { week } = request.query as GetPlansQuery;
+      const householdId = request.user.household_id;
       const { plan, planItems, isDraft, weekOf } = await fastify.plansService.getPlanForWeek({
-        householdId: request.user.household_id,
+        householdId,
         week,
       });
+
+      // Story 3.25/3.26 — hard-fail surface. Only check when plan===null &&
+      // !isDraft (the slow path that hits the reworking UX). Drafts never
+      // hard-fail since they haven't gone through the guardrail loop yet.
+      // Story 3.26 — payload now includes failed_at so the client can render
+      // a real estimated recovery time (failed_at + 1h).
+      let hardFail: { week_of: string; failed_at: string } | null = null;
+      if (plan === null && !isDraft) {
+        try {
+          hardFail = await fastify.plansService.getHardFailStatus(householdId, weekOf);
+        } catch (err) {
+          request.log.error({ err, householdId, weekOf }, 'getHardFailStatus failed — omitting hard_fail from response');
+        }
+      }
+
       return reply.status(200).send({
         plan: plan ?? null,
         plan_items: planItems,
         is_draft: isDraft,
         week_of: weekOf,
+        ...(hardFail !== null ? { hard_fail: hardFail } : {}),
       });
     },
   );

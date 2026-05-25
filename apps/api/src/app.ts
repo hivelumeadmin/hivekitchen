@@ -36,6 +36,7 @@ import { auditPartitionRotationPlugin } from './jobs/audit-partition-rotation.jo
 import { planGenerationJobPlugin } from './jobs/plan-generation.job.js';
 import { planRegenerationJobPlugin } from './jobs/plan-regeneration.job.js';
 import { dayOverrideRevertJobPlugin } from './jobs/day-override-revert.job.js';
+import { catalogSeedJobPlugin } from './jobs/catalog-seed.job.js';
 import { healthRoutes } from './modules/internal/health.routes.js';
 import { eventsRoutes } from './routes/v1/events/events.routes.js';
 import { authRoutes } from './modules/auth/auth.routes.js';
@@ -115,6 +116,9 @@ export async function buildApp(opts: BuildAppOptions) {
   await app.register(planGenerationJobPlugin);
   await app.register(planRegenerationJobPlugin);
   await app.register(dayOverrideRevertJobPlugin);
+  // Slice 2.6-s3 — must register BEFORE onboardingRoutes so the queue is
+  // available when OnboardingService submits its M2 trigger.
+  await app.register(catalogSeedJobPlugin);
 
   await app.register(cookie);
   await app.register(jwt, {

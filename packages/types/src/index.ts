@@ -17,6 +17,7 @@ import {
   AllergyVerdict,
   PlanUpdatedEvent,
   ConflictSchema,
+  FlaggedCompoundItemSchema,
   GuardrailResultSchema,
   PlanItemForGuardrailSchema,
   AllergyCheckInputSchema,
@@ -161,6 +162,8 @@ import {
   KitchenMapRecipesSchema,
   KitchenMapFavouriteRecipeSchema,
   KitchenMapMetaSchema,
+  // Slice 2.6-s1 — catalog provenance enum
+  CatalogProvenanceSchema,
   ChildUpsertInputSchema,
   ChildUpsertOutputSchema,
   CulturalNoteInputSchema,
@@ -192,6 +195,7 @@ import {
   RegeneratePlanResponseSchema,
   GetPlansQuerySchema,
   GetPlansResponseSchema,
+  HardFailStatusSchema,
   PlanItemSwapSummarySchema,
   PlanWeekIdParamSchema,
   PlanHistoryResponseSchema,
@@ -261,6 +265,7 @@ export type PlanUpdatedEvent = z.infer<typeof PlanUpdatedEvent>;
 
 // Allergy guardrail (Story 3.1)
 export type Conflict = z.infer<typeof ConflictSchema>;
+export type FlaggedCompoundItem = z.infer<typeof FlaggedCompoundItemSchema>;
 export type GuardrailResult = z.infer<typeof GuardrailResultSchema>;
 export type PlanItemForGuardrail = z.infer<typeof PlanItemForGuardrailSchema>;
 export type AllergyCheckInput = z.infer<typeof AllergyCheckInputSchema>;
@@ -461,6 +466,9 @@ export type KitchenMapExtraLibraryItem = z.infer<typeof KitchenMapExtraLibraryIt
 export type KitchenMapRecipes = z.infer<typeof KitchenMapRecipesSchema>;
 export type KitchenMapFavouriteRecipe = z.infer<typeof KitchenMapFavouriteRecipeSchema>;
 export type KitchenMapMeta = z.infer<typeof KitchenMapMetaSchema>;
+// Slice 2.6-s1 — catalog provenance enum used by KitchenMapFavoriteLunch
+// and KitchenMapFavouriteRecipe.
+export type CatalogProvenance = z.infer<typeof CatalogProvenanceSchema>;
 
 // Slice C — Onboarding agent tool I/O
 export type ChildUpsertInput = z.infer<typeof ChildUpsertInputSchema>;
@@ -514,6 +522,9 @@ export type RegeneratePlanResponse = z.infer<typeof RegeneratePlanResponseSchema
 // Story 3.14 — following-week draft view types
 export type GetPlansQuery = z.infer<typeof GetPlansQuerySchema>;
 export type GetPlansResponse = z.infer<typeof GetPlansResponseSchema>;
+
+// Story 3.25 — hard-fail escalation status payload
+export type HardFailStatus = z.infer<typeof HardFailStatusSchema>;
 
 // Story 3.15 — historical plans + outcomes view types
 export type PlanItemSwapSummary = z.infer<typeof PlanItemSwapSummarySchema>;

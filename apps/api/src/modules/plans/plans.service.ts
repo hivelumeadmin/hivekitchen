@@ -19,6 +19,8 @@ import type { BriefStateComposer } from './brief-state.composer.js';
 import type { ExtraRemovalSignalService } from './extra-removal-signal.service.js';
 import type { SnackSkusRepository } from './snack-skus.repository.js';
 import type { RecipeService } from '../recipe/recipe.service.js';
+import type { RecipesRepository } from '../recipe/recipes.repository.js';
+import type { RecipeAgent } from '../../agents/recipe-agent.js';
 import type { PlanRegenerationJobData } from '../../jobs/plan-regeneration.job.js';
 import type {
   BriefStateRow,
@@ -54,6 +56,14 @@ export interface PlansServiceDeps {
   // tests pre-dating slice D can construct PlansService without it; when
   // omitted, commit() proceeds without populating recipe_id.
   recipeService?: RecipeService;
+  // Slice 2.6-s3 — Layer 2 materialization wires recipesRepo + recipeAgent
+  // directly so a catalog_seeded recipe with empty ingredients gets its full
+  // ingredient list populated via Tavily fetch + LLM extraction before commit.
+  // Optional so tests pre-dating slice 2.6-s3 still compile; when omitted, the
+  // Layer 2 branch in materializeBeforeCommit is skipped (catalog_seeded items
+  // pass through unchanged — only the legacy slice D path runs).
+  recipesRepo?: RecipesRepository;
+  recipeAgent?: RecipeAgent;
 }
 
 // Story 3.13 — regeneration rate limit (architecture §3.6).
@@ -76,6 +86,8 @@ export class PlansService {
   private readonly extraRemovalSignalService: ExtraRemovalSignalService | null;
   private readonly snackSkusRepository: SnackSkusRepository | null;
   private readonly recipeService: RecipeService | null;
+  private readonly recipesRepo: RecipesRepository | null;
+  private readonly recipeAgent: RecipeAgent | null;
 
   constructor(deps: PlansServiceDeps) {
     this.repo = deps.repository;
@@ -89,6 +101,8 @@ export class PlansService {
     this.extraRemovalSignalService = deps.extraRemovalSignalService ?? null;
     this.snackSkusRepository = deps.snackSkusRepository ?? null;
     this.recipeService = deps.recipeService ?? null;
+    this.recipesRepo = deps.recipesRepo ?? null;
+    this.recipeAgent = deps.recipeAgent ?? null;
   }
 
   // Single-row read from brief_state. Never composes at request time
@@ -316,7 +330,51 @@ export class PlansService {
       }
     }
 
+    // Story 3.25 — hard-fail escalation. The retry loop exhausted all attempts
+    // without a cleared verdict. Emit `plan.hard_fail` audit so ops/parent
+    // surfaces can render the AccountableError state, then preserve the
+    // existing throw. Audit-write failure must not mask the guardrail rejection
+    // (AC4) — log and continue.
+    try {
+      await this.auditService.write({
+        event_type: 'plan.hard_fail',
+        household_id: current.household_id,
+        request_id: requestId,
+        metadata: {
+          plan_id: planId,
+          week_of: current.week_of,
+          rejection_count: rejections.length,
+        },
+        stages: rejections.map((r, i) => ({
+          stage: 'guardrail_rejection',
+          attempt: i + 1,
+          verdict: r.verdict,
+          conflicts: r.verdict === 'blocked' ? r.conflicts : [],
+          ...(r.verdict === 'uncertain' && r.reason === 'compound_ingredient_unverified'
+            ? { reason: r.reason, flagged_items: r.flagged_items ?? [] }
+            : {}),
+        })),
+      });
+    } catch (auditErr) {
+      this.logger.error(
+        { auditErr, plan_id: planId },
+        'audit write failed for plan.hard_fail — throwing GuardrailRejectionError anyway',
+      );
+    }
     throw new GuardrailRejectionError(planId, lastAttempt);
+  }
+
+  // Story 3.25 — does a plan.hard_fail audit row exist for this household+week?
+  // Slow-path read only — invoked by GET /v1/plans when plan===null && !isDraft
+  // so the response can carry { hard_fail: { week_of, failed_at } } and the
+  // frontend can render the FreshnessState variant="reworking" copy with a
+  // real ETA instead of the "Lumi is drafting" copy.
+  async getHardFailStatus(
+    householdId: string,
+    weekOf: string,
+  ): Promise<{ week_of: string; failed_at: string } | null> {
+    const result = await this.repo.findHardFailAudit(householdId, weekOf);
+    return result !== null ? { week_of: weekOf, failed_at: result.failedAt } : null;
   }
 
   // Story 3.12 — per-slot ingredient swap with guardrail validation.
@@ -509,6 +567,36 @@ export class PlansService {
       // Agent may already have supplied a recipe_id (Slice D.2 recipe.search
       // hit on the household's own catalog). Trust it — don't re-materialize.
       if (item.recipe_id !== undefined) {
+        // Slice 2.6-s3 — Layer 2 trigger. catalog_seeded rows are inserted by
+        // Stage 1 (catalog-seed.service.ts) with ingredients=[] (Layer 1: name
+        // + tags only). At plan-commit time we materialize the full structured
+        // ingredients via RecipeAgent.discover() so the plan store never
+        // references an empty-ingredient recipe. Only main slots carry recipes
+        // in this contract; the DB lookup short-circuits for non-catalog rows.
+        if (item.slot === 'main' && this.recipesRepo !== null && this.recipeAgent !== null) {
+          const recipe = await this.recipesRepo.findById(item.recipe_id);
+          if (
+            recipe !== null &&
+            recipe.source === 'catalog_seeded' &&
+            recipe.ingredients.length === 0
+          ) {
+            const materialized = await this.layer2Materialize(
+              item.recipe_id,
+              recipe.canonical_name,
+              input.household_id,
+            );
+            if (!materialized) {
+              // Mark the (household, recipe) pair as failed so the planner
+              // skips it on retry, then throw so the regenerate callback
+              // chooses a different item. Plan never commits with empty
+              // ingredients pointing at a catalog_seeded row.
+              await this.recipesRepo.markDiscoverFailed(item.recipe_id, input.household_id);
+              throw new Error(
+                `Layer 2 discovery failed for catalog_seeded recipe ${item.recipe_id} — planner retry expected`,
+              );
+            }
+          }
+        }
         items.push(item);
         recordedRecipeIds.push(item.recipe_id);
         continue;
@@ -624,6 +712,80 @@ export class PlansService {
       item: { ...rest, recipe_id: recipeId },
       recipeId,
     };
+  }
+
+  /**
+   * Slice 2.6-s3 — Layer 2 materialization.
+   *
+   * Given a catalog_seeded recipe row that started with empty ingredients (the
+   * Stage 1 LLM emitted name + tags only), fetch full structured ingredients
+   * via the existing RecipeAgent.discover flow (Tavily fetch + LLM extraction
+   * scoped to Allrecipes / RecipeTin Eats) and persist them in place on the
+   * SAME recipe id via RecipesRepository.updateIngredients.
+   *
+   * Returns true on success, false on failure (no candidates returned, or
+   * discover threw). The caller's job is to set discover_failed_at on the
+   * usage row when this returns false; the planner regenerate path then
+   * substitutes a different item.
+   */
+  private async layer2Materialize(
+    recipeId: string,
+    canonicalName: string,
+    householdId: string,
+  ): Promise<boolean> {
+    if (this.recipesRepo === null || this.recipeAgent === null) return false;
+    try {
+      const result = await this.recipeAgent.discover({
+        household_id: householdId,
+        // Reuse the plan-build cache namespace conceptually, but layer 2
+        // materializations are independent fetches — generate a fresh
+        // identifier so the cache doesn't collide with the planner run.
+        plan_build_id: `layer2-${recipeId}`,
+        slot: 'main',
+        count: 3,
+        intent: canonicalName,
+        constraints: {
+          cuisine_tags: [],
+          cultural_tags: [],
+          dietary_flags: [],
+          allergen_exclusions: [],
+          max_prep_minutes: null,
+        },
+      });
+      const first = result.candidates[0];
+      if (first === undefined) return false;
+      if (first.extraction.ingredients.length === 0) return false;
+      const ingredientKeys = dedupeKeys(first.extraction.ingredients.map((i) => i.key));
+      await this.recipesRepo.updateIngredients(
+        recipeId,
+        first.extraction.ingredients,
+        ingredientKeys,
+      );
+      this.logger.info(
+        {
+          module: 'recipes',
+          action: 'recipe.layer2_materialized',
+          household_id: householdId,
+          recipe_id: recipeId,
+          ingredient_count: first.extraction.ingredients.length,
+          source_site: first.extraction.source_site,
+        },
+        'catalog_seeded recipe materialized via Layer 2 discovery',
+      );
+      return true;
+    } catch (err) {
+      this.logger.warn(
+        {
+          module: 'recipes',
+          action: 'recipe.layer2_failed',
+          household_id: householdId,
+          recipe_id: recipeId,
+          err,
+        },
+        'Layer 2 RecipeAgent.discover threw — planner retry expected',
+      );
+      return false;
+    }
   }
 
   // Story 3.12 — sick-day pause: marks paused_at on all plan_items for the day.
@@ -844,4 +1006,18 @@ export class PlansService {
 
     return { jobId: job.id ?? jobIdKey, rateLimitRemaining };
   }
+}
+
+// Slice 2.6-s3 — module-local helper. Mirrors RecipeService.insertFromDiscoverExtraction's
+// dedupe shape so Layer 2 writes the same ingredient_keys array RecipeService
+// would have produced for a fresh insert.
+function dedupeKeys(keys: readonly string[]): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const k of keys) {
+    if (seen.has(k)) continue;
+    seen.add(k);
+    out.push(k);
+  }
+  return out;
 }

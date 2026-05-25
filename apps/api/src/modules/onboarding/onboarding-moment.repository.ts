@@ -120,10 +120,15 @@ export class OnboardingMomentRepository {
         .from('child_allergens')
         .select('id', { count: 'exact', head: true })
         .eq('household_id', householdId),
+      // Slice 2.6-s1 — favorite_lunches table dropped; count derives from
+      // household_recipe_usage rows the parent declared (catalog_provenance
+      // ='declared'). The completion gate semantics (FR124 ≥10) are
+      // preserved.
       this.client
-        .from('favorite_lunches')
-        .select('id', { count: 'exact', head: true })
-        .eq('household_id', householdId),
+        .from('household_recipe_usage')
+        .select('recipe_id', { count: 'exact', head: true })
+        .eq('household_id', householdId)
+        .eq('catalog_provenance', 'declared'),
     ]);
 
     if (householdRes.error !== null && householdRes.error !== undefined) {
@@ -143,7 +148,7 @@ export class OnboardingMomentRepository {
     }
     if (favoriteRes.error !== null && favoriteRes.error !== undefined) {
       throw new Error(
-        `onboarding_moment_state.countRequiredSetSources(favorite_lunches): ${favoriteRes.error.message}`,
+        `onboarding_moment_state.countRequiredSetSources(household_recipe_usage[declared]): ${favoriteRes.error.message}`,
       );
     }
 

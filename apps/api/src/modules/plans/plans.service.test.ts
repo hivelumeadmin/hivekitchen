@@ -259,7 +259,7 @@ describe('PlansService.commit', () => {
     const blocked: GuardrailResult = {
       verdict: 'blocked',
       conflicts: [
-        { child_id: CHILD_ID, allergen: 'peanuts', ingredient: 'peanut butter', day: 'monday', slot: 'main' },
+        { child_id: CHILD_ID, allergen: 'peanut', ingredient: 'peanut butter', day: 'monday', slot: 'main' },
       ],
     };
     const guardrail = buildGuardrail([blocked, blocked, blocked]);
@@ -280,7 +280,12 @@ describe('PlansService.commit', () => {
       GuardrailRejectionError,
     );
     expect(repo.commit).not.toHaveBeenCalled();
-    expect(audit.write).not.toHaveBeenCalled();
+    // Story 3.25 — audit.write IS now called with plan.hard_fail before the
+    // throw; assert no plan.generated audit was emitted on the failure path.
+    const generatedCalls = audit.write.mock.calls.filter(
+      (call) => (call[0] as { event_type: string }).event_type === 'plan.generated',
+    );
+    expect(generatedCalls).toHaveLength(0);
   });
 
   it('retries via regenerate() up to 3 attempts and clears on the third', async () => {
@@ -288,7 +293,7 @@ describe('PlansService.commit', () => {
     const blocked: GuardrailResult = {
       verdict: 'blocked',
       conflicts: [
-        { child_id: CHILD_ID, allergen: 'peanuts', ingredient: 'peanut butter', day: 'monday', slot: 'main' },
+        { child_id: CHILD_ID, allergen: 'peanut', ingredient: 'peanut butter', day: 'monday', slot: 'main' },
       ],
     };
     const guardrail = buildGuardrail([blocked, blocked, { verdict: 'cleared', conflicts: [] }]);
@@ -325,7 +330,7 @@ describe('PlansService.commit', () => {
     const blocked: GuardrailResult = {
       verdict: 'blocked',
       conflicts: [
-        { child_id: CHILD_ID, allergen: 'peanuts', ingredient: 'peanut butter', day: 'monday', slot: 'main' },
+        { child_id: CHILD_ID, allergen: 'peanut', ingredient: 'peanut butter', day: 'monday', slot: 'main' },
       ],
     };
     const guardrail = buildGuardrail([blocked, blocked, blocked]);
@@ -431,7 +436,9 @@ describe('PlansService.commit', () => {
 
   it('throws GuardrailRejectionError immediately on uncertain verdict (infrastructure failure)', async () => {
     const repo = buildRepo();
-    const guardrail = buildGuardrail([{ verdict: 'uncertain', conflicts: [] }]);
+    const guardrail = buildGuardrail([
+      { verdict: 'uncertain', conflicts: [], reason: 'no_rules_loaded' },
+    ]);
     const audit = buildAudit();
     const service = new PlansService({
       repository: repo,
@@ -451,6 +458,106 @@ describe('PlansService.commit', () => {
     expect(guardrail.clearOrReject).toHaveBeenCalledTimes(1);
     expect(regenerate).not.toHaveBeenCalled();
     expect(repo.commit).not.toHaveBeenCalled();
+    expect(audit.write).not.toHaveBeenCalledWith(expect.objectContaining({ event_type: 'plan.hard_fail' }));
+  });
+
+  it('throws GuardrailRejectionError on infrastructure-uncertain "empty_ingredients"', async () => {
+    const repo = buildRepo();
+    const guardrail = buildGuardrail([
+      { verdict: 'uncertain', conflicts: [], reason: 'empty_ingredients' },
+    ]);
+    const audit = buildAudit();
+    const service = new PlansService({
+      repository: repo,
+      briefStateRepository: buildBriefStateRepo(),
+      briefStateComposer: buildBriefStateComposer(),
+      allergyGuardrail: guardrail,
+      auditService: audit,
+      logger: buildLogger(),
+      redis: buildRedis(),
+      regenQueue: buildRegenQueue(),
+    });
+
+    const regenerate = vi.fn();
+    await expect(service.commit(makeInput(), REQUEST_ID, regenerate)).rejects.toBeInstanceOf(
+      GuardrailRejectionError,
+    );
+    expect(regenerate).not.toHaveBeenCalled();
+    expect(audit.write).not.toHaveBeenCalledWith(expect.objectContaining({ event_type: 'plan.hard_fail' }));
+  });
+
+  // -------------------- Story 3.24 — compound-uncertain retry path --------------------
+
+  it('retries via regenerate() on compound-uncertain reason (does NOT throw immediately)', async () => {
+    const repo = buildRepo();
+    const guardrail = buildGuardrail([
+      {
+        verdict: 'uncertain',
+        conflicts: [],
+        reason: 'compound_ingredient_unverified',
+        flagged_items: [
+          { child_id: CHILD_ID, ingredient: 'garam masala', slot: 'main', day: 'monday' },
+        ],
+      },
+      { verdict: 'cleared', conflicts: [] },
+    ]);
+    const audit = buildAudit();
+    const service = new PlansService({
+      repository: repo,
+      briefStateRepository: buildBriefStateRepo(),
+      briefStateComposer: buildBriefStateComposer(),
+      allergyGuardrail: guardrail,
+      auditService: audit,
+      logger: buildLogger(),
+      redis: buildRedis(),
+      regenQueue: buildRegenQueue(),
+    });
+
+    const cleanInput = makeInput({
+      items: [{ child_id: CHILD_ID, day: 'monday', slot: 'main', ingredients: ['rice', 'broccoli'] }],
+    });
+    const regenerate = vi.fn().mockResolvedValue(cleanInput);
+    const result = await service.commit(makeInput(), REQUEST_ID, regenerate);
+
+    expect(result).toBe(PLAN_ID);
+    expect(regenerate).toHaveBeenCalledTimes(1);
+    expect(repo.commit).toHaveBeenCalledTimes(1);
+    // regenerate received the compound-uncertain rejection
+    const passedRejections = regenerate.mock.calls[0][0] as GuardrailResult[];
+    expect(passedRejections[0].verdict).toBe('uncertain');
+    if (passedRejections[0].verdict === 'uncertain') {
+      expect(passedRejections[0].reason).toBe('compound_ingredient_unverified');
+    }
+  });
+
+  it('throws GuardrailRejectionError after MAX retries even for compound-uncertain', async () => {
+    const repo = buildRepo();
+    const compoundResult: GuardrailResult = {
+      verdict: 'uncertain',
+      conflicts: [],
+      reason: 'compound_ingredient_unverified',
+      flagged_items: [
+        { child_id: CHILD_ID, ingredient: 'garam masala', slot: 'main', day: 'monday' },
+      ],
+    };
+    const guardrail = buildGuardrail([compoundResult, compoundResult, compoundResult]);
+    const audit = buildAudit();
+    const service = new PlansService({
+      repository: repo,
+      briefStateRepository: buildBriefStateRepo(),
+      briefStateComposer: buildBriefStateComposer(),
+      allergyGuardrail: guardrail,
+      auditService: audit,
+      logger: buildLogger(),
+      redis: buildRedis(),
+      regenQueue: buildRegenQueue(),
+    });
+
+    const regenerate = vi.fn().mockResolvedValue(makeInput());
+    await expect(service.commit(makeInput(), REQUEST_ID, regenerate)).rejects.toBeInstanceOf(
+      GuardrailRejectionError,
+    );
+    expect(repo.commit).not.toHaveBeenCalled();
   });
 
   it('throws GuardrailRejectionError when regenerate() throws during retry', async () => {
@@ -458,7 +565,7 @@ describe('PlansService.commit', () => {
     const blocked: GuardrailResult = {
       verdict: 'blocked',
       conflicts: [
-        { child_id: CHILD_ID, allergen: 'peanuts', ingredient: 'peanut butter', day: 'monday', slot: 'main' },
+        { child_id: CHILD_ID, allergen: 'peanut', ingredient: 'peanut butter', day: 'monday', slot: 'main' },
       ],
     };
     const guardrail = buildGuardrail([blocked]);
@@ -479,6 +586,8 @@ describe('PlansService.commit', () => {
       GuardrailRejectionError,
     );
     expect(repo.commit).not.toHaveBeenCalled();
+    // regenerate() throwing is infra failure (not guardrail exhaustion) — plan.hard_fail must NOT be emitted
+    expect(audit.write).not.toHaveBeenCalledWith(expect.objectContaining({ event_type: 'plan.hard_fail' }));
   });
 
   it('returns planId and logs error when audit write fails after successful commit', async () => {
@@ -507,6 +616,173 @@ describe('PlansService.commit', () => {
       expect.objectContaining({ plan_id: PLAN_ID }),
       expect.stringContaining('audit write failed'),
     );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Story 3.25 — hard-fail escalation
+// ---------------------------------------------------------------------------
+
+describe('PlansService.commit — plan.hard_fail audit (Story 3.25)', () => {
+  const blocked: GuardrailResult = {
+    verdict: 'blocked',
+    conflicts: [
+      { child_id: CHILD_ID, allergen: 'peanut', ingredient: 'peanut butter', day: 'monday', slot: 'main' },
+    ],
+  };
+
+  it('writes plan.hard_fail audit with one stages entry per rejection before throwing', async () => {
+    const repo = buildRepo();
+    const guardrail = buildGuardrail([blocked, blocked, blocked]);
+    const audit = buildAudit();
+    const service = new PlansService({
+      repository: repo,
+      briefStateRepository: buildBriefStateRepo(),
+      briefStateComposer: buildBriefStateComposer(),
+      allergyGuardrail: guardrail,
+      auditService: audit,
+      logger: buildLogger(),
+      redis: buildRedis(),
+      regenQueue: buildRegenQueue(),
+    });
+
+    const regenerate = vi.fn().mockResolvedValue(makeInput());
+    await expect(service.commit(makeInput(), REQUEST_ID, regenerate)).rejects.toBeInstanceOf(
+      GuardrailRejectionError,
+    );
+
+    expect(audit.write).toHaveBeenCalledTimes(1);
+    const auditCall = audit.write.mock.calls[0]?.[0];
+    expect(auditCall).toMatchObject({
+      event_type: 'plan.hard_fail',
+      household_id: HOUSEHOLD_ID,
+      request_id: REQUEST_ID,
+      metadata: {
+        plan_id: PLAN_ID,
+        week_of: '2026-05-04',
+        rejection_count: 3,
+      },
+    });
+    expect(auditCall.stages).toHaveLength(3);
+    expect(auditCall.stages[0]).toEqual({
+      stage: 'guardrail_rejection',
+      attempt: 1,
+      verdict: 'blocked',
+      conflicts: blocked.conflicts,
+    });
+    expect(auditCall.stages[2].attempt).toBe(3);
+  });
+
+  it('carries compound-uncertain reason + flagged_items on stages entries', async () => {
+    const repo = buildRepo();
+    const flagged = [
+      { child_id: CHILD_ID, ingredient: 'garam masala', slot: 'main', day: 'monday' },
+    ];
+    const compound: GuardrailResult = {
+      verdict: 'uncertain',
+      conflicts: [],
+      reason: 'compound_ingredient_unverified',
+      flagged_items: flagged,
+    };
+    const guardrail = buildGuardrail([compound, compound, compound]);
+    const audit = buildAudit();
+    const service = new PlansService({
+      repository: repo,
+      briefStateRepository: buildBriefStateRepo(),
+      briefStateComposer: buildBriefStateComposer(),
+      allergyGuardrail: guardrail,
+      auditService: audit,
+      logger: buildLogger(),
+      redis: buildRedis(),
+      regenQueue: buildRegenQueue(),
+    });
+
+    const regenerate = vi.fn().mockResolvedValue(makeInput());
+    await expect(service.commit(makeInput(), REQUEST_ID, regenerate)).rejects.toBeInstanceOf(
+      GuardrailRejectionError,
+    );
+
+    const auditCall = audit.write.mock.calls[0]?.[0];
+    expect(auditCall.event_type).toBe('plan.hard_fail');
+    expect(auditCall.stages[0]).toMatchObject({
+      stage: 'guardrail_rejection',
+      attempt: 1,
+      verdict: 'uncertain',
+      conflicts: [],
+      reason: 'compound_ingredient_unverified',
+      flagged_items: flagged,
+    });
+  });
+
+  it('still throws GuardrailRejectionError when the audit write fails (AC4)', async () => {
+    const repo = buildRepo();
+    const guardrail = buildGuardrail([blocked, blocked, blocked]);
+    const audit = {
+      write: vi.fn().mockRejectedValue(new Error('audit DB down')),
+    } as unknown as AuditService & { write: ReturnType<typeof vi.fn> };
+    const logger = buildLogger();
+    const service = new PlansService({
+      repository: repo,
+      briefStateRepository: buildBriefStateRepo(),
+      briefStateComposer: buildBriefStateComposer(),
+      allergyGuardrail: guardrail,
+      auditService: audit,
+      logger,
+      redis: buildRedis(),
+      regenQueue: buildRegenQueue(),
+    });
+
+    const regenerate = vi.fn().mockResolvedValue(makeInput());
+    await expect(service.commit(makeInput(), REQUEST_ID, regenerate)).rejects.toBeInstanceOf(
+      GuardrailRejectionError,
+    );
+    expect((logger.error as ReturnType<typeof vi.fn>)).toHaveBeenCalledWith(
+      expect.objectContaining({ plan_id: PLAN_ID }),
+      expect.stringContaining('plan.hard_fail'),
+    );
+  });
+});
+
+describe('PlansService.getHardFailStatus (Story 3.25 / 3.26)', () => {
+  it('returns { week_of, failed_at } when the repo finds a hard-fail audit row', async () => {
+    const repo = {
+      findHardFailAudit: vi.fn().mockResolvedValue({ failedAt: '2026-05-25T08:00:00Z' }),
+    } as unknown as PlansRepository & { findHardFailAudit: ReturnType<typeof vi.fn> };
+    const service = new PlansService({
+      repository: repo,
+      briefStateRepository: buildBriefStateRepo(),
+      briefStateComposer: buildBriefStateComposer(),
+      allergyGuardrail: buildGuardrail([{ verdict: 'cleared', conflicts: [] }]),
+      auditService: buildAudit(),
+      logger: buildLogger(),
+      redis: buildRedis(),
+      regenQueue: buildRegenQueue(),
+    });
+
+    const out = await service.getHardFailStatus(HOUSEHOLD_ID, '2026-05-04');
+
+    expect(out).toEqual({ week_of: '2026-05-04', failed_at: '2026-05-25T08:00:00Z' });
+    expect(repo.findHardFailAudit).toHaveBeenCalledWith(HOUSEHOLD_ID, '2026-05-04');
+  });
+
+  it('returns null when the repo finds no hard-fail audit row', async () => {
+    const repo = {
+      findHardFailAudit: vi.fn().mockResolvedValue(null),
+    } as unknown as PlansRepository & { findHardFailAudit: ReturnType<typeof vi.fn> };
+    const service = new PlansService({
+      repository: repo,
+      briefStateRepository: buildBriefStateRepo(),
+      briefStateComposer: buildBriefStateComposer(),
+      allergyGuardrail: buildGuardrail([{ verdict: 'cleared', conflicts: [] }]),
+      auditService: buildAudit(),
+      logger: buildLogger(),
+      redis: buildRedis(),
+      regenQueue: buildRegenQueue(),
+    });
+
+    const out = await service.getHardFailStatus(HOUSEHOLD_ID, '2026-05-04');
+
+    expect(out).toBeNull();
   });
 });
 
@@ -1907,7 +2183,7 @@ describe('PlansService.commit — Slice D recipe materialization', () => {
     const blocked: GuardrailResult = {
       verdict: 'blocked',
       conflicts: [
-        { child_id: CHILD_ID, allergen: 'peanuts', ingredient: 'peanut butter', day: 'monday', slot: 'main' },
+        { child_id: CHILD_ID, allergen: 'peanut', ingredient: 'peanut butter', day: 'monday', slot: 'main' },
       ],
     };
     const service = new PlansService({

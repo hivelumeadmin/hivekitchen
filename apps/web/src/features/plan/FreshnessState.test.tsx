@@ -1,6 +1,6 @@
 import { describe, it, expect, afterEach } from 'vitest';
 import { render, screen, cleanup } from '@testing-library/react';
-import { FreshnessState } from './FreshnessState.js';
+import { FreshnessState, formatEstimatedRecovery } from './FreshnessState.js';
 
 afterEach(() => {
   cleanup();
@@ -69,5 +69,75 @@ describe('FreshnessState', () => {
     cleanup();
     render(<FreshnessState variant="stale" />);
     expect(screen.getByRole('status')).toBeDefined();
+    cleanup();
+    render(<FreshnessState variant="reworking" />);
+    expect(screen.getByRole('status')).toBeDefined();
+  });
+});
+
+describe('FreshnessState — reworking variant (Story 3.26)', () => {
+  it('renders the reworking copy fragment', () => {
+    render(<FreshnessState variant="reworking" />);
+    expect(screen.getByText(/Lumi is reworking this week's plan/)).toBeDefined();
+  });
+
+  it('falls back to "within the hour" when failedAt is absent', () => {
+    render(<FreshnessState variant="reworking" />);
+    expect(screen.getByText(/within the hour/)).toBeDefined();
+  });
+
+  it('shows "soon" when failedAt + 1h is already past', () => {
+    const twoHoursAgo = new Date(Date.now() - 2 * 3_600_000).toISOString();
+    render(<FreshnessState variant="reworking" failedAt={twoHoursAgo} />);
+    expect(screen.getByText(/soon/)).toBeDefined();
+  });
+
+  it('shows a locale time string when failedAt + 1h is in the future', () => {
+    const thirtyMinutesAgo = new Date(Date.now() - 30 * 60_000).toISOString();
+    render(<FreshnessState variant="reworking" failedAt={thirtyMinutesAgo} />);
+    const p = screen.getByRole('status');
+    expect(p.textContent).not.toContain('soon');
+    expect(p.textContent).not.toContain('within the hour');
+    // ETA (~30 min from now) is some locale-formatted time string — just assert
+    // it landed somewhere in the rendered text.
+    expect((p.textContent ?? '').length).toBeGreaterThan(0);
+  });
+
+  it('exposes role="status" and aria-live="polite"', () => {
+    render(<FreshnessState variant="reworking" />);
+    const node = screen.getByRole('status');
+    expect(node.getAttribute('aria-live')).toBe('polite');
+  });
+
+  it('uses warm-neutral token, no error/red/destructive tokens', () => {
+    const { container } = render(<FreshnessState variant="reworking" />);
+    const p = container.querySelector('p');
+    expect(p?.className).toContain('text-fg-muted');
+    expect(p?.className).not.toContain('red');
+    expect(p?.className).not.toContain('destructive');
+    expect(p?.className).not.toContain('error');
+  });
+});
+
+describe('formatEstimatedRecovery (Story 3.26)', () => {
+  it('returns "within the hour" when failedAt is undefined', () => {
+    expect(formatEstimatedRecovery(undefined)).toBe('within the hour');
+  });
+
+  it('returns "within the hour" when failedAt is an invalid date string', () => {
+    expect(formatEstimatedRecovery('not-a-date')).toBe('within the hour');
+  });
+
+  it('returns "soon" when failedAt + 1h is in the past', () => {
+    const twoHoursAgo = new Date(Date.now() - 2 * 3_600_000).toISOString();
+    expect(formatEstimatedRecovery(twoHoursAgo)).toBe('soon');
+  });
+
+  it('returns a non-empty time string when failedAt + 1h is in the future', () => {
+    const thirtyMinutesAgo = new Date(Date.now() - 30 * 60_000).toISOString();
+    const result = formatEstimatedRecovery(thirtyMinutesAgo);
+    expect(result).not.toBe('soon');
+    expect(result).not.toBe('within the hour');
+    expect(result.length).toBeGreaterThan(0);
   });
 });

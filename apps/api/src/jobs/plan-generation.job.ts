@@ -8,6 +8,7 @@ import type {
   PlanComposeOutput,
   PlanItemWrite,
 } from '@hivekitchen/types';
+import { GuardrailRejectionError } from '../common/errors.js';
 import { HouseholdsRepository } from '../modules/households/households.repository.js';
 import { ChildAllergensRepository } from '../modules/children/child-allergens.repository.js';
 import { ChildrenRepository } from '../modules/children/children.repository.js';
@@ -458,6 +459,10 @@ const planGenerationPlugin: FastifyPluginAsync = async (fastify) => {
           error: err.message,
           attempts: job.attemptsMade,
           job_id: job.id ?? null,
+          // Story 3.25 — lets ops distinguish guardrail-retry exhaustion from
+          // infrastructure failures (timeout, LLM error, DB outage). Both
+          // throw — only the guardrail path also emits plan.hard_fail.
+          is_guardrail_rejection: err instanceof GuardrailRejectionError,
         },
       })
       .catch((auditErr: unknown) => {

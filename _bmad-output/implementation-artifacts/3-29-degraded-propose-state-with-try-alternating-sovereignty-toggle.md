@@ -20,8 +20,8 @@ So that the household isn't stuck with rice-and-steamed-vegetables plans (UX-DR4
 - Story 3.18: `CulturalCalendarService` + `MemoryContextService`; planner prompt receives cultural priors and observances; silence-mode guard
 - Story 3.2: `DomainOrchestrator.planWeek()` — orchestrator handles `rejectionContext` and `uncertainContext`; this story adds a `degradedReason` output path
 - Story 3.6: `brief_state` projection; `GET /v1/households/:id/brief`
-- Story 3.25: `brief_state.plan_state` + `plan_state_message` column (added in migration 20260820000000); `plan_state_enum` already includes `'degraded'`
-- Story 3.11: `<FreshnessState>` — used to render the degraded note inline (Story 3.26 extended the `failed` variant; this story uses the `degraded` state of `plan_state` with a different surface)
+- Story 3.25 / 3.26: `hard_fail` on `GET /v1/plans` + `FreshnessState variant="reworking"` — the hard-fail (no-safe-plan) surface. Neither story added `brief_state.plan_state`. **This story adds those columns** (Task 1b migration).
+- Story 3.11: `<FreshnessState>` — exists with `fresh | stale | loading | failed | offline | reworking`. The `reworking` variant (Story 3.26) is for hard-fail. This story uses a different surface: an inline `<LumiNote>` for `plan_state = 'degraded'` in `BriefCanvas`, not `FreshnessState`.
 - `AUDIT_EVENT_TYPES`
 
 **Key invariants:**
@@ -38,9 +38,36 @@ So that the household isn't stuck with rice-and-steamed-vegetables plans (UX-DR4
 
 ## Tasks / Subtasks
 
-### Task 1 — DB Migration: `households.sovereignty_mode` column
+### Task 1a — DB Migration: `brief_state` plan-state columns
 
-Create `supabase/migrations/20260850000000_add_sovereignty_mode_to_households.sql`:
+Create `supabase/migrations/20260920000000_add_plan_state_to_brief_state.sql`:
+
+```sql
+-- Story 3.29: brief_state tracks a soft cultural-degradation signal.
+-- plan_state_enum covers both the hard-fail path (Story 3.25 audit machinery)
+-- and this story's cultural-degradation path. The enum lives here so both
+-- paths share the same type.
+DO $$ BEGIN
+  CREATE TYPE plan_state_enum AS ENUM ('hard_failed', 'degraded');
+EXCEPTION
+  WHEN duplicate_object THEN null;
+END $$;
+
+ALTER TABLE brief_state
+  ADD COLUMN IF NOT EXISTS plan_state       plan_state_enum,   -- null = no active degradation
+  ADD COLUMN IF NOT EXISTS plan_state_set_at TIMESTAMPTZ,
+  ADD COLUMN IF NOT EXISTS plan_state_message TEXT;
+```
+
+`plan_state = NULL` is the normal/no-degradation state (most rows). The column is nullable to avoid backfill.
+
+> **Note:** `hard_failed` is in this enum for completeness, but the current hard-fail surface (Story 3.25/3.26) reads from `audit_log` via `GET /v1/plans`, not from `brief_state`. A future story may unify both paths through `brief_state`; for now only `'degraded'` is written here.
+
+---
+
+### Task 1b — DB Migration: `households.sovereignty_mode` column
+
+Create `supabase/migrations/20260920000100_add_sovereignty_mode_to_households.sql`:
 
 ```sql
 -- Story 3.29: households can choose how to handle intersecting cultural rule sets.
@@ -233,15 +260,22 @@ The toggle calls `PATCH /v1/households/:id/sovereignty-mode` with `{ sovereignty
 
 Use `foliage-*` from Tailwind tokens (cultural/diversity palette — verify with `Design System.md`; if not defined, use `emerald-*` as placeholder and note the token mapping in `deferred-work.md`).
 
-### Task 6 — Update `BriefStateResponse` contract
+### Task 6 — Add `plan_state` fields to `BriefStateRowSchema` contract
 
-In `packages/contracts/src/brief.ts`, verify that `plan_state` already includes `'degraded'` as a value (added in Story 3.25 migration via `plan_state_enum`). The contract schema should already handle it:
+**File:** `packages/contracts/src/plan.ts` (where `BriefStateRowSchema` lives — there is no `brief.ts`).
+
+Add three fields to `BriefStateRowSchema`. Read the schema before editing — it currently ends at `updated_at`.
 
 ```typescript
-plan_state: z.enum(['hard_failed', 'degraded']).nullable(),
+// Add to BriefStateRowSchema (after updated_at):
+plan_state: z.enum(['hard_failed', 'degraded']).nullable().default(null),
+plan_state_set_at: z.string().datetime({ offset: true }).nullable().default(null),
+plan_state_message: z.string().max(500).nullable().default(null),
 ```
 
-No contract change needed if Story 3.25 already covers this.
+`default(null)` ensures existing `brief_state` rows without these columns (pre-migration) parse cleanly without breaking the `BriefResponseSchema`.
+
+Also update `packages/types/src/index.ts` — if `BriefStateRow` is re-exported via `z.infer<typeof BriefStateRowSchema>`, the type picks up the new fields automatically. Confirm with `pnpm --filter @hivekitchen/contracts exec tsc --noEmit`.
 
 ### Task 7 — Planner prompt: alternating sovereignty instructions
 
@@ -286,11 +320,12 @@ export const PLANNER_PROMPT = {
 | | `hard_failed` | `degraded` |
 |---|---|---|
 | Plan committed? | No | Yes (best effort) |
-| Component | `<AccountableError>` | `<LumiNote>` inline note |
-| Palette | teal (safety) | foliage (cultural/soft) |
-| `role` | `alert` (assertive) | `status` (polite) |
+| Surface | `<FreshnessState variant="reworking">` (Story 3.26) | `<LumiNote>` inline note in `BriefCanvas` |
+| Data source | `audit_log` via `GET /v1/plans hard_fail` | `brief_state.plan_state` (this story) |
+| Palette | warm-neutral `text-fg-muted` | foliage (cultural/soft) |
+| `role` | `status` (polite) | `status` (polite) |
 | Actions | None (ops handles it) | [Try alternating] toggle |
-| `plan_state` value | `'hard_failed'` | `'degraded'` |
+| `plan_state` value | n/a (not in `brief_state`) | `'degraded'` |
 
 ### `CULTURAL_INTERSECTION_EMPTY` is the planner's signal, not the guardrail's
 
@@ -312,12 +347,13 @@ Households in silence-mode (no ratified cultural priors) never produce `CULTURAL
 
 **New files:**
 ```
-supabase/migrations/20260850000000_add_sovereignty_mode_to_households.sql
+supabase/migrations/20260920000000_add_plan_state_to_brief_state.sql
+supabase/migrations/20260920000100_add_sovereignty_mode_to_households.sql
 ```
 
 **Modified files:**
 ```
-packages/contracts/src/plan.ts                              + degraded_reason field in PlanComposeOutputSchema
+packages/contracts/src/plan.ts                              + degraded_reason in PlanComposeOutputSchema; plan_state/plan_state_set_at/plan_state_message in BriefStateRowSchema
 packages/contracts/src/households.ts                        + UpdateSovereigntyModeInputSchema
 packages/types/src/index.ts                                  + UpdateSovereigntyModeInput type
 apps/api/src/audit/audit.types.ts                            + plan.cultural_degraded, household.sovereignty_mode_changed
@@ -339,3 +375,4 @@ _bmad-output/implementation-artifacts/deferred-work.md       + foliage-* token m
 | Date | Author | Change |
 |------|--------|--------|
 | 2026-05-05 | Menon | Story 3.29 created — ready-for-dev. |
+| 2026-05-25 | Menon | Corrected stale dependency assumption: 3.25/3.26 did NOT add brief_state.plan_state. Added Task 1a migration for those columns. Rewrote Task 6 to add the schema fields (was "verify"). Updated dev notes table: AccountableError deleted in 3.26, replaced by FreshnessState variant=reworking. Fixed migration timestamp (was 20260850000000, now 20260920000100). |

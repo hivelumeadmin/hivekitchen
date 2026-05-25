@@ -34,7 +34,7 @@ function buildService(verdict: 'cleared' | 'blocked' | 'uncertain' = 'cleared') 
     conflicts: [
       {
         child_id: CHILD_ID,
-        allergen: 'peanuts',
+        allergen: 'peanut',
         ingredient: 'peanut butter',
         slot: 'main',
         day: 'monday',

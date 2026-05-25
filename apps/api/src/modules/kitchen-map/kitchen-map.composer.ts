@@ -1,5 +1,6 @@
 import type {
   BagCompositionPattern,
+  CatalogProvenance,
   KitchenMap,
   KitchenMapAllergen,
   KitchenMapCaregiver,
@@ -23,7 +24,6 @@ import type {
   RawChildRow,
   RawCulturalPriorRow,
   RawDietaryRow,
-  RawFavoriteLunchRow,
   RawFavouriteRecipeRow,
   RawFoodPreferenceRow,
   RawKitchenMapData,
@@ -31,6 +31,21 @@ import type {
   RawRuleRow,
   RawSchoolPolicyRow,
 } from './kitchen-map.repository.js';
+
+// Slice 2.6-s1 — favorite_lunches projection is now derived from
+// household_recipe_usage rows whose catalog_provenance flags them as
+// parent-stated, joined to recipes for canonical_name.
+const VALID_CATALOG_PROVENANCES = new Set<CatalogProvenance>([
+  'declared',
+  'inferred',
+  'parent_added',
+  'plan_promoted',
+]);
+const FAVORITE_LUNCH_PROVENANCES = new Set<CatalogProvenance>([
+  'declared',
+  'parent_added',
+]);
+const FAVORITE_LUNCHES_LIMIT = 20;
 
 // Slice 2.5-s1 — schema 1.0.0 → 1.1.0. Added: household.display_name,
 // child.bag_composition_pattern (derived), cultural prior enforcement,
@@ -116,10 +131,14 @@ export function composeKitchenMap(raw: RawKitchenMapData): KitchenMap {
     // return [] for households that haven't been through Epic 2.5 moments;
     // newly-onboarded households start populating these as slices 2.5-s5
     // through 2.5-s9 ship.
+    //
+    // Slice 2.6-s1 — favorite_lunches is now derived from the same
+    // recipe_usage rows projectRecipes consumes (single source of truth);
+    // the standalone favorite_lunches table is dropped.
     allergens: projectAllergens(raw.allergens),
     dietary: projectDietary(raw.dietary),
     food_preferences: projectFoodPreferences(raw.food_preferences),
-    favorite_lunches: projectFavoriteLunches(raw.favorite_lunches),
+    favorite_lunches: projectFavoriteLunchesFromUsage(raw.recipe_usage),
     rules: projectRules(raw.rules),
     meta: {
       composed_at: new Date().toISOString(),
@@ -268,6 +287,15 @@ function projectMemory(rows: RawMemoryNodeRow[]): { nodes: KitchenMapMemoryNode[
   return { nodes };
 }
 
+function coerceCatalogProvenance(value: string): CatalogProvenance {
+  // Defensive read: rogue DB values (e.g. an in-flight migration row) project
+  // as 'plan_promoted' rather than crash the whole map. Mirrors the rogue-
+  // enforcement coercion elsewhere in this composer.
+  return VALID_CATALOG_PROVENANCES.has(value as CatalogProvenance)
+    ? (value as CatalogProvenance)
+    : 'plan_promoted';
+}
+
 function projectRecipes(rows: RawFavouriteRecipeRow[]): KitchenMapRecipes {
   const favourites: KitchenMapFavouriteRecipe[] = [];
   const banned: KitchenMapFavouriteRecipe[] = [];
@@ -280,6 +308,8 @@ function projectRecipes(rows: RawFavouriteRecipeRow[]): KitchenMapRecipes {
       cuisine_tags: r.cuisine_tags,
       confidence_score: r.confidence_score,
       is_household_favorite: r.is_household_favorite,
+      // Slice 2.6-s1 — surfaces household_recipe_usage.catalog_provenance.
+      catalog_provenance: coerceCatalogProvenance(r.catalog_provenance),
       use_count: r.use_count,
       last_used_at: r.last_used_at,
     };
@@ -300,6 +330,39 @@ function projectRecipes(rows: RawFavouriteRecipeRow[]): KitchenMapRecipes {
     favourites: favourites.slice(0, FAVOURITES_LIMIT),
     banned,
   };
+}
+
+// Slice 2.6-s1 — derive the favorite_lunches projection from the same
+// recipe_usage rows. A row qualifies when EITHER its catalog_provenance is
+// parent-stated ('declared' / 'parent_added') OR is_household_favorite=true.
+// Excluded: banned rows; rows whose canonical_name is missing (FK to recipes
+// already filtered by the repository — defensive).
+// Order: is_household_favorite DESC, then last_used_at DESC NULLS LAST.
+// Position is the 0-based index after ordering.
+function projectFavoriteLunchesFromUsage(
+  rows: RawFavouriteRecipeRow[],
+): KitchenMapFavoriteLunch[] {
+  const filtered = rows
+    .filter((r) => !r.is_household_banned)
+    .filter((r) => {
+      const prov = coerceCatalogProvenance(r.catalog_provenance);
+      return r.is_household_favorite || FAVORITE_LUNCH_PROVENANCES.has(prov);
+    });
+
+  filtered.sort((a, b) => {
+    if (a.is_household_favorite !== b.is_household_favorite) {
+      return a.is_household_favorite ? -1 : 1;
+    }
+    const aTs = a.last_used_at ?? '';
+    const bTs = b.last_used_at ?? '';
+    return bTs.localeCompare(aTs);
+  });
+
+  return filtered.slice(0, FAVORITE_LUNCHES_LIMIT).map((r, idx) => ({
+    item: r.canonical_name,
+    provenance: coerceCatalogProvenance(r.catalog_provenance),
+    position: idx,
+  }));
 }
 
 // Slice 2.5-s1 — projection helpers for the five new top-level arrays.
@@ -334,14 +397,6 @@ function projectFoodPreferences(rows: RawFoodPreferenceRow[]): KitchenMapFoodPre
       ? (r.enforcement as EnforcementLevel)
       : 'soft',
     source: r.source,
-  }));
-}
-
-function projectFavoriteLunches(rows: RawFavoriteLunchRow[]): KitchenMapFavoriteLunch[] {
-  return rows.map((r) => ({
-    item: r.item,
-    provenance: r.provenance,
-    position: r.position,
   }));
 }
 

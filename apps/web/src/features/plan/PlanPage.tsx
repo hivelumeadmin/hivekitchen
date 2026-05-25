@@ -250,15 +250,19 @@ export function PlanPage() {
       {!isLoading && !isError && data !== undefined && (
         <>
           {data.plan === null ? (
-            <p
-              className="mt-2 font-sans text-[13px] text-fg-muted"
-              role="status"
-              aria-live="polite"
-            >
-              {data.is_draft
-                ? 'Lumi is drafting next week — about 30 seconds'
-                : "Lumi is drafting this week's plan — about 30 seconds"}
-            </p>
+            data.hard_fail != null && !data.is_draft ? (
+              <FreshnessState variant="reworking" failedAt={data.hard_fail.failed_at} />
+            ) : (
+              <p
+                className="mt-2 font-sans text-[13px] text-fg-muted"
+                role="status"
+                aria-live="polite"
+              >
+                {data.is_draft
+                  ? 'Lumi is drafting next week — about 30 seconds'
+                  : "Lumi is drafting this week's plan — about 30 seconds"}
+              </p>
+            )
           ) : (
             <PlanWeekContent data={data} childColorMap={childColorMap} />
           )}

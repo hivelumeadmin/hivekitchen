@@ -4,6 +4,7 @@ import type { BagCompositionPattern } from '@hivekitchen/types';
 import { BaseRepository } from '../../repository/base.repository.js';
 import { decryptField, encryptField } from '../../lib/envelope-encryption.js';
 import { getHouseholdDek, getOrCreateHouseholdDek } from '../../lib/household-key.js';
+import type { ChildAllergensRepository } from './child-allergens.repository.js';
 
 export interface InsertChildParams {
   household_id: string;
@@ -69,10 +70,17 @@ interface RepositoryLogger {
 }
 
 export class ChildrenRepository extends BaseRepository {
+  // Slice 2.6-s8 — declared_allergens reads + writes now route through the
+  // structured child_allergens table. The legacy children.declared_allergens
+  // column is written as encryptField([], dek) for column-shape parity and
+  // is no longer read by the response shape. childAllergensRepo is required
+  // (not nullable) so the cutover is enforced — every caller wiring up the
+  // repository must wire it.
   constructor(
     client: SupabaseClient,
     private readonly kek: Buffer | null,
     private readonly log: RepositoryLogger,
+    private readonly childAllergensRepo: ChildAllergensRepository,
   ) {
     super(client);
   }
@@ -87,12 +95,14 @@ export class ChildrenRepository extends BaseRepository {
 
   async insert(params: InsertChildParams): Promise<DecryptedChildRow> {
     const dek = await this.getOrCreateHouseholdDek(params.household_id);
+    // Slice 2.6-s8 — legacy column is written as an encrypted empty array
+    // for column-shape parity; the canonical store is `child_allergens`.
     const insertRow: Record<string, unknown> = {
       household_id: params.household_id,
       name: params.name,
       age_band: params.age_band,
       school_policy_notes: params.school_policy_notes,
-      declared_allergens: encryptField(params.declared_allergens, dek),
+      declared_allergens: encryptField([], dek),
       cultural_identifiers: encryptField(params.cultural_identifiers, dek),
       dietary_preferences: encryptField(params.dietary_preferences, dek),
     };
@@ -105,7 +115,20 @@ export class ChildrenRepository extends BaseRepository {
       .select(CHILD_COLUMNS)
       .single();
     if (error) throw error;
-    return this.decryptRow(data as ChildRow, dek);
+    const row = data as ChildRow;
+    for (const allergen of params.declared_allergens) {
+      await this.childAllergensRepo.declareIfNew(
+        params.household_id,
+        row.id,
+        allergen,
+        'onboarding_declared',
+      );
+    }
+    const decoded = this.decryptRow(row, dek);
+    // Surface the just-declared allergens on the response so callers (REST
+    // POST /v1/households/:id/children) see what they posted without a
+    // follow-up round-trip.
+    return { ...decoded, declared_allergens: [...params.declared_allergens] };
   }
 
   async findById(householdId: string, childId: string): Promise<DecryptedChildRow | null> {
@@ -118,7 +141,14 @@ export class ChildrenRepository extends BaseRepository {
     if (error) throw error;
     if (data === null) return null;
     const dek = await this.getHouseholdDek(householdId);
-    return this.decryptRow(data as ChildRow, dek);
+    const decoded = this.decryptRow(data as ChildRow, dek);
+    // Slice 2.6-s8 — overlay declared_allergens from child_allergens. The
+    // legacy column decode is discarded.
+    const allergenRows = await this.childAllergensRepo.findByHousehold(householdId);
+    const allergens = allergenRows
+      .filter((r) => r.child_id === childId)
+      .map((r) => r.allergen);
+    return { ...decoded, declared_allergens: allergens };
   }
 
   async findByHouseholdId(householdId: string): Promise<DecryptedChildRow[]> {
@@ -130,11 +160,24 @@ export class ChildrenRepository extends BaseRepository {
     const rows = (data as ChildRow[] | null) ?? [];
     if (rows.length === 0) return [];
     const dek = await this.getHouseholdDek(householdId);
+    // Slice 2.6-s8 — fetch every child's allergens once and group by child_id;
+    // the legacy column decode is discarded.
+    const allergenRows = await this.childAllergensRepo.findByHousehold(householdId);
+    const allergensByChild = new Map<string, string[]>();
+    for (const r of allergenRows) {
+      const list = allergensByChild.get(r.child_id) ?? [];
+      list.push(r.allergen);
+      allergensByChild.set(r.child_id, list);
+    }
     // Isolate per-row decryption: a single corrupt row (e.g. from a DEK race)
     // is skipped rather than crashing the entire household list.
     return rows.reduce<DecryptedChildRow[]>((acc, r) => {
       try {
-        acc.push(this.decryptRow(r, dek));
+        const decoded = this.decryptRow(r, dek);
+        acc.push({
+          ...decoded,
+          declared_allergens: allergensByChild.get(r.id) ?? [],
+        });
       } catch {
         // Log child ID only — no ciphertext in logs.
         this.log.error({ childId: r.id }, 'failed to decrypt child row — row skipped');
@@ -188,11 +231,16 @@ export class ChildrenRepository extends BaseRepository {
     bag_composition_pattern?: BagCompositionPattern | null | undefined;
   }): Promise<DecryptedChildRow | null> {
     const dek = await this.getHouseholdDek(params.household_id);
+    // Slice 2.6-s8 — legacy column always written as encrypted []. The actual
+    // per-child allergen state lives in child_allergens; the update path adds
+    // declared allergens with source='parent_edited' (per AC3) so subsequent
+    // re-mentions by the agent are auditable separately from initial
+    // onboarding declarations.
     const updateRow: Record<string, unknown> = {
       name: params.name,
       age_band: params.age_band,
       school_policy_notes: params.school_policy_notes,
-      declared_allergens: encryptField(params.declared_allergens, dek),
+      declared_allergens: encryptField([], dek),
       cultural_identifiers: encryptField(params.cultural_identifiers, dek),
       dietary_preferences: encryptField(params.dietary_preferences, dek),
       updated_at: new Date().toISOString(),
@@ -209,7 +257,26 @@ export class ChildrenRepository extends BaseRepository {
       .maybeSingle();
     if (error) throw error;
     if (data === null) return null;
-    return this.decryptRow(data as ChildRow, dek);
+    // Replace semantics: wipe existing rows then re-declare the incoming set.
+    // Without the delete, removing an allergen from the UI would have no effect.
+    await this.childAllergensRepo.deleteByChild(params.household_id, params.id);
+    for (const allergen of params.declared_allergens) {
+      await this.childAllergensRepo.declareIfNew(
+        params.household_id,
+        params.id,
+        allergen,
+        'parent_edited',
+      );
+    }
+    const decoded = this.decryptRow(data as ChildRow, dek);
+    // Surface the union of pre-existing + just-declared allergens. Re-read
+    // is the safest source of truth since declared_allergens here is the
+    // incremental set the agent supplied, not the complete list.
+    const allergenRows = await this.childAllergensRepo.findByHousehold(params.household_id);
+    const allergens = allergenRows
+      .filter((r) => r.child_id === params.id)
+      .map((r) => r.allergen);
+    return { ...decoded, declared_allergens: allergens };
   }
 
   async updateBagComposition(
@@ -235,7 +302,10 @@ export class ChildrenRepository extends BaseRepository {
     if (error) throw error;
     if (data === null) return null;
     const dek = await this.getHouseholdDek(householdId);
-    return this.decryptRow(data as ChildRow, dek);
+    const decoded = this.decryptRow(data as ChildRow, dek);
+    const allergenRows = await this.childAllergensRepo.findByHousehold(householdId);
+    const allergens = allergenRows.filter((r) => r.child_id === id).map((r) => r.allergen);
+    return { ...decoded, declared_allergens: allergens };
   }
 
   private decryptRow(row: ChildRow, dek: Buffer | null): DecryptedChildRow {
@@ -245,7 +315,13 @@ export class ChildrenRepository extends BaseRepository {
       name: row.name,
       age_band: row.age_band,
       school_policy_notes: row.school_policy_notes,
-      declared_allergens: decryptArrayField(row.declared_allergens, dek),
+      // Slice 2.6-s8 — legacy children.declared_allergens column is no longer
+      // a read source. The caller (insert / updateProfile / findById /
+      // findByHouseholdId) overlays the canonical value from child_allergens
+      // before returning. Always emit [] here; skipping the legacy decrypt
+      // avoids a spurious failure mode if a pre-2.6-s8 row hasn't been
+      // touched by the backfill yet.
+      declared_allergens: [],
       cultural_identifiers: decryptArrayField(row.cultural_identifiers, dek),
       dietary_preferences: decryptArrayField(row.dietary_preferences, dek),
       allergen_rule_version: row.allergen_rule_version,

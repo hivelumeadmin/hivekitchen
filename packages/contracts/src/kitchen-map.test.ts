@@ -120,6 +120,7 @@ describe('KitchenMapSchema', () => {
             cuisine_tags: ['south_indian'],
             confidence_score: 88,
             is_household_favorite: true,
+            catalog_provenance: 'declared',
             use_count: 6,
             last_used_at: NOW,
           },
@@ -153,7 +154,7 @@ describe('KitchenMapSchema', () => {
       favorite_lunches: [
         {
           item: 'dal chawal',
-          provenance: 'onboarding_seed',
+          provenance: 'declared',
           position: 0,
         },
       ],
@@ -329,8 +330,28 @@ describe('KitchenMapFavoriteLunchSchema', () => {
   it('rejects negative position', () => {
     const r = KitchenMapFavoriteLunchSchema.safeParse({
       item: 'dal chawal',
-      provenance: 'onboarding_seed',
+      provenance: 'declared',
       position: -1,
+    });
+    expect(r.success).toBe(false);
+  });
+
+  it('accepts all four catalog_provenance enum values (slice 2.6-s1)', () => {
+    for (const provenance of ['declared', 'inferred', 'parent_added', 'plan_promoted'] as const) {
+      const r = KitchenMapFavoriteLunchSchema.safeParse({
+        item: 'dal chawal',
+        provenance,
+        position: 0,
+      });
+      expect(r.success).toBe(true);
+    }
+  });
+
+  it('rejects the retired onboarding_seed provenance value', () => {
+    const r = KitchenMapFavoriteLunchSchema.safeParse({
+      item: 'dal chawal',
+      provenance: 'onboarding_seed',
+      position: 0,
     });
     expect(r.success).toBe(false);
   });

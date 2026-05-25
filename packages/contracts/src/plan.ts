@@ -126,6 +126,19 @@ export const ConflictSchema = z.object({
   day: z.string().min(1).max(SLOT_MAX),
 });
 
+// Story 3.24 — compound-ingredient flagged items. Emitted by the guardrail
+// engine when a child's plan item contains a compound/processed product whose
+// allergen content cannot be determined from the ingredient string alone
+// (e.g., "garam masala", "ranch dressing"). Distinct from `ConflictSchema`
+// because there is no known matched allergen — only the suspect ingredient
+// and the slot it occupies.
+export const FlaggedCompoundItemSchema = z.object({
+  child_id: z.string().uuid(),
+  ingredient: z.string().min(1).max(INGREDIENT_MAX),
+  slot: z.string().min(1).max(SLOT_MAX),
+  day: z.string().min(1).max(SLOT_MAX),
+});
+
 export const GuardrailResultSchema = z.discriminatedUnion('verdict', [
   z.object({ verdict: z.literal('cleared'), conflicts: z.array(ConflictSchema) }),
   z.object({ verdict: z.literal('blocked'), conflicts: z.array(ConflictSchema).min(1) }),
@@ -133,6 +146,11 @@ export const GuardrailResultSchema = z.discriminatedUnion('verdict', [
     verdict: z.literal('uncertain'),
     conflicts: z.array(ConflictSchema),
     reason: z.string().min(1).max(200),
+    // Story 3.24 — populated when `reason === 'compound_ingredient_unverified'`.
+    // Empty/omitted for infrastructure-uncertain variants (empty_ingredients,
+    // no_rules_loaded, falcpa_baseline_missing, etc.) — those are not
+    // recoverable via substitution.
+    flagged_items: z.array(FlaggedCompoundItemSchema).optional(),
   }),
 ]);
 
@@ -381,13 +399,24 @@ export const GetPlansQuerySchema = z.object({
   week: z.enum(['current', 'next']).default('current'),
 });
 
+// Story 3.25 — hard-fail status payload. Present in GetPlansResponse only when
+// plan===null && !isDraft && a plan.hard_fail audit row exists for the
+// (household, week_of). Drives the AccountableError UX on the brief surface.
+export const HardFailStatusSchema = z.object({
+  week_of: z.string().date(),
+  failed_at: z.string().datetime(),
+});
+
 // is_draft mirrors the (week === 'next') decision so the frontend doesn't
 // recompute date math; week_of is always the ISO Monday for the resolved week.
+// Story 3.25 — hard_fail is optional + nullable; the route handler omits the
+// key entirely on the non-hard-fail path so existing clients see no change.
 export const GetPlansResponseSchema = z.object({
   plan: PlanRowSchema.nullable(),
   plan_items: z.array(PlanItemRowSchema),
   is_draft: z.boolean(),
   week_of: z.string().date(),
+  hard_fail: HardFailStatusSchema.nullable().optional(),
 });
 
 // --- Story 3.15 — historical plans + outcomes view (FR25) ---

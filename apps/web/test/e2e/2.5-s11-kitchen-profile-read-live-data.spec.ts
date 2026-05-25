@@ -197,8 +197,11 @@ test.describe('Slice 2.5-s11: Kitchen Profile — Live Data Read', () => {
   test('renders favorite lunch items in the starting line section', async ({ page }) => {
     await landOnKitchenProfile(page, {
       favorite_lunches: [
-        { id: 'aa000000-0000-4000-8000-000000000001', item: 'Paratha roll', position: 0 },
-        { id: 'aa000000-0000-4000-8000-000000000002', item: 'Dal + rice (thermos)', position: 1 },
+        // Slice 2.6-s1 — KitchenMapFavoriteLunchSchema shape is
+        // { item, provenance, position } (no id). 'declared' replaces the
+        // retired 'onboarding_seed' value.
+        { item: 'Paratha roll', provenance: 'declared', position: 0 },
+        { item: 'Dal + rice (thermos)', provenance: 'declared', position: 1 },
       ],
     });
 

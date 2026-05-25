@@ -56,6 +56,7 @@ function buildMockService(overrides: {
   getPlanForWeek?: ReturnType<typeof vi.fn>;
   getPlanHistory?: ReturnType<typeof vi.fn>;
   requestRegeneration?: ReturnType<typeof vi.fn>;
+  getHardFailStatus?: ReturnType<typeof vi.fn>;
 } = {}) {
   return {
     swapItem: overrides.swapItem ?? vi.fn().mockResolvedValue(MOCK_ITEM),
@@ -81,6 +82,11 @@ function buildMockService(overrides: {
     requestRegeneration:
       overrides.requestRegeneration ??
       vi.fn().mockResolvedValue({ jobId: 'noop', rateLimitRemaining: 5 }),
+    // Story 3.25 / 3.26 — default returns null (no hard fail). Tests that
+    // exercise the reworking-state surface override this with the
+    // { week_of, failed_at } payload.
+    getHardFailStatus:
+      overrides.getHardFailStatus ?? vi.fn().mockResolvedValue(null),
   };
 }
 
@@ -238,7 +244,7 @@ describe('PATCH /v1/plans/:planId/items/:itemId', () => {
   it('returns 422 when service throws SwapGuardrailBlockedError', async () => {
     const service = buildMockService({
       swapItem: vi.fn().mockRejectedValue(
-        new SwapGuardrailBlockedError(SAMPLE_ITEM_ID, ['peanuts']),
+        new SwapGuardrailBlockedError(SAMPLE_ITEM_ID, ['peanut']),
       ),
     });
     app = await buildTestApp(service);
@@ -567,6 +573,108 @@ describe('GET /v1/plans', () => {
     const body = JSON.parse(res.body) as { plan: { id: string }; plan_items: unknown[] };
     expect(body.plan?.id).toBe(SAMPLE_PLAN_ID);
     expect(body.plan_items).toHaveLength(1);
+  });
+
+  // Story 3.25 / 3.26 — hard_fail surface
+  it('omits hard_fail entirely when getHardFailStatus returns null', async () => {
+    const service = buildMockService();
+    app = await buildTestApp(service);
+    const token = signPrimary(app);
+    const res = await app.inject({
+      method: 'GET',
+      url: '/v1/plans',
+      headers: { authorization: `Bearer ${token}` },
+    });
+    expect(res.statusCode).toBe(200);
+    const body = JSON.parse(res.body) as Record<string, unknown>;
+    expect('hard_fail' in body).toBe(false);
+    expect(service.getHardFailStatus).toHaveBeenCalledWith(
+      SAMPLE_HOUSEHOLD_ID,
+      '2026-05-04',
+    );
+  });
+
+  it('returns hard_fail: { week_of, failed_at } when plan is null, not draft, and audit exists', async () => {
+    const service = buildMockService({
+      getHardFailStatus: vi
+        .fn()
+        .mockResolvedValue({ week_of: '2026-05-04', failed_at: '2026-05-25T08:00:00Z' }),
+    });
+    app = await buildTestApp(service);
+    const token = signPrimary(app);
+    const res = await app.inject({
+      method: 'GET',
+      url: '/v1/plans',
+      headers: { authorization: `Bearer ${token}` },
+    });
+    expect(res.statusCode).toBe(200);
+    const body = JSON.parse(res.body) as {
+      hard_fail?: { week_of: string; failed_at: string };
+    };
+    expect(body.hard_fail).toEqual({
+      week_of: '2026-05-04',
+      failed_at: '2026-05-25T08:00:00Z',
+    });
+  });
+
+  it('does not check getHardFailStatus on the draft (next week) path', async () => {
+    const service = buildMockService({
+      getPlanForWeek: vi.fn().mockResolvedValue({
+        plan: null,
+        planItems: [],
+        isDraft: true,
+        weekOf: '2026-05-11',
+      }),
+      getHardFailStatus: vi
+        .fn()
+        .mockResolvedValue({ week_of: '2026-05-11', failed_at: '2026-05-25T08:00:00Z' }),
+    });
+    app = await buildTestApp(service);
+    const token = signPrimary(app);
+    const res = await app.inject({
+      method: 'GET',
+      url: '/v1/plans?week=next',
+      headers: { authorization: `Bearer ${token}` },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(service.getHardFailStatus).not.toHaveBeenCalled();
+    const body = JSON.parse(res.body) as Record<string, unknown>;
+    expect('hard_fail' in body).toBe(false);
+  });
+
+  it('does not check getHardFailStatus when plan is present', async () => {
+    const planRow = {
+      id: SAMPLE_PLAN_ID,
+      household_id: SAMPLE_HOUSEHOLD_ID,
+      week_id: '00000000-0000-4000-8000-000000000099',
+      week_of: '2026-05-04',
+      revision: 1,
+      generated_at: '2026-05-02T11:00:00.000Z',
+      guardrail_cleared_at: '2026-05-02T11:00:01.000Z',
+      guardrail_version: 'v1.0.0',
+      prompt_version: 'v1.0.0',
+      created_at: '2026-05-02T11:00:00.000Z',
+      updated_at: '2026-05-02T11:00:01.000Z',
+    };
+    const service = buildMockService({
+      getPlanForWeek: vi.fn().mockResolvedValue({
+        plan: planRow,
+        planItems: [MOCK_ITEM],
+        isDraft: false,
+        weekOf: '2026-05-04',
+      }),
+    });
+    app = await buildTestApp(service);
+    const token = signPrimary(app);
+    const res = await app.inject({
+      method: 'GET',
+      url: '/v1/plans',
+      headers: { authorization: `Bearer ${token}` },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(service.getHardFailStatus).not.toHaveBeenCalled();
+    const body = JSON.parse(res.body) as Record<string, unknown>;
+    expect('hard_fail' in body).toBe(false);
   });
 });
 

@@ -60,7 +60,16 @@ async function runRegenerationJob(
     getCurrentPlanItems: ReturnType<typeof vi.fn>;
   },
 ): Promise<void> {
-  const { plan_id, household_id, week_of, week_id, current_revision, scope, day, request_id } = data;
+  const { plan_id, household_id, week_of, week_id, current_revision, scope, day, request_id, slot_scope } = data;
+
+  // Story 3.23 — mirror the worker's slotScopeContext build.
+  let slotScopeContext: string | undefined;
+  if (slot_scope !== undefined) {
+    const slotLabel = slot_scope.charAt(0).toUpperCase() + slot_scope.slice(1);
+    slotScopeContext =
+      `SLOT-SCOPED REGENERATION: Regenerate ONLY the ${slotLabel} slot items. ` +
+      `Keep ALL other slot items (Main/Snack/Extra as applicable) identical to the previous plan.`;
+  }
 
   const composeOutput: PlanComposeOutput = await deps.planWeek(
     household_id,
@@ -68,6 +77,7 @@ async function runRegenerationJob(
     request_id,
     undefined,
     scope === 'day' ? day : undefined,
+    slotScopeContext,
   );
 
   const filteredOutput =
@@ -148,7 +158,7 @@ describe('plan-regeneration job (Story 3.13)', () => {
       { planWeek, commit, getCurrentPlanItems },
     );
 
-    expect(planWeek).toHaveBeenCalledWith(HOUSEHOLD_ID, '2026-05-04', REQUEST_ID, undefined, undefined);
+    expect(planWeek).toHaveBeenCalledWith(HOUSEHOLD_ID, '2026-05-04', REQUEST_ID, undefined, undefined, undefined);
     expect(getCurrentPlanItems).not.toHaveBeenCalled();
     const commitInput = commit.mock.calls[0]?.[0] as CommitPlanInput;
     expect(commitInput.items).toHaveLength(2);
@@ -189,6 +199,7 @@ describe('plan-regeneration job (Story 3.13)', () => {
       REQUEST_ID,
       undefined,
       'tuesday',
+      undefined,
     );
     expect(getCurrentPlanItems).toHaveBeenCalledWith(PLAN_ID, HOUSEHOLD_ID);
     const commitInput = commit.mock.calls[0]?.[0] as CommitPlanInput;
@@ -240,6 +251,67 @@ describe('plan-regeneration job (Story 3.13)', () => {
     // ingredients ('rice', 'lentils'), not the rogue 'rogue' ingredient.
     const wednesdayItem = commitInput.items.find((i) => i.day === 'wednesday');
     expect(wednesdayItem?.ingredients).toEqual(['rice', 'lentils']);
+  });
+
+  // Story 3.23 — slot-scoped regen prompt injection.
+  it('slot_scope=snack: planWeek receives a slotScopeContext line referencing "Snack slot"', async () => {
+    const planWeek = vi.fn().mockResolvedValue(
+      makeComposeOutput([
+        {
+          day: 'monday',
+          items: [{ child_id: CHILD_ID, slot: 'snack', ingredients: ['apple'] }],
+        },
+      ]),
+    );
+    const commit = vi.fn().mockResolvedValue(PLAN_ID);
+    const getCurrentPlanItems = vi.fn();
+
+    await runRegenerationJob(
+      {
+        plan_id: PLAN_ID,
+        household_id: HOUSEHOLD_ID,
+        week_of: '2026-05-04',
+        week_id: WEEK_ID,
+        current_revision: 1,
+        scope: 'week',
+        request_id: REQUEST_ID,
+        slot_scope: 'snack',
+      },
+      { planWeek, commit, getCurrentPlanItems },
+    );
+
+    const slotScopeArg = planWeek.mock.calls[0]?.[5] as string | undefined;
+    expect(slotScopeArg).toBeDefined();
+    expect(slotScopeArg).toContain('Snack slot');
+    expect(slotScopeArg).toContain('SLOT-SCOPED REGENERATION');
+  });
+
+  it('no slot_scope: planWeek receives slotScopeContext = undefined', async () => {
+    const planWeek = vi.fn().mockResolvedValue(
+      makeComposeOutput([
+        {
+          day: 'monday',
+          items: [{ child_id: CHILD_ID, slot: 'main', ingredients: ['rice'] }],
+        },
+      ]),
+    );
+    const commit = vi.fn().mockResolvedValue(PLAN_ID);
+    const getCurrentPlanItems = vi.fn();
+
+    await runRegenerationJob(
+      {
+        plan_id: PLAN_ID,
+        household_id: HOUSEHOLD_ID,
+        week_of: '2026-05-04',
+        week_id: WEEK_ID,
+        current_revision: 1,
+        scope: 'week',
+        request_id: REQUEST_ID,
+      },
+      { planWeek, commit, getCurrentPlanItems },
+    );
+
+    expect(planWeek.mock.calls[0]?.[5]).toBeUndefined();
   });
 
   it('scope=day with empty target-day output: throws (job fails)', async () => {

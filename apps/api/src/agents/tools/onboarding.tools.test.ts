@@ -91,6 +91,14 @@ function makeDeps(overrides: Partial<OnboardingToolDeps> = {}): OnboardingToolDe
       setDisplayName: vi.fn().mockResolvedValue(undefined),
     } as unknown as OnboardingToolDeps['householdsService'],
     vocabularyService: {
+      // Slice 2.6-s8 — production child.upsert uses resolveAllergen +
+      // isActive (per-key resolution) for the allergen-vocabulary partition
+      // instead of the legacy validateAllergens batch path. Default mock
+      // accepts every key as a known active allergen so existing tests'
+      // `declared_allergens: ['peanut']` payloads flow through to the
+      // ChildrenService.upsertByName mock unchanged.
+      resolveAllergen: vi.fn((key: string) => key),
+      isActive: vi.fn(() => true),
       validateAllergens: vi.fn((keys: string[]) => [...new Set(keys)]),
       validateCultural: vi.fn((keys: string[]) => [...new Set(keys)]),
       validateDietary: vi.fn((keys: string[]) => [...new Set(keys)]),
@@ -121,9 +129,14 @@ function makeDeps(overrides: Partial<OnboardingToolDeps> = {}): OnboardingToolDe
         was_existing: false,
       }),
     } as unknown as OnboardingToolDeps['householdRulesRepository'],
-    favoriteLunchesRepository: {
-      add: vi.fn().mockResolvedValue({ id: FAV_LUNCH_ROW_ID, position: 0 }),
-    } as unknown as OnboardingToolDeps['favoriteLunchesRepository'],
+    recipesRepository: {
+      declareForHousehold: vi.fn().mockResolvedValue({
+        recipeId: FAV_LUNCH_ROW_ID,
+        usageWasExisting: false,
+        recipeWasInserted: true,
+      }),
+      countDeclaredFavorites: vi.fn().mockResolvedValue(1),
+    } as unknown as OnboardingToolDeps['recipesRepository'],
     ...overrides,
   };
 }
@@ -157,7 +170,29 @@ describe('createChildUpsertToolSpec', () => {
     expect(deps.childrenService.upsertByName).toHaveBeenCalledTimes(1);
   });
 
-  it('validates allergens against vocabulary before persisting', async () => {
+  // Slice 2.6-s8 — child.upsert is the legacy declared_allergens entry point.
+  // After the storage cutover, known allergens still flow through
+  // upsertByName (which fans into child_allergens internally — see
+  // ChildrenRepository.insert/updateProfile). The tool itself does not call
+  // ChildAllergensRepository directly; the service does.
+  it('child.upsert passes known declared_allergens through upsertByName (storage routed by service)', async () => {
+    await spec.fn({
+      name: 'Layla',
+      age_band: 'child',
+      declared_allergens: ['peanut', 'shellfish'],
+      cultural_identifiers: [],
+      dietary_preferences: [],
+    });
+    expect(deps.childrenService.upsertByName).toHaveBeenCalledWith(
+      expect.objectContaining({
+        body: expect.objectContaining({
+          declared_allergens: ['peanut', 'shellfish'],
+        }),
+      }),
+    );
+  });
+
+  it('validates allergens against vocabulary before persisting (per-key resolve+isActive)', async () => {
     await spec.fn({
       name: 'Layla',
       age_band: 'child',
@@ -165,7 +200,13 @@ describe('createChildUpsertToolSpec', () => {
       cultural_identifiers: [],
       dietary_preferences: [],
     });
-    expect(deps.vocabularyService.validateAllergens).toHaveBeenCalledWith(['peanut']);
+    expect(
+      (deps.vocabularyService as unknown as { resolveAllergen: ReturnType<typeof vi.fn> })
+        .resolveAllergen,
+    ).toHaveBeenCalledWith('peanut');
+    expect(
+      (deps.vocabularyService as unknown as { isActive: ReturnType<typeof vi.fn> }).isActive,
+    ).toHaveBeenCalledWith('allergen', 'peanut');
   });
 
   it('runs dietary tags through implies-closure expansion', async () => {
@@ -179,20 +220,35 @@ describe('createChildUpsertToolSpec', () => {
     expect(deps.vocabularyService.expandImpliesClosure).toHaveBeenCalledWith(['vegan']);
   });
 
-  it('propagates vocabulary validation errors so the agent can recover', async () => {
-    vi.mocked(deps.vocabularyService.validateAllergens).mockImplementation(() => {
-      throw new Error('Unknown allergen tag: unicorn');
+  it('routes unknown allergens to memory.note instead of throwing (graceful partition)', async () => {
+    // Slice 2.6-s8 — production code partitions unknowns (resolveAllergen
+    // returns undefined) into a memory.note write rather than throwing.
+    // A thrown error would propagate as a tool failure and force Lumi to
+    // apologise; the partition keeps the conversation moving.
+    (
+      deps.vocabularyService as unknown as { resolveAllergen: ReturnType<typeof vi.fn> }
+    ).resolveAllergen.mockImplementation((key: string) =>
+      key === 'unicorn' ? undefined : key,
+    );
+
+    const result = await spec.fn({
+      name: 'Layla',
+      age_band: 'child',
+      declared_allergens: ['unicorn'],
+      cultural_identifiers: [],
+      dietary_preferences: [],
     });
-    await expect(
-      spec.fn({
-        name: 'Layla',
-        age_band: 'child',
-        declared_allergens: ['unicorn'],
-        cultural_identifiers: [],
-        dietary_preferences: [],
+
+    expect(deps.childrenService.upsertByName).toHaveBeenCalled();
+    expect(deps.memoryService.noteFromAgent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        nodeType: 'allergy',
+        facet: 'allergen',
       }),
-    ).rejects.toThrowError(/Unknown allergen/);
-    expect(deps.childrenService.upsertByName).not.toHaveBeenCalled();
+    );
+    expect((result as { unknown_allergens_noted?: string[] }).unknown_allergens_noted).toEqual([
+      'unicorn',
+    ]);
   });
 
   it('reports was_existing=true when repository upsert hit an existing row', async () => {
@@ -259,14 +315,16 @@ describe('createChildUpsertToolSpec', () => {
     expect(deps.vocabularyService.validateDietary).not.toHaveBeenCalled();
   });
 
-  it('PATCH semantics: explicit empty array IS an overwrite (validated through)', async () => {
+  it('PATCH semantics: explicit empty array IS an overwrite', async () => {
     await spec.fn({
       name: 'Layla',
       age_band: 'child',
       declared_allergens: [],
     });
     // Empty array is a deliberate clear — the service should receive it as
-    // [] (overwrite), not undefined (preserve).
+    // [] (overwrite), not undefined (preserve). Slice 2.6-s8: production
+    // partition iterates per-key, so an empty array calls neither
+    // resolveAllergen nor isActive — assertion on validator counts dropped.
     expect(deps.childrenService.upsertByName).toHaveBeenCalledWith(
       expect.objectContaining({
         body: expect.objectContaining({
@@ -274,8 +332,6 @@ describe('createChildUpsertToolSpec', () => {
         }),
       }),
     );
-    // Validator IS called for the explicit empty array (returns []).
-    expect(deps.vocabularyService.validateAllergens).toHaveBeenCalledWith([]);
   });
 
   it('PATCH semantics: partial update — only declared_allergens supplied', async () => {
@@ -971,8 +1027,8 @@ describe('createFoodPreferenceDeclareToolSpec (2.5-s7 wired)', () => {
   });
 });
 
-describe('createFavoriteLunchAddToolSpec (2.5-s9 wired)', () => {
-  it('happy path: calls favoriteLunchesRepository.add and maps to output schema', async () => {
+describe('createFavoriteLunchAddToolSpec (2.6-s1 — writes to recipes catalog)', () => {
+  it('happy path: calls recipesRepository.declareForHousehold and maps to output schema', async () => {
     const deps = makeDeps();
     const spec = createFavoriteLunchAddToolSpec(makeCtx(), deps);
     expect(spec.name).toBe('favorite_lunch.add');
@@ -982,27 +1038,28 @@ describe('createFavoriteLunchAddToolSpec (2.5-s9 wired)', () => {
       position: number;
     };
 
-    expect(deps.favoriteLunchesRepository.add).toHaveBeenCalledWith(
+    expect(deps.recipesRepository.declareForHousehold).toHaveBeenCalledWith(
       HOUSEHOLD_ID,
       'Paratha roll',
-      undefined,
     );
     expect(result.favorite_lunch_id).toBe(FAV_LUNCH_ROW_ID);
+    // position derived from countDeclaredFavorites (mocked to 1) → max(0, 1-1) = 0
     expect(result.position).toBe(0);
   });
 
-  it('passes explicit position through to the repository', async () => {
-    const deps = makeDeps({
-      favoriteLunchesRepository: {
-        add: vi.fn().mockResolvedValue({ id: FAV_LUNCH_ROW_ID, position: 7 }),
-      } as unknown as OnboardingToolDeps['favoriteLunchesRepository'],
-    });
+  it('uses explicit position when the agent supplies one', async () => {
+    const deps = makeDeps();
     const spec = createFavoriteLunchAddToolSpec(makeCtx(), deps);
 
     const result = (await spec.fn({ item: 'Wrap', position: 7 })) as { position: number };
 
-    expect(deps.favoriteLunchesRepository.add).toHaveBeenCalledWith(HOUSEHOLD_ID, 'Wrap', 7);
+    expect(deps.recipesRepository.declareForHousehold).toHaveBeenCalledWith(HOUSEHOLD_ID, 'Wrap');
     expect(result.position).toBe(7);
+  });
+
+  it('rejects empty item at the Zod boundary (M5 chip must have a label)', async () => {
+    const spec = createFavoriteLunchAddToolSpec(makeCtx(), makeDeps());
+    await expect(spec.fn({ item: '' })).rejects.toThrow();
   });
 });
 

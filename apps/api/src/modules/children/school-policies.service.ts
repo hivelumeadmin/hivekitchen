@@ -97,10 +97,9 @@ export class SchoolPoliciesService {
       return { policy, regenerationTriggered: false, affectedPlanIds: [] };
     }
 
-    // 5. Activation: hand off to PlanAdjustmentService. Slot-level partial
-    //    regen is still deferred (see deferred-work.md from 3.16) — the
-    //    dispatcher converts a non-bag-wide slot_scope into a full week-scope
-    //    regen and surfaces the original slot_scope in the audit metadata.
+    // 5. Activation: hand off to PlanAdjustmentService. slot_scope flows
+    //    end-to-end: PlanAdjustmentService → PlanRegenerationJobData →
+    //    orchestrator.planWeek() context line (Story 3.23).
     const result = await this.planAdjustment.triggerAdjustment({
       type: 'school_policy_changed',
       householdId: opts.householdId,

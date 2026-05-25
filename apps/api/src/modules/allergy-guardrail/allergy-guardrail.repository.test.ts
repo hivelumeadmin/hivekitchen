@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import { AllergyGuardrailRepository } from './allergy-guardrail.repository.js';
+import { ChildAllergensRepository } from '../children/child-allergens.repository.js';
 import { encryptField } from '../../lib/envelope-encryption.js';
 import { evaluate, type AllergyRule } from './allergy-rules.engine.js';
 import type { PlanItemForGuardrail } from '@hivekitchen/types';
@@ -9,28 +10,33 @@ const CHILD_ID = '22222222-2222-4222-8222-222222222222';
 const OTHER_CHILD_ID = '33333333-3333-4333-8333-333333333333';
 
 const FALCPA_SEED: Array<Omit<AllergyRule, 'id'>> = [
-  { household_id: null, child_id: null, allergen: 'peanuts', rule_type: 'falcpa' },
-  { household_id: null, child_id: null, allergen: 'tree_nuts', rule_type: 'falcpa' },
-  { household_id: null, child_id: null, allergen: 'milk', rule_type: 'falcpa' },
-  { household_id: null, child_id: null, allergen: 'eggs', rule_type: 'falcpa' },
-  { household_id: null, child_id: null, allergen: 'wheat', rule_type: 'falcpa' },
-  { household_id: null, child_id: null, allergen: 'soy', rule_type: 'falcpa' },
-  { household_id: null, child_id: null, allergen: 'fish', rule_type: 'falcpa' },
+  { household_id: null, child_id: null, allergen: 'peanut',    rule_type: 'falcpa' },
+  { household_id: null, child_id: null, allergen: 'tree_nut',  rule_type: 'falcpa' },
+  { household_id: null, child_id: null, allergen: 'dairy',     rule_type: 'falcpa' },
+  { household_id: null, child_id: null, allergen: 'egg',       rule_type: 'falcpa' },
+  { household_id: null, child_id: null, allergen: 'wheat',     rule_type: 'falcpa' },
+  { household_id: null, child_id: null, allergen: 'soy',       rule_type: 'falcpa' },
+  { household_id: null, child_id: null, allergen: 'fish',      rule_type: 'falcpa' },
   { household_id: null, child_id: null, allergen: 'shellfish', rule_type: 'falcpa' },
-  { household_id: null, child_id: null, allergen: 'sesame', rule_type: 'falcpa' },
+  { household_id: null, child_id: null, allergen: 'sesame',    rule_type: 'falcpa' },
 ];
 
 interface MockOpts {
   /** Decrypted (plain) array; tests pass plain string[] and the mock encrypts via NOOP. */
   householdAllergens?: string[] | null;
-  /** Mapping of child_id → declared_allergens array (plain). */
+  /** Per-child structured allergens — slice 2.6-s8 read source. */
   childAllergens?: Array<{ id: string; allergens: string[] | null }>;
+  /** Override allergen_tags rows returned by the mock. Defaults to full FALCPA_SEED. */
+  allergenTagKeys?: string[];
+  /** Force ChildAllergensRepository.findByHousehold to throw — exercises the
+   *  fail-closed AllergyGuardrailDecryptError path. */
+  childAllergensThrows?: boolean;
 }
 
 function buildMockSupabase(opts: MockOpts) {
   // Use the NOOP cipher branch (dek=null + encryptField) so the encrypted
-  // text we hand back from .from('households') / .from('children') decodes
-  // cleanly inside the repository without a real DEK setup.
+  // text we hand back from .from('households') / .from('child_allergens')
+  // decodes cleanly inside the repository without a real DEK setup.
   const householdRow =
     opts.householdAllergens === undefined
       ? { declared_allergens: null }
@@ -38,18 +44,31 @@ function buildMockSupabase(opts: MockOpts) {
         ? { declared_allergens: null }
         : { declared_allergens: encryptField(opts.householdAllergens, null) };
 
-  const childRows = (opts.childAllergens ?? []).map((c) => ({
-    id: c.id,
-    declared_allergens:
-      c.allergens === null ? null : encryptField(c.allergens, null),
-  }));
+  // Slice 2.6-s8 — child_allergens table is the new read source. Each per-
+  // child plaintext is fanned into one row per allergen, encrypted via NOOP.
+  const childAllergenRows: Array<{ child_id: string; allergen: string }> = [];
+  for (const c of opts.childAllergens ?? []) {
+    if (c.allergens === null) continue;
+    for (const a of c.allergens) {
+      childAllergenRows.push({ child_id: c.id, allergen: encryptField(a, null) });
+    }
+  }
 
   return {
     from(table: string) {
-      if (table === 'allergy_rules') {
+      if (table === 'allergen_tags') {
+        const tagData = (opts.allergenTagKeys ?? FALCPA_SEED.map((r) => r.allergen)).map((key) => ({ key }));
         return {
           select: () => ({
-            is: () => Promise.resolve({ data: FALCPA_SEED, error: null }),
+            eq: (col1: string, val1: string) => ({
+              eq: (col2: string, val2: boolean) => {
+                if (col1 !== 'rule_class' || val1 !== 'falcpa')
+                  throw new Error(`allergen_tags: unexpected filter ${col1}=${val1}`);
+                if (col2 !== 'is_active' || val2 !== true)
+                  throw new Error(`allergen_tags: unexpected filter ${col2}=${String(val2)}`);
+                return Promise.resolve({ data: tagData, error: null });
+              },
+            }),
           }),
         };
       }
@@ -65,10 +84,12 @@ function buildMockSupabase(opts: MockOpts) {
           }),
         };
       }
-      if (table === 'children') {
+      if (table === 'child_allergens') {
+        // Slice 2.6-s8 — ChildAllergensRepository.findByHousehold issues
+        // `from('child_allergens').select('child_id, allergen').eq('household_id', ...)`.
         return {
           select: () => ({
-            eq: () => Promise.resolve({ data: childRows, error: null }),
+            eq: () => Promise.resolve({ data: childAllergenRows, error: null }),
           }),
         };
       }
@@ -80,14 +101,20 @@ function buildMockSupabase(opts: MockOpts) {
 function makeRepo(opts: MockOpts): AllergyGuardrailRepository {
   // KEK null → all decrypts use the NOOP path (matches the encryptField
   // calls in the mock).
-  return new AllergyGuardrailRepository(
-    buildMockSupabase(opts) as unknown as Parameters<
-      typeof AllergyGuardrailRepository.prototype.getRulesForHousehold
-    > extends never
-      ? never
-      : ConstructorParameters<typeof AllergyGuardrailRepository>[0],
-    null,
-  );
+  const client = buildMockSupabase(opts) as unknown as ConstructorParameters<
+    typeof AllergyGuardrailRepository
+  >[0];
+
+  if (opts.childAllergensThrows === true) {
+    // Injecting a stub repo lets us simulate a decrypt failure on the per-
+    // child read path without corrupting the mock supabase wiring.
+    const stub = {
+      findByHousehold: vi.fn().mockRejectedValue(new Error('decrypt failed')),
+    } as unknown as ChildAllergensRepository;
+    return new AllergyGuardrailRepository(client, null, stub);
+  }
+
+  return new AllergyGuardrailRepository(client, null);
 }
 
 describe('AllergyGuardrailRepository.getRulesForHousehold', () => {
@@ -215,9 +242,55 @@ describe('AllergyGuardrailRepository.getRulesForHousehold', () => {
     expect(evaluate(otherChild, rules as AllergyRule[]).verdict).toBe('cleared');
   });
 
+  it('peanut-key synonym expansion blocks "peanut butter"', async () => {
+    const repo = makeRepo({ householdAllergens: null, childAllergens: [] });
+    const rules = await repo.getRulesForHousehold(HOUSEHOLD_ID);
+    const items: PlanItemForGuardrail[] = [
+      { child_id: CHILD_ID, day: 'monday', slot: 'main', ingredients: ['peanut butter'] },
+    ];
+    const verdict = evaluate(items, rules as AllergyRule[]);
+    expect(verdict.verdict).toBe('blocked');
+  });
+
+  it('dairy-key synonym expansion blocks "skim milk"', async () => {
+    const repo = makeRepo({ householdAllergens: null, childAllergens: [] });
+    const rules = await repo.getRulesForHousehold(HOUSEHOLD_ID);
+    const items: PlanItemForGuardrail[] = [
+      { child_id: CHILD_ID, day: 'tuesday', slot: 'main', ingredients: ['skim milk'] },
+    ];
+    const verdict = evaluate(items, rules as AllergyRule[]);
+    expect(verdict.verdict).toBe('blocked');
+  });
+
   it('rejects malformed household id', async () => {
     const repo = makeRepo({});
     await expect(repo.getRulesForHousehold('not-a-uuid')).rejects.toThrow();
+  });
+
+  // Slice 2.6-s8 — per-child reads come from child_allergens; legacy
+  // children.declared_allergens column is no longer consulted.
+  it('child_allergens decrypt failure → AllergyGuardrailDecryptError (fail-closed)', async () => {
+    const repo = makeRepo({
+      householdAllergens: null,
+      childAllergens: [{ id: CHILD_ID, allergens: ['celery'] }],
+      childAllergensThrows: true,
+    });
+    await expect(repo.getRulesForHousehold(HOUSEHOLD_ID)).rejects.toThrow(
+      /allergen data decrypt failed/,
+    );
+  });
+
+  it('only loads tags returned by is_active=true filter (deactivated tags excluded)', async () => {
+    // Simulate one tag administratively deactivated by omitting it from mock data.
+    const repo = makeRepo({
+      allergenTagKeys: FALCPA_SEED.filter((r) => r.allergen !== 'peanut').map((r) => r.allergen),
+      householdAllergens: null,
+      childAllergens: [],
+    });
+    const rules = await repo.getRulesForHousehold(HOUSEHOLD_ID);
+    const falcpa = rules.filter((r) => r.rule_type === 'falcpa');
+    expect(falcpa).toHaveLength(FALCPA_SEED.length - 1);
+    expect(falcpa.some((r) => r.allergen === 'peanut')).toBe(false);
   });
 });
 
