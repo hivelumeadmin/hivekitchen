@@ -19,7 +19,8 @@
     "supabase:diff": "supabase db diff --linked",
     "supabase:status": "supabase projects list",
     "seed:dev": "tsx test/helpers/seed-dev.ts",
-    "seed:reset": "tsx test/helpers/seed-dev.ts --reset"
+    "seed:reset": "tsx test/helpers/seed-dev.ts --reset",
+    "db:reset": "tsx --env-file=apps/api/.env.local scripts/dev-db-reset.ts --confirm"
   },
   "devDependencies": {
     "@lhci/cli": "^0.15.1",
