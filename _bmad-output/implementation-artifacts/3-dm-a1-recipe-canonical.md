@@ -1,6 +1,6 @@
 # Story 3-DM-A1: Recipe canonical — structured method steps + finish_time_minutes
 
-Status: planned
+Status: done
 
 ## Story
 

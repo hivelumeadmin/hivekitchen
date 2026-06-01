@@ -724,4 +724,46 @@ describe('RecipeService.readCandidate / insertFromDiscoverExtraction', () => {
     expect(recipeId).toBe('existing-id');
     expect(repo.insertRecipe).not.toHaveBeenCalled();
   });
+
+  // Story 3-DM-A1 — assert the structured-method fields propagate. Without
+  // this, a regression that silently drops `steps` or `finish_time_minutes`
+  // before the repository call would still leave the existing "returns the
+  // recipe id" test green.
+  it('insertFromDiscoverExtraction forwards steps and finish_time_minutes to the repository', async () => {
+    const repo = buildRepo();
+    const svc = new RecipeService(repo, buildLogger());
+    const extraction = buildExtraction({
+      finish_time_minutes: 12,
+      steps: [
+        { mode: 'prep' as const, text: 'Marinate overnight.' },
+        { mode: 'finish' as const, text: 'Pan-sear and slice.' },
+      ],
+    });
+
+    await svc.insertFromDiscoverExtraction({
+      householdId: HOUSEHOLD_ID,
+      extraction,
+    });
+
+    const insertCall = (repo.insertRecipe as ReturnType<typeof vi.fn>).mock.calls[0]?.[0];
+    expect(insertCall).toBeDefined();
+    expect(insertCall.steps).toEqual(extraction.steps);
+    expect(insertCall.finish_time_minutes).toBe(12);
+  });
+
+  it('insertFromDiscoverExtraction maps absent finish_time_minutes to null', async () => {
+    const repo = buildRepo();
+    const svc = new RecipeService(repo, buildLogger());
+    // Omit finish_time_minutes entirely (Zod marks it as .optional()).
+    const extraction = buildExtraction();
+    delete (extraction as { finish_time_minutes?: number | null }).finish_time_minutes;
+
+    await svc.insertFromDiscoverExtraction({
+      householdId: HOUSEHOLD_ID,
+      extraction,
+    });
+
+    const insertCall = (repo.insertRecipe as ReturnType<typeof vi.fn>).mock.calls[0]?.[0];
+    expect(insertCall.finish_time_minutes).toBeNull();
+  });
 });

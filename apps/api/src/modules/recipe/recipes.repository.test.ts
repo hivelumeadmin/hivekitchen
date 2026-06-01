@@ -49,10 +49,15 @@ function buildClient(plan: Op[]): {
       pendingResult = takeNext(table);
       return builder;
     };
+    builder.delete = () => {
+      pendingResult = takeNext(table);
+      return builder;
+    };
     builder.select = (_cols?: unknown) => builder;
     builder.eq = (..._args: unknown[]) => builder;
     builder.ilike = (..._args: unknown[]) => builder;
     builder.limit = (..._args: unknown[]) => builder;
+    builder.order = (..._args: unknown[]) => builder;
     // single() / maybeSingle() return the pending result of the most-recent
     // insert OR — for the conflict-recovery SELECT branch — pull the next
     // scripted result from the plan.
@@ -201,5 +206,153 @@ describe('RecipesRepository.seedFromCatalogBaseline', () => {
       { ...SAMPLE_ITEM, canonical_name: '   ' },
     ]);
     expect(persisted).toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Story 3-DM-A1 — insertRecipe with steps, findStepsByRecipeId, rollback
+// ---------------------------------------------------------------------------
+
+const BASE_INSERT_INPUT = {
+  canonical_name: 'Chicken with rice',
+  ingredients: [
+    {
+      key: 'chicken',
+      modifier: 'thigh',
+      display: '1 lb chicken thighs',
+      quantity: 1,
+      unit: 'lb',
+      optional: false,
+      substitutes: [],
+    },
+  ],
+  ingredient_keys: ['chicken'],
+  primary_ingredient_key: 'chicken',
+  allergen_flags: [],
+  dietary_flags: [],
+  cultural_tags: [],
+  cuisine_tags: [],
+  applicable_slots: ['main'] as Array<'main' | 'snack' | 'extra'>,
+  prep_time_minutes: 20,
+  source: 'agent_generated' as const,
+  created_by_household_id: HOUSEHOLD_ID,
+  visibility: 'private' as const,
+};
+
+describe('RecipesRepository.insertRecipe — Story 3-DM-A1 steps persistence', () => {
+  it('persists recipe + recipe_steps when steps array is provided', async () => {
+    const plan: Op[] = [
+      // recipes INSERT — returns the new id
+      { table: 'recipes', op: 'insert', result: { data: { id: RECIPE_ID, canonical_name: 'Chicken with rice' }, error: null } },
+      // recipe_steps INSERT — success
+      { table: 'recipe_steps', op: 'insert', result: { data: null, error: null } },
+    ];
+    const { client, recorded } = buildClient(plan);
+    const repo = new RecipesRepository(client);
+
+    const row = await repo.insertRecipe({
+      ...BASE_INSERT_INPUT,
+      finish_time_minutes: 10,
+      steps: [
+        { mode: 'prep', text: 'Chop the chicken.' },
+        { mode: 'finish', text: 'Sear over high heat.' },
+      ],
+    });
+
+    expect(row.id).toBe(RECIPE_ID);
+    expect(recorded.map((r) => `${r.table}:${r.op}`)).toEqual([
+      'recipes:insert',
+      'recipe_steps:insert',
+    ]);
+  });
+
+  it('skips recipe_steps insert when no steps are provided (back-compat path)', async () => {
+    const plan: Op[] = [
+      { table: 'recipes', op: 'insert', result: { data: { id: RECIPE_ID, canonical_name: 'Chicken with rice' }, error: null } },
+    ];
+    const { client, recorded } = buildClient(plan);
+    const repo = new RecipesRepository(client);
+
+    await repo.insertRecipe(BASE_INSERT_INPUT);
+
+    expect(recorded.map((r) => r.table)).toEqual(['recipes']);
+  });
+
+  it('skips recipe_steps insert when steps is an empty array', async () => {
+    const plan: Op[] = [
+      { table: 'recipes', op: 'insert', result: { data: { id: RECIPE_ID, canonical_name: 'Chicken with rice' }, error: null } },
+    ];
+    const { client, recorded } = buildClient(plan);
+    const repo = new RecipesRepository(client);
+
+    await repo.insertRecipe({ ...BASE_INSERT_INPUT, steps: [] });
+
+    expect(recorded.map((r) => r.table)).toEqual(['recipes']);
+  });
+
+  it('rolls back the recipe row when recipe_steps INSERT fails', async () => {
+    const plan: Op[] = [
+      { table: 'recipes', op: 'insert', result: { data: { id: RECIPE_ID, canonical_name: 'Chicken with rice' }, error: null } },
+      // recipe_steps INSERT — fails (e.g. CHECK constraint violation, FK fail)
+      { table: 'recipe_steps', op: 'insert', result: { data: null, error: { code: '23514', message: 'check constraint failed' } } },
+      // recipes DELETE — best-effort rollback
+      { table: 'recipes', op: 'delete', result: { data: null, error: null } },
+    ];
+    const { client, recorded } = buildClient(plan);
+    const repo = new RecipesRepository(client);
+
+    await expect(
+      repo.insertRecipe({
+        ...BASE_INSERT_INPUT,
+        steps: [{ mode: 'prep', text: 'Cook.' }],
+      }),
+    ).rejects.toMatchObject({ code: '23514' });
+
+    expect(recorded.map((r) => `${r.table}:${r.op}`)).toEqual([
+      'recipes:insert',
+      'recipe_steps:insert',
+      'recipes:delete',
+    ]);
+  });
+});
+
+describe('RecipesRepository.findStepsByRecipeId — Story 3-DM-A1', () => {
+  it('returns rows in sequence order from the recipe_steps table', async () => {
+    const rows = [
+      { id: 'step-1', recipe_id: RECIPE_ID, sequence: 1, mode: 'prep', text: 'Chop.', created_at: '2026-05-31T00:00:00Z' },
+      { id: 'step-2', recipe_id: RECIPE_ID, sequence: 2, mode: 'finish', text: 'Sear.', created_at: '2026-05-31T00:00:00Z' },
+    ];
+    const plan: Op[] = [
+      { table: 'recipe_steps', op: 'select', result: { data: rows, error: null } },
+    ];
+    const { client, recorded } = buildClient(plan);
+    const repo = new RecipesRepository(client);
+
+    const result = await repo.findStepsByRecipeId(RECIPE_ID);
+
+    expect(result).toEqual(rows);
+    expect(recorded.map((r) => `${r.table}:${r.op}`)).toEqual(['recipe_steps:select']);
+  });
+
+  it('returns an empty array when no steps exist for the recipe', async () => {
+    const plan: Op[] = [
+      { table: 'recipe_steps', op: 'select', result: { data: [], error: null } },
+    ];
+    const { client } = buildClient(plan);
+    const repo = new RecipesRepository(client);
+
+    const result = await repo.findStepsByRecipeId(RECIPE_ID);
+    expect(result).toEqual([]);
+  });
+
+  it('returns an empty array when Supabase returns null data', async () => {
+    const plan: Op[] = [
+      { table: 'recipe_steps', op: 'select', result: { data: null, error: null } },
+    ];
+    const { client } = buildClient(plan);
+    const repo = new RecipesRepository(client);
+
+    const result = await repo.findStepsByRecipeId(RECIPE_ID);
+    expect(result).toEqual([]);
   });
 });
