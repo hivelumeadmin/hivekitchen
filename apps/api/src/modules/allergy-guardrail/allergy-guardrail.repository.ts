@@ -2,9 +2,7 @@ import type { Buffer } from 'node:buffer';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { z } from 'zod';
 import { BaseRepository } from '../../repository/base.repository.js';
-import { decryptField } from '../../lib/envelope-encryption.js';
-import { getHouseholdDek } from '../../lib/household-key.js';
-import { ChildAllergensRepository } from '../children/child-allergens.repository.js';
+import { HouseholdAllergensRepository } from '../households/household-allergens.repository.js';
 import type { AllergyRule } from './allergy-rules.engine.js';
 
 const UuidSchema = z.string().uuid();
@@ -31,22 +29,21 @@ export class AllergyGuardrailDecryptError extends Error {
 }
 
 export class AllergyGuardrailRepository extends BaseRepository {
-  // Slice 2-s27 — KEK is required so the repository can derive the household
-  // DEK and decrypt parent-declared allergens stored on households.
-  // Slice 2.6-s8 — per-child allergens now come from ChildAllergensRepository
-  // (structured `child_allergens` table). The legacy per-child decrypt block
-  // is gone. KEK is still needed for the household-wide read of
-  // `households.declared_allergens` (unchanged).
-  private readonly childAllergensRepo: ChildAllergensRepository;
+  // Story 3-DM-B2 — single-source allergen read. `household_allergens` now
+  // holds both household-wide rules (child_id=NULL) and per-child medical
+  // attribution (child_id non-NULL). Both shapes flow through the guardrail
+  // as `parent_declared` rules; child_id is preserved as-is so per-child
+  // rules continue to scope to that child while household-wide rules apply
+  // to every kid. FALCPA seeds still come from `allergen_tags`.
+  private readonly householdAllergensRepo: HouseholdAllergensRepository;
   constructor(
     client: SupabaseClient,
-    private readonly kek: Buffer | null = null,
-    childAllergensRepo?: ChildAllergensRepository,
+    kek: Buffer | null = null,
+    householdAllergensRepo?: HouseholdAllergensRepository,
   ) {
     super(client);
-    // Default: construct one from the same client + KEK. Tests can inject a
-    // stub to drive findByHousehold without going through PostgREST.
-    this.childAllergensRepo = childAllergensRepo ?? new ChildAllergensRepository(client, kek);
+    this.householdAllergensRepo =
+      householdAllergensRepo ?? new HouseholdAllergensRepository(client, kek);
   }
 
   async getRulesForHousehold(householdId: string): Promise<AllergyRule[]> {
@@ -56,38 +53,12 @@ export class AllergyGuardrailRepository extends BaseRepository {
     // input as the threat model and fail loudly here.
     UuidSchema.parse(householdId);
 
-    // Slice 2.6-s7 — FALCPA seeds come from `allergen_tags`
-    // (rule_class='falcpa', is_active=true).
-    // Slice 2.6-s8 — per-child parent_declared rules come from
-    // `child_allergens` via ChildAllergensRepository.findByHousehold.
-    // Household-wide parent_declared rules continue to come from the encrypted
-    // `households.declared_allergens` JSONB column (canonical store; no
-    // structured table yet — see deferred-work.md).
-    let childAllergenError: unknown = null;
-    let perChildRows: Array<{ child_id: string; allergen: string }> = [];
-    const [falcpaRes, householdRow] = await Promise.all([
-      this.client
-        .from('allergen_tags')
-        .select('key')
-        .eq('rule_class', 'falcpa')
-        .eq('is_active', true),
-      this.client
-        .from('households')
-        .select('declared_allergens')
-        .eq('id', householdId)
-        .maybeSingle(),
-      this.childAllergensRepo
-        .findByHousehold(householdId)
-        .then((rows) => {
-          perChildRows = rows;
-        })
-        .catch((err: unknown) => {
-          childAllergenError = err;
-        }),
-    ]);
-
+    const falcpaRes = await this.client
+      .from('allergen_tags')
+      .select('key')
+      .eq('rule_class', 'falcpa')
+      .eq('is_active', true);
     if (falcpaRes.error) throw falcpaRes.error;
-    if (householdRow.error) throw householdRow.error;
 
     const falcpa: AllergyRule[] = ((falcpaRes.data ?? []) as Array<{ key: string }>).map(
       (row) => ({
@@ -99,54 +70,27 @@ export class AllergyGuardrailRepository extends BaseRepository {
       }),
     );
 
-    // Fail-closed on per-child decrypt failures: if any cell could not be
-    // decrypted, propagate AllergyGuardrailDecryptError so the service
-    // surfaces verdict='uncertain' (matches the legacy per-child path's
-    // semantics — never silently clear a plan when allergen data is
-    // unreadable).
-    if (childAllergenError !== null) {
+    let householdRows;
+    try {
+      householdRows = await this.householdAllergensRepo.findByHouseholdId(householdId);
+    } catch {
+      // Any decrypt failure inside the repo is treated as fail-closed: the
+      // service surfaces verdict='uncertain' rather than silently clearing a
+      // plan with unreadable allergen data.
       throw new AllergyGuardrailDecryptError(householdId);
     }
 
-    const householdStored =
-      (householdRow.data as { declared_allergens: string | null } | null)?.declared_allergens ??
-      null;
+    if (householdRows.length === 0) return falcpa;
 
-    // Short-circuit: nothing declared anywhere → just the FALCPA seed.
-    if (householdStored === null && perChildRows.length === 0) {
-      return falcpa;
-    }
-
-    const synthetic: AllergyRule[] = [];
-    let householdDecryptFailed = false;
-
-    if (householdStored !== null) {
-      const dek = await getHouseholdDek(this.client, this.kek, householdId);
-      const onDecryptError = (): void => {
-        householdDecryptFailed = true;
-      };
-      for (const allergen of decryptArray(householdStored, dek, onDecryptError)) {
-        synthetic.push({
-          household_id: householdId,
-          child_id: null,
-          allergen,
-          rule_type: 'parent_declared',
-        } as AllergyRule);
-      }
-    }
-
-    for (const row of perChildRows) {
-      synthetic.push({
-        household_id: householdId,
-        child_id: row.child_id,
-        allergen: row.allergen,
-        rule_type: 'parent_declared',
-      } as AllergyRule);
-    }
-
-    if (householdDecryptFailed) {
-      throw new AllergyGuardrailDecryptError(householdId);
-    }
+    // `id` is not load-bearing on parent_declared rules (the engine matches on
+    // allergen text + child_id scoping); the legacy code path also omitted it
+    // via an `as AllergyRule` cast. Preserve that contract here.
+    const synthetic = householdRows.map((row) => ({
+      household_id: householdId,
+      child_id: row.child_id,
+      allergen: row.allergen,
+      rule_type: 'parent_declared',
+    })) as AllergyRule[];
 
     return [...falcpa, ...synthetic];
   }
@@ -172,18 +116,5 @@ export class AllergyGuardrailRepository extends BaseRepository {
         { onConflict: 'household_id,request_id', ignoreDuplicates: true },
       );
     if (error) throw error;
-  }
-}
-
-// Slice 2-s27 — decrypt one allergen cell. On failure, calls onError() so
-// the caller can track whether any cell in the batch failed and throw
-// AllergyGuardrailDecryptError after assembly — producing verdict='uncertain'
-// rather than silently clearing a plan that may contain a declared allergen.
-function decryptArray(stored: string, dek: Buffer | null, onError: () => void): string[] {
-  try {
-    return decryptField<string[]>(stored, dek);
-  } catch {
-    onError();
-    return [];
   }
 }

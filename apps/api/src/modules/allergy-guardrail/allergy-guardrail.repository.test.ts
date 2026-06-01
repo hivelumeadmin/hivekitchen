@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import { AllergyGuardrailRepository } from './allergy-guardrail.repository.js';
-import { ChildAllergensRepository } from '../children/child-allergens.repository.js';
+import { HouseholdAllergensRepository } from '../households/household-allergens.repository.js';
 import { encryptField } from '../../lib/envelope-encryption.js';
 import { evaluate, type AllergyRule } from './allergy-rules.engine.js';
 import type { PlanItemForGuardrail } from '@hivekitchen/types';
@@ -35,22 +35,35 @@ interface MockOpts {
 
 function buildMockSupabase(opts: MockOpts) {
   // Use the NOOP cipher branch (dek=null + encryptField) so the encrypted
-  // text we hand back from .from('households') / .from('child_allergens')
-  // decodes cleanly inside the repository without a real DEK setup.
-  const householdRow =
-    opts.householdAllergens === undefined
-      ? { declared_allergens: null }
-      : opts.householdAllergens === null
-        ? { declared_allergens: null }
-        : { declared_allergens: encryptField(opts.householdAllergens, null) };
+  // text we hand back from .from('household_allergens') decodes cleanly
+  // inside the repository without a real DEK setup.
 
-  // Slice 2.6-s8 — child_allergens table is the new read source. Each per-
-  // child plaintext is fanned into one row per allergen, encrypted via NOOP.
-  const childAllergenRows: Array<{ child_id: string; allergen: string }> = [];
+  // Story 3-DM-B2 — household_allergens is the single source. NOOP encrypt
+  // each plaintext allergen; child_id=NULL rows represent household-wide
+  // rules, child_id=non-NULL represent per-child medical attribution.
+  const householdAllergenRows: Array<{
+    household_id: string;
+    child_id: string | null;
+    allergen: string;
+    source: string;
+  }> = [];
+  for (const a of opts.householdAllergens ?? []) {
+    householdAllergenRows.push({
+      household_id: HOUSEHOLD_ID,
+      child_id: null,
+      allergen: encryptField(a, null),
+      source: 'parent_edited',
+    });
+  }
   for (const c of opts.childAllergens ?? []) {
     if (c.allergens === null) continue;
     for (const a of c.allergens) {
-      childAllergenRows.push({ child_id: c.id, allergen: encryptField(a, null) });
+      householdAllergenRows.push({
+        household_id: HOUSEHOLD_ID,
+        child_id: c.id,
+        allergen: encryptField(a, null),
+        source: 'child_medical',
+      });
     }
   }
 
@@ -72,24 +85,23 @@ function buildMockSupabase(opts: MockOpts) {
           }),
         };
       }
-      if (table === 'households') {
-        // The repository also reads the household row for the DEK from another
-        // codepath — but with NOOP-encrypted fixtures, getHouseholdDek can
-        // return null and decryptField still works.
+      if (table === 'household_allergens') {
         return {
           select: () => ({
-            eq: () => ({
-              maybeSingle: () => Promise.resolve({ data: householdRow, error: null }),
-            }),
+            eq: () => Promise.resolve({ data: householdAllergenRows, error: null }),
           }),
         };
       }
-      if (table === 'child_allergens') {
-        // Slice 2.6-s8 — ChildAllergensRepository.findByHousehold issues
-        // `from('child_allergens').select('child_id, allergen').eq('household_id', ...)`.
+      if (table === 'households') {
+        // getHouseholdDek path still reads encrypted_dek when KEK is non-null.
+        // KEK is null in these tests so the dek fetch is short-circuited and
+        // this branch is not reached, but supplying a stub keeps any future
+        // codepath safe.
         return {
           select: () => ({
-            eq: () => Promise.resolve({ data: childAllergenRows, error: null }),
+            eq: () => ({
+              maybeSingle: () => Promise.resolve({ data: null, error: null }),
+            }),
           }),
         };
       }
@@ -106,11 +118,12 @@ function makeRepo(opts: MockOpts): AllergyGuardrailRepository {
   >[0];
 
   if (opts.childAllergensThrows === true) {
-    // Injecting a stub repo lets us simulate a decrypt failure on the per-
-    // child read path without corrupting the mock supabase wiring.
+    // Story 3-DM-B2 — fail-closed path now triggers when the consolidated
+    // household_allergens read throws. Injecting a stub repo lets us
+    // simulate a decrypt failure without corrupting the mock supabase wiring.
     const stub = {
-      findByHousehold: vi.fn().mockRejectedValue(new Error('decrypt failed')),
-    } as unknown as ChildAllergensRepository;
+      findByHouseholdId: vi.fn().mockRejectedValue(new Error('decrypt failed')),
+    } as unknown as HouseholdAllergensRepository;
     return new AllergyGuardrailRepository(client, null, stub);
   }
 

@@ -52,7 +52,7 @@
 # Walls (decision moments) are flagged with `# WALL:` markers.
 
 generated: 2026-04-23
-last_updated: 2026-05-31 (4-s10 → done)
+last_updated: 2026-05-31 (3-dm-* phase-4 migration slices added; 3-dm-b2 → ready-for-dev)
 project: hivekitchen
 project_key: NOKEY
 tracking_system: file-system
@@ -214,6 +214,20 @@ development_status:
   3-28-pause-lunch-link-for-child-on-day-without-altering-plan: done          # CONTINUES IN PARALLEL — infrastructure, no contract dependency
   3-29-degraded-propose-state-with-try-alternating-sovereignty-toggle: done    # code review complete 2026-05-25 — 3 decisions resolved; 9 patches applied (no-op guard, committedPlanId log, CHECK constraint, role=region ARIA, idempotency key to caller, NotFoundError fallback, setPlanState row check, toggle error feedback, min(1) schema); 1 false positive dismissed; 5 deferred
   3-30-llm-provider-failover-circuit-breaker-audit: done                      # Code review 2026-05-22: 12 patches applied (auth, retry, breaker timer-leak fix, branch-coverage tests, auth tests). 7 deferred. CONTINUES IN PARALLEL — infrastructure, no contract dependency
+  # ==========================================================================
+  # Epic 3 — Phase 4 data-model migration (canonical-data-model-design.md).
+  # 9 slices across 5 phases. A/B/D ship in parallel; C waits on A+B+D;
+  # E is final cleanup. See _bmad-output/planning-artifacts/phase-4-migration-story-breakdown.md
+  # ==========================================================================
+  3-dm-a1-recipe-canonical: in-progress                                       # recipe_steps + finish_time_minutes + structured method; migrations 20261005000000 / 20261005000100 + scripts/backfill-recipe-steps.ts staged
+  3-dm-a2-snack-sku-fold: in-progress                                         # snack_skus → recipes; migration 20261006000000 staged; snack-skus.repository deleted
+  3-dm-a3-test-factories-saturday-audit: in-progress                          # apps/api/test/factories/ scaffold; saturday-audit-findings.md authored
+  3-dm-b1-child-profile-attributes: in-progress                               # appetite_level / texture_needs / spice_tolerance + bag_composition_pattern enum; migration 20261007000000 staged
+  3-dm-b2-allergen-consolidation: in-progress                                 # 2026-05-31: foundation + cutover + guardrail single-source rewrite shipped; ~46 children/households legacy mock-shape tests pending sweep (deferred-work.md). ChildAllergensRepository kept as thin adapter for now.
+  3-dm-c1-plan-structure-cutover: backlog                                     # blocked on A1, A2, B1, B2
+  3-dm-c2-phase-c-cleanup: backlog                                            # blocked on C1
+  3-dm-d1-brief-state-payload: backlog                                        # brief_state.payload jsonb + plan_state migrates to plans
+  3-dm-e1-adjacent-cleanup: backlog                                           # blocked on C1 — day_overrides → plan_day_context rename
   epic-3-retrospective: done                                                  # retro completed 2026-05-25; see epic-3-retro-2026-05-25.md
 
   # ==========================================================================

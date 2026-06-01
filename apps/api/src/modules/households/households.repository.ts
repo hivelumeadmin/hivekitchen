@@ -3,7 +3,9 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { BaseRepository } from '../../repository/base.repository.js';
 import { decryptField, encryptField } from '../../lib/envelope-encryption.js';
 import { getHouseholdDek, getOrCreateHouseholdDek } from '../../lib/household-key.js';
-import { HouseholdDecryptError, NotFoundError } from '../../common/errors.js';
+import { NotFoundError } from '../../common/errors.js';
+import { HouseholdAllergensRepository } from './household-allergens.repository.js';
+import { HouseholdCulturalIdentifiersRepository } from './household-cultural-identifiers.repository.js';
 
 // Story 2.10 lazy-migration shape: pre-2.10 rows held jsonb that was cast to
 // text by `ALTER COLUMN ... TYPE text USING caregiver_relationships::text`.
@@ -157,57 +159,52 @@ export class HouseholdsRepository extends BaseRepository {
     if (error) throw error;
   }
 
-  // ---- Slice 2-s27 — household-level food identity ------------------------
+  // ---- Story 3-DM-B2 — household-level food identity reads/writes --------
   //
-  // Three encrypted columns added by migration 20260902000000:
-  // cultural_identifiers / dietary_preferences / declared_allergens. Each
-  // stores an AES-GCM ciphertext (or NOOP:base64(JSON) in NODE_ENV=dev) of a
-  // JSON string[]; NULL means "no household-level value set yet" and reads
-  // back as []. The household DEK is the same one that protects children
-  // and caregiver_relationships, derived via getHouseholdDek / getOrCreateHouseholdDek.
+  // The legacy 2-s27 encrypted columns (households.cultural_identifiers,
+  // .dietary_preferences, .declared_allergens) are dropped. Reads and writes
+  // route through the structured tables:
+  //   - household_cultural_identifiers   (closed-vocab, no encryption)
+  //   - dietary_preferences (child_id=NULL = household-scoped, closed-vocab)
+  //   - household_allergens (child_id=NULL = household-wide, encrypted)
+  // The household DEK is still derived here for the household_allergens path
+  // (allergen plaintext is encrypted under it).
 
   async getProfile(householdId: string): Promise<{
     cultural_identifiers: string[];
     dietary_preferences: string[];
     declared_allergens: string[];
   }> {
-    const { data, error } = await this.client
+    // Existence check — preserves the prior NotFoundError contract for
+    // callers that distinguish "no row" from "no profile data."
+    const exists = await this.client
       .from('households')
-      .select('cultural_identifiers, dietary_preferences, declared_allergens')
+      .select('id')
       .eq('id', householdId)
       .maybeSingle();
-    if (error) throw error;
-    const row = data as
-      | {
-          cultural_identifiers: string | null;
-          dietary_preferences: string | null;
-          declared_allergens: string | null;
-        }
-      | null;
-    if (row === null) {
+    if (exists.error) throw exists.error;
+    if (exists.data === null) {
       throw new NotFoundError(`household not found: ${householdId}`);
     }
 
-    // Decrypt only if anything is set — avoids an unnecessary DEK fetch on
-    // brand-new households (and gracefully handles dev environments with no
-    // KEK configured).
-    if (
-      row.cultural_identifiers === null &&
-      row.dietary_preferences === null &&
-      row.declared_allergens === null
-    ) {
-      return {
-        cultural_identifiers: [],
-        dietary_preferences: [],
-        declared_allergens: [],
-      };
-    }
+    const allergensRepo = new HouseholdAllergensRepository(this.client, this.kek);
+    const culturalRepo = new HouseholdCulturalIdentifiersRepository(this.client);
 
-    const dek = await getHouseholdDek(this.client, this.kek, householdId);
+    const [allergenRows, culturalTags, dietaryRows] = await Promise.all([
+      allergensRepo.findByHouseholdId(householdId),
+      culturalRepo.listTags(householdId),
+      this.fetchHouseholdDietaryTags(householdId),
+    ]);
+
     return {
-      cultural_identifiers: decryptArrayColumn(row.cultural_identifiers, dek),
-      dietary_preferences: decryptArrayColumn(row.dietary_preferences, dek),
-      declared_allergens: decryptArrayColumn(row.declared_allergens, dek),
+      cultural_identifiers: culturalTags,
+      dietary_preferences: dietaryRows,
+      // Household-wide only — per-child rows live on this same table but are
+      // not part of the household-profile payload (consumers read those via
+      // ChildrenRepository.findById which overlays per-child allergen rows).
+      declared_allergens: allergenRows
+        .filter((r) => r.child_id === null)
+        .map((r) => r.allergen),
     };
   }
 
@@ -232,39 +229,69 @@ export class HouseholdsRepository extends BaseRepository {
       return this.getProfile(householdId);
     }
 
-    const dek = await getOrCreateHouseholdDek(this.client, this.kek, householdId);
-    const update: Record<string, string> = {};
+    const allergensRepo = new HouseholdAllergensRepository(this.client, this.kek);
+    const culturalRepo = new HouseholdCulturalIdentifiersRepository(this.client);
+
     if (patch.cultural_identifiers !== undefined) {
-      update.cultural_identifiers = encryptField(patch.cultural_identifiers, dek);
+      await culturalRepo.upsertSet({
+        household_id: householdId,
+        tags: patch.cultural_identifiers,
+        source: 'parent_edited',
+      });
     }
     if (patch.dietary_preferences !== undefined) {
-      update.dietary_preferences = encryptField(patch.dietary_preferences, dek);
+      await this.upsertHouseholdDietaryTags(householdId, patch.dietary_preferences);
     }
     if (patch.declared_allergens !== undefined) {
-      update.declared_allergens = encryptField(patch.declared_allergens, dek);
+      // Replace-semantics for household-wide rows only; per-child attributions
+      // are preserved (ChildrenRepository owns those edits).
+      await this.client
+        .from('household_allergens')
+        .delete()
+        .eq('household_id', householdId)
+        .is('child_id', null);
+      for (const allergen of patch.declared_allergens) {
+        await allergensRepo.declareIfNew({
+          household_id: householdId,
+          child_id: null,
+          allergen,
+          source: 'parent_edited',
+        });
+      }
     }
-    // Use .update().select() to return the post-write row in a single
-    // round-trip, eliminating the torn-read window between the write and
-    // the follow-on getProfile() call.
-    const { data, error } = await this.client
-      .from('households')
-      .update(update)
-      .eq('id', householdId)
-      .select('cultural_identifiers, dietary_preferences, declared_allergens')
-      .maybeSingle();
-    if (error) throw error;
-    if (data === null) throw new NotFoundError(`household not found: ${householdId}`);
 
-    const row = data as {
-      cultural_identifiers: string | null;
-      dietary_preferences: string | null;
-      declared_allergens: string | null;
-    };
-    return {
-      cultural_identifiers: decryptArrayColumn(row.cultural_identifiers, dek),
-      dietary_preferences: decryptArrayColumn(row.dietary_preferences, dek),
-      declared_allergens: decryptArrayColumn(row.declared_allergens, dek),
-    };
+    return this.getProfile(householdId);
+  }
+
+  private async fetchHouseholdDietaryTags(householdId: string): Promise<string[]> {
+    const { data, error } = await this.client
+      .from('dietary_preferences')
+      .select('tag')
+      .eq('household_id', householdId)
+      .is('child_id', null);
+    if (error) throw error;
+    return ((data ?? []) as Array<{ tag: string }>).map((r) => r.tag);
+  }
+
+  private async upsertHouseholdDietaryTags(
+    householdId: string,
+    tags: readonly string[],
+  ): Promise<void> {
+    if (tags.length === 0) return;
+    const rows = tags.map((tag) => ({
+      household_id: householdId,
+      child_id: null,
+      tag,
+      source: 'parent_edited' as const,
+      updated_at: new Date().toISOString(),
+    }));
+    const { error } = await this.client
+      .from('dietary_preferences')
+      .upsert(rows, {
+        onConflict: 'household_id,tag',
+        ignoreDuplicates: true,
+      });
+    if (error) throw error;
   }
 
   // Story 3.29 — household sovereignty-mode for cultural-rule reconciliation.
@@ -339,18 +366,6 @@ export class HouseholdsRepository extends BaseRepository {
       p_household_id: householdId,
     });
     if (error) throw error;
-  }
-}
-
-function decryptArrayColumn(stored: string | null, dek: Buffer | null): string[] {
-  if (stored === null) return [];
-  try {
-    return decryptField<string[]>(stored, dek);
-  } catch {
-    // Throw rather than returning [] — an empty allergen list is semantically
-    // different from "data unreadable." Fail-closed keeps the safety invariant:
-    // a corrupt or mis-keyed cell surfaces as a 500, not as "no allergens."
-    throw new HouseholdDecryptError();
   }
 }
 
