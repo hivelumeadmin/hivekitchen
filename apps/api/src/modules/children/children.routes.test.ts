@@ -17,7 +17,11 @@ const SAMPLE_HOUSEHOLD_ID = '22222222-2222-4222-8222-222222222222';
 const OTHER_HOUSEHOLD_ID = '33333333-3333-4333-8333-333333333333';
 const JWT_SECRET = 'a'.repeat(32);
 
-// Story 3-DM-B1: legacy bag_composition jsonb + allergen_rule_version dropped;
+// Story 3-DM-B2 — encrypted JSONB columns (declared_allergens,
+// cultural_identifiers, dietary_preferences) dropped from `children`; data
+// now lives in household_allergens / household_cultural_identifiers /
+// dietary_preferences (child_id=NULL for the household-scoped tags).
+// Story 3-DM-B1 — bag_composition jsonb + allergen_rule_version dropped;
 // 3 new variation-driving enums + promoted bag_composition_pattern enum take
 // their place.
 interface ChildRowDb {
@@ -26,9 +30,6 @@ interface ChildRowDb {
   name: string;
   age_band: 'toddler' | 'child' | 'preteen' | 'teen';
   school_policy_notes: string | null;
-  declared_allergens: string | null;
-  cultural_identifiers: string | null;
-  dietary_preferences: string | null;
   appetite_level: 'light' | 'normal' | 'heavy';
   texture_needs: 'soft' | 'mixed' | 'normal';
   spice_tolerance: 'mild' | 'regular' | 'spicy';
@@ -69,16 +70,34 @@ interface LunchLinkSession {
   suppressed_by_user_id: string | null;
 }
 
-interface ChildAllergenRowDb {
+// Story 3-DM-B2 — `household_allergens` is the canonical single-source store.
+// child_id is nullable: NULL = household-wide row, non-NULL = per-child.
+interface HouseholdAllergenRowDb {
   id: string;
   household_id: string;
-  child_id: string;
+  child_id: string | null;
   // NOOP-prefixed ciphertext of the allergen plaintext.
   allergen: string;
   allergen_hash: string;
   source: string;
   created_at: string;
   updated_at: string;
+}
+
+interface HouseholdCulturalIdentifierRowDb {
+  household_id: string;
+  cultural_tag: string;
+  enforcement: 'non_negotiable' | 'strong' | 'default' | 'soft' | 'just_for_context';
+  source: string;
+}
+
+interface DietaryPreferenceRowDb {
+  id: string;
+  household_id: string;
+  child_id: string | null;
+  tag: string;
+  enforcement: 'non_negotiable' | 'strong' | 'default' | 'soft' | 'just_for_context';
+  source: string;
 }
 
 interface MockDbState {
@@ -90,10 +109,11 @@ interface MockDbState {
   plans: PlanRowForPropagation[];
   // Story 3.28
   lunchLinkSessions: Map<string, LunchLinkSession>;  // key: `${childId}:${date}`
-  // Slice 2.6-s8 — structured per-child allergen storage. ChildrenRepository
-  // now writes through ChildAllergensRepository.declareIfNew and reads via
-  // ChildAllergensRepository.findByHousehold.
-  childAllergens: ChildAllergenRowDb[];
+  // Story 3-DM-B2 — single-source allergen storage (per-child + household
+  // wide in one table). Mock for the renamed PostgREST table.
+  householdAllergens: HouseholdAllergenRowDb[];
+  householdCulturalIdentifiers: HouseholdCulturalIdentifierRowDb[];
+  dietaryPreferences: DietaryPreferenceRowDb[];
 }
 
 // In-memory Supabase mock — children + users (for parental_notice gate).
@@ -109,7 +129,10 @@ function buildMockSupabase(state: MockDbState) {
       if (table === 'vpc_consents') return vpcConsentsNoop();
       if (table === 'school_policies') return schoolPoliciesTable(state);
       if (table === 'plans') return plansTable(state);
-      if (table === 'child_allergens') return childAllergensTable(state);
+      if (table === 'household_allergens') return householdAllergensTable(state);
+      if (table === 'household_cultural_identifiers')
+        return householdCulturalIdentifiersTable(state);
+      if (table === 'dietary_preferences') return dietaryPreferencesTable(state);
       throw new Error(`unexpected table: ${table}`);
     },
     rpc(_fnName: string) {
@@ -229,7 +252,10 @@ function plansTable(state: MockDbState) {
 
 function childrenTable(state: MockDbState) {
   return {
-    insert(row: Omit<ChildRowDb, 'id' | 'appetite_level' | 'texture_needs' | 'spice_tolerance' | 'bag_composition_pattern' | 'extra_rules' | 'created_at' | 'updated_at'>) {
+    insert(row: Omit<
+      ChildRowDb,
+      'id' | 'appetite_level' | 'texture_needs' | 'spice_tolerance' | 'bag_composition_pattern' | 'extra_rules' | 'created_at' | 'updated_at'
+    >) {
       return {
         select() {
           return {
@@ -240,9 +266,6 @@ function childrenTable(state: MockDbState) {
                 name: row.name,
                 age_band: row.age_band,
                 school_policy_notes: row.school_policy_notes,
-                declared_allergens: row.declared_allergens,
-                cultural_identifiers: row.cultural_identifiers,
-                dietary_preferences: row.dietary_preferences,
                 // Story 3-DM-B1 — DB defaults for the new enum columns.
                 appetite_level: 'normal',
                 texture_needs: 'normal',
@@ -492,25 +515,29 @@ function emptyState(opts: {
     plans: opts.plans ?? [],
     schoolPolicies: opts.schoolPolicies ?? [],
     lunchLinkSessions: new Map(),
-    childAllergens: [],
+    householdAllergens: [],
+    householdCulturalIdentifiers: [],
+    dietaryPreferences: [],
   };
 }
 
-// Slice 2.6-s8 — mock for the structured child_allergens table. Implements
-// the exact PostgREST shapes ChildAllergensRepository exercises:
-//   - upsert({...}, { onConflict, ignoreDuplicates }).select(...).maybeSingle()
-//     (used by declare AND declareIfNew; ignoreDuplicates=true skips conflicts)
-//   - select(cols).eq('household_id', id) (used by findByHousehold)
-function childAllergensTable(state: MockDbState) {
+// Story 3-DM-B2 — mock for the consolidated household_allergens table.
+// child_id is nullable (NULL = household-wide). PostgREST shapes exercised by
+// HouseholdAllergensRepository:
+//   - upsert({...}, { onConflict: 'household_id,child_id,allergen_hash',
+//                     ignoreDuplicates: true }).select(...).maybeSingle()
+//   - select(cols).eq('household_id', id)
+//   - delete().eq('household_id', id).eq('child_id', childId)
+function householdAllergensTable(state: MockDbState) {
   return {
     upsert(
       payload: {
         household_id: string;
-        child_id: string;
+        child_id: string | null;
         allergen: string;
         allergen_hash: string;
         source: string;
-        updated_at: string;
+        updated_at?: string;
       },
       opts: { onConflict?: string; ignoreDuplicates?: boolean },
     ) {
@@ -518,27 +545,22 @@ function childAllergensTable(state: MockDbState) {
         select(_cols: string) {
           return {
             maybeSingle: async () => {
-              const existing = state.childAllergens.find(
+              const existing = state.householdAllergens.find(
                 (a) =>
-                  a.child_id === payload.child_id && a.allergen_hash === payload.allergen_hash,
+                  a.household_id === payload.household_id &&
+                  a.child_id === payload.child_id &&
+                  a.allergen_hash === payload.allergen_hash,
               );
               if (existing) {
                 if (opts.ignoreDuplicates === true) {
                   return { data: null, error: null };
                 }
-                existing.updated_at = payload.updated_at;
+                existing.updated_at = payload.updated_at ?? new Date().toISOString();
                 existing.source = payload.source;
-                return {
-                  data: {
-                    id: existing.id,
-                    created_at: existing.created_at,
-                    updated_at: existing.updated_at,
-                  },
-                  error: null,
-                };
+                return { data: { id: existing.id }, error: null };
               }
-              const now = payload.updated_at;
-              const stored: ChildAllergenRowDb = {
+              const now = payload.updated_at ?? new Date().toISOString();
+              const stored: HouseholdAllergenRowDb = {
                 id: randomUUID(),
                 household_id: payload.household_id,
                 child_id: payload.child_id,
@@ -548,11 +570,8 @@ function childAllergensTable(state: MockDbState) {
                 created_at: now,
                 updated_at: now,
               };
-              state.childAllergens.push(stored);
-              return {
-                data: { id: stored.id, created_at: stored.created_at, updated_at: stored.updated_at },
-                error: null,
-              };
+              state.householdAllergens.push(stored);
+              return { data: { id: stored.id }, error: null };
             },
           };
         },
@@ -561,12 +580,194 @@ function childAllergensTable(state: MockDbState) {
     select(_cols: string) {
       return {
         eq(_col: string, householdId: string) {
-          const rows = state.childAllergens
+          const rows = state.householdAllergens
             .filter((a) => a.household_id === householdId)
-            .map((a) => ({ child_id: a.child_id, allergen: a.allergen }));
+            .map((a) => ({
+              household_id: a.household_id,
+              child_id: a.child_id,
+              allergen: a.allergen,
+              source: a.source,
+            }));
           return Promise.resolve({ data: rows, error: null });
         },
       };
+    },
+    delete() {
+      const filters: Record<string, unknown> = {};
+      const chain = {
+        eq(column: string, value: unknown) {
+          filters[column] = value;
+          return chain;
+        },
+        then(resolve: (v: { error: null }) => void) {
+          const before = state.householdAllergens.length;
+          state.householdAllergens = state.householdAllergens.filter(
+            (a) =>
+              !(
+                (filters.household_id === undefined ||
+                  a.household_id === filters.household_id) &&
+                (filters.child_id === undefined || a.child_id === filters.child_id)
+              ),
+          );
+          void before;
+          resolve({ error: null });
+          return Promise.resolve({ error: null });
+        },
+      };
+      return chain;
+    },
+  };
+}
+
+// Story 3-DM-B2 — mock for household_cultural_identifiers.
+// Composite PK (household_id, cultural_tag); upsert with
+// onConflict='household_id,cultural_tag', ignoreDuplicates=true.
+function householdCulturalIdentifiersTable(state: MockDbState) {
+  return {
+    upsert(
+      payload:
+        | Array<{
+            household_id: string;
+            cultural_tag: string;
+            enforcement?: HouseholdCulturalIdentifierRowDb['enforcement'];
+            source: string;
+          }>
+        | {
+            household_id: string;
+            cultural_tag: string;
+            enforcement?: HouseholdCulturalIdentifierRowDb['enforcement'];
+            source: string;
+          },
+      opts: { onConflict?: string; ignoreDuplicates?: boolean },
+    ) {
+      const rows = Array.isArray(payload) ? payload : [payload];
+      for (const row of rows) {
+        const existing = state.householdCulturalIdentifiers.find(
+          (r) => r.household_id === row.household_id && r.cultural_tag === row.cultural_tag,
+        );
+        if (existing !== undefined) {
+          if (opts.ignoreDuplicates === true) continue;
+          existing.source = row.source;
+          continue;
+        }
+        state.householdCulturalIdentifiers.push({
+          household_id: row.household_id,
+          cultural_tag: row.cultural_tag,
+          enforcement: row.enforcement ?? 'default',
+          source: row.source,
+        });
+      }
+      return Array.isArray(payload)
+        ? Promise.resolve({ error: null })
+        : {
+            select(_cols: string) {
+              return {
+                maybeSingle: async () => ({
+                  data: { household_id: rows[0]!.household_id },
+                  error: null,
+                }),
+              };
+            },
+          };
+    },
+    select(_cols: string) {
+      return {
+        eq(_col: string, householdId: string) {
+          const rows = state.householdCulturalIdentifiers.filter(
+            (r) => r.household_id === householdId,
+          );
+          return Promise.resolve({ data: rows, error: null });
+        },
+      };
+    },
+  };
+}
+
+// Story 3-DM-B2 — mock for the existing dietary_preferences table extended
+// to carry household-scoped rows (child_id=NULL). COALESCE-sentinel UNIQUE
+// (household_id, COALESCE(child_id, sentinel), tag); upsert with
+// onConflict='household_id,tag', ignoreDuplicates=true for household rows.
+function dietaryPreferencesTable(state: MockDbState) {
+  return {
+    upsert(
+      payload:
+        | Array<{
+            household_id: string;
+            child_id: string | null;
+            tag: string;
+            source: string;
+            enforcement?: DietaryPreferenceRowDb['enforcement'];
+          }>
+        | {
+            household_id: string;
+            child_id: string | null;
+            tag: string;
+            source: string;
+            enforcement?: DietaryPreferenceRowDb['enforcement'];
+          },
+      opts: { onConflict?: string; ignoreDuplicates?: boolean },
+    ) {
+      const rows = Array.isArray(payload) ? payload : [payload];
+      for (const row of rows) {
+        const existing = state.dietaryPreferences.find(
+          (r) =>
+            r.household_id === row.household_id &&
+            r.child_id === row.child_id &&
+            r.tag === row.tag,
+        );
+        if (existing !== undefined) {
+          if (opts.ignoreDuplicates === true) continue;
+          existing.source = row.source;
+          continue;
+        }
+        state.dietaryPreferences.push({
+          id: randomUUID(),
+          household_id: row.household_id,
+          child_id: row.child_id,
+          tag: row.tag,
+          enforcement: row.enforcement ?? 'default',
+          source: row.source,
+        });
+      }
+      return Array.isArray(payload)
+        ? Promise.resolve({ error: null })
+        : {
+            select(_cols: string) {
+              return {
+                maybeSingle: async () => ({
+                  data: { id: state.dietaryPreferences[0]?.id ?? 'mock' },
+                  error: null,
+                }),
+              };
+            },
+          };
+    },
+    select(_cols: string) {
+      const filters: Record<string, unknown> = {};
+      let childIdIsNull = false;
+      const chain = {
+        eq(column: string, value: unknown) {
+          filters[column] = value;
+          return chain;
+        },
+        is(column: string, value: null) {
+          if (column === 'child_id' && value === null) childIdIsNull = true;
+          return chain;
+        },
+        then(resolve: (v: { data: Array<{ tag: string }>; error: null }) => void) {
+          const rows = state.dietaryPreferences
+            .filter(
+              (r) =>
+                (filters.household_id === undefined ||
+                  r.household_id === filters.household_id) &&
+                (!childIdIsNull || r.child_id === null),
+            )
+            .map((r) => ({ tag: r.tag }));
+          resolve({ data: rows, error: null });
+          return Promise.resolve({ data: rows, error: null });
+        },
+      };
+      return chain;
     },
   };
 }
@@ -666,7 +867,7 @@ describe('POST /v1/households/:id/children', () => {
     expect(metaJson).not.toContain('Asha');
   });
 
-  it('declared_allergens land in child_allergens with source=onboarding_declared (2.6-s8 cutover)', async () => {
+  it('declared_allergens land in household_allergens (3-DM-B2 cutover) with source=onboarding_declared and per-child child_id', async () => {
     const state = emptyState({ acked: [SAMPLE_USER_ID] });
     app = await buildTestApp({ state });
     const token = signPrimaryParentToken(app);
@@ -679,49 +880,45 @@ describe('POST /v1/households/:id/children', () => {
     });
     expect(res.statusCode).toBe(201);
 
-    // Two structured rows in child_allergens, one per allergen, all flagged
-    // as onboarding-declared (REST POST is treated as initial onboarding).
-    expect(state.childAllergens).toHaveLength(2);
-    expect(state.childAllergens.every((a) => a.source === 'onboarding_declared')).toBe(true);
+    // Two rows in household_allergens, one per allergen, both per-child
+    // (child_id non-null) — the REST POST is treated as initial onboarding.
+    expect(state.householdAllergens).toHaveLength(2);
+    expect(state.householdAllergens.every((a) => a.source === 'onboarding_declared')).toBe(true);
+    expect(state.householdAllergens.every((a) => a.child_id !== null)).toBe(true);
     // Each row's `allergen` is NOOP-prefixed ciphertext over the plaintext —
     // the canonical store never holds plaintext at rest.
-    expect(state.childAllergens.every((a) => a.allergen.startsWith('NOOP:'))).toBe(true);
-    expect(state.childAllergens.every((a) => a.allergen_hash.length === 64)).toBe(true);
-
-    // Legacy children.declared_allergens column is written as encrypted []
-    // for shape parity but no longer carries authoritative data.
-    const childRow = state.children[0];
-    expect(childRow).toBeDefined();
-    // NOOP-encrypted "[]" decodes to base64 of "[]" = "W10=" → "NOOP:W10="
-    expect(childRow!.declared_allergens).toBe('NOOP:W10=');
+    expect(state.householdAllergens.every((a) => a.allergen.startsWith('NOOP:'))).toBe(true);
+    expect(state.householdAllergens.every((a) => a.allergen_hash.length === 64)).toBe(true);
   });
 
-  it('encrypted storage → raw inserted row uses NOOP: prefix in encrypted columns (never plaintext)', async () => {
-    let captured: ChildRowDb | undefined;
-    const state = emptyState({
-      acked: [SAMPLE_USER_ID],
-      insertSpy: (row) => {
-        captured = row;
-      },
-    });
+  it('cultural_identifiers + dietary_preferences route to household tables (canonical §5 — household-scoped)', async () => {
+    const state = emptyState({ acked: [SAMPLE_USER_ID] });
     app = await buildTestApp({ state });
     const token = signPrimaryParentToken(app);
 
-    await app.inject({
+    const res = await app.inject({
       method: 'POST',
       url: `/v1/households/${SAMPLE_HOUSEHOLD_ID}/children`,
       headers: { authorization: `Bearer ${token}` },
       payload: VALID_BODY,
     });
+    expect(res.statusCode).toBe(201);
 
-    expect(captured).toBeDefined();
-    expect(captured!.declared_allergens).toMatch(/^NOOP:/);
-    expect(captured!.cultural_identifiers).toMatch(/^NOOP:/);
-    expect(captured!.dietary_preferences).toMatch(/^NOOP:/);
-    // Stored ciphertext must not contain the raw plaintext anywhere.
-    expect(captured!.declared_allergens).not.toContain('peanut');
-    expect(captured!.cultural_identifiers).not.toContain('south_asian');
-    expect(captured!.dietary_preferences).not.toContain('vegetarian');
+    // cultural_identifiers → household_cultural_identifiers (composite PK).
+    expect(state.householdCulturalIdentifiers).toHaveLength(1);
+    expect(state.householdCulturalIdentifiers[0]).toMatchObject({
+      household_id: SAMPLE_HOUSEHOLD_ID,
+      cultural_tag: 'south_asian',
+      source: 'onboarding_declared',
+    });
+    // dietary_preferences → dietary_preferences table with child_id=NULL.
+    expect(state.dietaryPreferences).toHaveLength(1);
+    expect(state.dietaryPreferences[0]).toMatchObject({
+      household_id: SAMPLE_HOUSEHOLD_ID,
+      child_id: null,
+      tag: 'vegetarian',
+      source: 'onboarding_declared',
+    });
   });
 
   it('parental notice not acknowledged → 403 /errors/parental-notice-required, no insert', async () => {

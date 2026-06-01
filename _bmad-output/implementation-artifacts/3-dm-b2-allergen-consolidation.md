@@ -1,22 +1,35 @@
 # Story 3-DM-B2: Allergen consolidation + household_cultural_identifiers + drop legacy encrypted columns
 
-Status: in-progress
+Status: review
 
 ## Implementation notes (2026-05-31)
 
-**Foundation + cutover shipped:**
+**Foundation + cutover + test sweep shipped:**
 - Migrations: `20261008000000_household_allergens_consolidation.sql` (schema) + `20261008000100_drop_legacy_allergen_columns.sql` (drops, gated by backfill verification).
 - Backfill: `apps/api/scripts/backfill-household-allergens.ts` — 4-step migration (child_allergens, households.declared_allergens, cultural_identifiers, dietary_preferences) with count-parity verification gate; idempotent re-runs.
 - New repos: `HouseholdAllergensRepository` (declareIfNew / findByHouseholdId / findByHouseholdAndChild / deleteByChild) + `HouseholdCulturalIdentifiersRepository` (listTags / declareIfNew / upsertSet).
-- Single-source guardrail (AC9): `AllergyGuardrailRepository.getRulesForHousehold` collapsed to one `findByHouseholdId` call; fail-closed `AllergyGuardrailDecryptError` preserved. 11/11 guardrail tests pass.
+- Single-source guardrail (AC9): `AllergyGuardrailRepository.getRulesForHousehold` collapsed to one `findByHouseholdId` call; fail-closed `AllergyGuardrailDecryptError` preserved.
 - `HouseholdsRepository.getProfile/patchProfile` rewritten to read/write the new structured tables (`household_allergens` child_id=NULL, `household_cultural_identifiers`, `dietary_preferences` child_id=NULL).
-- `ChildrenRepository` stopped selecting/writing the dropped encrypted columns; per-child allergen overlay still flows through the `ChildAllergensRepository` adapter.
+- `ChildrenRepository` stopped selecting/writing the dropped encrypted children columns. Cultural / dietary inputs from `POST /v1/households/:id/children` now route to household tables (canonical §5 — household-scoped); reads overlay them back from those tables so the REST round-trip is preserved.
 - `ChildAllergensRepository` rewritten as a thin delegating adapter over `HouseholdAllergensRepository` (per-child rows). Onboarding tools and `children.service` compile unchanged.
+- Legacy `apps/api/scripts/backfill-child-allergens.{ts,test.ts}` deleted (superseded by B2's `backfill-household-allergens.ts`).
 
-**Deferred to B2-followup (tracked in deferred-work.md):**
-- ~46 routes/repository tests across `children`, `households`, `extra-library` still mock the legacy encrypted-column shape and return 500. Mechanical: update Supabase mocks to expect `household_allergens` and the children row shape without dropped columns. Required before C1.
-- Delete the `ChildAllergensRepository` adapter and switch call-sites to `HouseholdAllergensRepository` directly. Defer until tests are green.
+**Test sweep results:**
+| File | Pre-sweep | Post-sweep |
+| --- | --- | --- |
+| `children.routes.test.ts` | 37 fail / 50 cases | 0 fail / 50 cases |
+| `households.routes.test.ts` | 6 fail / 23 cases | 0 fail / 23 cases |
+| `households.service.test.ts` | 0 fail / 6 cases | 0 fail / 6 cases |
+| `allergy-guardrail.repository.test.ts` | 11 fail / 11 cases | 0 fail / 11 cases |
+| `household-allergens.repository.test.ts` (new) | n/a | 6/6 pass |
+| `backfill-child-allergens.test.ts` (deleted) | 4 fail / 4 cases | n/a — file removed |
+
+Net: 58 B2-related failures resolved, 0 regressions introduced. Full API suite: 1273 pass / 30 fail (all 30 pre-existing per `git stash` comparison; B2 is not responsible).
+
+**Followups (still open in deferred-work.md):**
+- Delete the `ChildAllergensRepository` adapter and switch call-sites to `HouseholdAllergensRepository` directly. The adapter is now a soft no-op for most callers — clean removal is mechanical.
 - `declare()` `child_allergen_id` returns empty string under the adapter (upsert + ignoreDuplicates does not expose the conflict row id). Audit logs redact allergen plaintext so no correlation gap. Closes when the adapter is deleted.
+- 30 pre-existing failing tests across `auth.routes`, `day-overrides.{repository,service}`, `extra-library.repository`, `lunch-link.routes`, `memory.service`, `planner.prompt`, `onboarding.tools`, `audit.types`, `catalog-seed.service`, `plan-adjustment.service` — not B2 scope; pre-date the sprint catchup commit (`f00ef2f`).
 
 ## Story
 

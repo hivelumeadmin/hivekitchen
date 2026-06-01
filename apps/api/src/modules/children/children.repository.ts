@@ -10,6 +10,7 @@ import { BaseRepository } from '../../repository/base.repository.js';
 import { getHouseholdDek, getOrCreateHouseholdDek } from '../../lib/household-key.js';
 import { bagCompositionFromPattern } from '@hivekitchen/contracts';
 import type { ChildAllergensRepository } from './child-allergens.repository.js';
+import { HouseholdCulturalIdentifiersRepository } from '../households/household-cultural-identifiers.repository.js';
 
 export interface InsertChildParams {
   household_id: string;
@@ -108,10 +109,12 @@ export class ChildrenRepository extends BaseRepository {
 
   async insert(params: InsertChildParams): Promise<DecryptedChildRow> {
     // Story 3-DM-B2 — the three encrypted JSONB columns on `children` are
-    // dropped. Per-child allergens live in household_allergens (via
-    // ChildAllergensRepository adapter). Per-child cultural/dietary identity
-    // is not modeled at child row level; the params are accepted for API
-    // compatibility but household-scoped state owns those tags.
+    // dropped. Per-child allergens live in household_allergens (via the
+    // ChildAllergensRepository adapter). cultural_identifiers and
+    // dietary_preferences are canonical-model household-scoped: the inputs
+    // are routed to `household_cultural_identifiers` + `dietary_preferences`
+    // (child_id=NULL). The response overlays both back from those tables so
+    // the REST round-trip is preserved.
     const insertRow: Record<string, unknown> = {
       household_id: params.household_id,
       name: params.name,
@@ -136,11 +139,20 @@ export class ChildrenRepository extends BaseRepository {
         'onboarding_declared',
       );
     }
+    await this.writeHouseholdScopedTags(
+      params.household_id,
+      params.cultural_identifiers,
+      params.dietary_preferences,
+      'onboarding_declared',
+    );
     const decoded = this.decodeRow(row);
-    // Surface the just-declared allergens on the response so callers (REST
-    // POST /v1/households/:id/children) see what they posted without a
-    // follow-up round-trip.
-    return { ...decoded, declared_allergens: [...params.declared_allergens] };
+    const householdTags = await this.readHouseholdScopedTags(params.household_id);
+    return {
+      ...decoded,
+      declared_allergens: [...params.declared_allergens],
+      cultural_identifiers: householdTags.cultural_identifiers,
+      dietary_preferences: householdTags.dietary_preferences,
+    };
   }
 
   async findById(householdId: string, childId: string): Promise<DecryptedChildRow | null> {
@@ -153,13 +165,19 @@ export class ChildrenRepository extends BaseRepository {
     if (error) throw error;
     if (data === null) return null;
     const decoded = this.decodeRow(data as ChildRow);
-    // Story 3-DM-B2 — declared_allergens overlay from household_allergens
-    // (per-child rows only).
-    const allergenRows = await this.childAllergensRepo.findByHousehold(householdId);
+    const [allergenRows, householdTags] = await Promise.all([
+      this.childAllergensRepo.findByHousehold(householdId),
+      this.readHouseholdScopedTags(householdId),
+    ]);
     const allergens = allergenRows
       .filter((r) => r.child_id === childId)
       .map((r) => r.allergen);
-    return { ...decoded, declared_allergens: allergens };
+    return {
+      ...decoded,
+      declared_allergens: allergens,
+      cultural_identifiers: householdTags.cultural_identifiers,
+      dietary_preferences: householdTags.dietary_preferences,
+    };
   }
 
   async findByHouseholdId(householdId: string): Promise<DecryptedChildRow[]> {
@@ -170,7 +188,10 @@ export class ChildrenRepository extends BaseRepository {
     if (error) throw error;
     const rows = (data as ChildRow[] | null) ?? [];
     if (rows.length === 0) return [];
-    const allergenRows = await this.childAllergensRepo.findByHousehold(householdId);
+    const [allergenRows, householdTags] = await Promise.all([
+      this.childAllergensRepo.findByHousehold(householdId),
+      this.readHouseholdScopedTags(householdId),
+    ]);
     const allergensByChild = new Map<string, string[]>();
     for (const r of allergenRows) {
       const list = allergensByChild.get(r.child_id) ?? [];
@@ -180,6 +201,8 @@ export class ChildrenRepository extends BaseRepository {
     return rows.map((r) => ({
       ...this.decodeRow(r),
       declared_allergens: allergensByChild.get(r.id) ?? [],
+      cultural_identifiers: householdTags.cultural_identifiers,
+      dietary_preferences: householdTags.dietary_preferences,
     }));
   }
 
@@ -284,12 +307,26 @@ export class ChildrenRepository extends BaseRepository {
         'parent_edited',
       );
     }
+    await this.writeHouseholdScopedTags(
+      params.household_id,
+      params.cultural_identifiers,
+      params.dietary_preferences,
+      'parent_edited',
+    );
     const decoded = this.decodeRow(data as ChildRow);
-    const allergenRows = await this.childAllergensRepo.findByHousehold(params.household_id);
+    const [allergenRows, householdTags] = await Promise.all([
+      this.childAllergensRepo.findByHousehold(params.household_id),
+      this.readHouseholdScopedTags(params.household_id),
+    ]);
     const allergens = allergenRows
       .filter((r) => r.child_id === params.id)
       .map((r) => r.allergen);
-    return { ...decoded, declared_allergens: allergens };
+    return {
+      ...decoded,
+      declared_allergens: allergens,
+      cultural_identifiers: householdTags.cultural_identifiers,
+      dietary_preferences: householdTags.dietary_preferences,
+    };
   }
 
   async updateBagComposition(
@@ -315,9 +352,71 @@ export class ChildrenRepository extends BaseRepository {
     if (error) throw error;
     if (data === null) return null;
     const decoded = this.decodeRow(data as ChildRow);
-    const allergenRows = await this.childAllergensRepo.findByHousehold(householdId);
+    const [allergenRows, householdTags] = await Promise.all([
+      this.childAllergensRepo.findByHousehold(householdId),
+      this.readHouseholdScopedTags(householdId),
+    ]);
     const allergens = allergenRows.filter((r) => r.child_id === id).map((r) => r.allergen);
-    return { ...decoded, declared_allergens: allergens };
+    return {
+      ...decoded,
+      declared_allergens: allergens,
+      cultural_identifiers: householdTags.cultural_identifiers,
+      dietary_preferences: householdTags.dietary_preferences,
+    };
+  }
+
+  // Story 3-DM-B2 — cultural / dietary inputs from per-child writes route to
+  // household-scoped tables (canonical §5 model). Idempotent additive writes
+  // mirror the existing onboarding tools' household-scoped pattern.
+  private async writeHouseholdScopedTags(
+    householdId: string,
+    culturalTags: readonly string[],
+    dietaryTags: readonly string[],
+    source: 'onboarding_declared' | 'parent_edited',
+  ): Promise<void> {
+    if (culturalTags.length > 0) {
+      const culturalRepo = new HouseholdCulturalIdentifiersRepository(this.client);
+      await culturalRepo.upsertSet({
+        household_id: householdId,
+        tags: culturalTags,
+        source,
+      });
+    }
+    if (dietaryTags.length > 0) {
+      const rows = dietaryTags.map((tag) => ({
+        household_id: householdId,
+        child_id: null,
+        tag,
+        source,
+        updated_at: new Date().toISOString(),
+      }));
+      const { error } = await this.client
+        .from('dietary_preferences')
+        .upsert(rows, {
+          onConflict: 'household_id,tag',
+          ignoreDuplicates: true,
+        });
+      if (error) throw error;
+    }
+  }
+
+  private async readHouseholdScopedTags(
+    householdId: string,
+  ): Promise<{ cultural_identifiers: string[]; dietary_preferences: string[] }> {
+    const culturalRepo = new HouseholdCulturalIdentifiersRepository(this.client);
+    const [culturalTags, dietaryRes] = await Promise.all([
+      culturalRepo.listTags(householdId),
+      this.client
+        .from('dietary_preferences')
+        .select('tag')
+        .eq('household_id', householdId)
+        .is('child_id', null),
+    ]);
+    if (dietaryRes.error) throw dietaryRes.error;
+    const dietaryTags = ((dietaryRes.data ?? []) as Array<{ tag: string }>).map(
+      (r) => r.tag,
+    );
+    return { cultural_identifiers: culturalTags, dietary_preferences: dietaryTags };
   }
 
   private decodeRow(row: ChildRow): DecryptedChildRow {

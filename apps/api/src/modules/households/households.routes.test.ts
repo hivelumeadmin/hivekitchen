@@ -481,13 +481,13 @@ describe('GET /v1/households/:householdId/brief', () => {
 // Slice 2-s27 — PATCH /v1/households/:id (household food-identity profile)
 // ===========================================================================
 
-import { encryptField } from '../../lib/envelope-encryption.js';
+import { encryptField, normalizedHash } from '../../lib/envelope-encryption.js';
 import { vi } from 'vitest';
 
 const OTHER_HOUSEHOLD_ID = '33333333-3333-4333-8333-333333333333';
 
 interface PatchMockOpts {
-  /** Plain (decrypted) initial values; encoded under NOOP cipher for the mock. */
+  /** Plain (decrypted) initial values seeded into the new structured tables. */
   initial?: {
     cultural_identifiers?: string[];
     dietary_preferences?: string[];
@@ -495,63 +495,55 @@ interface PatchMockOpts {
   };
 }
 
+// Story 3-DM-B2 — household profile (cultural / dietary / allergens) now
+// lives in three structured tables:
+//   - household_cultural_identifiers (composite PK)
+//   - dietary_preferences (child_id=NULL = household-scoped)
+//   - household_allergens (child_id=NULL = household-wide)
+// getProfile/patchProfile route through HouseholdAllergensRepository +
+// HouseholdCulturalIdentifiersRepository + direct dietary_preferences IO.
 function buildPatchMockSupabase(opts: PatchMockOpts = {}) {
   const initial = opts.initial ?? {};
-  let householdRow: {
-    cultural_identifiers: string | null;
-    dietary_preferences: string | null;
-    declared_allergens: string | null;
-  } = {
-    cultural_identifiers:
-      initial.cultural_identifiers !== undefined
-        ? encryptField(initial.cultural_identifiers, null)
-        : null,
-    dietary_preferences:
-      initial.dietary_preferences !== undefined
-        ? encryptField(initial.dietary_preferences, null)
-        : null,
-    declared_allergens:
-      initial.declared_allergens !== undefined
-        ? encryptField(initial.declared_allergens, null)
-        : null,
+  const state = {
+    householdExists: true as boolean,
+    culturalTags: [...(initial.cultural_identifiers ?? [])],
+    dietaryTags: [...(initial.dietary_preferences ?? [])],
+    // [{ allergen plaintext, ciphertext, hash }]
+    householdAllergens: (initial.declared_allergens ?? []).map((plaintext) => ({
+      allergen: encryptField(plaintext, null),
+      allergen_hash: normalizedHash(plaintext),
+      source: 'parent_edited',
+    })),
   };
 
   return {
     from(table: string) {
       if (table === 'households') {
         return {
-          select: () => ({
-            eq: () => ({
-              maybeSingle: vi
-                .fn()
-                .mockImplementation(() =>
-                  Promise.resolve({ data: householdRow, error: null }),
-                ),
-          }),
-          }),
-          update: (patch: Record<string, string>) => ({
-            eq: vi.fn().mockImplementation(() => {
-              householdRow = { ...householdRow, ...patch };
-              return {
-                select: () => ({
-                  maybeSingle: vi
-                    .fn()
-                    .mockResolvedValue({ data: householdRow, error: null }),
+          select: (_cols: string) => ({
+            eq: (_col: string, _val: string) => ({
+              maybeSingle: vi.fn().mockImplementation(() =>
+                Promise.resolve({
+                  data: state.householdExists ? { id: SAMPLE_HOUSEHOLD_ID } : null,
+                  error: null,
                 }),
-              };
+              ),
             }),
+          }),
+          update: (_patch: Record<string, string>) => ({
+            eq: vi.fn().mockImplementation(() => ({
+              select: () => ({
+                maybeSingle: vi.fn().mockResolvedValue({ data: { id: SAMPLE_HOUSEHOLD_ID }, error: null }),
+              }),
+            })),
           }),
         };
       }
       if (table === 'household_keys') {
-        // getHouseholdDek looks up the wrapped DEK here; null = no DEK, which
-        // pushes encryptField/decryptField down the NOOP branch.
         return {
           select: () => ({
             eq: () => ({
-              maybeSingle: vi
-                .fn()
-                .mockResolvedValue({ data: null, error: null }),
+              maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null }),
             }),
           }),
           insert: () => ({
@@ -559,6 +551,125 @@ function buildPatchMockSupabase(opts: PatchMockOpts = {}) {
               single: vi.fn().mockResolvedValue({ data: null, error: null }),
             }),
           }),
+        };
+      }
+      if (table === 'household_allergens') {
+        return {
+          select: (_cols: string) => ({
+            eq: (_col: string, _val: string) =>
+              Promise.resolve({
+                data: state.householdAllergens.map((a) => ({
+                  household_id: SAMPLE_HOUSEHOLD_ID,
+                  child_id: null,
+                  allergen: a.allergen,
+                  source: a.source,
+                })),
+                error: null,
+              }),
+          }),
+          upsert: (
+            payload: {
+              household_id: string;
+              child_id: string | null;
+              allergen: string;
+              allergen_hash: string;
+              source: string;
+            },
+            opts: { onConflict?: string; ignoreDuplicates?: boolean },
+          ) => ({
+            select: (_cols: string) => ({
+              maybeSingle: async () => {
+                const existing = state.householdAllergens.find(
+                  (a) => a.allergen_hash === payload.allergen_hash,
+                );
+                if (existing !== undefined) {
+                  if (opts.ignoreDuplicates === true) return { data: null, error: null };
+                  return { data: { id: 'mock' }, error: null };
+                }
+                state.householdAllergens.push({
+                  allergen: payload.allergen,
+                  allergen_hash: payload.allergen_hash,
+                  source: payload.source,
+                });
+                return { data: { id: randomUUID() }, error: null };
+              },
+            }),
+          }),
+          delete: () => {
+            const chain = {
+              eq: (_col: string, _val: unknown) => chain,
+              is: (col: string, val: null) => {
+                if (col === 'child_id' && val === null) {
+                  state.householdAllergens = [];
+                }
+                return Promise.resolve({ error: null });
+              },
+              then(resolve: (v: { error: null }) => void) {
+                resolve({ error: null });
+                return Promise.resolve({ error: null });
+              },
+            };
+            return chain;
+          },
+        };
+      }
+      if (table === 'household_cultural_identifiers') {
+        return {
+          select: (_cols: string) => ({
+            eq: (_col: string, _val: string) =>
+              Promise.resolve({
+                data: state.culturalTags.map((cultural_tag) => ({
+                  household_id: SAMPLE_HOUSEHOLD_ID,
+                  cultural_tag,
+                  enforcement: 'default',
+                  source: 'parent_edited',
+                })),
+                error: null,
+              }),
+          }),
+          upsert: (
+            payload:
+              | Array<{ household_id: string; cultural_tag: string }>
+              | { household_id: string; cultural_tag: string },
+            _opts: { onConflict?: string; ignoreDuplicates?: boolean },
+          ) => {
+            const rows = Array.isArray(payload) ? payload : [payload];
+            for (const r of rows) {
+              if (!state.culturalTags.includes(r.cultural_tag)) {
+                state.culturalTags.push(r.cultural_tag);
+              }
+            }
+            return Promise.resolve({ error: null });
+          },
+        };
+      }
+      if (table === 'dietary_preferences') {
+        return {
+          select: (_cols: string) => {
+            const chain = {
+              eq: (_col: string, _val: string) => chain,
+              is: (_col: string, _val: null) =>
+                Promise.resolve({
+                  data: state.dietaryTags.map((tag) => ({ tag })),
+                  error: null,
+                }),
+            };
+            return chain;
+          },
+          upsert: (
+            payload:
+              | Array<{ household_id: string; child_id: string | null; tag: string }>
+              | { household_id: string; child_id: string | null; tag: string },
+            _opts: { onConflict?: string; ignoreDuplicates?: boolean },
+          ) => {
+            const rows = Array.isArray(payload) ? payload : [payload];
+            for (const r of rows) {
+              if (r.child_id === null && !state.dietaryTags.includes(r.tag)) {
+                state.dietaryTags.push(r.tag);
+              }
+            }
+            return Promise.resolve({ error: null });
+          },
         };
       }
       if (table === 'audit_log') {
