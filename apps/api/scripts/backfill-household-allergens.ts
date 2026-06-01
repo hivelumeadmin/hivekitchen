@@ -221,7 +221,7 @@ async function migrateChildAllergens(
             updated_at: row.updated_at,
           },
           {
-            onConflict: 'household_id,child_id,allergen_hash',
+            onConflict: 'household_allergens_scope_hash_uniq',
             ignoreDuplicates: true,
           },
         )
@@ -290,9 +290,7 @@ async function migrateHouseholdAllergens(
           source: SOURCE_BACKFILL,
         },
         {
-          // COALESCE-sentinel UNIQUE handles child_id=NULL; the named
-          // constraint matches `household_allergens_scope_hash_uniq`.
-          onConflict: 'household_id,allergen_hash',
+          onConflict: 'household_allergens_scope_hash_uniq',
           ignoreDuplicates: true,
         },
       )
@@ -381,7 +379,9 @@ async function migrateCulturalIdentifiers(
       );
       continue;
     }
-    summary.cultural_identifiers_inserted += 1;
+    if (insertResult.data !== null) {
+      summary.cultural_identifiers_inserted += 1;
+    }
   }
 }
 
@@ -451,7 +451,9 @@ async function migrateDietaryPreferences(
       );
       continue;
     }
-    summary.dietary_preferences_inserted += 1;
+    if (insertResult.data !== null) {
+      summary.dietary_preferences_inserted += 1;
+    }
   }
 }
 
@@ -510,9 +512,9 @@ export async function verifyCounts(
   const ok =
     summary.decrypt_failures === 0 &&
     summary.insert_failures === 0 &&
-    householdAllergensCount >= expectedHouseholdAllergens &&
-    householdAllergensCount >=
-      summary.child_allergens_copied + summary.child_allergens_skipped_existing;
+    summary.cultural_identifiers_skipped_vocab === 0 &&
+    summary.dietary_preferences_skipped_vocab === 0 &&
+    householdAllergensCount === expectedHouseholdAllergens;
 
   if (!ok) {
     logger.error(

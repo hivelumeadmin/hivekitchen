@@ -52,7 +52,7 @@
 # Walls (decision moments) are flagged with `# WALL:` markers.
 
 generated: 2026-04-23
-last_updated: 2026-05-31 (3-dm-* phase-4 migration slices added; 3-dm-b2 → ready-for-dev)
+last_updated: 2026-05-31 (3-dm-b2 → done after code review; 6 patches applied, 96/96 tests green)
 project: hivekitchen
 project_key: NOKEY
 tracking_system: file-system
@@ -223,7 +223,7 @@ development_status:
   3-dm-a2-snack-sku-fold: in-progress                                         # snack_skus → recipes; migration 20261006000000 staged; snack-skus.repository deleted
   3-dm-a3-test-factories-saturday-audit: in-progress                          # apps/api/test/factories/ scaffold; saturday-audit-findings.md authored
   3-dm-b1-child-profile-attributes: in-progress                               # appetite_level / texture_needs / spice_tolerance + bag_composition_pattern enum; migration 20261007000000 staged
-  3-dm-b2-allergen-consolidation: review                                      # 2026-05-31: foundation + cutover + guardrail single-source rewrite + test sweep complete. children.routes.test (50/50) + households.routes.test (23/23) + households.service.test (6/6) + household-allergens.repository.test (6/6) + allergy-guardrail.repository.test (11/11) all green. ChildAllergensRepository kept as thin adapter; legacy backfill-child-allergens.{ts,test.ts} deleted (superseded by backfill-household-allergens.ts).
+  3-dm-b2-allergen-consolidation: done                                        # 2026-05-31: code review complete (6 patches applied, 5 deferred, 2 decisions resolved). 96/96 tests green post-review. onConflict→constraint name; insert-first-then-prune; replace semantics for cultural/dietary; verifyCounts exact equality + vocab-skip gate; counter increment guards.
   3-dm-c1-plan-structure-cutover: backlog                                     # blocked on A1, A2, B1, B2
   3-dm-c2-phase-c-cleanup: backlog                                            # blocked on C1
   3-dm-d1-brief-state-payload: backlog                                        # brief_state.payload jsonb + plan_state migrates to plans

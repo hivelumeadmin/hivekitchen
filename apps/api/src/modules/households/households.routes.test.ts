@@ -513,6 +513,7 @@ function buildPatchMockSupabase(opts: PatchMockOpts = {}) {
       allergen: encryptField(plaintext, null),
       allergen_hash: normalizedHash(plaintext),
       source: 'parent_edited',
+      child_id: null as string | null,
     })),
   };
 
@@ -590,21 +591,35 @@ function buildPatchMockSupabase(opts: PatchMockOpts = {}) {
                   allergen: payload.allergen,
                   allergen_hash: payload.allergen_hash,
                   source: payload.source,
+                  child_id: payload.child_id,
                 });
                 return { data: { id: randomUUID() }, error: null };
               },
             }),
           }),
           delete: () => {
+            let childIdIsNull = false;
+            let excludeHashes: string[] = [];
             const chain = {
               eq: (_col: string, _val: unknown) => chain,
               is: (col: string, val: null) => {
-                if (col === 'child_id' && val === null) {
-                  state.householdAllergens = [];
+                if (col === 'child_id' && val === null) childIdIsNull = true;
+                return chain;
+              },
+              not: (col: string, op: string, value: string) => {
+                if (col === 'allergen_hash' && op === 'in') {
+                  excludeHashes = value.slice(1, -1).split(',').filter(Boolean);
                 }
-                return Promise.resolve({ error: null });
+                return chain;
               },
               then(resolve: (v: { error: null }) => void) {
+                if (childIdIsNull) {
+                  state.householdAllergens = state.householdAllergens.filter((a) =>
+                    excludeHashes.length > 0
+                      ? !(a.child_id === null && !excludeHashes.includes(a.allergen_hash))
+                      : a.child_id !== null,
+                  );
+                }
                 resolve({ error: null });
                 return Promise.resolve({ error: null });
               },
@@ -641,6 +656,15 @@ function buildPatchMockSupabase(opts: PatchMockOpts = {}) {
             }
             return Promise.resolve({ error: null });
           },
+          delete: () => {
+            const chain = {
+              eq: (_col: string, _val: unknown) => {
+                state.culturalTags = [];
+                return Promise.resolve({ error: null });
+              },
+            };
+            return chain;
+          },
         };
       }
       if (table === 'dietary_preferences') {
@@ -669,6 +693,16 @@ function buildPatchMockSupabase(opts: PatchMockOpts = {}) {
               }
             }
             return Promise.resolve({ error: null });
+          },
+          delete: () => {
+            const chain = {
+              eq: (_col: string, _val: unknown) => chain,
+              is: (_col: string, _val: null) => {
+                state.dietaryTags = [];
+                return Promise.resolve({ error: null });
+              },
+            };
+            return chain;
           },
         };
       }

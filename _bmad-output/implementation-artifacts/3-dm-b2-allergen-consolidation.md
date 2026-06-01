@@ -1,6 +1,6 @@
 # Story 3-DM-B2: Allergen consolidation + household_cultural_identifiers + drop legacy encrypted columns
 
-Status: review
+Status: done
 
 ## Implementation notes (2026-05-31)
 
@@ -141,6 +141,38 @@ So that the guardrail evaluates one query against one table AND the coexistence 
 - New: `household-cultural-identifiers.repository.test.ts`
 - Use `buildChild` and new `buildHouseholdAllergen` factory from A3 if available
 - Estimated: ~25 test changes
+
+## Review Findings (2026-05-31)
+
+### Decision-Needed
+
+- [x] [Review][Decision] **F10: Household-wide allergens invisible from child-profile REST responses** — Resolved: D1-B (keep current behaviour — household-wide allergens on household profile only, not per-child REST response). — `ChildAllergensRepository.findByHousehold` filters `child_id !== null`, so `household_allergens` rows with `child_id=NULL` never appear in `GET /v1/households/:id/children/:childId` `declared_allergens`. A parent who sets a household-wide allergen via PATCH /v1/households/:id sees it in the household profile but not in any child's response. Options: (A) include household-wide rows in the child response overlay — the union of per-child + household-wide rows is the child's effective allergen set; (B) keep the current behaviour — household-wide allergens are visible only on the household profile, not per-child. The guardrail already sees both regardless.
+
+- [x] [Review][Decision] **F11: Removed cultural/dietary tags silently orphaned — additive-only vs replace semantics** — Resolved: D2-A (replace semantics — `parent_edited` calls delete-then-reinsert; `onboarding_declared` calls remain additive). — `writeHouseholdScopedTags` and `HouseholdsRepository.patchProfile` use `ignoreDuplicates: true` with no delete step, so a PATCH that removes a tag leaves the old tag in `household_cultural_identifiers` / `dietary_preferences`. The response then echoes stale tags. Options: (A) add a delete-then-reinsert (replace semantics, matching the `declared_allergens` path) — note this has the same atomicity gap as F2; (B) keep additive-only, document the limitation, and accept that tag removal requires a separate DELETE endpoint; (C) accept additive-only as correct for the data model (cultural identity accumulates, it doesn't shrink).
+
+### Patches
+
+- [x] [Review][Patch] **F1: `onConflict` column list won't resolve COALESCE-sentinel UNIQUE constraint** [`apps/api/src/modules/households/household-allergens.repository.ts` + `apps/api/scripts/backfill-household-allergens.ts`] — The UNIQUE on `household_allergens` is expression-based (`UNIQUE (household_id, COALESCE(child_id, sentinel), allergen_hash)`, named `household_allergens_scope_hash_uniq`). PostgREST's `onConflict: 'household_id,child_id,allergen_hash'` does not match a functional index. For `child_id=NULL` rows, the upsert will either throw a constraint violation or insert duplicates. Fix: use the constraint name `household_allergens_scope_hash_uniq` in all `onConflict` calls targeting this table.
+
+- [x] [Review][Patch] **F2: `patchProfile` delete-then-insert not atomic — guardrail sees empty allergens mid-update** [`apps/api/src/modules/households/households.repository.ts`] — `.delete().eq(...).is('child_id', null)` fires, then a loop calls `declareIfNew` one allergen at a time. A concurrent `getRulesForHousehold` call between delete and re-inserts returns zero household allergens and produces `verdict='clear'` for a plan that should be blocked. Fix: wrap the delete+insert sequence in a transaction, or restructure as a single upsert batch without a preceding delete.
+
+- [x] [Review][Patch] **F6: `verifyCounts` uses `>=` — masks double-insert or partial-page failures** [`apps/api/scripts/backfill-household-allergens.ts:1152`] — `householdAllergensCount >= expectedHouseholdAllergens` passes when the target has MORE rows than expected (double-insert) or when the expected count is computed as 0 due to swallowed Step 1 errors. Fix: use exact equality `=== expectedHouseholdAllergens` or at minimum fail when the count diverges by more than a configurable tolerance.
+
+- [x] [Review][Patch] **F8: `migrateCulturalIdentifiers` / `migrateDietaryPreferences` increment counter unconditionally** [`apps/api/scripts/backfill-household-allergens.ts:1027` and `:1096`] — After the `insertResult.error !== null` check, both functions call `summary.cultural_identifiers_inserted += 1` and `summary.dietary_preferences_inserted += 1` without checking `insertResult.data === null` (which signals a conflict-skip under `ignoreDuplicates: true`). The allergen paths correctly branch on `data === null`. Fix: add `if (insertResult.data === null) { ... } else { ... }` pattern matching `migrateHouseholdAllergens`.
+
+- [x] [Review][Patch] **F9: `verifyCounts` gate doesn't check vocab-skip counts — silently lost data passes gate** [`apps/api/scripts/backfill-household-allergens.ts:1152`] — `ok` condition checks `decrypt_failures === 0 && insert_failures === 0` but not `cultural_identifiers_skipped_vocab` or `dietary_preferences_skipped_vocab`. A household whose entire cultural/dietary data maps to unknown vocab keys will be permanently lost (silent drop) while the gate passes and the drop migration runs. Fix: add `summary.cultural_identifiers_skipped_vocab === 0 && summary.dietary_preferences_skipped_vocab === 0` to the `ok` condition, or emit a prominent operator warning and set `ok = false`.
+
+### Deferred
+
+- [x] [Review][Defer] **F3: `findAllergenId` is a no-op stub — `declare()` always returns `child_allergen_id: ''` even on new inserts** [`apps/api/src/modules/children/child-allergens.repository.ts:1842`] — deferred, pre-existing (already in deferred-work.md; closes with adapter deletion)
+
+- [x] [Review][Defer] **F5: `migrateChildAllergens` swallows table-not-found errors — gate computes expected=0 on re-run after drop** [`apps/api/scripts/backfill-household-allergens.ts:841`] — deferred, pre-existing; only relevant on mis-ordered ops (run backfill after drop migration); the comment already calls this out; process control is the mitigation
+
+- [x] [Review][Defer] **F12: Child deleted mid-backfill causes FK violation — allergen row silently dropped from gate count** [`apps/api/scripts/backfill-household-allergens.ts`] — deferred, pre-beta; no concurrent user mutations expected during backfill execution; acceptable operational risk pre-launch
+
+- [x] [Review][Defer] **F14: Drop migration has no SQL guard — gate only exits script non-zero, no SQL coupling** [`supabase/migrations/20261008000100_drop_legacy_allergen_columns.sql`] — deferred, pre-beta; process discipline (run backfill, check exit code, then apply drop) is the mitigation; SQL-level guard would require a Postgres function which is out of scope for a pre-beta migration
+
+- [x] [Review][Defer] **F16: `verifyCounts` called twice in `main()` — redundant DB round-trip** [`apps/api/scripts/backfill-household-allergens.ts:1209`] — deferred, pre-existing; redundant but not incorrect; low priority
 
 ## Rollback
 

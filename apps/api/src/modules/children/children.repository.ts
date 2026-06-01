@@ -366,37 +366,56 @@ export class ChildrenRepository extends BaseRepository {
   }
 
   // Story 3-DM-B2 — cultural / dietary inputs from per-child writes route to
-  // household-scoped tables (canonical §5 model). Idempotent additive writes
-  // mirror the existing onboarding tools' household-scoped pattern.
+  // household-scoped tables (canonical §5 model).
+  // parent_edited → replace semantics: the submitted list is the complete
+  //   intended household state; removed tags must disappear.
+  // onboarding_declared → additive: multiple children may contribute tags to
+  //   the shared household identity across separate insert() calls.
   private async writeHouseholdScopedTags(
     householdId: string,
     culturalTags: readonly string[],
     dietaryTags: readonly string[],
     source: 'onboarding_declared' | 'parent_edited',
   ): Promise<void> {
-    if (culturalTags.length > 0) {
-      const culturalRepo = new HouseholdCulturalIdentifiersRepository(this.client);
-      await culturalRepo.upsertSet({
-        household_id: householdId,
-        tags: culturalTags,
-        source,
-      });
-    }
-    if (dietaryTags.length > 0) {
-      const rows = dietaryTags.map((tag) => ({
-        household_id: householdId,
-        child_id: null,
-        tag,
-        source,
-        updated_at: new Date().toISOString(),
-      }));
-      const { error } = await this.client
+    const culturalRepo = new HouseholdCulturalIdentifiersRepository(this.client);
+    if (source === 'parent_edited') {
+      await culturalRepo.replaceSet({ household_id: householdId, tags: culturalTags, source });
+      const { error: delErr } = await this.client
         .from('dietary_preferences')
-        .upsert(rows, {
-          onConflict: 'household_id,tag',
-          ignoreDuplicates: true,
-        });
-      if (error) throw error;
+        .delete()
+        .eq('household_id', householdId)
+        .is('child_id', null);
+      if (delErr) throw delErr;
+      if (dietaryTags.length > 0) {
+        const rows = dietaryTags.map((tag) => ({
+          household_id: householdId,
+          child_id: null,
+          tag,
+          source,
+          updated_at: new Date().toISOString(),
+        }));
+        const { error } = await this.client
+          .from('dietary_preferences')
+          .upsert(rows, { onConflict: 'household_id,tag', ignoreDuplicates: true });
+        if (error) throw error;
+      }
+    } else {
+      if (culturalTags.length > 0) {
+        await culturalRepo.upsertSet({ household_id: householdId, tags: culturalTags, source });
+      }
+      if (dietaryTags.length > 0) {
+        const rows = dietaryTags.map((tag) => ({
+          household_id: householdId,
+          child_id: null,
+          tag,
+          source,
+          updated_at: new Date().toISOString(),
+        }));
+        const { error } = await this.client
+          .from('dietary_preferences')
+          .upsert(rows, { onConflict: 'household_id,tag', ignoreDuplicates: true });
+        if (error) throw error;
+      }
     }
   }
 

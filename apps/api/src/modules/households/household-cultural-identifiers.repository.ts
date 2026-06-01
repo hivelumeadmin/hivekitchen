@@ -69,11 +69,30 @@ export class HouseholdCulturalIdentifiersRepository {
   }
 
   /**
-   * Replace semantics for a household's cultural tag set. Used when the
-   * onboarding flow re-emits the full list (parent edits a previously-
-   * declared identity). Inserts new tags, leaves existing tags untouched.
-   * Does NOT delete tags that disappear from the set — that's an explicit
-   * parent action (out of scope for this repository).
+   * True replace: delete all existing tags for the household, then insert the
+   * new set. Used for parent-edit flows where the submitted list is the
+   * complete intended state (not an additive addition).
+   */
+  async replaceSet(params: {
+    household_id: string;
+    tags: readonly string[];
+    source: string;
+  }): Promise<void> {
+    const { error: deleteError } = await this.client
+      .from('household_cultural_identifiers')
+      .delete()
+      .eq('household_id', params.household_id);
+    if (deleteError) {
+      throw new Error(`household_cultural_identifiers.replaceSet delete: ${deleteError.message}`);
+    }
+    if (params.tags.length === 0) return;
+    await this.upsertSet(params);
+  }
+
+  /**
+   * Additive upsert: insert new tags, leave existing tags untouched.
+   * Used for onboarding_declared flows where multiple children may contribute
+   * tags to the shared household identity.
    */
   async upsertSet(params: {
     household_id: string;

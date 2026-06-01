@@ -54,7 +54,7 @@ export class HouseholdAllergensRepository {
           updated_at: new Date().toISOString(),
         },
         {
-          onConflict: 'household_id,child_id,allergen_hash',
+          onConflict: 'household_allergens_scope_hash_uniq',
           ignoreDuplicates: true,
         },
       )

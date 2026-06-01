@@ -1,7 +1,7 @@
 import { Buffer } from 'node:buffer';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { BaseRepository } from '../../repository/base.repository.js';
-import { decryptField, encryptField } from '../../lib/envelope-encryption.js';
+import { decryptField, encryptField, normalizedHash } from '../../lib/envelope-encryption.js';
 import { getHouseholdDek, getOrCreateHouseholdDek } from '../../lib/household-key.js';
 import { NotFoundError } from '../../common/errors.js';
 import { HouseholdAllergensRepository } from './household-allergens.repository.js';
@@ -233,23 +233,28 @@ export class HouseholdsRepository extends BaseRepository {
     const culturalRepo = new HouseholdCulturalIdentifiersRepository(this.client);
 
     if (patch.cultural_identifiers !== undefined) {
-      await culturalRepo.upsertSet({
+      // Replace semantics: delete existing tags, insert the new set.
+      await culturalRepo.replaceSet({
         household_id: householdId,
         tags: patch.cultural_identifiers,
         source: 'parent_edited',
       });
     }
     if (patch.dietary_preferences !== undefined) {
-      await this.upsertHouseholdDietaryTags(householdId, patch.dietary_preferences);
-    }
-    if (patch.declared_allergens !== undefined) {
-      // Replace-semantics for household-wide rows only; per-child attributions
-      // are preserved (ChildrenRepository owns those edits).
-      await this.client
-        .from('household_allergens')
+      // Replace semantics: delete household-wide dietary rows, insert the new set.
+      const { error: delErr } = await this.client
+        .from('dietary_preferences')
         .delete()
         .eq('household_id', householdId)
         .is('child_id', null);
+      if (delErr) throw delErr;
+      await this.upsertHouseholdDietaryTags(householdId, patch.dietary_preferences);
+    }
+    if (patch.declared_allergens !== undefined) {
+      // Insert-first replace: upsert the new set first, then prune stale rows.
+      // This prevents a transient window where household-wide allergens are
+      // absent between a delete and re-insert — which could produce
+      // verdict='clear' on a concurrent guardrail read.
       for (const allergen of patch.declared_allergens) {
         await allergensRepo.declareIfNew({
           household_id: householdId,
@@ -258,6 +263,18 @@ export class HouseholdsRepository extends BaseRepository {
           source: 'parent_edited',
         });
       }
+      const newHashes = patch.declared_allergens.map((a) => normalizedHash(a));
+      const pruneQuery = this.client
+        .from('household_allergens')
+        .delete()
+        .eq('household_id', householdId)
+        .is('child_id', null);
+      const { error: pruneError } = await (
+        newHashes.length > 0
+          ? pruneQuery.not('allergen_hash', 'in', `(${newHashes.join(',')})`)
+          : pruneQuery
+      );
+      if (pruneError) throw pruneError;
     }
 
     return this.getProfile(householdId);
