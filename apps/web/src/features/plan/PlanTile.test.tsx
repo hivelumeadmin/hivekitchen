@@ -20,6 +20,7 @@ function makeSummary(
     ],
     paused: false,
     lunch_link_suppressed_children: [],
+    child_ratings: {},
     ...overrides,
   };
 }

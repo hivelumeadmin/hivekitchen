@@ -87,6 +87,9 @@ import {
   ChildResponseSchema,
   AddChildResponseSchema,
   GetChildResponseSchema,
+  AppetiteLevelSchema,
+  TextureNeedsSchema,
+  SpiceToleranceSchema,
   BagCompositionSchema,
   SetBagCompositionBodySchema,
   SetBagCompositionResponseSchema,
@@ -182,7 +185,6 @@ import {
   CommitPlanInputSchema,
   PlanRowSchema,
   PlanItemRowSchema,
-  SnackSkuSchema,
   PlanTileSummarySchema,
   ClearedAllergyEntrySchema,
   ScaffoldingDiffSchema,
@@ -213,6 +215,9 @@ import {
   HouseholdProfilePatchBodySchema,
   HouseholdProfileResponseSchema,
   HouseholdIdParamSchema,
+  // Story 3.29 — sovereignty mode toggle
+  UpdateSovereigntyModeInputSchema,
+  UpdateSovereigntyModeResponseSchema,
   // Slice 2.5-s1 — enforcement gradient + KitchenMap extensions + 7 new tools
   ENFORCEMENT_LEVEL_VALUES,
   EnforcementLevelSchema,
@@ -378,6 +383,9 @@ export type GetChildResponse = z.infer<typeof GetChildResponseSchema>;
 
 // Children (Story 2.12 — per-child Lunch Bag slot declaration)
 export type BagComposition = z.infer<typeof BagCompositionSchema>;
+export type AppetiteLevel = z.infer<typeof AppetiteLevelSchema>;
+export type TextureNeeds = z.infer<typeof TextureNeedsSchema>;
+export type SpiceTolerance = z.infer<typeof SpiceToleranceSchema>;
 export type SetBagCompositionBody = z.infer<typeof SetBagCompositionBodySchema>;
 export type SetBagCompositionResponse = z.infer<typeof SetBagCompositionResponseSchema>;
 
@@ -502,8 +510,6 @@ export type PlanRow = z.infer<typeof PlanRowSchema>;
 // brief_state projection (Story 3.6)
 export type PlanItemRow = z.infer<typeof PlanItemRowSchema>;
 
-// Snack SKU catalog (Story 3.20)
-export type SnackSku = z.infer<typeof SnackSkuSchema>;
 export type PlanTileSummary = z.infer<typeof PlanTileSummarySchema>;
 export type BriefStateRow = z.infer<typeof BriefStateRowSchema>;
 export type BriefResponse = z.infer<typeof BriefResponseSchema>;
@@ -553,6 +559,10 @@ export type HouseholdUpsertOutput = z.infer<typeof HouseholdUpsertOutputSchema>;
 export type HouseholdProfilePatchBody = z.infer<typeof HouseholdProfilePatchBodySchema>;
 export type HouseholdProfileResponse = z.infer<typeof HouseholdProfileResponseSchema>;
 export type HouseholdIdParam = z.infer<typeof HouseholdIdParamSchema>;
+
+// Story 3.29 — sovereignty mode toggle
+export type UpdateSovereigntyModeInput = z.infer<typeof UpdateSovereigntyModeInputSchema>;
+export type UpdateSovereigntyModeResponse = z.infer<typeof UpdateSovereigntyModeResponseSchema>;
 
 // Slice 2.5-s1 — enforcement gradient + KitchenMap structured signal arrays
 export { ENFORCEMENT_LEVEL_VALUES };

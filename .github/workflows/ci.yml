@@ -51,6 +51,9 @@ jobs:
       - name: Tool manifest check
         run: pnpm tools:check
 
+      - name: Sacred-channel boundary check
+        run: pnpm --filter @hivekitchen/api check:sacred-channel
+
   e2e:
     name: E2E · A11y
     runs-on: ubuntu-latest

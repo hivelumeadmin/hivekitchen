@@ -11,7 +11,7 @@ const PLAN_COLUMNS =
   'id, household_id, week_id, week_of, revision, generated_at, guardrail_cleared_at, guardrail_version, prompt_version, created_at, updated_at';
 
 const PLAN_ITEM_COLUMNS =
-  'id, plan_id, child_id, day, slot, recipe_id, item_id, item_sku_id, ingredients, paused_at, replaced_by_plan_id, created_at, updated_at';
+  'id, plan_id, child_id, day, slot, recipe_id, item_id, ingredients, paused_at, replaced_by_plan_id, created_at, updated_at';
 
 export class PlansRepository extends BaseRepository {
   // Presentation-bind contract: only guardrail-cleared rows ever reach the UI.
@@ -309,13 +309,15 @@ export class PlansRepository extends BaseRepository {
   // null when none. Only invoked by GET /v1/plans when plan===null && !isDraft,
   // so the cost is bounded. Story 3.26 extended the SELECT to include
   // created_at so the API can surface the ETA to the parent UI.
+  // Story pre-4-s3 — stages is selected so the service layer can extract
+  // compound-uncertain flagged_items for the AllergyUncertaintyBanner.
   async findHardFailAudit(
     householdId: string,
     weekOf: string,
-  ): Promise<{ failedAt: string } | null> {
+  ): Promise<{ failedAt: string; stages: unknown } | null> {
     const { data, error } = await this.client
       .from('audit_log')
-      .select('id, created_at')
+      .select('id, created_at, stages')
       .eq('event_type', 'plan.hard_fail')
       .eq('household_id', householdId)
       .eq('metadata->>week_of', weekOf)
@@ -323,7 +325,9 @@ export class PlansRepository extends BaseRepository {
       .limit(1)
       .maybeSingle();
     if (error) throw error;
-    return data !== null ? { failedAt: data.created_at as string } : null;
+    return data !== null
+      ? { failedAt: data.created_at as string, stages: data.stages }
+      : null;
   }
 
   // Atomic write: plan row + plan_items + guardrail_cleared_at + guardrail_version

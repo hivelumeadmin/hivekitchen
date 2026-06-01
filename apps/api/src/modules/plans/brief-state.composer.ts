@@ -92,7 +92,11 @@ export class BriefStateComposer {
       const previousTileSummaries = previousBrief?.plan_tile_summaries ?? null;
 
       // Story 3.28 — overlay lunch link suppression state per tile day.
-      const suppressionByDay = await this.buildSuppressionMap(plan);
+      // Story 4-S4 — overlay per-child ratings; both reads parallelize.
+      const [suppressionByDay, ratingsMap] = await Promise.all([
+        this.buildSuppressionMap(plan),
+        this.buildRatingsMap(plan),
+      ]);
 
       // moment_headline / lumi_note / memory_prose remain '' until the
       // planner agent (Story 3.7) and memory prose composer (Story 5.11) are
@@ -103,7 +107,7 @@ export class BriefStateComposer {
         moment_headline: '',
         lumi_note: '',
         memory_prose: '',
-        plan_tile_summaries: this.buildTileSummaries(items, suppressionByDay),
+        plan_tile_summaries: this.buildTileSummaries(items, suppressionByDay, ratingsMap),
         cleared_allergies: this.buildClearedAllergies(items, children),
         scaffolding_diff: this.buildScaffoldingDiff(
           previousTileSummaries,
@@ -151,6 +155,7 @@ export class BriefStateComposer {
   private buildTileSummaries(
     items: PlanItemRow[],
     suppressionByDay: Map<string, string[]>,
+    ratingsMap: Map<string, Map<string, 'loved' | 'ok' | 'not-really'>>,
   ): PlanTileSummary[] {
     const byDay = new Map<
       SchoolDay,
@@ -184,8 +189,51 @@ export class BriefStateComposer {
           entry.items.length > 0 && entry.pausedCount === entry.items.length,
         // Story 3.28: child UUIDs whose lunch_link_session is suppressed on this day.
         lunch_link_suppressed_children: suppressionByDay.get(day) ?? [],
+        // Story 4-S4: Record<child_id, rating> for children who rated this day.
+        child_ratings: Object.fromEntries(ratingsMap.get(day) ?? new Map()),
       };
     });
+  }
+
+  // Story 4-S4 — one DB query per brief refresh. Same shape as
+  // buildSuppressionMap but returns Map<day, Map<child_id, rating>>. Empty map
+  // when week_of is absent or lunchLinkSessionRepo is not wired.
+  private async buildRatingsMap(
+    plan: PlanRow,
+  ): Promise<Map<string, Map<string, 'loved' | 'ok' | 'not-really'>>> {
+    const weekOf = plan.week_of;
+    if (!this.lunchLinkSessionRepo || !weekOf) {
+      return new Map();
+    }
+
+    const monday = new Date(weekOf + 'T00:00:00Z');
+    const saturday = new Date(monday);
+    saturday.setUTCDate(monday.getUTCDate() + 5);
+    const dateTo = saturday.toISOString().split('T')[0]!;
+
+    const ratingsByDate = await this.lunchLinkSessionRepo.findRatingsInRange(
+      plan.household_id,
+      weekOf,
+      dateTo,
+    );
+
+    const dayOffsets: Array<[SchoolDay, number]> = [
+      ['monday', 0],
+      ['tuesday', 1],
+      ['wednesday', 2],
+      ['thursday', 3],
+      ['friday', 4],
+      ['saturday', 5],
+    ];
+
+    return new Map(
+      dayOffsets.map(([day, offset]) => {
+        const d = new Date(monday);
+        d.setUTCDate(monday.getUTCDate() + offset);
+        const dateStr = d.toISOString().split('T')[0]!;
+        return [day, ratingsByDate.get(dateStr) ?? new Map()];
+      }),
+    );
   }
 
   // Story 3.28 / D1-C — one DB query per brief refresh. Derives the calendar
@@ -246,8 +294,12 @@ export class BriefStateComposer {
     if (userInitiated) return null;
     if (!previousTileSummaries || previousTileSummaries.length === 0) return null;
 
-    // suppressionByDay is irrelevant for ingredient diff — pass empty map.
-    const currentSummaries = this.buildTileSummaries(currentItems, new Map<string, string[]>());
+    // suppressionByDay + ratingsMap are irrelevant for ingredient diff — pass empties.
+    const currentSummaries = this.buildTileSummaries(
+      currentItems,
+      new Map<string, string[]>(),
+      new Map<string, Map<string, 'loved' | 'ok' | 'not-really'>>(),
+    );
 
     // Index both sides by `(day, child_id, slot)` so we can enumerate the union
     // and detect additions (curr-only) and removals (prev-only) in addition to

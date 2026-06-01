@@ -45,17 +45,20 @@ function makeBrief(overrides: Partial<BriefStateRow> = {}): BriefStateRow {
     lumi_note: 'Tuesday flexes around your late meeting.',
     memory_prose: '',
     plan_tile_summaries: [
-      { day: 'monday', items: [{ plan_item_id: '00000000-0000-4000-8000-000000000010', child_id: CHILD_ID, slot: 'main', ingredients: ['rice', 'beans', 'cheese'] }], paused: false, lunch_link_suppressed_children: [] },
-      { day: 'tuesday', items: [{ plan_item_id: '00000000-0000-4000-8000-000000000011', child_id: CHILD_ID, slot: 'main', ingredients: ['noodles'] }], paused: false, lunch_link_suppressed_children: [] },
-      { day: 'wednesday', items: [{ plan_item_id: '00000000-0000-4000-8000-000000000012', child_id: CHILD_ID, slot: 'main', ingredients: ['pasta'] }], paused: false, lunch_link_suppressed_children: [] },
-      { day: 'thursday', items: [{ plan_item_id: '00000000-0000-4000-8000-000000000013', child_id: CHILD_ID, slot: 'main', ingredients: ['soup'] }], paused: false, lunch_link_suppressed_children: [] },
-      { day: 'friday', items: [{ plan_item_id: '00000000-0000-4000-8000-000000000014', child_id: CHILD_ID, slot: 'main', ingredients: ['wrap'] }], paused: false, lunch_link_suppressed_children: [] },
+      { day: 'monday', items: [{ plan_item_id: '00000000-0000-4000-8000-000000000010', child_id: CHILD_ID, slot: 'main', ingredients: ['rice', 'beans', 'cheese'] }], paused: false, lunch_link_suppressed_children: [], child_ratings: {} },
+      { day: 'tuesday', items: [{ plan_item_id: '00000000-0000-4000-8000-000000000011', child_id: CHILD_ID, slot: 'main', ingredients: ['noodles'] }], paused: false, lunch_link_suppressed_children: [], child_ratings: {} },
+      { day: 'wednesday', items: [{ plan_item_id: '00000000-0000-4000-8000-000000000012', child_id: CHILD_ID, slot: 'main', ingredients: ['pasta'] }], paused: false, lunch_link_suppressed_children: [], child_ratings: {} },
+      { day: 'thursday', items: [{ plan_item_id: '00000000-0000-4000-8000-000000000013', child_id: CHILD_ID, slot: 'main', ingredients: ['soup'] }], paused: false, lunch_link_suppressed_children: [], child_ratings: {} },
+      { day: 'friday', items: [{ plan_item_id: '00000000-0000-4000-8000-000000000014', child_id: CHILD_ID, slot: 'main', ingredients: ['wrap'] }], paused: false, lunch_link_suppressed_children: [], child_ratings: {} },
     ],
     cleared_allergies: [],
     scaffolding_diff: null,
     generated_at: '2026-05-02T00:00:00.000Z',
     plan_revision: 1,
     updated_at: '2026-05-02T00:00:00.000Z',
+    plan_state: null,
+    plan_state_set_at: null,
+    plan_state_message: null,
     ...overrides,
   };
 }
@@ -450,5 +453,105 @@ describe('BriefCanvas — Story 3.13 (regeneration affordance)', () => {
       expect(screen.queryByRole('button', { name: /Ask Lumi to try again/i })).toBeNull();
     });
     expect(screen.getByText(/Lumi is rethinking/i)).toBeDefined();
+  });
+});
+
+describe('BriefCanvas — Story 3.29 (degraded cultural-intersection note)', () => {
+  it('renders the inline note with "Try alternating" button when plan_state="degraded"', async () => {
+    const { hkFetch } = await import('@/lib/fetch.js');
+    vi.mocked(hkFetch).mockResolvedValue({
+      brief: makeBrief({
+        plan_state: 'degraded',
+        plan_state_set_at: '2026-05-25T12:00:00.000Z',
+        plan_state_message:
+          "This week's plan couldn't honor every rule strictly. Try alternating whose rules lead each day?",
+      }),
+    } satisfies BriefResponse);
+
+    renderWithClient(<BriefCanvas />);
+
+    const message = await screen.findByText(
+      "This week's plan couldn't honor every rule strictly. Try alternating whose rules lead each day?",
+    );
+    expect(message).toBeDefined();
+    const toggle = screen.getByRole('button', {
+      name: 'Switch to alternating sovereignty mode',
+    });
+    expect(toggle).toBeDefined();
+    expect(toggle.textContent).toMatch(/Try alternating/);
+  });
+
+  it('does NOT render the degraded note when plan_state is null', async () => {
+    const { hkFetch } = await import('@/lib/fetch.js');
+    vi.mocked(hkFetch).mockResolvedValue({ brief: makeBrief() } satisfies BriefResponse);
+
+    renderWithClient(<BriefCanvas />);
+
+    await waitFor(() => {
+      expect(screen.getByLabelText('Weekly plan')).toBeDefined();
+    });
+    expect(
+      screen.queryByRole('button', { name: 'Switch to alternating sovereignty mode' }),
+    ).toBeNull();
+  });
+
+  it('does NOT render the degraded note when plan_state="hard_failed" — that surface lives in FreshnessState', async () => {
+    const { hkFetch } = await import('@/lib/fetch.js');
+    vi.mocked(hkFetch).mockResolvedValue({
+      brief: makeBrief({
+        plan_state: 'hard_failed',
+        plan_state_set_at: '2026-05-25T12:00:00.000Z',
+        plan_state_message: 'A hard-fail message that must NOT be rendered as the soft inline note.',
+      }),
+    } satisfies BriefResponse);
+
+    renderWithClient(<BriefCanvas />);
+
+    await waitFor(() => {
+      expect(screen.getByLabelText('Weekly plan')).toBeDefined();
+    });
+    expect(
+      screen.queryByRole('button', { name: 'Switch to alternating sovereignty mode' }),
+    ).toBeNull();
+    expect(
+      screen.queryByText(/A hard-fail message that must NOT be rendered/),
+    ).toBeNull();
+  });
+
+  it('clicking the toggle fires PATCH /v1/households/:id/sovereignty-mode with {sovereignty_mode: "alternating"}', async () => {
+    const { hkFetch } = await import('@/lib/fetch.js');
+    const calls: Array<{ path: string; method?: string; body?: unknown }> = [];
+    vi.mocked(hkFetch).mockImplementation(async (path: string, opts?: { method?: string; body?: unknown }) => {
+      calls.push({ path, method: opts?.method, body: opts?.body });
+      if (path.includes('/sovereignty-mode')) {
+        return { sovereignty_mode: 'alternating' };
+      }
+      return {
+        brief: makeBrief({
+          plan_state: 'degraded',
+          plan_state_set_at: '2026-05-25T12:00:00.000Z',
+          plan_state_message: 'msg',
+        }),
+      } satisfies BriefResponse;
+    });
+
+    renderWithClient(<BriefCanvas />);
+
+    const toggle = await screen.findByRole('button', {
+      name: 'Switch to alternating sovereignty mode',
+    });
+    fireEvent.click(toggle);
+
+    await waitFor(() => {
+      expect(
+        calls.some(
+          (c) =>
+            c.path === `/v1/households/${HOUSEHOLD_ID}/sovereignty-mode` &&
+            c.method === 'PATCH',
+        ),
+      ).toBe(true);
+    });
+    const sovereigntyCall = calls.find((c) => c.path.includes('/sovereignty-mode'));
+    expect(sovereigntyCall?.body).toEqual({ sovereignty_mode: 'alternating' });
   });
 });

@@ -1,0 +1,46 @@
+{
+  "name": "planner-schema",
+  "description": "Verifies that the planner agent produces a structurally valid PlanComposeOutput. Runs against stored completions tagged agent_type=planner.",
+  "data_source_config": {
+    "type": "stored_completions",
+    "metadata": {
+      "agent_type": "planner"
+    }
+  },
+  "testing_criteria": [
+    {
+      "name": "schema_valid",
+      "type": "label_model",
+      "model": "gpt-4o-mini",
+      "input": [
+        {
+          "role": "system",
+          "content": "You are a schema validator for the HiveKitchen planner agent. The planner must produce a JSON object containing a `plan_id` (UUID string) and a `days` array. Each entry in `days` must have a `day` field (e.g. \"monday\") and a `plan_items` array. Each plan_item must have `child_id`, `slot` (\"main\" | \"snack\" | \"extra\"), and `ingredients` (non-empty array of strings).\n\nClassify the assistant response as:\n- schema_valid: the response contains a valid plan object matching the above shape\n- schema_broken: the response is missing required fields, has wrong types, or cannot be parsed as JSON\n- degraded: the response is parseable but structurally incomplete (e.g. empty days array, plan_items missing for expected children)"
+        },
+        {
+          "role": "user",
+          "content": "Classify the following planner agent response:\n\n{{sample.output_text}}"
+        }
+      ],
+      "labels": ["schema_valid", "schema_broken", "degraded"],
+      "passing_labels": ["schema_valid"]
+    },
+    {
+      "name": "no_empty_days",
+      "type": "label_model",
+      "model": "gpt-4o-mini",
+      "input": [
+        {
+          "role": "system",
+          "content": "You are reviewing a HiveKitchen planner response. A valid weekly plan must cover all 5 school days (monday through friday). Classify as:\n- pass: all 5 days are present in the plan output\n- fail: fewer than 5 days are present"
+        },
+        {
+          "role": "user",
+          "content": "{{sample.output_text}}"
+        }
+      ],
+      "labels": ["pass", "fail"],
+      "passing_labels": ["pass"]
+    }
+  ]
+}

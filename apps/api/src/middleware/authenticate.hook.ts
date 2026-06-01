@@ -9,6 +9,12 @@ const SKIP_PREFIXES = ['/v1/internal/', '/v1/webhooks/', '/v1/auth/'];
 // /v1/events is the SSE channel; native EventSource also cannot send
 // custom headers — JWT is validated inside the route from the ?token= param.
 const SKIP_EXACT = new Set(['/v1/voice/ws', '/v1/events']);
+// Slice 4-S3 — GET /v1/lunch-link/:token is the child-facing public endpoint.
+// Only GET is skipped here; POST /v1/lunch-link/generate stays auth-gated.
+const LUNCH_LINK_PUBLIC_RE = /^\/v1\/lunch-link\/[^/]+$/;
+// Slice 4-S4 — POST /v1/lunch-link/:token/rate is the public child-facing
+// rating endpoint. Only POST to this exact path shape is skipped.
+const LUNCH_LINK_RATE_RE = /^\/v1\/lunch-link\/[^/]+\/rate$/;
 
 interface AccessTokenPayload {
   sub: string;
@@ -30,6 +36,8 @@ const authenticateHookPlugin: FastifyPluginAsync = async (fastify) => {
     const url = (request.url.split('?')[0] ?? '').replace(/\/$/, '') || '/';
     if (SKIP_EXACT.has(url)) return;
     if (SKIP_PREFIXES.some((prefix) => url.startsWith(prefix))) return;
+    if (request.method === 'GET' && LUNCH_LINK_PUBLIC_RE.test(url)) return;
+    if (request.method === 'POST' && LUNCH_LINK_RATE_RE.test(url)) return;
 
     const header = request.headers.authorization;
     if (!header || !header.startsWith('Bearer ')) {

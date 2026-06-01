@@ -7,6 +7,8 @@ import type {
   SetDayOverrideInput,
   SetDayOverrideResponse,
   ConfirmVariantProposalInput,
+  UpdateSovereigntyModeInput,
+  UpdateSovereigntyModeResponse,
 } from '@hivekitchen/types';
 
 // Browser crypto.randomUUID() is available in all modern browsers in secure contexts.
@@ -147,6 +149,32 @@ export function useConfirmVariantProposalMutation() {
       ),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ['plan'] });
+    },
+  });
+}
+
+// PATCH /v1/households/:id/sovereignty-mode — Story 3.29.
+// On success invalidates ['brief'] so the inline degraded note disappears (the
+// API clears brief_state.plan_state) and the queued regen plan replaces the
+// degraded one when committed.
+export function useUpdateSovereigntyModeMutation() {
+  const queryClient = useQueryClient();
+  return useMutation<
+    UpdateSovereigntyModeResponse,
+    Error,
+    { householdId: string; input: UpdateSovereigntyModeInput; idempotencyKey: string }
+  >({
+    mutationFn: ({ householdId, input, idempotencyKey }) =>
+      hkFetch<UpdateSovereigntyModeResponse>(
+        `/v1/households/${householdId}/sovereignty-mode`,
+        {
+          method: 'PATCH',
+          body: input,
+          headers: { 'Idempotency-Key': idempotencyKey },
+        },
+      ),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['brief'] });
     },
   });
 }

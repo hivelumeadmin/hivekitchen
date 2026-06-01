@@ -45,6 +45,8 @@ describe('OnboardingMomentRepository.getState', () => {
         m5_favorite_count: 3,
         m5_complete: false,
       },
+      cold_start_triggered: false,
+      cold_start_trigger_reason: null,
     };
     const fromMock = vi.fn().mockReturnValue(makeSelectQuery({ data: row, error: null }));
     const client = { from: fromMock } as unknown as SupabaseClient;
@@ -61,6 +63,8 @@ describe('OnboardingMomentRepository.getState', () => {
         m5_favorite_count: 3,
         m5_complete: false,
       },
+      cold_start_triggered: false,
+      cold_start_trigger_reason: null,
     });
   });
 
@@ -69,6 +73,8 @@ describe('OnboardingMomentRepository.getState', () => {
       household_id: HOUSEHOLD_ID,
       current_moment: 'pre_start',
       required_set_status: {},
+      cold_start_triggered: false,
+      cold_start_trigger_reason: null,
     };
     const fromMock = vi.fn().mockReturnValue(makeSelectQuery({ data: row, error: null }));
     const client = { from: fromMock } as unknown as SupabaseClient;
@@ -85,7 +91,47 @@ describe('OnboardingMomentRepository.getState', () => {
         m5_favorite_count: 0,
         m5_complete: false,
       },
+      cold_start_triggered: false,
+      cold_start_trigger_reason: null,
     });
+  });
+
+  // Slice 2.6-s6 — cold-start fields project through getState with correct
+  // defaults when the row predates the migration (NULL → false / null).
+  it('parses cold_start_triggered / cold_start_trigger_reason when populated', async () => {
+    const row = {
+      household_id: HOUSEHOLD_ID,
+      current_moment: 'm5_starting_line',
+      required_set_status: {},
+      cold_start_triggered: true,
+      cold_start_trigger_reason: 'per_cuisine_floor',
+    };
+    const fromMock = vi.fn().mockReturnValue(makeSelectQuery({ data: row, error: null }));
+    const client = { from: fromMock } as unknown as SupabaseClient;
+    const repo = new OnboardingMomentRepository(client);
+
+    const result = await repo.getState(HOUSEHOLD_ID);
+
+    expect(result?.cold_start_triggered).toBe(true);
+    expect(result?.cold_start_trigger_reason).toBe('per_cuisine_floor');
+  });
+
+  it('treats NULL cold_start columns from legacy rows as false / null', async () => {
+    const row = {
+      household_id: HOUSEHOLD_ID,
+      current_moment: 'm1_table',
+      required_set_status: {},
+      cold_start_triggered: null,
+      cold_start_trigger_reason: null,
+    };
+    const fromMock = vi.fn().mockReturnValue(makeSelectQuery({ data: row, error: null }));
+    const client = { from: fromMock } as unknown as SupabaseClient;
+    const repo = new OnboardingMomentRepository(client);
+
+    const result = await repo.getState(HOUSEHOLD_ID);
+
+    expect(result?.cold_start_triggered).toBe(false);
+    expect(result?.cold_start_trigger_reason).toBeNull();
   });
 
   it('defaults current_moment to pre_start when the column is null', async () => {
@@ -248,6 +294,8 @@ describe('OnboardingMomentRepository.upsertState', () => {
       m5_favorite_count: 6,
       m5_complete: false,
     },
+    cold_start_triggered: false,
+    cold_start_trigger_reason: null,
   };
 
   it('upserts the state via supabase with onConflict=household_id', async () => {

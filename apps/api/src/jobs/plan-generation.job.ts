@@ -105,7 +105,6 @@ export function buildCommitInput(
       // so commit can resolve it against Redis and insert a real recipes row.
       ...(item.recipe_candidate_id !== undefined ? { recipe_candidate_id: item.recipe_candidate_id } : {}),
       ...(item.item_id !== undefined ? { item_id: item.item_id } : {}),
-      ...(item.item_sku_id !== undefined ? { item_sku_id: item.item_sku_id } : {}),
     })),
   );
 
@@ -283,11 +282,19 @@ const planGenerationPlugin: FastifyPluginAsync = async (fastify) => {
         'plan-generation job started',
       );
 
-      const [culturalContext, bagCompositions, extraLibraryItems, variantEligibleChildren] = await Promise.all([
+      const householdsRepoForRun = new HouseholdsRepository(fastify.supabase, null);
+      const [culturalContext, bagCompositions, extraLibraryItems, variantEligibleChildren, sovereigntyMode] = await Promise.all([
         loadCulturalContextForHousehold(household_id, week_of, culturalPriorRepository, culturalCalendarService, memoryContextService),
         loadBagCompositionsForHousehold(household_id, childrenRepository),
         loadExtraLibraryForHousehold(household_id, extraLibraryRepository),
         loadVariantEligibleChildrenForHousehold(household_id, childrenRepository),
+        householdsRepoForRun.getSovereigntyMode(household_id).catch((err: unknown) => {
+          fastify.log.warn(
+            { err, household_id },
+            'getSovereigntyMode failed — falling back to unified mode',
+          );
+          return 'unified' as const;
+        }),
       ]);
       // extra_rules read fans out per-child; depends on bagCompositions for
       // {child_id, child_name} pairs, so it's sequenced after the parallel batch.
@@ -330,21 +337,18 @@ const planGenerationPlugin: FastifyPluginAsync = async (fastify) => {
         }
       }
 
-      const composeOutput = await fastify.orchestrator.planWeek(
-        household_id,
-        week_of,
-        request_id,
-        undefined,
-        undefined,
+      const composeOutput = await fastify.orchestrator.planWeek({
+        householdId: household_id,
+        weekOf: week_of,
+        requestId: request_id,
         culturalContext,
         bagCompositions,
         extraRules,
         extraLibraryItems,
         extraProposals,
-        undefined,
-        undefined,
         variantEligibleChildren,
-      );
+        sovereigntyMode,
+      });
       const commitInput = buildCommitInput(composeOutput, weekId, request_id);
 
       // Allergy guardrail + brief_state refresh are wired inside
@@ -408,21 +412,20 @@ const planGenerationPlugin: FastifyPluginAsync = async (fastify) => {
             return `ALLERGEN-UNCERTAIN: Replace the following items — use only single-ingredient items of unambiguous provenance (no sauces, spice blends, pastes, or compound products): ${slots}`;
           })();
 
-          const retryOutput = await fastify.orchestrator.planWeek(
-            household_id,
-            week_of,
-            request_id,
+          const retryOutput = await fastify.orchestrator.planWeek({
+            householdId: household_id,
+            weekOf: week_of,
+            requestId: request_id,
             rejectionContext,
-            undefined,
             culturalContext,
             bagCompositions,
             extraRules,
             extraLibraryItems,
             extraProposals,
-            undefined,
             uncertainContext,
             variantEligibleChildren,
-          );
+            sovereigntyMode,
+          });
           const retryCommit = buildCommitInput(retryOutput, weekId, request_id);
           lastAttemptCommit = retryCommit;
           lastAttemptComposeOutput = retryOutput;
@@ -446,6 +449,25 @@ const planGenerationPlugin: FastifyPluginAsync = async (fastify) => {
           { err, household_id, plan_id: commitInput.plan_id },
           'variant proposal persistence failed — plan is committed',
         );
+      }
+
+      // Story 3.29 — soft cultural-degradation signal. The planner sets
+      // degraded_reason on its compose output when the unified-sovereignty
+      // intersection collapses; surface it on brief_state so BriefCanvas can
+      // render the "try alternating" toggle. Failure must not block delivery —
+      // the plan is the canonical output, the toggle is an opt-in offer.
+      if (lastAttemptComposeOutput.degraded_reason === 'CULTURAL_INTERSECTION_EMPTY') {
+        try {
+          await fastify.plansService.handleDegradedPlan({
+            householdId: household_id,
+            requestId: request_id,
+          });
+        } catch (err) {
+          fastify.log.error(
+            { err, household_id, plan_id: committedPlanId },
+            'handleDegradedPlan failed — plan is committed, brief_state may lack degraded flag',
+          );
+        }
       }
 
       fastify.log.info(

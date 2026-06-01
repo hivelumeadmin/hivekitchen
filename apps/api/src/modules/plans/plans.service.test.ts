@@ -743,10 +743,10 @@ describe('PlansService.commit — plan.hard_fail audit (Story 3.25)', () => {
   });
 });
 
-describe('PlansService.getHardFailStatus (Story 3.25 / 3.26)', () => {
-  it('returns { week_of, failed_at } when the repo finds a hard-fail audit row', async () => {
+describe('PlansService.getHardFailStatus (Story 3.25 / 3.26 / pre-4-s3)', () => {
+  it('returns { week_of, failed_at, flagged_items=[] } when the repo finds a hard-fail audit row with no stages', async () => {
     const repo = {
-      findHardFailAudit: vi.fn().mockResolvedValue({ failedAt: '2026-05-25T08:00:00Z' }),
+      findHardFailAudit: vi.fn().mockResolvedValue({ failedAt: '2026-05-25T08:00:00Z', stages: null }),
     } as unknown as PlansRepository & { findHardFailAudit: ReturnType<typeof vi.fn> };
     const service = new PlansService({
       repository: repo,
@@ -761,7 +761,7 @@ describe('PlansService.getHardFailStatus (Story 3.25 / 3.26)', () => {
 
     const out = await service.getHardFailStatus(HOUSEHOLD_ID, '2026-05-04');
 
-    expect(out).toEqual({ week_of: '2026-05-04', failed_at: '2026-05-25T08:00:00Z' });
+    expect(out).toEqual({ week_of: '2026-05-04', failed_at: '2026-05-25T08:00:00Z', flagged_items: [] });
     expect(repo.findHardFailAudit).toHaveBeenCalledWith(HOUSEHOLD_ID, '2026-05-04');
   });
 
@@ -783,6 +783,155 @@ describe('PlansService.getHardFailStatus (Story 3.25 / 3.26)', () => {
     const out = await service.getHardFailStatus(HOUSEHOLD_ID, '2026-05-04');
 
     expect(out).toBeNull();
+  });
+
+  it('extracts compound-uncertain flagged_items from stages, skipping non-matching stages', async () => {
+    const childA = '11111111-1111-4111-8111-111111111111';
+    const childB = '22222222-2222-4222-8222-222222222222';
+    const stages = [
+      { stage: 'guardrail_rejection', attempt: 1, verdict: 'blocked', conflicts: [] },
+      {
+        stage: 'guardrail_rejection',
+        attempt: 2,
+        verdict: 'uncertain',
+        reason: 'compound_ingredient_unverified',
+        flagged_items: [
+          { child_id: childA, ingredient: 'garam masala', slot: 'main', day: 'monday' },
+          { child_id: childB, ingredient: 'ranch dressing', slot: 'main', day: 'tuesday' },
+        ],
+      },
+    ];
+    const repo = {
+      findHardFailAudit: vi.fn().mockResolvedValue({ failedAt: '2026-05-25T08:00:00Z', stages }),
+    } as unknown as PlansRepository & { findHardFailAudit: ReturnType<typeof vi.fn> };
+    const service = new PlansService({
+      repository: repo,
+      briefStateRepository: buildBriefStateRepo(),
+      briefStateComposer: buildBriefStateComposer(),
+      allergyGuardrail: buildGuardrail([{ verdict: 'cleared', conflicts: [] }]),
+      auditService: buildAudit(),
+      logger: buildLogger(),
+      redis: buildRedis(),
+      regenQueue: buildRegenQueue(),
+    });
+
+    const out = await service.getHardFailStatus(HOUSEHOLD_ID, '2026-05-04');
+
+    expect(out).toEqual({
+      week_of: '2026-05-04',
+      failed_at: '2026-05-25T08:00:00Z',
+      flagged_items: [
+        { child_id: childA, ingredient: 'garam masala', slot: 'main', day: 'monday' },
+        { child_id: childB, ingredient: 'ranch dressing', slot: 'main', day: 'tuesday' },
+      ],
+    });
+  });
+
+  it('dedupes the same flagged item appearing across multiple uncertain stages', async () => {
+    const childA = '11111111-1111-4111-8111-111111111111';
+    const stages = [
+      {
+        stage: 'guardrail_rejection',
+        attempt: 1,
+        verdict: 'uncertain',
+        reason: 'compound_ingredient_unverified',
+        flagged_items: [{ child_id: childA, ingredient: 'garam masala', slot: 'main', day: 'monday' }],
+      },
+      {
+        stage: 'guardrail_rejection',
+        attempt: 2,
+        verdict: 'uncertain',
+        reason: 'compound_ingredient_unverified',
+        flagged_items: [{ child_id: childA, ingredient: 'garam masala', slot: 'main', day: 'monday' }],
+      },
+    ];
+    const repo = {
+      findHardFailAudit: vi.fn().mockResolvedValue({ failedAt: '2026-05-25T08:00:00Z', stages }),
+    } as unknown as PlansRepository & { findHardFailAudit: ReturnType<typeof vi.fn> };
+    const service = new PlansService({
+      repository: repo,
+      briefStateRepository: buildBriefStateRepo(),
+      briefStateComposer: buildBriefStateComposer(),
+      allergyGuardrail: buildGuardrail([{ verdict: 'cleared', conflicts: [] }]),
+      auditService: buildAudit(),
+      logger: buildLogger(),
+      redis: buildRedis(),
+      regenQueue: buildRegenQueue(),
+    });
+
+    const out = await service.getHardFailStatus(HOUSEHOLD_ID, '2026-05-04');
+
+    expect(out?.flagged_items).toHaveLength(1);
+    expect(out?.flagged_items[0]).toEqual({
+      child_id: childA,
+      ingredient: 'garam masala',
+      slot: 'main',
+      day: 'monday',
+    });
+  });
+
+  it('returns flagged_items=[] when the only uncertain stage has an infrastructure reason (not compound_ingredient_unverified)', async () => {
+    const stages = [
+      {
+        stage: 'guardrail_rejection',
+        attempt: 1,
+        verdict: 'uncertain',
+        reason: 'no_rules_loaded',
+      },
+    ];
+    const repo = {
+      findHardFailAudit: vi.fn().mockResolvedValue({ failedAt: '2026-05-25T08:00:00Z', stages }),
+    } as unknown as PlansRepository & { findHardFailAudit: ReturnType<typeof vi.fn> };
+    const service = new PlansService({
+      repository: repo,
+      briefStateRepository: buildBriefStateRepo(),
+      briefStateComposer: buildBriefStateComposer(),
+      allergyGuardrail: buildGuardrail([{ verdict: 'cleared', conflicts: [] }]),
+      auditService: buildAudit(),
+      logger: buildLogger(),
+      redis: buildRedis(),
+      regenQueue: buildRegenQueue(),
+    });
+
+    const out = await service.getHardFailStatus(HOUSEHOLD_ID, '2026-05-04');
+
+    expect(out?.flagged_items).toEqual([]);
+  });
+
+  it('skips malformed flagged_items entries (logs warning, does not throw)', async () => {
+    const childA = '11111111-1111-4111-8111-111111111111';
+    const stages = [
+      {
+        stage: 'guardrail_rejection',
+        attempt: 1,
+        verdict: 'uncertain',
+        reason: 'compound_ingredient_unverified',
+        flagged_items: [
+          { child_id: childA, ingredient: 'garam masala', slot: 'main', day: 'monday' },
+          { child_id: 'not-a-uuid', ingredient: 'ranch dressing', slot: 'main', day: 'tuesday' },
+        ],
+      },
+    ];
+    const repo = {
+      findHardFailAudit: vi.fn().mockResolvedValue({ failedAt: '2026-05-25T08:00:00Z', stages }),
+    } as unknown as PlansRepository & { findHardFailAudit: ReturnType<typeof vi.fn> };
+    const logger = buildLogger();
+    const service = new PlansService({
+      repository: repo,
+      briefStateRepository: buildBriefStateRepo(),
+      briefStateComposer: buildBriefStateComposer(),
+      allergyGuardrail: buildGuardrail([{ verdict: 'cleared', conflicts: [] }]),
+      auditService: buildAudit(),
+      logger,
+      redis: buildRedis(),
+      regenQueue: buildRegenQueue(),
+    });
+
+    const out = await service.getHardFailStatus(HOUSEHOLD_ID, '2026-05-04');
+
+    expect(out?.flagged_items).toHaveLength(1);
+    expect(out?.flagged_items[0].child_id).toBe(childA);
+    expect(logger.warn).toHaveBeenCalled();
   });
 });
 
@@ -807,7 +956,11 @@ function buildMinimalExtraction(): RecipeAgentExtraction {
     ingredients: [
       { key: 'chicken', modifier: null, display: '1 lb chicken', quantity: 1, unit: 'lb', optional: false, substitutes: [] },
     ],
-    instructions: ['Cook the chicken.', 'Add rice and water.', 'Simmer 20 minutes.'],
+    steps: [
+      { mode: 'prep' as const, text: 'Cook the chicken.' },
+      { mode: 'finish' as const, text: 'Add rice and water.' },
+      { mode: 'finish' as const, text: 'Simmer 20 minutes.' },
+    ],
     allergen_info_from_source: null,
   };
 }
@@ -1004,7 +1157,6 @@ function makeItemRow(overrides: Partial<PlanItemRow> = {}): PlanItemRow {
     slot: 'main',
     recipe_id: null,
     item_id: null,
-    item_sku_id: null,
     ingredients: ['rice'],
     paused_at: null,
     replaced_by_plan_id: null,
@@ -1630,8 +1782,7 @@ describe('PlansService.getPlanForWeek (Story 3.14)', () => {
       slot: 'main',
       recipe_id: null,
       item_id: null,
-      item_sku_id: null,
-      ingredients: ['rice'],
+        ingredients: ['rice'],
       paused_at: null,
       replaced_by_plan_id: null,
       created_at: '2026-05-02T11:00:00.000Z',
@@ -1795,8 +1946,7 @@ describe('PlansService.getPlanHistory (Story 3.15)', () => {
       slot: 'main',
       recipe_id: null,
       item_id: null,
-      item_sku_id: null,
-      ingredients: ['rice'],
+        ingredients: ['rice'],
       paused_at: null,
       replaced_by_plan_id: null,
       created_at: '2026-04-19T11:00:00.000Z',
@@ -2018,7 +2168,7 @@ describe('PlansService.commit — Slice D recipe materialization', () => {
     expect(committed.items[0]?.recipe_id).toBe(SLICE_D_RECIPE_ID);
   });
 
-  it('skips materialization for snack + extra slot items (they reference item_sku_id)', async () => {
+  it('skips materialization for snack + extra slot items (they resolve via curated recipes catalog)', async () => {
     const repo = buildRepo();
     const recipeService = buildRecipeService();
     const service = new PlansService({
@@ -2205,5 +2355,103 @@ describe('PlansService.commit — Slice D recipe materialization', () => {
     // Guardrail never cleared → no materialization or usage bump
     expect(recipeService.materializeFromPlanItem).not.toHaveBeenCalled();
     expect(recipeService.recordUse).not.toHaveBeenCalled();
+  });
+});
+
+// Story 3.29 — soft cultural-degradation signal. handleDegradedPlan is
+// invoked from plan-generation.job after commit clears, so these tests
+// exercise the method directly (not commit() — degraded_reason flows live
+// in the BullMQ job).
+describe('PlansService.handleDegradedPlan (Story 3.29)', () => {
+  function buildBriefStateRepoWithPlanState(): BriefStateRepository & {
+    setPlanState: ReturnType<typeof vi.fn>;
+    clearDegradedPlanState: ReturnType<typeof vi.fn>;
+  } {
+    return {
+      findByHousehold: vi.fn().mockResolvedValue(null),
+      upsert: vi.fn().mockResolvedValue(undefined),
+      setPlanState: vi.fn().mockResolvedValue(undefined),
+      clearDegradedPlanState: vi.fn().mockResolvedValue(undefined),
+    } as unknown as BriefStateRepository & {
+      setPlanState: ReturnType<typeof vi.fn>;
+      clearDegradedPlanState: ReturnType<typeof vi.fn>;
+    };
+  }
+
+  it('writes plan_state=degraded + the canonical message to brief_state and emits plan.cultural_degraded audit', async () => {
+    const briefStateRepo = buildBriefStateRepoWithPlanState();
+    const audit = buildAudit();
+    const service = new PlansService({
+      repository: buildRepo(),
+      briefStateRepository: briefStateRepo,
+      briefStateComposer: buildBriefStateComposer(),
+      allergyGuardrail: buildGuardrail([{ verdict: 'cleared', conflicts: [] }]),
+      auditService: audit,
+      logger: buildLogger(),
+      redis: buildRedis(),
+      regenQueue: buildRegenQueue(),
+    });
+
+    await service.handleDegradedPlan({
+      householdId: HOUSEHOLD_ID,
+      requestId: REQUEST_ID,
+    });
+
+    expect(briefStateRepo.setPlanState).toHaveBeenCalledTimes(1);
+    const setArgs = briefStateRepo.setPlanState.mock.calls[0]![0];
+    expect(setArgs.householdId).toBe(HOUSEHOLD_ID);
+    expect(setArgs.planState).toBe('degraded');
+    expect(setArgs.message).toBe(
+      "This week's plan couldn't honor every rule strictly. Try alternating whose rules lead each day?",
+    );
+    expect(typeof setArgs.setAt).toBe('string');
+
+    expect(audit.write).toHaveBeenCalledWith(
+      expect.objectContaining({
+        event_type: 'plan.cultural_degraded',
+        household_id: HOUSEHOLD_ID,
+        request_id: REQUEST_ID,
+        metadata: { reason: 'CULTURAL_INTERSECTION_EMPTY' },
+      }),
+    );
+  });
+
+  it('still resolves when the audit write fails (best-effort)', async () => {
+    const briefStateRepo = buildBriefStateRepoWithPlanState();
+    const audit = buildAudit();
+    audit.write.mockRejectedValueOnce(new Error('audit down'));
+    const service = new PlansService({
+      repository: buildRepo(),
+      briefStateRepository: briefStateRepo,
+      briefStateComposer: buildBriefStateComposer(),
+      allergyGuardrail: buildGuardrail([{ verdict: 'cleared', conflicts: [] }]),
+      auditService: audit,
+      logger: buildLogger(),
+      redis: buildRedis(),
+      regenQueue: buildRegenQueue(),
+    });
+
+    await expect(
+      service.handleDegradedPlan({ householdId: HOUSEHOLD_ID, requestId: REQUEST_ID }),
+    ).resolves.toBeUndefined();
+    expect(briefStateRepo.setPlanState).toHaveBeenCalledTimes(1);
+  });
+
+  it('clearDegradedPlanState delegates to the brief_state repository', async () => {
+    const briefStateRepo = buildBriefStateRepoWithPlanState();
+    const service = new PlansService({
+      repository: buildRepo(),
+      briefStateRepository: briefStateRepo,
+      briefStateComposer: buildBriefStateComposer(),
+      allergyGuardrail: buildGuardrail([{ verdict: 'cleared', conflicts: [] }]),
+      auditService: buildAudit(),
+      logger: buildLogger(),
+      redis: buildRedis(),
+      regenQueue: buildRegenQueue(),
+    });
+
+    await service.clearDegradedPlanState(HOUSEHOLD_ID);
+
+    expect(briefStateRepo.clearDegradedPlanState).toHaveBeenCalledWith(HOUSEHOLD_ID);
   });
 });

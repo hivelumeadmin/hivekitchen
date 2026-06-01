@@ -6,6 +6,7 @@ export const AUDIT_EVENT_TYPES = [
   'plan.policy_regeneration_triggered',
   'plan.adjustment_triggered',
   'plan.hard_fail',
+  'plan.cultural_degraded',
   'plan.generation.failed',
   'plan.item_swapped',
   'plan.day_paused',
@@ -91,6 +92,7 @@ export const AUDIT_EVENT_TYPES = [
   'household.extra_library_item_created',
   'household.extra_library_item_archived',
   'household.profile_updated',
+  'household.sovereignty_mode_changed',
   // school policies
   'school_policy.updated',
   // cultural

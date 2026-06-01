@@ -24,7 +24,7 @@ export interface AllergyUncertaintyFlaggedItem {
 export interface AllergyUncertaintyBannerProps {
   flaggedItems: readonly AllergyUncertaintyFlaggedItem[];
   onRetry: () => void;
-  onSwapSlot: (childId: string, day: string, slot: string) => void;
+  onSwapSlot?: (childId: string, day: string, slot: string) => void;
 }
 
 function capitalize(s: string): string {
@@ -34,7 +34,7 @@ function capitalize(s: string): string {
 export function AllergyUncertaintyBanner({
   flaggedItems,
   onRetry,
-  onSwapSlot,
+  onSwapSlot = undefined,
 }: AllergyUncertaintyBannerProps) {
   if (flaggedItems.length === 0) return null;
 
@@ -71,13 +71,15 @@ export function AllergyUncertaintyBanner({
                 {item.childName}, {capitalize(item.day)} {item.slot}
               </span>
             </div>
-            <button
-              type="button"
-              onClick={() => { onSwapSlot(item.childId, item.day, item.slot); }}
-              className="rounded-full border border-honey-amber-300 bg-honey-amber-100 px-3 py-1 text-xs font-medium text-honey-amber-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-honey-amber-400 focus-visible:ring-offset-1"
-            >
-              Swap {capitalize(item.slot)}
-            </button>
+            {onSwapSlot !== undefined && (
+              <button
+                type="button"
+                onClick={() => { onSwapSlot(item.childId, item.day, item.slot); }}
+                className="rounded-full border border-honey-amber-300 bg-honey-amber-100 px-3 py-1 text-xs font-medium text-honey-amber-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-honey-amber-400 focus-visible:ring-offset-1"
+              >
+                Swap {capitalize(item.slot)}
+              </button>
+            )}
           </li>
         ))}
       </ul>
@@ -90,9 +92,11 @@ export function AllergyUncertaintyBanner({
         >
           Try again
         </button>
-        <span className="text-xs text-fg-muted">
-          Or swap each item individually above.
-        </span>
+        {onSwapSlot !== undefined && (
+          <span className="text-xs text-fg-muted">
+            Or swap each item individually above.
+          </span>
+        )}
       </div>
     </section>
   );

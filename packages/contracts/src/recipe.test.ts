@@ -212,7 +212,6 @@ function makeRecipeRow() {
         substitutes: [],
       },
     ],
-    instructions: 'Sear, then bake at 400 for 20 minutes.',
     ingredient_keys: ['chicken', 'lemon'],
     primary_ingredient_key: 'chicken',
     allergen_flags: [],
@@ -221,6 +220,7 @@ function makeRecipeRow() {
     cuisine_tags: ['mediterranean'],
     applicable_slots: ['main' as const],
     prep_time_minutes: 35,
+    finish_time_minutes: 10,
     source: 'agent_generated' as const,
     created_by_household_id: UUID2,
     visibility: 'private' as const,
@@ -239,25 +239,16 @@ describe('RecipeRowSchema / RecipeFetchOutputSchema', () => {
     expect(r.success).toBe(true);
   });
 
-  it('accepts instructions as a string', () => {
-    const row: Record<string, unknown> = { ...makeRecipeRow(), instructions: 'Simmer for 25 minutes.' };
+  it('accepts null finish_time_minutes (story 3-DM-A1)', () => {
+    const row: Record<string, unknown> = { ...makeRecipeRow(), finish_time_minutes: null };
     const r = RecipeRowSchema.safeParse(row);
     expect(r.success).toBe(true);
   });
 
-  it('accepts instructions as an array of strings', () => {
-    const row: Record<string, unknown> = {
-      ...makeRecipeRow(),
-      instructions: ['Sear chicken.', 'Add lemon and garlic.', 'Bake 20 min.'],
-    };
+  it('rejects negative finish_time_minutes (story 3-DM-A1)', () => {
+    const row: Record<string, unknown> = { ...makeRecipeRow(), finish_time_minutes: -1 };
     const r = RecipeRowSchema.safeParse(row);
-    expect(r.success).toBe(true);
-  });
-
-  it('accepts null instructions', () => {
-    const row: Record<string, unknown> = { ...makeRecipeRow(), instructions: null };
-    const r = RecipeRowSchema.safeParse(row);
-    expect(r.success).toBe(true);
+    expect(r.success).toBe(false);
   });
 
   it('rejects rating_avg above 5', () => {
@@ -442,9 +433,10 @@ describe('RecipeAgentExtractionSchema (Story 3-31)', () => {
         substitutes: [],
       },
     ],
-    instructions: [
-      'Soak rice in cold water for 20 minutes.',
-      'Marinate chicken with yogurt and spices.',
+    steps: [
+      { mode: 'prep' as const, text: 'Soak rice in cold water for 20 minutes.' },
+      { mode: 'prep' as const, text: 'Marinate chicken with yogurt and spices.' },
+      { mode: 'finish' as const, text: 'Layer rice and chicken; steam 25 minutes.' },
     ],
     allergen_info_from_source: null,
   };
@@ -459,9 +451,20 @@ describe('RecipeAgentExtractionSchema (Story 3-31)', () => {
     expect(r.success).toBe(false);
   });
 
-  it('rejects an empty instructions array', () => {
-    const r = RecipeAgentExtractionSchema.safeParse({ ...validExtraction, instructions: [] });
+  it('rejects an empty steps array (story 3-DM-A1)', () => {
+    const r = RecipeAgentExtractionSchema.safeParse({ ...validExtraction, steps: [] });
     expect(r.success).toBe(false);
+  });
+
+  it('defaults missing mode tag to prep (story 3-DM-A1)', () => {
+    const r = RecipeAgentExtractionSchema.safeParse({
+      ...validExtraction,
+      steps: [{ text: 'Stir-fry vegetables.' }],
+    });
+    expect(r.success).toBe(true);
+    if (r.success) {
+      expect(r.data.steps[0]!.mode).toBe('prep');
+    }
   });
 
   it('rejects a source_site outside the allowed enum', () => {

@@ -23,7 +23,6 @@ import {
   PlanItemSwapSummarySchema,
   PlanWeekIdParamSchema,
   PlanHistoryResponseSchema,
-  SnackSkuSchema,
   FlaggedCompoundItemSchema,
   GuardrailResultSchema,
   HardFailStatusSchema,
@@ -891,6 +890,115 @@ describe('BriefStateRowSchema — plan_id (Story 3.12)', () => {
   });
 });
 
+describe('BriefStateRowSchema — plan_state (Story 3.29)', () => {
+  const baseRow = {
+    household_id: UUID1,
+    moment_headline: '',
+    lumi_note: '',
+    memory_prose: '',
+    plan_tile_summaries: [],
+    cleared_allergies: [],
+    scaffolding_diff: null,
+    generated_at: '2026-01-01T00:00:00Z',
+    plan_revision: 0,
+    updated_at: '2026-01-01T00:00:00Z',
+  };
+
+  it('defaults plan_state, plan_state_set_at, and plan_state_message to null when omitted', () => {
+    const parsed = BriefStateRowSchema.safeParse(baseRow);
+    expect(parsed.success).toBe(true);
+    if (parsed.success) {
+      expect(parsed.data.plan_state).toBeNull();
+      expect(parsed.data.plan_state_set_at).toBeNull();
+      expect(parsed.data.plan_state_message).toBeNull();
+    }
+  });
+
+  it("parses plan_state='degraded' with the canonical message + ISO timestamp", () => {
+    const parsed = BriefStateRowSchema.safeParse({
+      ...baseRow,
+      plan_state: 'degraded',
+      plan_state_set_at: '2026-05-25T12:00:00Z',
+      plan_state_message:
+        "This week's plan couldn't honor every rule strictly. Try alternating whose rules lead each day?",
+    });
+    expect(parsed.success).toBe(true);
+    if (parsed.success) expect(parsed.data.plan_state).toBe('degraded');
+  });
+
+  it("parses plan_state='hard_failed' (reserved value)", () => {
+    const parsed = BriefStateRowSchema.safeParse({
+      ...baseRow,
+      plan_state: 'hard_failed',
+      plan_state_set_at: '2026-05-25T12:00:00Z',
+      plan_state_message: 'reserved',
+    });
+    expect(parsed.success).toBe(true);
+  });
+
+  it('rejects an unknown plan_state value', () => {
+    expect(
+      BriefStateRowSchema.safeParse({ ...baseRow, plan_state: 'paused' }).success,
+    ).toBe(false);
+  });
+
+  it('rejects a plan_state_message over 500 chars', () => {
+    expect(
+      BriefStateRowSchema.safeParse({
+        ...baseRow,
+        plan_state: 'degraded',
+        plan_state_set_at: '2026-05-25T12:00:00Z',
+        plan_state_message: 'x'.repeat(501),
+      }).success,
+    ).toBe(false);
+  });
+});
+
+describe('PlanComposeOutputSchema.degraded_reason (Story 3.29)', () => {
+  const baseOutput = {
+    plan_id: UUID1,
+    household_id: UUID2,
+    week_of: '2026-05-04',
+    days: [
+      {
+        day: 'monday',
+        items: [{ child_id: UUID1, slot: 'main', ingredients: ['rice'] }],
+      },
+    ],
+    prompt_version: 'v1.5.0',
+  };
+
+  it('parses without degraded_reason (omitted)', () => {
+    const parsed = PlanComposeOutputSchema.safeParse(baseOutput);
+    expect(parsed.success).toBe(true);
+  });
+
+  it("parses with degraded_reason='CULTURAL_INTERSECTION_EMPTY'", () => {
+    const parsed = PlanComposeOutputSchema.safeParse({
+      ...baseOutput,
+      degraded_reason: 'CULTURAL_INTERSECTION_EMPTY',
+    });
+    expect(parsed.success).toBe(true);
+  });
+
+  it('parses with degraded_reason=null', () => {
+    const parsed = PlanComposeOutputSchema.safeParse({
+      ...baseOutput,
+      degraded_reason: null,
+    });
+    expect(parsed.success).toBe(true);
+  });
+
+  it('rejects an unknown degraded_reason value', () => {
+    expect(
+      PlanComposeOutputSchema.safeParse({
+        ...baseOutput,
+        degraded_reason: 'WHATEVER',
+      }).success,
+    ).toBe(false);
+  });
+});
+
 describe('SwapPlanItemInputSchema (Story 3.12)', () => {
   it('parses a body with only ingredients', () => {
     expect(
@@ -1514,87 +1622,6 @@ describe('PlanHistoryResponseSchema (Story 3.15)', () => {
         week_of: null,
         ratings: {},
       }).success,
-    ).toBe(false);
-  });
-});
-
-describe('SnackSkuSchema (Story 3.20)', () => {
-  const validSku = {
-    id: '00000000-0000-4000-8000-000000000099',
-    name: 'String Cheese',
-    brand: null,
-    category: 'dairy',
-    contains_peanut: false,
-    contains_tree_nut: false,
-    contains_dairy: true,
-    contains_egg: false,
-    contains_wheat: false,
-    contains_soy: false,
-    contains_fish: false,
-    contains_shellfish: false,
-    contains_sesame: false,
-    is_halal: true,
-    is_kosher: true,
-    is_vegetarian: true,
-    is_vegan: false,
-    is_active: true,
-  };
-
-  it('round-trips a valid SKU', () => {
-    expect(SnackSkuSchema.safeParse(validSku).success).toBe(true);
-  });
-
-  it('rejects when contains_dairy is non-boolean', () => {
-    expect(
-      SnackSkuSchema.safeParse({ ...validSku, contains_dairy: 'yes' }).success,
-    ).toBe(false);
-  });
-
-  it('accepts a string brand', () => {
-    expect(
-      SnackSkuSchema.safeParse({ ...validSku, brand: 'Trader Joe’s' }).success,
-    ).toBe(true);
-  });
-
-  it('rejects empty name', () => {
-    expect(SnackSkuSchema.safeParse({ ...validSku, name: '' }).success).toBe(false);
-  });
-});
-
-describe('PlanItemRowSchema — item_sku_id (Story 3.20)', () => {
-  const baseRow = {
-    id: '00000000-0000-4000-8000-000000000020',
-    plan_id: UUID1,
-    child_id: UUID2,
-    day: 'monday',
-    slot: 'snack',
-    recipe_id: null,
-    item_id: null,
-    ingredients: ['Apple'],
-    created_at: '2026-05-02T11:00:00.000Z',
-    updated_at: '2026-05-02T11:00:01.000Z',
-  };
-
-  it('defaults item_sku_id to null when omitted', () => {
-    const parsed = PlanItemRowSchema.safeParse(baseRow);
-    expect(parsed.success).toBe(true);
-    if (parsed.success) {
-      expect(parsed.data.item_sku_id).toBeNull();
-    }
-  });
-
-  it('accepts a UUID item_sku_id', () => {
-    expect(
-      PlanItemRowSchema.safeParse({
-        ...baseRow,
-        item_sku_id: '00000000-0000-4000-8000-000000000099',
-      }).success,
-    ).toBe(true);
-  });
-
-  it('rejects a non-UUID item_sku_id', () => {
-    expect(
-      PlanItemRowSchema.safeParse({ ...baseRow, item_sku_id: 'not-a-uuid' }).success,
     ).toBe(false);
   });
 });

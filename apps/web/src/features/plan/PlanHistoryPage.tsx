@@ -27,6 +27,9 @@ function toPlanTileSummaries(items: ReadonlyArray<PlanItemRow>): PlanTileSummary
       day,
       paused: dayItems.length > 0 && dayItems.every((it) => it.paused_at !== null),
       lunch_link_suppressed_children: [],
+      // Story 4-S4: history surface doesn't render per-tile ratings (Layer 1
+      // ratings exposed via PlanHistoryResponse.ratings instead).
+      child_ratings: {},
       items: dayItems.map((it) => ({
         plan_item_id: it.id,
         child_id: it.child_id,

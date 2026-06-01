@@ -15,6 +15,7 @@ function briefResponse() {
       moment_headline: 'A quiet week, with one small surprise.',
       lumi_note: 'Tuesday flexes around your late meeting.',
       memory_prose: '',
+      cleared_allergies: [],
       plan_tile_summaries: [
         { day: 'monday',    items: [{ child_id: CHILD_ID, slot: 'main', ingredients: ['rice', 'beans'] }] },
         { day: 'tuesday',   items: [{ child_id: CHILD_ID, slot: 'main', ingredients: ['noodles', 'tofu', 'broccoli', 'sesame'] }] },
@@ -42,6 +43,13 @@ async function navigateToApp(page: import('@playwright/test').Page) {
       status: 200,
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(briefResponse()),
+    }),
+  );
+  await page.route('**/v1/plans*', (route) =>
+    route.fulfill({
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ plan: null, plan_items: [], is_draft: false, week_of: '2026-05-04' }),
     }),
   );
   await loginAndNavigate(page, '/app');

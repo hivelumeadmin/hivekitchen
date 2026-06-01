@@ -7,8 +7,13 @@ import { ZodError } from 'zod';
 import { authenticateHook } from '../../middleware/authenticate.hook.js';
 import { householdScopeHook } from '../../middleware/household-scope.hook.js';
 import { isDomainError } from '../../common/errors.js';
+import { encryptField } from '../../lib/envelope-encryption.js';
 import { heartNoteRoutes } from './heart-note.routes.js';
 import type { HeartNoteRow } from './heart-note.repository.js';
+
+function noop(plaintext: string): string {
+  return encryptField(plaintext, null);
+}
 
 const USER_ID = '11111111-1111-4111-8111-111111111111';
 const HOUSEHOLD_ID = '22222222-2222-4222-8222-222222222222';
@@ -18,27 +23,47 @@ const OTHER_HOUSEHOLD_ID = '55555555-5555-4555-8555-555555555555';
 const JWT_SECRET = 'a'.repeat(32);
 
 function sampleRow(overrides: Partial<HeartNoteRow> = {}): HeartNoteRow {
-  return {
+  // The repository now decrypts row.content on the way out — DB mocks must
+  // return NOOP-encoded ciphertext so the routes' read paths can decrypt
+  // back to plaintext. The override values below are pre-wrapped via noop().
+  const base: HeartNoteRow = {
     id: NOTE_ID,
     household_id: HOUSEHOLD_ID,
     child_id: CHILD_ID,
     author_user_id: USER_ID,
-    content: '',
+    content: noop(''),
     status: 'draft',
     scheduled_for: null,
+    // Slice 4-S6 — new nullable scheduling outcome columns.
+    delivered_at: null,
+    cancelled_at: null,
     created_at: '2026-05-15T12:00:00.000Z',
     updated_at: '2026-05-15T12:00:00.000Z',
-    ...overrides,
   };
+  const merged = { ...base, ...overrides };
+  // If a test overrides content with a plaintext sentinel (no NOOP: prefix),
+  // wrap it so the repository can decrypt successfully.
+  if (overrides.content !== undefined && !merged.content.startsWith('NOOP:')) {
+    merged.content = noop(overrides.content);
+  }
+  return merged;
 }
 
 interface MockOpts {
   insertResult?: HeartNoteRow;
   insertError?: unknown;
+  // findResult — returned by findByChildAndDate / findForDelivery (3-eq chain
+  // with order+limit), AND by findById (2-eq chain) when findByIdResult is
+  // not supplied. Default is null.
   findResult?: HeartNoteRow | null;
+  // findByIdResult — when set, this is what findById returns. Falls back to
+  // findResult when undefined so existing tests keep working.
+  findByIdResult?: HeartNoteRow | null;
   findError?: unknown;
   patchResult?: HeartNoteRow | null;
   patchError?: unknown;
+  // listResult — returned by listByHousehold (no maybeSingle, awaited).
+  listResult?: HeartNoteRow[];
   // childExists: true = child belongs to the caller's household (default).
   // Set false to simulate a cross-household child_id rejection.
   childExists?: boolean;
@@ -49,18 +74,8 @@ function buildMockSupabase(opts: MockOpts) {
   return {
     from(table: string) {
       if (table === 'children') {
-        // childBelongsToHousehold: SELECT id … .eq(id).eq(household_id).maybeSingle()
         return {
-          select: () => ({
-            eq: () => ({
-              eq: () => ({
-                maybeSingle: vi.fn().mockResolvedValue({
-                  data: childExists ? { id: CHILD_ID } : null,
-                  error: null,
-                }),
-              }),
-            }),
-          }),
+          select: () => buildChildrenChain(childExists),
         };
       }
       if (table === 'heart_notes') {
@@ -73,36 +88,8 @@ function buildMockSupabase(opts: MockOpts) {
               }),
             }),
           }),
-          select: () => ({
-            eq: () => ({
-              eq: () => ({
-                gte: () => ({
-                  lt: () => ({
-                    order: () => ({
-                      limit: () => ({
-                        maybeSingle: vi.fn().mockResolvedValue({
-                          data: opts.findResult ?? null,
-                          error: opts.findError ?? null,
-                        }),
-                      }),
-                    }),
-                  }),
-                }),
-              }),
-            }),
-          }),
-          update: () => ({
-            eq: () => ({
-              eq: () => ({
-                select: () => ({
-                  maybeSingle: vi.fn().mockResolvedValue({
-                    data: opts.patchResult ?? null,
-                    error: opts.patchError ?? null,
-                  }),
-                }),
-              }),
-            }),
-          }),
+          select: () => buildHeartNotesSelectChain(opts),
+          update: () => buildHeartNotesUpdateChain(opts),
         };
       }
       if (table === 'audit_log') {
@@ -113,6 +100,109 @@ function buildMockSupabase(opts: MockOpts) {
       throw new Error(`unexpected table ${table}`);
     },
   };
+}
+
+interface SelectChain {
+  eq: (col: string, val: unknown) => SelectChain;
+  gte: (col: string, val: unknown) => SelectChain;
+  lt: (col: string, val: unknown) => SelectChain;
+  in: (col: string, vals: unknown[]) => SelectChain;
+  order: (col: string, options: { ascending: boolean }) => SelectChain;
+  limit: (n: number) => SelectChain;
+  maybeSingle: () => Promise<{ data: unknown; error: unknown }>;
+  then: (resolve: (value: { data: unknown; error: unknown }) => void) => void;
+}
+
+// Flexible chain supporting:
+//   .eq().eq().maybeSingle()                              (findById — 2 eq, no gte/lt)
+//   .eq().eq().gte().lt().order().limit().maybeSingle()   (findByChildAndDate — 2 eq + gte/lt)
+//   .eq().eq().eq().order().limit().maybeSingle()         (findForDelivery — 3 eq)
+//   .eq().order().order().limit() (awaited)               (listByHousehold)
+function buildHeartNotesSelectChain(opts: MockOpts): SelectChain {
+  let gteCalled = false;
+  const chain: SelectChain = {
+    eq(_col: string, _val: unknown) {
+      return chain;
+    },
+    gte(_col: string, _val: unknown) {
+      gteCalled = true;
+      return chain;
+    },
+    lt(_col: string, _val: unknown) {
+      return chain;
+    },
+    in(_col: string, _vals: unknown[]) {
+      return chain;
+    },
+    order(_col: string, _options: { ascending: boolean }) {
+      return chain;
+    },
+    limit(_n: number) {
+      return chain;
+    },
+    maybeSingle: vi.fn().mockImplementation(async () => {
+      // findByChildAndDate uses gte/lt (creation-date range); findById and
+      // findForDelivery use only .eq() calls.
+      // Default findByIdResult to patchResult so PATCH tests that only set
+      // patchResult get a non-null pre-fetch result automatically.
+      const isFindById = !gteCalled;
+      const data = isFindById
+        ? opts.findByIdResult !== undefined
+          ? opts.findByIdResult
+          : opts.patchResult !== undefined
+            ? opts.patchResult
+            : opts.findResult ?? null
+        : opts.findResult ?? null;
+      return { data, error: opts.findError ?? null };
+    }),
+    then(resolve: (value: { data: unknown; error: unknown }) => void) {
+      // Awaited directly == listByHousehold.
+      resolve({ data: opts.listResult ?? [], error: opts.findError ?? null });
+    },
+  };
+  return chain;
+}
+
+interface UpdateChain {
+  eq: (col: string, val: unknown) => UpdateChain;
+  select: (cols: string) => {
+    maybeSingle: () => Promise<{ data: unknown; error: unknown }>;
+  };
+}
+
+function buildHeartNotesUpdateChain(opts: MockOpts): UpdateChain {
+  const chain: UpdateChain = {
+    eq(_col: string, _val: unknown) {
+      return chain;
+    },
+    select(_cols: string) {
+      return {
+        maybeSingle: vi.fn().mockResolvedValue({
+          data: opts.patchResult ?? null,
+          error: opts.patchError ?? null,
+        }),
+      };
+    },
+  };
+  return chain;
+}
+
+interface ChildrenChain {
+  eq: (col: string, val: unknown) => ChildrenChain;
+  maybeSingle: () => Promise<{ data: unknown; error: unknown }>;
+}
+
+function buildChildrenChain(childExists: boolean): ChildrenChain {
+  const chain: ChildrenChain = {
+    eq(_col: string, _val: unknown) {
+      return chain;
+    },
+    maybeSingle: vi.fn().mockResolvedValue({
+      data: childExists ? { id: CHILD_ID } : null,
+      error: null,
+    }),
+  };
+  return chain;
 }
 
 async function buildTestApp(
@@ -374,5 +464,164 @@ describe('PATCH /v1/heart-notes/:id', () => {
     });
 
     expect(res.statusCode).toBe(401);
+  });
+
+  it('200 — transitions draft → scheduled when scheduled_for is set', async () => {
+    const existing = sampleRow({ status: 'draft' });
+    const updated = sampleRow({ status: 'scheduled', scheduled_for: '2026-05-30' });
+    app = await buildTestApp(
+      buildMockSupabase({ findByIdResult: existing, patchResult: updated }),
+    );
+    const token = signToken(app);
+
+    const res = await app.inject({
+      method: 'PATCH',
+      url: `/v1/heart-notes/${NOTE_ID}`,
+      headers: { authorization: `Bearer ${token}` },
+      payload: { scheduled_for: '2026-05-30' },
+    });
+
+    expect(res.statusCode).toBe(200);
+    const body = JSON.parse(res.body) as { note: HeartNoteRow };
+    expect(body.note.status).toBe('scheduled');
+    expect(body.note.scheduled_for).toBe('2026-05-30');
+  });
+
+  it('409 — returns 409 when patching a delivered note', async () => {
+    app = await buildTestApp(
+      buildMockSupabase({
+        findByIdResult: sampleRow({
+          status: 'delivered',
+          delivered_at: '2026-05-28T06:00:00.000Z',
+        }),
+      }),
+    );
+    const token = signToken(app);
+
+    const res = await app.inject({
+      method: 'PATCH',
+      url: `/v1/heart-notes/${NOTE_ID}`,
+      headers: { authorization: `Bearer ${token}` },
+      payload: { content: 'too late' },
+    });
+
+    expect(res.statusCode).toBe(409);
+    const body = JSON.parse(res.body) as { type: string };
+    expect(body.type).toBe('/errors/conflict');
+  });
+
+  it('400 — rejects explicit status=delivered on the wire', async () => {
+    app = await buildTestApp(buildMockSupabase({ patchResult: sampleRow() }));
+    const token = signToken(app);
+
+    const res = await app.inject({
+      method: 'PATCH',
+      url: `/v1/heart-notes/${NOTE_ID}`,
+      headers: { authorization: `Bearer ${token}` },
+      payload: { status: 'delivered' },
+    });
+
+    expect(res.statusCode).toBe(400);
+  });
+});
+
+describe('GET /v1/heart-notes/history', () => {
+  let app: FastifyInstance;
+  afterEach(async () => {
+    if (app) await app.close();
+  });
+
+  it('200 — returns notes array for the caller household', async () => {
+    const notes = [
+      sampleRow({
+        id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+        status: 'scheduled',
+        scheduled_for: '2026-05-30',
+        content: noop('one'),
+      }),
+      sampleRow({
+        id: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+        status: 'delivered',
+        delivered_at: '2026-05-27T06:00:00.000Z',
+        scheduled_for: '2026-05-27',
+        content: noop('two'),
+      }),
+    ];
+    app = await buildTestApp(buildMockSupabase({ listResult: notes }));
+    const token = signToken(app);
+
+    const res = await app.inject({
+      method: 'GET',
+      url: '/v1/heart-notes/history',
+      headers: { authorization: `Bearer ${token}` },
+    });
+
+    expect(res.statusCode).toBe(200);
+    const body = JSON.parse(res.body) as { notes: HeartNoteRow[] };
+    expect(body.notes).toHaveLength(2);
+    expect(body.notes.map((n) => n.content).sort()).toEqual(['one', 'two']);
+  });
+
+  it('200 — empty array when household has no notes', async () => {
+    app = await buildTestApp(buildMockSupabase({ listResult: [] }));
+    const token = signToken(app);
+
+    const res = await app.inject({
+      method: 'GET',
+      url: '/v1/heart-notes/history',
+      headers: { authorization: `Bearer ${token}` },
+    });
+
+    expect(res.statusCode).toBe(200);
+    const body = JSON.parse(res.body) as { notes: HeartNoteRow[] };
+    expect(body.notes).toEqual([]);
+  });
+
+  it('401 without bearer token', async () => {
+    app = await buildTestApp(buildMockSupabase({ listResult: [] }));
+
+    const res = await app.inject({
+      method: 'GET',
+      url: '/v1/heart-notes/history',
+    });
+
+    expect(res.statusCode).toBe(401);
+  });
+
+  it('200 — ?status=scheduled passes through to the service filter', async () => {
+    const notes = [
+      sampleRow({
+        id: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc',
+        status: 'scheduled',
+        scheduled_for: '2026-05-30',
+        content: noop('filtered'),
+      }),
+    ];
+    app = await buildTestApp(buildMockSupabase({ listResult: notes }));
+    const token = signToken(app);
+
+    const res = await app.inject({
+      method: 'GET',
+      url: '/v1/heart-notes/history?status=scheduled',
+      headers: { authorization: `Bearer ${token}` },
+    });
+
+    expect(res.statusCode).toBe(200);
+    const body = JSON.parse(res.body) as { notes: HeartNoteRow[] };
+    expect(body.notes).toHaveLength(1);
+    expect(body.notes[0]?.status).toBe('scheduled');
+  });
+
+  it('400 — rejects unknown status enum value', async () => {
+    app = await buildTestApp(buildMockSupabase({ listResult: [] }));
+    const token = signToken(app);
+
+    const res = await app.inject({
+      method: 'GET',
+      url: '/v1/heart-notes/history?status=not-a-valid-status',
+      headers: { authorization: `Bearer ${token}` },
+    });
+
+    expect(res.statusCode).toBe(400);
   });
 });

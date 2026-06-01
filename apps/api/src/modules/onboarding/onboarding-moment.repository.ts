@@ -16,6 +16,11 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 // `current_moment` is `text` with a DB CHECK constraint matching the 8
 // valid values; the TS type-alias mirrors them so a typo in the service
 // layer fails to compile rather than 23514-ing at write time.
+//
+// Slice 2.6-s6 — extended with cold_start_triggered + cold_start_trigger_reason
+// columns. These are sticky once set; callers must always carry forward
+// the pre-turn value when upserting so routine moment advances don't
+// accidentally reset the flag.
 // ===========================================================================
 
 export type CurrentMoment =
@@ -39,12 +44,19 @@ export interface RequiredSetStatus {
 export interface MomentState {
   current_moment: CurrentMoment;
   required_set_status: RequiredSetStatus;
+  // Slice 2.6-s6 — cold-start fallback flag. False on rows that predate
+  // the migration. Sticky: once true, the service must carry it forward
+  // on every subsequent upsertState.
+  cold_start_triggered: boolean;
+  cold_start_trigger_reason: string | null;
 }
 
 interface MomentStateRow {
   household_id: string;
   current_moment: CurrentMoment | null;
   required_set_status: Partial<RequiredSetStatus> | null;
+  cold_start_triggered: boolean | null;
+  cold_start_trigger_reason: string | null;
 }
 
 const EMPTY_REQUIRED_SET: RequiredSetStatus = {
@@ -75,7 +87,9 @@ export class OnboardingMomentRepository {
   async getState(householdId: string): Promise<MomentState | null> {
     const { data, error } = await this.client
       .from('onboarding_moment_state')
-      .select('household_id, current_moment, required_set_status')
+      .select(
+        'household_id, current_moment, required_set_status, cold_start_triggered, cold_start_trigger_reason',
+      )
       .eq('household_id', householdId)
       .maybeSingle();
 
@@ -88,6 +102,8 @@ export class OnboardingMomentRepository {
     return {
       current_moment: row.current_moment ?? 'pre_start',
       required_set_status: normalizeRequiredSet(row.required_set_status),
+      cold_start_triggered: row.cold_start_triggered === true,
+      cold_start_trigger_reason: row.cold_start_trigger_reason ?? null,
     };
   }
 
@@ -165,18 +181,40 @@ export class OnboardingMomentRepository {
     };
   }
 
-  async upsertState(householdId: string, state: MomentState): Promise<void> {
+  /**
+   * Slice 2.6-s6 — `update.cold_start_triggered` is OPTIONAL but, in
+   * practice, the OnboardingService callsite always passes the carried-
+   * forward pre-turn value. When omitted, the column gets its DEFAULT
+   * (false) on INSERT; on UPDATE (conflict), the existing value is
+   * preserved — Supabase excludes absent columns from the
+   * ON CONFLICT DO UPDATE SET clause. Same pattern for
+   * cold_start_trigger_reason.
+   */
+  async upsertState(
+    householdId: string,
+    update: {
+      current_moment: CurrentMoment;
+      required_set_status: RequiredSetStatus;
+      cold_start_triggered?: boolean;
+      cold_start_trigger_reason?: string | null;
+    },
+  ): Promise<void> {
+    const payload: Record<string, unknown> = {
+      household_id: householdId,
+      current_moment: update.current_moment,
+      required_set_status: update.required_set_status,
+      updated_at: new Date().toISOString(),
+    };
+    if (update.cold_start_triggered !== undefined) {
+      payload['cold_start_triggered'] = update.cold_start_triggered;
+    }
+    if (update.cold_start_trigger_reason !== undefined) {
+      payload['cold_start_trigger_reason'] = update.cold_start_trigger_reason;
+    }
+
     const { error } = await this.client
       .from('onboarding_moment_state')
-      .upsert(
-        {
-          household_id: householdId,
-          current_moment: state.current_moment,
-          required_set_status: state.required_set_status,
-          updated_at: new Date().toISOString(),
-        },
-        { onConflict: 'household_id' },
-      );
+      .upsert(payload, { onConflict: 'household_id' });
 
     if (error !== null && error !== undefined) {
       throw new Error(`onboarding_moment_state.upsertState: ${error.message}`);

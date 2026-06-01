@@ -15,6 +15,7 @@ function briefResponse(overrides: Record<string, unknown> = {}) {
       moment_headline: 'A quiet week, with one small surprise.',
       lumi_note: 'Tuesday flexes around your late meeting.',
       memory_prose: '',
+      cleared_allergies: [],
       plan_tile_summaries: [
         { day: 'monday',    items: [{ child_id: CHILD_ID, slot: 'main', ingredients: ['rice', 'beans'] }] },
         { day: 'tuesday',   items: [{ child_id: CHILD_ID, slot: 'main', ingredients: ['noodles'] }] },
@@ -42,6 +43,15 @@ async function mockAcknowledgedProfile(page: import('@playwright/test').Page) {
 
 async function navigateToApp(page: import('@playwright/test').Page) {
   await mockAcknowledgedProfile(page);
+  // pre-4-s3: BriefCanvas now calls usePlanQuery on every mount. Mock the
+  // plans endpoint so E2E tests don't hit a real (absent) API server.
+  await page.route('**/v1/plans*', (route) =>
+    route.fulfill({
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ plan: null, plan_items: [], is_draft: false, week_of: '2026-05-04' }),
+    }),
+  );
   await loginAndNavigate(page, '/app');
   // Wait for the compliance gate to hydrate from /v1/users/me so BriefCanvas mounts.
   await page.waitForResponse('**/v1/users/me');
@@ -113,9 +123,9 @@ test.describe('Story 3-8: BriefCanvas', () => {
 
     // Plan grid still renders — no crash
     await expect(page.getByLabel('Weekly plan')).toBeVisible();
-    // sr-only h1 is in the DOM (visually hidden landmark)
-    const h1 = page.getByRole('heading', { level: 1, name: 'Weekly plan' });
-    await expect(h1).toBeAttached();
+    // PageHeader renders fallback h1 when moment_headline is empty
+    const h1 = page.getByRole('heading', { level: 1, name: 'Your week, ready' });
+    await expect(h1).toBeVisible();
     // LumiNote returns null for empty text — no border-left paragraph
     await expect(page.locator('[class*="border-s-4"]')).toHaveCount(0);
   });

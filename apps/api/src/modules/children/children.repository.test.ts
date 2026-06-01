@@ -46,8 +46,10 @@ function rowFixture(overrides: Record<string, unknown> = {}): Record<string, unk
     declared_allergens: 'NOOP:W10=', // NOOP-prefixed base64('[]')
     cultural_identifiers: 'NOOP:W10=',
     dietary_preferences: 'NOOP:W10=',
-    allergen_rule_version: '1',
-    bag_composition: { main: true, snack: true, extra: true },
+    appetite_level: 'normal',
+    texture_needs: 'normal',
+    spice_tolerance: 'mild',
+    bag_composition_pattern: 'main_plus_snack_plus_extra',
     created_at: '2026-05-21T00:00:00.000Z',
     ...overrides,
   };

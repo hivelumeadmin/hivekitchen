@@ -158,7 +158,6 @@ export async function trySurgicalSwap(opts: {
         ingredients: [...item.ingredients],
         ...(item.recipe_id !== undefined ? { recipe_id: item.recipe_id } : {}),
         ...(item.item_id !== undefined ? { item_id: item.item_id } : {}),
-        ...(item.item_sku_id !== undefined ? { item_sku_id: item.item_sku_id } : {}),
       });
     }
   }

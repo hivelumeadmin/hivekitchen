@@ -1,17 +1,20 @@
 import { useState, useEffect } from 'react';
 import { useParams } from 'react-router-dom';
-import { hkFetch } from '@/lib/fetch.js';
-import type { LunchLinkDevResponse } from '@hivekitchen/contracts';
+import { hkFetch, publicGet, publicPost } from '@/lib/fetch.js';
+import type {
+  LunchLinkDevResponse,
+  LunchLinkPayload,
+  LunchLinkExpiredPayload,
+} from '@hivekitchen/contracts';
 import { FeedbackBlock } from '@/features/lunch-link/components/FeedbackBlock.js';
 import { HeartNoteCard } from '@/features/lunch-link/components/HeartNoteCard.js';
 import { LunchSummary } from '@/features/lunch-link/components/LunchSummary.js';
 import { MumNoteSalutation } from '@/features/lunch-link/components/MumNoteSalutation.js';
 import type { RatingOption } from '@/features/lunch-link/data/mockData.js';
 
-type LoadState = 'loading' | 'invalid-link' | 'error' | 'loaded';
+type LoadState = 'loading' | 'invalid-link' | 'error' | 'loaded' | 'expired';
 
 // Stub link format for slice 4-S2: `test-{UUID:36}-{YYYY-MM-DD:10}` = 52 chars.
-// Real HMAC-signed tokens ship in 4-S3 and will replace this parser.
 function parseStubLinkId(linkId: string): { childId: string; date: string } | null {
   if (!linkId.startsWith('test-') || linkId.length !== 52) return null;
   // Char at index 41 separates the UUID and the date — without this guard a
@@ -32,6 +35,21 @@ function parseStubLinkId(linkId: string): { childId: string; date: string } | nu
   return { childId, date };
 }
 
+// Slice 4-S3 — real HMAC token: `{base64url(payload)}.{64 hex chars}`.
+// base64url alphabet contains no `.` so the last dot unambiguously splits
+// the encoded payload from the 64-char hex signature.
+function isHmacToken(linkId: string): boolean {
+  const dotIdx = linkId.lastIndexOf('.');
+  if (dotIdx === -1) return false;
+  const encodedPart = linkId.slice(0, dotIdx);
+  const sigPart = linkId.slice(dotIdx + 1);
+  return (
+    encodedPart.length > 0 &&
+    /^[A-Za-z0-9_-]+$/.test(encodedPart) &&
+    /^[0-9a-f]{64}$/.test(sigPart)
+  );
+}
+
 // Use noon local time to dodge the DST edge case where midnight in a negative
 // UTC offset rolls the date back a day.
 function formatDateLabel(isoDate: string): string {
@@ -48,43 +66,160 @@ const RATING_OPTIONS = [
   { id: 'not-really', emoji: '😕', label: 'Not really' },
 ] as const satisfies readonly RatingOption[];
 
+const RATING_EMOJIS: Record<string, string> = {
+  loved: '😋',
+  ok: '🙂',
+  'not-really': '😕',
+};
+
+type LoadedPayload = {
+  childName: string;
+  date: string;
+  heartNote: { body: string; authorDisplayName: string } | null;
+  bag: { name: string; sub: string; safetyNote: string };
+  rating?: 'loved' | 'ok' | 'not-really' | null;
+};
+
 // Child-scope surface. AppLayout suppresses the LumiOrb/LumiPanel for /lunch/*
 // routes (via useMatch); chrome (AppHeader/AppFooter) is intentionally kept so
 // a parent peeking at the link recognizes the family of surfaces.
 export default function LunchLinkRoute() {
   const { linkId } = useParams<{ linkId: string }>();
-  const parsed = linkId ? parseStubLinkId(linkId) : null;
+  const stubParsed = linkId ? parseStubLinkId(linkId) : null;
+  const isStub = stubParsed !== null;
+  const isHmac = linkId !== undefined && !isStub && isHmacToken(linkId);
 
-  const [loadState, setLoadState] = useState<LoadState>(parsed ? 'loading' : 'invalid-link');
-  const [data, setData] = useState<LunchLinkDevResponse | null>(null);
+  const [loadState, setLoadState] = useState<LoadState>(
+    isStub || isHmac ? 'loading' : 'invalid-link',
+  );
+  const [data, setData] = useState<LoadedPayload | null>(null);
+  const [expiredSnapshot, setExpiredSnapshot] = useState<
+    LunchLinkExpiredPayload['last_state_snapshot'] | null
+  >(null);
+  // Offline support (4-S10): when the SW serves a cached SPA shell but the
+  // cross-origin API is unreachable, fall back to a localStorage snapshot.
+  // `lastSyncedAt` is non-null only when the render is served from cache.
+  // The badge is only visible when both conditions hold: cached data AND offline.
+  const [isOnline, setIsOnline] = useState(
+    typeof navigator !== 'undefined' ? navigator.onLine : true,
+  );
+  const [lastSyncedAt, setLastSyncedAt] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!parsed) return;
+    const handleOnline = () => {
+      setIsOnline(true);
+      if (!linkId) return;
+      const pendingKey = `lunch-link-pending-rating.${linkId}`;
+      const raw = localStorage.getItem(pendingKey);
+      if (raw === null) return;
+      try {
+        const { rating } = JSON.parse(raw) as {
+          rating: 'loved' | 'ok' | 'not-really';
+        };
+        void publicPost(`/v1/lunch-link/${linkId}/rate`, { rating }).then(() => {
+          localStorage.removeItem(pendingKey);
+        });
+      } catch {
+        localStorage.removeItem(pendingKey);
+      }
+    };
+    const handleOffline = () => setIsOnline(false);
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+    };
+  }, [linkId]);
+
+  useEffect(() => {
+    if (!linkId) return;
     let isMounted = true;
-    setLoadState('loading');
-    hkFetch<LunchLinkDevResponse>(
-      `/v1/lunch-link-dev/${parsed.childId}/${parsed.date}`,
-      { method: 'GET' },
-    )
-      .then((res) => {
-        if (isMounted) {
+
+    if (isStub && stubParsed) {
+      setLoadState('loading');
+      hkFetch<LunchLinkDevResponse>(
+        `/v1/lunch-link-dev/${stubParsed.childId}/${stubParsed.date}`,
+        { method: 'GET' },
+      )
+        .then((res) => {
+          if (!isMounted) return;
           setData(res);
           setLoadState('loaded');
-        }
-      })
-      .catch(() => {
-        if (isMounted) setLoadState('error');
-      });
+        })
+        .catch(() => {
+          if (isMounted) setLoadState('error');
+        });
+    } else if (isHmac) {
+      setLoadState('loading');
+      publicGet(`/v1/lunch-link/${linkId}`)
+        .then(({ status, body }) => {
+          if (!isMounted) return;
+          if (status === 200) {
+            const payload = body as LoadedPayload;
+            setData(payload);
+            setLoadState('loaded');
+            const cacheEntry = JSON.stringify({
+              payload,
+              at: new Date().toISOString(),
+            });
+            try {
+              localStorage.setItem(`lunch-link-cache.${linkId}`, cacheEntry);
+              // Freshly loaded from network — suppress the "last synced" badge.
+              setLastSyncedAt(null);
+            } catch {
+              // localStorage write failure (quota) is non-fatal.
+            }
+          } else if (status === 410) {
+            const snapshot = (body as LunchLinkExpiredPayload).last_state_snapshot;
+            if (snapshot !== undefined && snapshot !== null) {
+              setExpiredSnapshot(snapshot);
+              setLoadState('expired');
+            } else {
+              setLoadState('error');
+            }
+          } else if (status === 404) {
+            setLoadState('invalid-link');
+          } else {
+            setLoadState('error');
+          }
+        })
+        .catch(() => {
+          if (!isMounted) return;
+          if (!navigator.onLine) {
+            const raw = localStorage.getItem(`lunch-link-cache.${linkId}`);
+            if (raw !== null) {
+              try {
+                const { payload, at } = JSON.parse(raw) as {
+                  payload: LoadedPayload;
+                  at: string;
+                };
+                setData(payload);
+                setLastSyncedAt(at);
+                setLoadState('loaded');
+                return;
+              } catch {
+                // Corrupt cache — fall through to error state.
+              }
+            }
+          }
+          setLoadState('error');
+        });
+    }
+
     return () => {
       isMounted = false;
     };
-  }, [parsed?.childId, parsed?.date]);
+  }, [linkId, isStub, isHmac, stubParsed?.childId, stubParsed?.date]);
 
   if (loadState === 'invalid-link') {
     return <LunchLinkErrorState message="This link doesn't look right." />;
   }
   if (loadState === 'loading') {
     return <LunchLinkLoadingState />;
+  }
+  if (loadState === 'expired' && expiredSnapshot !== null) {
+    return <LunchLinkExpiredState snapshot={expiredSnapshot} />;
   }
   if (loadState === 'error' || data === null) {
     return <LunchLinkErrorState message="Couldn't load this lunch link. Please try again." />;
@@ -93,10 +228,39 @@ export default function LunchLinkRoute() {
   const { childName, date, heartNote, bag } = data;
   const dateLabel = formatDateLabel(date);
 
+  // Slice 4-S4: fire-and-forget rating submission. The FeedbackBlock locks
+  // immediately on tap regardless of API outcome.
+  // Slice 4-S10: on offline failure, queue the rating in localStorage so the
+  // `online` listener can replay the POST when connectivity restores.
+  const handleRate = (rating: 'loved' | 'ok' | 'not-really') => {
+    if (!linkId || !isHmac) return;
+    void publicPost(`/v1/lunch-link/${linkId}/rate`, { rating }).catch(() => {
+      if (!navigator.onLine) {
+        try {
+          localStorage.setItem(
+            `lunch-link-pending-rating.${linkId}`,
+            JSON.stringify({ rating, linkId }),
+          );
+        } catch {
+          // Best-effort retry — quota failures are non-fatal.
+        }
+      }
+    });
+  };
+
   return (
     <main className="flex w-full flex-grow items-center justify-center px-4 py-8 sm:py-12">
       <div className="w-full max-w-md space-y-8">
         <MumNoteSalutation title="A note from Parent" date={dateLabel} />
+        {lastSyncedAt !== null && !isOnline && (
+          <p className="text-center text-xs text-fg-muted/50">
+            offline · last synced{' '}
+            {new Date(lastSyncedAt).toLocaleTimeString(undefined, {
+              hour: '2-digit',
+              minute: '2-digit',
+            })}
+          </p>
+        )}
         <HeartNoteCard
           body={(heartNote?.body?.trim() ? heartNote.body : null) ?? 'No note today — check back soon'}
           from={heartNote ? `— ${heartNote.authorDisplayName}` : ''}
@@ -113,6 +277,47 @@ export default function LunchLinkRoute() {
           question={`How was lunch, ${childName}?`}
           options={RATING_OPTIONS}
           hint="Tap one. That's all."
+          onRate={isHmac ? handleRate : undefined}
+          lockedRating={
+            isHmac ? ((data as LunchLinkPayload).rating ?? undefined) : undefined
+          }
+        />
+      </div>
+    </main>
+  );
+}
+
+function LunchLinkExpiredState({
+  snapshot,
+}: {
+  readonly snapshot: LunchLinkExpiredPayload['last_state_snapshot'];
+}) {
+  return (
+    <main className="flex w-full flex-grow items-center justify-center px-4 py-8 sm:py-12">
+      <div className="w-full max-w-md space-y-8">
+        <p className="text-center text-sm text-fg-muted">This link closed at 8pm</p>
+        <HeartNoteCard
+          body={
+            (snapshot.heartNote?.body?.trim() ? snapshot.heartNote.body : null) ??
+            'No note for this day'
+          }
+          from={snapshot.heartNote ? `— ${snapshot.heartNote.authorDisplayName}` : ''}
+        />
+        {snapshot.rating != null && (
+          <p
+            className="text-center text-4xl"
+            aria-label={`Child rated: ${snapshot.rating}`}
+          >
+            {RATING_EMOJIS[snapshot.rating]}
+          </p>
+        )}
+        <LunchSummary
+          lunch={{
+            eyebrow: "Today's Lunch",
+            name: snapshot.bag.name,
+            sub: snapshot.bag.sub,
+            safetyBadge: snapshot.bag.safetyNote,
+          }}
         />
       </div>
     </main>

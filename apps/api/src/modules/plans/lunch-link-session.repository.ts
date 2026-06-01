@@ -121,4 +121,37 @@ export class LunchLinkSessionRepository extends BaseRepository {
     }
     return map;
   }
+
+  // Slice 4-S4: per-child rating map for brief_state.composer. Returns a map
+  // of date → Map<child_id, rating> for all rated sessions in the given range.
+  // Parallels findSuppressedChildrenInRange — same query pattern, different column.
+  async findRatingsInRange(
+    householdId: string,
+    dateFrom: string,
+    dateTo: string,
+  ): Promise<Map<string, Map<string, 'loved' | 'ok' | 'not-really'>>> {
+    const { data, error } = await this.client
+      .from('lunch_link_sessions')
+      .select('date, child_id, rating')
+      .eq('household_id', householdId)
+      .gte('date', dateFrom)
+      .lte('date', dateTo)
+      .not('rating', 'is', null);
+    if (error) throw error;
+    const rows = (data ?? []) as Array<{
+      date: string;
+      child_id: string;
+      rating: 'loved' | 'ok' | 'not-really';
+    }>;
+    const map = new Map<string, Map<string, 'loved' | 'ok' | 'not-really'>>();
+    for (const row of rows) {
+      let entry = map.get(row.date);
+      if (entry === undefined) {
+        entry = new Map();
+        map.set(row.date, entry);
+      }
+      entry.set(row.child_id, row.rating);
+    }
+    return map;
+  }
 }

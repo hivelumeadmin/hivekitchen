@@ -40,14 +40,45 @@ function makeLogger(): FastifyBaseLogger {
   } as unknown as FastifyBaseLogger;
 }
 
+// Slice 2.6-s6 — relax the test-facing MomentState fixture so existing test
+// cases can keep their inline literals (most don't care about the
+// cold-start fields). buildService normalises this into the full MomentState
+// shape before constructing the service.
+type PartialMomentState = Omit<
+  MomentState,
+  'cold_start_triggered' | 'cold_start_trigger_reason'
+> & {
+  cold_start_triggered?: boolean;
+  cold_start_trigger_reason?: string | null;
+};
+
 interface BuildOpts {
   agentText: string;
-  preTurnMomentState?: MomentState | null;
+  preTurnMomentState?: PartialMomentState | null;
   countsOverride?: {
     household_name_set?: boolean;
     child_count?: number;
     child_allergen_count?: number;
     favorite_lunch_count?: number;
+  };
+  // Slice 2.6-s4 — optional CatalogProjectionService mock. When set, the
+  // service's submitTextTurn invokes getM5Chips at m5_starting_line. When
+  // undefined (legacy paths), chip_config falls back to whatever
+  // momentToChipConfig returned (null for M5 after this slice).
+  catalogProjectionGetM5Chips?:
+    | ReturnType<typeof vi.fn>
+    | (() => Promise<unknown>);
+}
+
+function normalizeMomentState(
+  raw: PartialMomentState | null | undefined,
+): MomentState | null {
+  if (raw === null || raw === undefined) return null;
+  return {
+    current_moment: raw.current_moment,
+    required_set_status: raw.required_set_status,
+    cold_start_triggered: raw.cold_start_triggered ?? false,
+    cold_start_trigger_reason: raw.cold_start_trigger_reason ?? null,
   };
 }
 
@@ -97,10 +128,17 @@ function buildService(opts: BuildOpts) {
   };
 
   const momentRepository = {
-    getState: vi.fn().mockResolvedValue(opts.preTurnMomentState ?? null),
+    getState: vi
+      .fn()
+      .mockResolvedValue(normalizeMomentState(opts.preTurnMomentState)),
     countRequiredSetSources: vi.fn().mockResolvedValue(counts),
     upsertState: vi.fn().mockResolvedValue(undefined),
   };
+
+  const catalogProjection =
+    opts.catalogProjectionGetM5Chips !== undefined
+      ? { getM5Chips: opts.catalogProjectionGetM5Chips }
+      : undefined;
 
   const deps: OnboardingServiceDeps = {
     threads: threads as unknown as OnboardingServiceDeps['threads'],
@@ -109,10 +147,12 @@ function buildService(opts: BuildOpts) {
     logger: makeLogger(),
     momentRepository:
       momentRepository as unknown as OnboardingServiceDeps['momentRepository'],
+    catalogProjection:
+      catalogProjection as unknown as OnboardingServiceDeps['catalogProjection'],
   };
 
   const service = new OnboardingService(deps);
-  return { service, threads, agent, momentRepository };
+  return { service, threads, agent, momentRepository, catalogProjection };
 }
 
 describe('renderMomentStateBlock', () => {
@@ -125,6 +165,8 @@ describe('renderMomentStateBlock', () => {
     expect(block).toContain('m5_favorite_count: 0');
     expect(block).toContain('m5_complete: false');
     expect(block).toContain('required_set_complete: false');
+    // Slice 2.6-s6 — null state defaults cold_start_triggered to false.
+    expect(block).toContain('cold_start_triggered: false');
   });
 
   it('renders an in-flight state with required_set_complete=true when all four booleans pass', () => {
@@ -137,10 +179,13 @@ describe('renderMomentStateBlock', () => {
         m5_favorite_count: 10,
         m5_complete: true,
       },
+      cold_start_triggered: false,
+      cold_start_trigger_reason: null,
     });
     expect(block).toContain('current_moment: summary');
     expect(block).toContain('m5_favorite_count: 10');
     expect(block).toContain('required_set_complete: true');
+    expect(block).toContain('cold_start_triggered: false');
   });
 
   it('renders required_set_complete=false when one required boolean is missing', () => {
@@ -153,8 +198,46 @@ describe('renderMomentStateBlock', () => {
         m5_favorite_count: 8,
         m5_complete: false,
       },
+      cold_start_triggered: false,
+      cold_start_trigger_reason: null,
     });
     expect(block).toContain('required_set_complete: false');
+  });
+
+  // Slice 2.6-s6 — cold-start fields render in the state block when the flag
+  // is set, so the agent can branch into the conversational M5 prompt.
+  it('renders cold_start_triggered=true with reason line when set (Slice 2.6-s6)', () => {
+    const block = renderMomentStateBlock({
+      current_moment: 'm5_starting_line',
+      required_set_status: {
+        m1_household_name: true,
+        m1_child_declared: true,
+        m2_allergen_response: true,
+        m5_favorite_count: 0,
+        m5_complete: false,
+      },
+      cold_start_triggered: true,
+      cold_start_trigger_reason: 'per_cuisine_floor',
+    });
+    expect(block).toContain('cold_start_triggered: true');
+    expect(block).toContain('cold_start_trigger_reason: per_cuisine_floor');
+  });
+
+  it('omits the reason line when cold_start_triggered=false (Slice 2.6-s6)', () => {
+    const block = renderMomentStateBlock({
+      current_moment: 'm1_table',
+      required_set_status: {
+        m1_household_name: false,
+        m1_child_declared: false,
+        m2_allergen_response: false,
+        m5_favorite_count: 0,
+        m5_complete: false,
+      },
+      cold_start_triggered: false,
+      cold_start_trigger_reason: null,
+    });
+    expect(block).toContain('cold_start_triggered: false');
+    expect(block).not.toContain('cold_start_trigger_reason:');
   });
 });
 
@@ -172,28 +255,10 @@ describe('momentToChipConfig', () => {
     expect(momentToChipConfig('finalized')).toBeNull();
   });
 
-  it('returns 18 multi-select chips for m5_starting_line (Slice 2.5-s9)', () => {
-    const config = momentToChipConfig('m5_starting_line');
-    expect(config).not.toBeNull();
-    expect(config?.mode).toBe('choice');
-    expect(config?.options).toHaveLength(18);
-    // M5 is a required-response gate — NOT skippable.
-    expect(config?.skip_label).toBeUndefined();
-    expect(config?.hints).toBeUndefined();
-    // First two chips match the South-Asian-leaning leading prompts in
-    // Moment5Page.tsx exactly so the agent's key→label lookup table stays
-    // in sync.
-    expect(config?.options?.[0]).toEqual({ key: 'paratha-roll', label: 'Paratha roll' });
-    expect(config?.options?.[1]).toEqual({ key: 'dal-rice-thermos', label: 'Dal + rice (thermos)' });
-  });
-
-  it('does NOT include override_fewer in the static M5 chip list (Slice 2.5-s9)', () => {
-    // override_fewer is appended dynamically in submitTextTurn when
-    // counts.favorite_lunch_count >= 4; it must never appear in the static
-    // catalog (otherwise it would show up at count 0, breaking the gate).
-    const config = momentToChipConfig('m5_starting_line');
-    const keys = config?.options?.map((o) => o.key) ?? [];
-    expect(keys).not.toContain('override_fewer');
+  it("momentToChipConfig('m5_starting_line') returns null (Slice 2.6-s4)", () => {
+    // The static 18-chip catalog was deleted in 2.6-s4. M5 chips are now
+    // injected dynamically in submitTextTurn from CatalogProjectionService.
+    expect(momentToChipConfig('m5_starting_line')).toBeNull();
   });
 
   it('returns 4 single-select chips for m4_bag matching BagCompositionPattern (Slice 2.5-s8)', () => {
@@ -394,7 +459,85 @@ describe('OnboardingService.submitTextTurn — chip_config passthrough', () => {
     expect(result.chip_config).toBeNull();
   });
 
-  it('returns the M5 choice chip set (no override_fewer) for m5_starting_line when count < 4 (Slice 2.5-s9)', async () => {
+  it('submitTextTurn injects personalized chips at m5_starting_line from CatalogProjectionService (Slice 2.6-s4)', async () => {
+    const personalized = [
+      { key: 'r-1', label: 'Anjero + suqaar', provenance: 'inferred' as const },
+      { key: 'r-2', label: 'Bariis iskukaris', provenance: 'declared' as const },
+      { key: 'r-3', label: 'Date bread + halib', provenance: 'parent_added' as const },
+    ];
+    const getM5Chips = vi
+      .fn()
+      .mockResolvedValue({ chips: personalized, coldStartReason: null });
+    const { service } = buildService({
+      agentText: 'pick favorites.',
+      preTurnMomentState: {
+        current_moment: 'm5_starting_line',
+        required_set_status: {
+          m1_household_name: true,
+          m1_child_declared: true,
+          m2_allergen_response: true,
+          m5_favorite_count: 0,
+          m5_complete: false,
+        },
+        cold_start_triggered: false,
+        cold_start_trigger_reason: null,
+      },
+      catalogProjectionGetM5Chips: getM5Chips,
+    });
+    const result = await service.submitTextTurn({
+      userId: USER_ID,
+      householdId: HOUSEHOLD_ID,
+      message: 'x',
+    });
+    // Slice 2.6-s6 — getM5Chips now takes a (householdId, declaredCuisineTags)
+    // signature; tags default to [] when the optional CulturalPriorRepository
+    // dep is absent (legacy/test path).
+    expect(getM5Chips).toHaveBeenCalledWith(HOUSEHOLD_ID, []);
+    expect(result.chip_config?.mode).toBe('choice');
+    expect(result.chip_config?.options).toEqual(personalized);
+    expect(result.cold_start_mode).toBe(false);
+  });
+
+  it('submitTextTurn appends override_fewer to personalized chips when favoriteLunchCount >= 4 (Slice 2.6-s4)', async () => {
+    const personalized = [
+      { key: 'r-1', label: 'Anjero + suqaar', provenance: 'declared' as const },
+      { key: 'r-2', label: 'Bariis iskukaris', provenance: 'declared' as const },
+    ];
+    const getM5Chips = vi
+      .fn()
+      .mockResolvedValue({ chips: personalized, coldStartReason: null });
+    const { service } = buildService({
+      agentText: 'a few more?',
+      preTurnMomentState: {
+        current_moment: 'm5_starting_line',
+        required_set_status: {
+          m1_household_name: true,
+          m1_child_declared: true,
+          m2_allergen_response: true,
+          m5_favorite_count: 4,
+          m5_complete: false,
+        },
+        cold_start_triggered: false,
+        cold_start_trigger_reason: null,
+      },
+      countsOverride: { favorite_lunch_count: 5 },
+      catalogProjectionGetM5Chips: getM5Chips,
+    });
+    const result = await service.submitTextTurn({
+      userId: USER_ID,
+      householdId: HOUSEHOLD_ID,
+      message: 'x',
+    });
+    const options = result.chip_config?.options ?? [];
+    expect(options).toHaveLength(personalized.length + 1);
+    expect(options[options.length - 1]).toEqual({
+      key: 'override_fewer',
+      label: 'Start with fewer',
+    });
+  });
+
+  it('submitTextTurn leaves chip_config as null when catalogProjection throws (Slice 2.6-s4)', async () => {
+    const getM5Chips = vi.fn().mockRejectedValue(new Error('catalog read failed'));
     const { service } = buildService({
       agentText: 'pick favorites.',
       preTurnMomentState: {
@@ -407,17 +550,40 @@ describe('OnboardingService.submitTextTurn — chip_config passthrough', () => {
           m5_complete: false,
         },
       },
+      catalogProjectionGetM5Chips: getM5Chips,
     });
     const result = await service.submitTextTurn({
       userId: USER_ID,
       householdId: HOUSEHOLD_ID,
       message: 'x',
     });
-    expect(result.chip_config).not.toBeNull();
-    expect(result.chip_config?.mode).toBe('choice');
-    expect(result.chip_config?.options).toHaveLength(18);
-    const keys = result.chip_config?.options?.map((o) => o.key) ?? [];
-    expect(keys).not.toContain('override_fewer');
+    // momentToChipConfig('m5_starting_line') returns null after 2.6-s4; the
+    // catch leaves chip_config at that null. Turn still succeeds.
+    expect(result.chip_config).toBeNull();
+  });
+
+  it('submitTextTurn skips personalization when catalogProjection dep is absent (Slice 2.6-s4)', async () => {
+    const { service } = buildService({
+      agentText: 'pick favorites.',
+      preTurnMomentState: {
+        current_moment: 'm5_starting_line',
+        required_set_status: {
+          m1_household_name: true,
+          m1_child_declared: true,
+          m2_allergen_response: true,
+          m5_favorite_count: 0,
+          m5_complete: false,
+        },
+      },
+      // catalogProjectionGetM5Chips intentionally omitted
+    });
+    const result = await service.submitTextTurn({
+      userId: USER_ID,
+      householdId: HOUSEHOLD_ID,
+      message: 'x',
+    });
+    // No catalog projection → momentToChipConfig('m5_starting_line') === null.
+    expect(result.chip_config).toBeNull();
   });
 
   it('returns the M1 hint chip config when current_moment advances into m1_table', async () => {
@@ -682,6 +848,8 @@ describe('OnboardingService.submitTextTurn — elevation directive (Slice 2.5-s7
       m5_favorite_count: 0,
       m5_complete: false,
     },
+    cold_start_triggered: false,
+    cold_start_trigger_reason: null,
   };
 
   it('strips both [CHIP_PROMPT:elevation:...] and [NEXT_MOMENT:m3_taste] from the persisted prose', async () => {
@@ -979,7 +1147,7 @@ describe('OnboardingService.submitTextTurn — m5 override + sticky m5_complete 
 // ---------------------------------------------------------------------------
 
 interface FinalizeBuildOpts {
-  preTurnMomentState?: MomentState | null;
+  preTurnMomentState?: PartialMomentState | null;
   closedSummary?: boolean;
 }
 
@@ -1039,7 +1207,9 @@ function buildFinalizableService(opts: FinalizeBuildOpts = {}) {
   };
 
   const momentRepository = {
-    getState: vi.fn().mockResolvedValue(opts.preTurnMomentState ?? null),
+    getState: vi
+      .fn()
+      .mockResolvedValue(normalizeMomentState(opts.preTurnMomentState)),
     countRequiredSetSources: vi.fn(),
     upsertState: vi.fn().mockResolvedValue(undefined),
   };
@@ -1120,5 +1290,139 @@ describe('OnboardingService.finalizeTextOnboarding — required-set gate (Slice 
       HOUSEHOLD_ID,
       expect.objectContaining({ current_moment: 'finalized' }),
     );
+  });
+});
+
+// ===========================================================================
+// Slice 2.6-s6 — Cold-start fallback wiring in submitTextTurn
+// ===========================================================================
+
+describe('OnboardingService.submitTextTurn — cold-start fallback (Slice 2.6-s6)', () => {
+  it('cold-start result → chip_config=null and cold_start_mode=true', async () => {
+    const getM5Chips = vi
+      .fn()
+      .mockResolvedValue({ chips: [], coldStartReason: 'per_cuisine_floor' });
+    const { service, momentRepository } = buildService({
+      agentText: 'tell me three dishes…',
+      preTurnMomentState: {
+        current_moment: 'm5_starting_line',
+        required_set_status: {
+          m1_household_name: true,
+          m1_child_declared: true,
+          m2_allergen_response: true,
+          m5_favorite_count: 0,
+          m5_complete: false,
+        },
+      },
+      catalogProjectionGetM5Chips: getM5Chips,
+    });
+    const result = await service.submitTextTurn({
+      userId: USER_ID,
+      householdId: HOUSEHOLD_ID,
+      message: 'x',
+    });
+    expect(result.chip_config).toBeNull();
+    expect(result.cold_start_mode).toBe(true);
+    const upsertCall = momentRepository.upsertState.mock.calls[0];
+    expect(upsertCall?.[1].cold_start_triggered).toBe(true);
+    expect(upsertCall?.[1].cold_start_trigger_reason).toBe('per_cuisine_floor');
+  });
+
+  it('relaxes m5_complete threshold to 3 when cold_start_triggered=true (Slice 2.6-s6 AC8)', async () => {
+    // Cold-start flag carried forward from a prior turn. With the relaxed
+    // threshold, exactly 3 declared items satisfies m5_complete.
+    const getM5Chips = vi
+      .fn()
+      .mockResolvedValue({ chips: [], coldStartReason: null });
+    const { service, momentRepository } = buildService({
+      agentText: 'one more please.',
+      preTurnMomentState: {
+        current_moment: 'm5_starting_line',
+        required_set_status: {
+          m1_household_name: true,
+          m1_child_declared: true,
+          m2_allergen_response: true,
+          m5_favorite_count: 2,
+          m5_complete: false,
+        },
+        cold_start_triggered: true,
+        cold_start_trigger_reason: 'per_cuisine_floor',
+      },
+      countsOverride: { favorite_lunch_count: 3 },
+      catalogProjectionGetM5Chips: getM5Chips,
+    });
+    await service.submitTextTurn({
+      userId: USER_ID,
+      householdId: HOUSEHOLD_ID,
+      message: 'one more',
+    });
+    const upsertCall = momentRepository.upsertState.mock.calls[0];
+    expect(upsertCall?.[1].required_set_status.m5_complete).toBe(true);
+    // Sticky flag carried forward into the upsert.
+    expect(upsertCall?.[1].cold_start_triggered).toBe(true);
+  });
+
+  it('keeps m5_complete threshold at 10 when cold_start_triggered=false (Slice 2.6-s6 AC8)', async () => {
+    // Same favorite_lunch_count=3, but cold-start is false → threshold is 10
+    // → m5_complete stays false (this turn is not at m5_starting_line exit
+    // so the m5OverridePath also can't kick in).
+    const { service, momentRepository } = buildService({
+      agentText: 'a few more.',
+      preTurnMomentState: {
+        current_moment: 'm5_starting_line',
+        required_set_status: {
+          m1_household_name: true,
+          m1_child_declared: true,
+          m2_allergen_response: true,
+          m5_favorite_count: 2,
+          m5_complete: false,
+        },
+        cold_start_triggered: false,
+        cold_start_trigger_reason: null,
+      },
+      countsOverride: { favorite_lunch_count: 3 },
+    });
+    await service.submitTextTurn({
+      userId: USER_ID,
+      householdId: HOUSEHOLD_ID,
+      message: 'three',
+    });
+    const upsertCall = momentRepository.upsertState.mock.calls[0];
+    expect(upsertCall?.[1].required_set_status.m5_complete).toBe(false);
+  });
+
+  it('cold_start_triggered is sticky — flag carried forward when this turn is normal', async () => {
+    // Pre-turn state has cold_start_triggered=true; this turn fires no fresh
+    // cold-start (chips return normally). The upsertState call must still
+    // pass cold_start_triggered=true to preserve the sticky flag.
+    const getM5Chips = vi
+      .fn()
+      .mockResolvedValue({ chips: [], coldStartReason: null });
+    const { service, momentRepository } = buildService({
+      agentText: 'great.',
+      preTurnMomentState: {
+        current_moment: 'm5_starting_line',
+        required_set_status: {
+          m1_household_name: true,
+          m1_child_declared: true,
+          m2_allergen_response: true,
+          m5_favorite_count: 1,
+          m5_complete: false,
+        },
+        cold_start_triggered: true,
+        cold_start_trigger_reason: 'stage1_timeout',
+      },
+      countsOverride: { favorite_lunch_count: 1 },
+      catalogProjectionGetM5Chips: getM5Chips,
+    });
+    const result = await service.submitTextTurn({
+      userId: USER_ID,
+      householdId: HOUSEHOLD_ID,
+      message: 'noted',
+    });
+    expect(result.cold_start_mode).toBe(true);
+    const upsertCall = momentRepository.upsertState.mock.calls[0];
+    expect(upsertCall?.[1].cold_start_triggered).toBe(true);
+    expect(upsertCall?.[1].cold_start_trigger_reason).toBe('stage1_timeout');
   });
 });

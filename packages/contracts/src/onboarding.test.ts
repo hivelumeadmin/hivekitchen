@@ -3,6 +3,7 @@ import {
   TextTurnBodySchema,
   ChipTurnBodySchema,
   ChipConfigSchema,
+  ChipOptionSchema,
   TextOnboardingTurnRequestSchema,
   TextOnboardingTurnResponseSchema,
   TextOnboardingFinalizeResponseSchema,
@@ -203,6 +204,45 @@ describe('TextOnboardingTurnRequestSchema (union)', () => {
 
   it('rejects an empty object', () => {
     const result = TextOnboardingTurnRequestSchema.safeParse({});
+    expect(result.success).toBe(false);
+  });
+});
+
+// Slice 2.6-s4 — ChipOption provenance extension for M5 personalized chips.
+
+describe('ChipOptionSchema (Slice 2.6-s4)', () => {
+  it('round-trips a chip with provenance="inferred"', () => {
+    const input = {
+      key: '6ba7b810-9dad-11d1-80b4-00c04fd430c8',
+      label: 'Anjero + suqaar',
+      provenance: 'inferred' as const,
+    };
+    const parsed = ChipOptionSchema.parse(input);
+    expect(parsed.provenance).toBe('inferred');
+    expect(parsed.key).toBe(input.key);
+    expect(parsed.label).toBe(input.label);
+  });
+
+  it('round-trips a chip with provenance="parent_added"', () => {
+    const parsed = ChipOptionSchema.parse({
+      key: 'abc',
+      label: 'Chickpea wrap',
+      provenance: 'parent_added',
+    });
+    expect(parsed.provenance).toBe('parent_added');
+  });
+
+  it('accepts a chip without provenance (back-compat for non-M5 surfaces)', () => {
+    const parsed = ChipOptionSchema.parse({ key: 'peanut', label: 'Peanut' });
+    expect(parsed.provenance).toBeUndefined();
+  });
+
+  it('rejects an invalid provenance value', () => {
+    const result = ChipOptionSchema.safeParse({
+      key: 'k',
+      label: 'L',
+      provenance: 'bogus',
+    });
     expect(result.success).toBe(false);
   });
 });

@@ -65,8 +65,9 @@ const INGREDIENTS_MAX = 20;
 // recipe_id / item_id are optional at compose time; resolver fills them in
 // later stories. Schemas are tool-internal — only the inferred types are
 // re-exported for consumers (planner agent + BullMQ worker).
-// Story 3.20: item_sku_id is the canonical reference for Snack-slot items;
-// the planner sets it for the snack_skus catalog row chosen for that slot.
+// Story 3-DM-A2: snack_skus folded into recipes; recipe_id is now the single
+// catalog FK across main / snack / extra slots. The slot ↔ FK XOR refine
+// retired with the snack_skus table.
 const PlanComposeItemSchema = z.object({
   child_id: z.string().uuid(),
   slot: z.string().min(1).max(SLOT_MAX),
@@ -79,14 +80,9 @@ const PlanComposeItemSchema = z.object({
   // EITHER a catalog row OR a yet-to-materialize candidate, never both).
   recipe_candidate_id: z.string().uuid().optional(),
   item_id: z.string().uuid().optional(),
-  item_sku_id: z.string().uuid().optional(),
 }).superRefine((val, ctx) => {
-  if (val.slot === 'main' && val.item_sku_id !== undefined) {
-    ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'item_sku_id is only valid for snack/extra slots', path: ['item_sku_id'] });
-  }
-  if ((val.slot === 'snack' || val.slot === 'extra') && val.recipe_id !== undefined) {
-    ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'recipe_id is not valid for snack/extra slots', path: ['recipe_id'] });
-  }
+  // discover is a main-slot pathway today — snack/extra resolve through the
+  // curated recipes catalog directly, never via discover candidates.
   if ((val.slot === 'snack' || val.slot === 'extra') && val.recipe_candidate_id !== undefined) {
     ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'recipe_candidate_id is not valid for snack/extra slots', path: ['recipe_candidate_id'] });
   }
@@ -96,8 +92,12 @@ const PlanComposeItemSchema = z.object({
 });
 export type PlanComposeItem = z.infer<typeof PlanComposeItemSchema>;
 
+// Story 3-DM-A3: enum extended to include 'saturday' so the planner can emit
+// 6-day weeks consistent with PlanItemRowSchema and brief_state's SCHOOL_DAYS
+// constant. Households whose school week ends on Friday simply emit no
+// saturday items — the contract allows the day, not requires it.
 const PlanComposeDaySchema = z.object({
-  day: z.enum(['monday', 'tuesday', 'wednesday', 'thursday', 'friday']),
+  day: z.enum(['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday']),
   items: z.array(PlanComposeItemSchema).min(1),
 });
 export type PlanComposeDay = z.infer<typeof PlanComposeDaySchema>;
@@ -134,6 +134,12 @@ export const PlanComposeOutputSchema = z.object({
   // Story 3.27 — present only when the planner identified a preparation-method
   // variant for a variant-eligible child. At most one per plan.
   variant_proposal: PlanVariantProposalOutputSchema.optional(),
+  // Story 3.29 — soft cultural-degradation signal. The planner sets this when
+  // honoring ALL household cultural rules simultaneously yields a near-empty
+  // intersection (e.g. Kosher + Halal + Hindu-vegetarian with no shared
+  // protein). The plan IS still committed; PlansService.handleDegradedPlan
+  // updates brief_state so the parent can opt into alternating sovereignty.
+  degraded_reason: z.enum(['CULTURAL_INTERSECTION_EMPTY']).nullable().optional(),
 });
 
 // Story 3.27 — DB row + confirm endpoint shapes.
@@ -234,15 +240,11 @@ export const PlanItemWriteSchema = z.object({
   // candidate awaiting materialization, never both).
   recipe_candidate_id: z.string().uuid().optional(),
   item_id: z.string().uuid().optional(),
-  item_sku_id: z.string().uuid().optional(),  // Story 3.20 — Snack SKU reference
   ingredients: z.array(z.string().min(1).max(INGREDIENT_MAX)).min(1),
 }).superRefine((val, ctx) => {
-  if (val.slot === 'main' && val.item_sku_id !== undefined) {
-    ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'item_sku_id is only valid for snack/extra slots', path: ['item_sku_id'] });
-  }
-  if ((val.slot === 'snack' || val.slot === 'extra') && val.recipe_id !== undefined) {
-    ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'recipe_id is not valid for snack/extra slots', path: ['recipe_id'] });
-  }
+  // Story 3-DM-A2: discover is a main-slot pathway. Snack / extra slots
+  // resolve through the curated recipes catalog (folded from snack_skus),
+  // never via discover candidates.
   if ((val.slot === 'snack' || val.slot === 'extra') && val.recipe_candidate_id !== undefined) {
     ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'recipe_candidate_id is not valid for snack/extra slots', path: ['recipe_candidate_id'] });
   }
@@ -293,39 +295,11 @@ export const PlanItemRowSchema = z.object({
   slot: z.string().min(1).max(SLOT_MAX),
   recipe_id: z.string().uuid().nullable(),
   item_id: z.string().uuid().nullable(),
-  item_sku_id: z.string().uuid().nullable().default(null),  // Story 3.20 — Snack SKU reference
   ingredients: z.array(z.string().min(1)),
   paused_at: z.string().datetime({ offset: true }).nullable().default(null),  // Story 3.12
   replaced_by_plan_id: z.string().uuid().nullable().default(null),  // Story 3.13 — null = current
   created_at: z.string().datetime({ offset: true }),
   updated_at: z.string().datetime({ offset: true }),
-});
-
-// --- Story 3.20 — Snack SKU catalog ---
-// Snack items are modeled as unit-level SKUs (Apple, String Cheese, Granola
-// Bar). The contains_* flags are the FALCPA top-9 allergen presence markers
-// the guardrail consults instead of ingredient text matching. is_halal /
-// is_kosher / is_vegetarian / is_vegan are the cultural template
-// compatibility flags the planner filters against.
-export const SnackSkuSchema = z.object({
-  id: z.string().uuid(),
-  name: z.string().min(1).max(200),
-  brand: z.string().max(200).nullable(),
-  category: z.string().min(1).max(64),
-  contains_peanut: z.boolean(),
-  contains_tree_nut: z.boolean(),
-  contains_dairy: z.boolean(),
-  contains_egg: z.boolean(),
-  contains_wheat: z.boolean(),
-  contains_soy: z.boolean(),
-  contains_fish: z.boolean(),
-  contains_shellfish: z.boolean(),
-  contains_sesame: z.boolean(),
-  is_halal: z.boolean(),
-  is_kosher: z.boolean(),
-  is_vegetarian: z.boolean(),
-  is_vegan: z.boolean(),
-  is_active: z.boolean(),
 });
 
 // Story 3.13 — POST /v1/plans/:planId/regenerate?scope=week|day&day=monday query params.
@@ -390,6 +364,9 @@ export const PlanTileSummarySchema = z.object({
   paused: z.boolean().default(false),  // Story 3.12: true when all items for the day are paused
   // Story 3.28: child UUIDs whose lunch_link_sessions row for this day has suppressed_at set.
   lunch_link_suppressed_children: z.array(z.string().uuid()).default([]),
+  // Story 4-S4: keyed by child_id UUID; only children who have submitted a
+  // rating for this day appear in the map. Absent key = no rating yet.
+  child_ratings: z.record(z.string().uuid(), z.enum(['loved', 'ok', 'not-really'])).default({}),
 });
 
 // Story 3.10 — populated by brief-state.composer; one entry per
@@ -422,6 +399,14 @@ export const BriefStateRowSchema = z.object({
   generated_at: z.string().datetime({ offset: true }),
   plan_revision: z.number().int().min(0),
   updated_at: z.string().datetime({ offset: true }),
+  // Story 3.29 — soft cultural-degradation signal surfaced inline in BriefCanvas.
+  // null = normal/no degradation (most rows; default for pre-migration parses).
+  // 'degraded' = planner signaled CULTURAL_INTERSECTION_EMPTY; the parent sees
+  // the "try alternating" toggle. 'hard_failed' is reserved — the current
+  // hard-fail surface (Story 3.25/3.26) reads from audit_log, not brief_state.
+  plan_state: z.enum(['hard_failed', 'degraded']).nullable().default(null),
+  plan_state_set_at: z.string().datetime({ offset: true }).nullable().default(null),
+  plan_state_message: z.string().min(1).max(500).nullable().default(null),
 });
 
 // API response for GET /v1/households/:id/brief.
@@ -454,6 +439,8 @@ export const HardFailStatusSchema = z.object({
 // unrejected) variant proposals for this plan. Optional + nullable so pre-3.27
 // fixtures and route paths that omit the key remain valid; consumers should
 // `?? []` it at the read site.
+// Story pre-4-s3 — flagged_items present only when hard_fail's audit stages
+// include compound_ingredient_unverified rejections; surfaces AllergyUncertaintyBanner.
 export const GetPlansResponseSchema = z.object({
   plan: PlanRowSchema.nullable(),
   plan_items: z.array(PlanItemRowSchema),
@@ -461,6 +448,7 @@ export const GetPlansResponseSchema = z.object({
   week_of: z.string().date(),
   hard_fail: HardFailStatusSchema.nullable().optional(),
   variant_proposals: z.array(VariantProposalSchema).optional(),
+  flagged_items: z.array(FlaggedCompoundItemSchema).optional(),
 });
 
 // --- Story 3.15 — historical plans + outcomes view (FR25) ---

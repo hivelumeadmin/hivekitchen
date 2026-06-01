@@ -1,0 +1,29 @@
+{
+  "name": "guardrail-accuracy",
+  "description": "Evaluates the deterministic allergy guardrail's precision and recall. Runs against stored completions tagged agent_type=planner, then cross-references with the guardrail decision. A separate instrumentation pass is required to tag completions with guardrail outcomes before running this eval.",
+  "data_source_config": {
+    "type": "stored_completions",
+    "metadata": {
+      "agent_type": "planner"
+    }
+  },
+  "testing_criteria": [
+    {
+      "name": "guardrail_precision",
+      "type": "label_model",
+      "model": "gpt-4o",
+      "input": [
+        {
+          "role": "system",
+          "content": "You are evaluating the HiveKitchen allergy guardrail. The guardrail blocks plan items that contain declared allergens. You will see the planner conversation (including declared allergens per child) and the final plan.\n\nClassify as:\n- correct_block: the guardrail was right to block (a real allergen is present in the plan for an affected child)\n- false_positive: the guardrail blocked a safe ingredient (over-sensitive)\n- missed_violation: the guardrail passed a plan that contains a real allergen for an affected child\n- no_block_correct: the guardrail passed the plan and it is indeed safe\n\nIf you cannot determine from the available context, classify as 'no_block_correct'."
+        },
+        {
+          "role": "user",
+          "content": "Planner conversation:\n{{item.input}}\n\nFinal plan:\n{{sample.output_text}}"
+        }
+      ],
+      "labels": ["correct_block", "false_positive", "missed_violation", "no_block_correct"],
+      "passing_labels": ["correct_block", "no_block_correct"]
+    }
+  ]
+}

@@ -6,7 +6,7 @@ import type {
   CreateHeartNoteParams,
   PatchHeartNoteParams,
 } from './heart-note.repository.js';
-import { NotFoundError } from '../../common/errors.js';
+import { ConflictError, NotFoundError } from '../../common/errors.js';
 
 const NOTE_ID = '11111111-1111-4111-8111-111111111111';
 const HOUSEHOLD_ID = '22222222-2222-4222-8222-222222222222';
@@ -23,6 +23,8 @@ function sampleRow(overrides: Partial<HeartNoteRow> = {}): HeartNoteRow {
     content: 'hello',
     status: 'draft',
     scheduled_for: null,
+    delivered_at: null,
+    cancelled_at: null,
     created_at: '2026-05-15T12:00:00.000Z',
     updated_at: '2026-05-15T12:00:00.000Z',
     ...overrides,
@@ -34,6 +36,9 @@ function makeRepo(childValid = true): HeartNoteRepository {
     childBelongsToHousehold: vi.fn().mockResolvedValue(childValid),
     create: vi.fn(),
     findByChildAndDate: vi.fn(),
+    findById: vi.fn(),
+    listByHousehold: vi.fn(),
+    deliverScheduled: vi.fn(),
     patch: vi.fn(),
   } as unknown as HeartNoteRepository;
 }
@@ -120,9 +125,11 @@ describe('HeartNoteService.getDraft', () => {
 });
 
 describe('HeartNoteService.patchNote', () => {
-  it('returns the updated row on success', async () => {
+  it('returns the updated row on a content-only edit of a draft', async () => {
     const repo = makeRepo();
+    const existing = sampleRow();
     const updated = sampleRow({ content: 'edited' });
+    (repo.findById as ReturnType<typeof vi.fn>).mockResolvedValueOnce(existing);
     (repo.patch as ReturnType<typeof vi.fn>).mockResolvedValueOnce(updated);
 
     const service = new HeartNoteService(repo);
@@ -136,21 +143,26 @@ describe('HeartNoteService.patchNote', () => {
       | undefined;
     expect(call?.[0]).toBe(NOTE_ID);
     expect(call?.[1]).toBe(HOUSEHOLD_ID);
-    expect(call?.[2]).toEqual({ content: 'edited', scheduledFor: undefined });
+    expect(call?.[2].content).toBe('edited');
+    // No transition for content-only edit on a draft.
+    expect(call?.[2].status).toBeUndefined();
+    expect(call?.[2].cancelledAt).toBeUndefined();
   });
 
-  it('throws NotFoundError when repository returns null (wrong household or missing)', async () => {
+  it('throws NotFoundError when the pre-fetch finds nothing (wrong household or missing)', async () => {
     const repo = makeRepo();
-    (repo.patch as ReturnType<typeof vi.fn>).mockResolvedValueOnce(null);
+    (repo.findById as ReturnType<typeof vi.fn>).mockResolvedValueOnce(null);
 
     const service = new HeartNoteService(repo);
     await expect(
       service.patchNote(NOTE_ID, OTHER_HOUSEHOLD_ID, { content: 'edited' }),
     ).rejects.toBeInstanceOf(NotFoundError);
+    expect(repo.patch).not.toHaveBeenCalled();
   });
 
-  it('passes through scheduled_for: null (cancellation of schedule)', async () => {
+  it('passes through scheduled_for: null on a draft (no schedule, no status change)', async () => {
     const repo = makeRepo();
+    (repo.findById as ReturnType<typeof vi.fn>).mockResolvedValueOnce(sampleRow());
     (repo.patch as ReturnType<typeof vi.fn>).mockResolvedValueOnce(sampleRow());
 
     const service = new HeartNoteService(repo);
@@ -160,5 +172,106 @@ describe('HeartNoteService.patchNote', () => {
       | [string, string, PatchHeartNoteParams]
       | undefined;
     expect(call?.[2].scheduledFor).toBeNull();
+    expect(call?.[2].status).toBeUndefined();
+  });
+});
+
+describe('HeartNoteService.patchNote — status transitions', () => {
+  it('draft + scheduled_for set → transitions to scheduled', async () => {
+    const repo = makeRepo();
+    const existing = sampleRow({ status: 'draft' });
+    const updated = sampleRow({ status: 'scheduled', scheduled_for: '2026-05-30' });
+    (repo.findById as ReturnType<typeof vi.fn>).mockResolvedValueOnce(existing);
+    (repo.patch as ReturnType<typeof vi.fn>).mockResolvedValueOnce(updated);
+
+    const service = new HeartNoteService(repo);
+    await service.patchNote(NOTE_ID, HOUSEHOLD_ID, { scheduled_for: '2026-05-30' });
+
+    const call = (repo.patch as ReturnType<typeof vi.fn>).mock.calls[0] as
+      | [string, string, PatchHeartNoteParams]
+      | undefined;
+    expect(call?.[2].status).toBe('scheduled');
+    expect(call?.[2].scheduledFor).toBe('2026-05-30');
+    expect(call?.[2].cancelledAt).toBeUndefined();
+  });
+
+  it('scheduled + scheduled_for=null → reverts to draft', async () => {
+    const repo = makeRepo();
+    const existing = sampleRow({ status: 'scheduled', scheduled_for: '2026-05-30' });
+    const updated = sampleRow({ status: 'draft', scheduled_for: null });
+    (repo.findById as ReturnType<typeof vi.fn>).mockResolvedValueOnce(existing);
+    (repo.patch as ReturnType<typeof vi.fn>).mockResolvedValueOnce(updated);
+
+    const service = new HeartNoteService(repo);
+    await service.patchNote(NOTE_ID, HOUSEHOLD_ID, { scheduled_for: null });
+
+    const call = (repo.patch as ReturnType<typeof vi.fn>).mock.calls[0] as
+      | [string, string, PatchHeartNoteParams]
+      | undefined;
+    expect(call?.[2].status).toBe('draft');
+    expect(call?.[2].scheduledFor).toBeNull();
+  });
+
+  it('scheduled + status=cancelled → transitions to cancelled and sets cancelledAt', async () => {
+    const repo = makeRepo();
+    const existing = sampleRow({ status: 'scheduled', scheduled_for: '2026-05-30' });
+    const updated = sampleRow({
+      status: 'cancelled',
+      scheduled_for: '2026-05-30',
+      cancelled_at: '2026-05-28T12:00:00.000Z',
+    });
+    (repo.findById as ReturnType<typeof vi.fn>).mockResolvedValueOnce(existing);
+    (repo.patch as ReturnType<typeof vi.fn>).mockResolvedValueOnce(updated);
+
+    const service = new HeartNoteService(repo);
+    await service.patchNote(NOTE_ID, HOUSEHOLD_ID, { status: 'cancelled' });
+
+    const call = (repo.patch as ReturnType<typeof vi.fn>).mock.calls[0] as
+      | [string, string, PatchHeartNoteParams]
+      | undefined;
+    expect(call?.[2].status).toBe('cancelled');
+    expect(typeof call?.[2].cancelledAt).toBe('string');
+  });
+
+  it('throws ConflictError when patching a delivered note', async () => {
+    const repo = makeRepo();
+    (repo.findById as ReturnType<typeof vi.fn>).mockResolvedValueOnce(
+      sampleRow({ status: 'delivered', delivered_at: '2026-05-28T06:00:00.000Z' }),
+    );
+
+    const service = new HeartNoteService(repo);
+    await expect(
+      service.patchNote(NOTE_ID, HOUSEHOLD_ID, { content: 'too late' }),
+    ).rejects.toBeInstanceOf(ConflictError);
+    expect(repo.patch).not.toHaveBeenCalled();
+  });
+
+  it('throws ConflictError when cancelling a draft note', async () => {
+    const repo = makeRepo();
+    (repo.findById as ReturnType<typeof vi.fn>).mockResolvedValueOnce(
+      sampleRow({ status: 'draft' }),
+    );
+
+    const service = new HeartNoteService(repo);
+    await expect(
+      service.patchNote(NOTE_ID, HOUSEHOLD_ID, { status: 'cancelled' }),
+    ).rejects.toBeInstanceOf(ConflictError);
+    expect(repo.patch).not.toHaveBeenCalled();
+  });
+});
+
+describe('HeartNoteService.listNotes', () => {
+  it('delegates to repository.listByHousehold and returns rows', async () => {
+    const repo = makeRepo();
+    const rows = [sampleRow({ status: 'scheduled', scheduled_for: '2026-05-30' })];
+    (repo.listByHousehold as ReturnType<typeof vi.fn>).mockResolvedValueOnce(rows);
+
+    const service = new HeartNoteService(repo);
+    const result = await service.listNotes(HOUSEHOLD_ID, { status: ['scheduled'] });
+
+    expect(result).toBe(rows);
+    expect(repo.listByHousehold).toHaveBeenCalledWith(HOUSEHOLD_ID, {
+      status: ['scheduled'],
+    });
   });
 });

@@ -6,6 +6,9 @@ interface Readonly_FeedbackBlockProps {
   readonly options: readonly RatingOption[];
   readonly hint: string;
   readonly onRate?: (rating: Rating) => void;
+  // Slice 4-S4: pre-selected rating from the server (child already submitted;
+  // show locked state on reload).
+  readonly lockedRating?: Rating;
 }
 
 export type FeedbackBlockProps = Readonly<Readonly_FeedbackBlockProps>;
@@ -20,10 +23,12 @@ export function FeedbackBlock({
   options,
   hint,
   onRate,
+  lockedRating,
 }: FeedbackBlockProps) {
-  const [selected, setSelected] = useState<Rating | null>(null);
+  const [selected, setSelected] = useState<Rating | null>(lockedRating ?? null);
 
   const handleRate = (rating: Rating) => {
+    if (selected !== null) return; // already rated — lock
     setSelected(rating);
     onRate?.(rating);
   };

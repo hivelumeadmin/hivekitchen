@@ -26,6 +26,7 @@ import type {
   SetDayOverrideInput,
   ConfirmVariantProposalInput,
   VariantProposal,
+  FlaggedCompoundItem,
 } from '@hivekitchen/types';
 import { ValidationError } from '../../common/errors.js';
 import { authorize } from '../../middleware/authorize.hook.js';
@@ -79,12 +80,20 @@ const plansRoutesPlugin: FastifyPluginAsync = async (fastify) => {
       // hard-fail since they haven't gone through the guardrail loop yet.
       // Story 3.26 — payload now includes failed_at so the client can render
       // a real estimated recovery time (failed_at + 1h).
+      // Story pre-4-s3 — getHardFailStatus also returns compound-uncertain
+      // flagged_items extracted from the audit's stages; surface those so the
+      // frontend's AllergyUncertaintyBanner can show the specific ingredients.
       let hardFail: { week_of: string; failed_at: string } | null = null;
+      let flaggedItems: FlaggedCompoundItem[] = [];
       if (plan === null && !isDraft) {
         try {
-          hardFail = await fastify.plansService.getHardFailStatus(householdId, weekOf);
+          const failStatus = await fastify.plansService.getHardFailStatus(householdId, weekOf);
+          if (failStatus !== null) {
+            hardFail = { week_of: failStatus.week_of, failed_at: failStatus.failed_at };
+            flaggedItems = failStatus.flagged_items;
+          }
         } catch (err) {
-          request.log.error({ err, householdId, weekOf }, 'getHardFailStatus failed — omitting hard_fail from response');
+          request.log.error({ err, householdId, weekOf }, 'getHardFailStatus failed — omitting hard_fail and flagged_items from response');
         }
       }
 
@@ -107,6 +116,7 @@ const plansRoutesPlugin: FastifyPluginAsync = async (fastify) => {
         week_of: weekOf,
         ...(hardFail !== null ? { hard_fail: hardFail } : {}),
         variant_proposals: variantProposals,
+        ...(flaggedItems.length > 0 ? { flagged_items: flaggedItems } : {}),
       });
     },
   );

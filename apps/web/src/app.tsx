@@ -3,6 +3,7 @@ import { useEffect } from 'react';
 import { createBrowserRouter, Navigate, RouterProvider } from 'react-router-dom';
 import { QueryProvider } from './providers/query-provider.js';
 import { DevDayDetailPage } from './routes/_dev-day-detail.js';
+import { DevDayDetailMultiChildPage } from './routes/_dev-day-detail-multi-child.js';
 import { DevEveningCheckinPage } from './routes/_dev-evening-checkin.js';
 import { DevGroceryListPage } from './routes/_dev-grocery-list.js';
 import { DevHeartNotePage } from './routes/_dev-heart-note.js';
@@ -36,6 +37,7 @@ import ChildBagCompositionPage from './routes/(app)/child-bag-composition.js';
 import ChildExtraRulesPage from './routes/(app)/child-extra-rules.js';
 import DayDetailRoute from './routes/(app)/day-detail.js';
 import HeartNoteRoute from './routes/(app)/heart-note.js';
+import HeartNotesRoute from './routes/(app)/heart-notes.js';
 import EveningCheckinRoute from './routes/(app)/evening-checkin.js';
 import GroceryListRoute from './routes/(app)/grocery-list.js';
 import KitchenInspirationRoute from './routes/(app)/kitchen-inspiration.js';
@@ -73,6 +75,7 @@ const router = createBrowserRouter([
       { path: '/app/children/:childId/extra-rules', element: <ChildExtraRulesPage /> },
       { path: '/app/day/:day', element: <DayDetailRoute /> },
       { path: '/app/heart-note', element: <HeartNoteRoute /> },
+      { path: '/app/heart-notes', element: <HeartNotesRoute /> },
       { path: '/app/evening-checkin', element: <EveningCheckinRoute /> },
       { path: '/app/grocery-list', element: <GroceryListRoute /> },
       { path: '/app/inspiration', element: <KitchenInspirationRoute /> },
@@ -121,6 +124,13 @@ export function App() {
     window.location.pathname === '/_dev-day-detail'
   ) {
     return <DevDayDetailPage />;
+  }
+  if (
+    import.meta.env.DEV &&
+    typeof window !== 'undefined' &&
+    window.location.pathname === '/_dev-day-detail-multi-child'
+  ) {
+    return <DevDayDetailMultiChildPage />;
   }
   if (
     import.meta.env.DEV &&

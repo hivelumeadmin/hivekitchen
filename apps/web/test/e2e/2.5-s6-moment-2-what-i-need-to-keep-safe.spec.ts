@@ -8,9 +8,9 @@ const M2_CHIP_CONFIG = {
   options: [
     { key: 'none', label: 'No known allergens' },
     { key: 'peanut', label: 'Peanut' },
-    { key: 'tree-nuts', label: 'Tree nuts' },
+    { key: 'tree_nut', label: 'Tree nuts' },
     { key: 'dairy', label: 'Dairy' },
-    { key: 'eggs', label: 'Eggs' },
+    { key: 'egg', label: 'Eggs' },
     { key: 'soy', label: 'Soy' },
     { key: 'wheat', label: 'Wheat / gluten' },
     { key: 'fish', label: 'Fish' },

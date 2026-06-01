@@ -159,7 +159,10 @@ describe('PlansService.commit — Layer 2 materialization (Slice 2.6-s3)', () =>
                   substitutes: [],
                 },
               ],
-              instructions: ['Cook rice.', 'Cook lentils.'],
+              steps: [
+                { mode: 'prep' as const, text: 'Cook rice.' },
+                { mode: 'prep' as const, text: 'Cook lentils.' },
+              ],
               ingredient_keys: ['lentil', 'rice'],
               primary_ingredient_key: 'lentil',
               allergen_flags: [],

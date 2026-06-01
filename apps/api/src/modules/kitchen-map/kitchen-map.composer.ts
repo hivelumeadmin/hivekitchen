@@ -17,7 +17,11 @@ import type {
   KitchenMapRecipes,
   KitchenMapRule,
 } from '@hivekitchen/types';
-import { ENFORCEMENT_LEVEL_VALUES, type EnforcementLevel } from '@hivekitchen/contracts';
+import {
+  ENFORCEMENT_LEVEL_VALUES,
+  bagCompositionFromPattern,
+  type EnforcementLevel,
+} from '@hivekitchen/contracts';
 import type {
   RawAllergenRow,
   RawCaregiverRow,
@@ -187,27 +191,14 @@ function groupSchoolPoliciesByChild(rows: RawSchoolPolicyRow[]): Map<string, str
   return out;
 }
 
-// Slice 2.5-s1 — derive the four-way bag composition pattern from the
-// existing per-slot booleans. The pattern is the parent's mental model;
-// the booleans are the planner-facing source of truth. Children.main is
-// constrained to true by the children_bag_main_true CHECK, so the four
-// possible (snack, extra) combinations map cleanly to the four pattern
-// enum values. Accepts null to match the schema's nullable contract —
-// returns null for any child row whose bag_composition is absent.
-function deriveBagCompositionPattern(
-  b: { snack: boolean; extra: boolean } | null,
-): BagCompositionPattern | null {
-  if (b === null) return null;
-  if (b.snack && b.extra) return 'main_plus_snack_plus_extra';
-  if (b.snack) return 'main_plus_snack';
-  if (b.extra) return 'main_plus_extra';
-  return 'main_only';
-}
-
 function projectChild(
   row: RawChildRow,
   schoolPoliciesByChild: Map<string, string[]>,
 ): KitchenMapChild {
+  // Story 3-DM-B1 — bag_composition booleans are derived from the canonical
+  // pattern enum. Both fields are surfaced on the projection: legacy boolean
+  // struct for planner allergy-filter selection, and the enum for the parent-
+  // mental-model UI.
   return {
     id: row.id,
     name: row.name,
@@ -215,14 +206,8 @@ function projectChild(
     declared_allergens: row.declared_allergens,
     cultural_identifiers: row.cultural_identifiers,
     dietary_preferences: row.dietary_preferences,
-    bag_composition: {
-      // children.bag_composition has a CHECK constraint guaranteeing main=true;
-      // contract's BagCompositionSchema narrows to z.literal(true).
-      main: true,
-      snack: row.bag_composition.snack,
-      extra: row.bag_composition.extra,
-    },
-    bag_composition_pattern: deriveBagCompositionPattern(row.bag_composition),
+    bag_composition: bagCompositionFromPattern(row.bag_composition_pattern),
+    bag_composition_pattern: row.bag_composition_pattern,
     school_policies: schoolPoliciesByChild.get(row.id) ?? [],
     extra_rules: {
       pinned: row.extra_rules.pins,

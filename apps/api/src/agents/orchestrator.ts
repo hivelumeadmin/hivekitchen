@@ -111,6 +111,27 @@ export interface BlockedItem {
   readonly blocked_by: ReadonlyArray<{ allergen: string; ingredient: string }>;
 }
 
+// pre-4-s1 — single options object for planWeek, replacing the 14 positional
+// params accumulated over stories 3-13..3-29. Field names match the prior
+// positional parameter names so the function body needs no body changes
+// beyond a top-level destructure.
+export interface PlanWeekOptions {
+  householdId: string;
+  weekOf: string;
+  requestId: string;
+  rejectionContext?: string;
+  dayScope?: string;
+  culturalContext?: PlannerCulturalContext;
+  bagCompositions?: readonly PlannerBagComposition[];
+  extraRules?: readonly PlannerExtraRules[];
+  extraLibraryItems?: readonly PlannerExtraLibraryItem[];
+  extraProposals?: readonly PlannerExtraProposal[];
+  slotScopeContext?: string;
+  uncertainContext?: string;
+  variantEligibleChildren?: readonly PlannerVariantEligibleChild[];
+  sovereigntyMode?: 'unified' | 'alternating';
+}
+
 export interface OrchestratorServices {
   memory: MemoryService;
   allergyGuardrail: AllergyGuardrailService;
@@ -254,21 +275,23 @@ export class DomainOrchestrator {
   // - rejectionContext: passes guardrail blocks from a previous attempt so the
   //   planner can avoid the same unsafe ingredients on retry (Story 3.7
   //   regenerate path).
-  async planWeek(
-    householdId: string,
-    weekOf: string,
-    requestId: string,
-    rejectionContext?: string,
-    dayScope?: string,  // Story 3.13 — ISO day name ('tuesday') for day-scoped regen
-    culturalContext?: PlannerCulturalContext,  // Story 3.18 — observances + L0/L1 priors
-    bagCompositions?: readonly PlannerBagComposition[],  // Story 3.20 — per-child snack/extra slots
-    extraRules?: readonly PlannerExtraRules[],  // Story 3.21 — per-child Extra pins/bans
-    extraLibraryItems?: readonly PlannerExtraLibraryItem[],  // Story 3.21 — household custom Extras
-    extraProposals?: readonly PlannerExtraProposal[],  // Story 3.22 — high-activity Extra proposals (FR119)
-    slotScopeContext?: string,  // Story 3.23 — slot-scoped regen instruction; prepended to contextLines
-    uncertainContext?: string,  // Story 3.24 — compound-uncertain substitution instruction; highest priority
-    variantEligibleChildren?: readonly PlannerVariantEligibleChild[],  // Story 3.27 — active-learning variant proposals
-  ): Promise<PlanComposeOutput> {
+  async planWeek(opts: PlanWeekOptions): Promise<PlanComposeOutput> {
+    const {
+      householdId,
+      weekOf,
+      requestId,
+      rejectionContext,
+      dayScope,
+      culturalContext,
+      bagCompositions,
+      extraRules,
+      extraLibraryItems,
+      extraProposals,
+      slotScopeContext,
+      uncertainContext,
+      variantEligibleChildren,
+      sovereigntyMode,
+    } = opts;
     const MAX_PLAN_ITERATIONS = 20;
     // Story 3-31 — recipe.discover needs the per-run requestId in its deps
     // closure (for audit correlation), so we override the manifest's stub
@@ -296,6 +319,7 @@ export class DomainOrchestrator {
     const extraRulesLines = buildExtraRulesLines(extraRules, extraLibraryItems);
     const extraProposalLines = buildExtraProposalLines(extraProposals);
     const variantEligibilityLines = buildVariantEligibilityLines(variantEligibleChildren);
+    const sovereigntyLines = buildSovereigntyContextLines(sovereigntyMode, culturalContext);
 
     const contextLines = [
       `Household ID: ${householdId}`,
@@ -306,6 +330,7 @@ export class DomainOrchestrator {
       ...extraRulesLines,
       ...extraProposalLines,
       ...variantEligibilityLines,
+      ...sovereigntyLines,
       dayScope !== undefined
         ? `Regeneration scope: DAY ONLY. Only generate a new plan for ${dayScope.toUpperCase()}. Keep all other days exactly as previously composed. Only call plan.compose with items for ${dayScope} — do not include other days.`
         : undefined,
@@ -343,7 +368,12 @@ export class DomainOrchestrator {
         // Slice B — semantic tier rather than hardcoded model id. Adapter
         // resolves to gpt-4o today; a future model bump is a one-line
         // change in providers/openai.adapter.ts.
-        { tier: 'flagship', temperature: 0.7, maxTokens: 4096 },
+        {
+          tier: 'flagship',
+          temperature: 0.7,
+          maxTokens: 4096,
+          metadata: { agent_type: 'planner', prompt_version: PLANNER_PROMPT.version },
+        },
         PLANNER_PROMPT.toolsAllowed,
       );
 
@@ -504,7 +534,12 @@ export class DomainOrchestrator {
         // safety constraints are validated post-hoc by the deterministic
         // guardrail. A mini-class model has plenty of recall for the common
         // allergen substitutions this agent handles.
-        { tier: 'mini', temperature: 0.4, maxTokens: 1024 },
+        {
+          tier: 'mini',
+          temperature: 0.4,
+          maxTokens: 1024,
+          metadata: { agent_type: 'swap', prompt_version: SWAP_PROMPT.version },
+        },
         SWAP_PROMPT.toolsAllowed,
       );
 
@@ -853,6 +888,34 @@ export function buildExtraProposalLines(
     );
   }
   return lines;
+}
+
+// Story 3.29 — sovereignty mode context. In 'alternating' mode the planner
+// rotates the leading tradition by day. In 'unified' mode (default) the
+// planner is invited to surface `degraded_reason: "CULTURAL_INTERSECTION_EMPTY"`
+// on the plan.compose output when honoring every rule simultaneously yields
+// fewer than 3 distinct protein options. Silence-mode households (no
+// ratified cultural templates) skip both branches — there is no intersection
+// to collapse and no traditions to rotate.
+export function buildSovereigntyContextLines(
+  mode: 'unified' | 'alternating' | undefined,
+  culturalContext: PlannerCulturalContext | undefined,
+): string[] {
+  const hasTemplates =
+    culturalContext !== undefined && culturalContext.culturalTemplates.length > 0;
+  if (!hasTemplates) return [];
+  if (mode === 'alternating') {
+    return [
+      'ALTERNATING SOVEREIGNTY MODE: This household rotates cultural lead by day. ' +
+        "Each day, follow ONE tradition's rules completely. Rotate through represented traditions across the week. " +
+        'Do not attempt to honor all traditions simultaneously on any single day.',
+    ];
+  }
+  // unified (default) — degraded-reason invitation.
+  return [
+    'If the intersection of all household cultural and dietary rules leaves fewer than 3 distinct protein options, ' +
+      'include "degraded_reason": "CULTURAL_INTERSECTION_EMPTY" in the plan.compose output.',
+  ];
 }
 
 // Story 3.27 — invites the planner to include AT MOST ONE preparation-method

@@ -5,6 +5,10 @@ import {
   LunchLinkDevParamsSchema,
   LunchLinkDevBagSchema,
   LunchLinkDevResponseSchema,
+  GenerateLunchLinkBodySchema,
+  LunchLinkPayloadSchema,
+  LunchLinkExpiredPayloadSchema,
+  RateLunchLinkBodySchema,
 } from './lunch-link.js';
 
 const CHILD_UUID_2 = '55555555-5555-4555-8555-555555555555';
@@ -143,5 +147,159 @@ describe('LunchLinkDevResponseSchema', () => {
         heartNote: null,
       }).success,
     ).toBe(false);
+  });
+});
+
+// ── Slice 4-S3: real signed token schemas ──────────────────────────────────
+
+const VALID_UUID = '77777777-7777-4777-8777-777777777777';
+const validPublicBag = { name: 'Sandwich', sub: 'Packed', safetyNote: 'Nut-free' };
+
+describe('GenerateLunchLinkBodySchema', () => {
+  it('accepts a valid body', () => {
+    expect(
+      GenerateLunchLinkBodySchema.safeParse({
+        child_id: VALID_UUID,
+        date: '2026-09-01',
+      }).success,
+    ).toBe(true);
+  });
+
+  it('rejects a non-UUID child_id', () => {
+    expect(
+      GenerateLunchLinkBodySchema.safeParse({
+        child_id: 'not-a-uuid',
+        date: '2026-09-01',
+      }).success,
+    ).toBe(false);
+  });
+
+  it('rejects an invalid date format', () => {
+    expect(
+      GenerateLunchLinkBodySchema.safeParse({
+        child_id: VALID_UUID,
+        date: '09-01-2026',
+      }).success,
+    ).toBe(false);
+  });
+});
+
+describe('LunchLinkPayloadSchema', () => {
+  it('accepts a valid payload with a heart note', () => {
+    expect(
+      LunchLinkPayloadSchema.safeParse({
+        childName: 'Layla',
+        date: '2026-09-01',
+        heartNote: { body: 'Hi!', authorDisplayName: 'Parent' },
+        bag: validPublicBag,
+        expired: false,
+      }).success,
+    ).toBe(true);
+  });
+
+  it('accepts a valid payload with null heartNote', () => {
+    expect(
+      LunchLinkPayloadSchema.safeParse({
+        childName: 'Layla',
+        date: '2026-09-01',
+        heartNote: null,
+        bag: validPublicBag,
+        expired: false,
+      }).success,
+    ).toBe(true);
+  });
+
+  it('rejects expired: true on the 200 schema', () => {
+    expect(
+      LunchLinkPayloadSchema.safeParse({
+        childName: 'Layla',
+        date: '2026-09-01',
+        heartNote: null,
+        bag: validPublicBag,
+        expired: true,
+      }).success,
+    ).toBe(false);
+  });
+});
+
+describe('LunchLinkExpiredPayloadSchema', () => {
+  it('accepts an expired payload with a rating', () => {
+    expect(
+      LunchLinkExpiredPayloadSchema.safeParse({
+        expired: true,
+        last_state_snapshot: {
+          heartNote: null,
+          rating: 'loved',
+          bag: validPublicBag,
+        },
+      }).success,
+    ).toBe(true);
+  });
+
+  it('accepts an expired payload with null rating', () => {
+    expect(
+      LunchLinkExpiredPayloadSchema.safeParse({
+        expired: true,
+        last_state_snapshot: {
+          heartNote: null,
+          rating: null,
+          bag: validPublicBag,
+        },
+      }).success,
+    ).toBe(true);
+  });
+
+  it('rejects an unknown rating value', () => {
+    expect(
+      LunchLinkExpiredPayloadSchema.safeParse({
+        expired: true,
+        last_state_snapshot: {
+          heartNote: null,
+          rating: 'thumbs-up',
+          bag: validPublicBag,
+        },
+      }).success,
+    ).toBe(false);
+  });
+});
+
+// ── Slice 4-S4: emoji rating ─────────────────────────────────────────────────
+
+describe('RateLunchLinkBodySchema', () => {
+  it('accepts loved', () => {
+    expect(() => RateLunchLinkBodySchema.parse({ rating: 'loved' })).not.toThrow();
+  });
+  it('accepts ok', () => {
+    expect(() => RateLunchLinkBodySchema.parse({ rating: 'ok' })).not.toThrow();
+  });
+  it('accepts not-really', () => {
+    expect(() => RateLunchLinkBodySchema.parse({ rating: 'not-really' })).not.toThrow();
+  });
+  it('rejects thumbs-up (out-of-enum)', () => {
+    expect(() => RateLunchLinkBodySchema.parse({ rating: 'thumbs-up' })).toThrow();
+  });
+  it('rejects missing rating', () => {
+    expect(() => RateLunchLinkBodySchema.parse({})).toThrow();
+  });
+});
+
+describe('LunchLinkPayloadSchema (S4: rating field)', () => {
+  const validBase = {
+    childName: 'Layla',
+    date: '2026-09-01',
+    heartNote: null,
+    bag: { name: 'Sandwich', sub: 'Packed', safetyNote: 'Nut-free' },
+    expired: false as const,
+  };
+  it('defaults rating to null when omitted', () => {
+    const result = LunchLinkPayloadSchema.parse(validBase);
+    expect(result.rating).toBeNull();
+  });
+  it('accepts rating: loved', () => {
+    const result = LunchLinkPayloadSchema.parse({ ...validBase, rating: 'loved' });
+    expect(result.rating).toBe('loved');
+  });
+  it('rejects invalid rating value', () => {
+    expect(() => LunchLinkPayloadSchema.parse({ ...validBase, rating: 'thumbs-up' })).toThrow();
   });
 });

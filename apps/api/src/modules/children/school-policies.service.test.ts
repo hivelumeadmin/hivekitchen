@@ -7,8 +7,12 @@ import type { PlanAdjustmentService } from '../plans/plan-adjustment.service.js'
 import type { SchoolPoliciesRepository } from './school-policies.repository.js';
 import { ForbiddenError } from '../../common/errors.js';
 import { SchoolPoliciesService } from './school-policies.service.js';
+import { buildChild as buildChildFromFactory } from '../../../test/factories/index.js';
 
 const HOUSEHOLD_ID = '11111111-1111-4111-8111-111111111111';
+// Story 3-DM-A3: this file uses '22222222-...' for child (legacy convention)
+// instead of the factory's '44444444-...' default — override at the call site
+// rather than introduce drift in surrounding test expectations.
 const CHILD_ID = '22222222-2222-4222-8222-222222222222';
 const REQUEST_ID = '33333333-3333-4333-8333-333333333333';
 const POLICY_ID = '44444444-4444-4444-8444-444444444444';
@@ -24,20 +28,11 @@ function buildLogger(): FastifyBaseLogger {
 }
 
 function buildChild(): DecryptedChildRow {
-  return {
+  return buildChildFromFactory({
     id: CHILD_ID,
     household_id: HOUSEHOLD_ID,
     name: 'Asha',
-    age_band: 'child',
-    school_policy_notes: null,
-    declared_allergens: [],
-    cultural_identifiers: [],
-    dietary_preferences: [],
-    allergen_rule_version: 'v1',
-    bag_composition: { main: true, snack: true, extra: true },
-    bag_composition_pattern: null,
-    created_at: '2026-04-28T10:00:00.000Z',
-  };
+  });
 }
 
 function buildPolicy(overrides: Partial<SchoolPolicy> = {}): SchoolPolicy {

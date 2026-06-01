@@ -7,14 +7,23 @@ import { PageHeader } from '@/components/PageHeader.js';
 import { AddChildForm } from '@/features/children/AddChildForm.js';
 import { BagCompositionCard } from '@/features/children/BagCompositionCard.js';
 import { AllergyClearedBadge } from './AllergyClearedBadge.js';
+import {
+  AllergyUncertaintyBanner,
+  type AllergyUncertaintyFlaggedItem,
+} from './AllergyUncertaintyBanner.js';
 import { BriefWhyPanel } from './BriefWhyPanel.js';
 import { DisambiguationPicker } from './DisambiguationPicker.js';
 import { FreshnessState } from './FreshnessState.js';
 import { PlanActionSection } from './PlanActionSection.js';
 import { PlanTile, type PlanTileState, type ChildDotColor, type ChildInfo } from './PlanTile.js';
 import { QuietDiff } from './QuietDiff.js';
+import { usePlanQuery } from './queries.js';
+import { QueryKeys } from '@/lib/realtime/query-keys.js';
 import { useBriefStateQuery } from './useBriefStateQuery.js';
-import { useRequestRegenerationMutation } from './mutations.js';
+import {
+  useRequestRegenerationMutation,
+  useUpdateSovereigntyModeMutation,
+} from './mutations.js';
 
 const CHILD_COLORS: readonly ChildDotColor[] = ['foliage', 'lumi-terracotta'];
 
@@ -52,6 +61,11 @@ export function BriefCanvas() {
   const householdId = useAuthStore((s) => s.user?.current_household_id ?? null);
   const queryClient = useQueryClient();
   const { data, isLoading, isError, isStale, isFetching, error } = useBriefStateQuery(householdId);
+  // Story pre-4-s3 — the plan endpoint carries compound-uncertain flagged_items
+  // when the hard-fail audit row signals AllergyUncertaintyBanner is needed.
+  // Gated on householdId so the query doesn't fire pre-auth.
+  const { data: planData, isLoading: isPlanLoading } = usePlanQuery('current', { enabled: householdId !== null });
+  const flaggedItemsRaw = planData?.flagged_items ?? [];
   const [showAddChild, setShowAddChild] = useState(false);
   const [addedChild, setAddedChild] = useState<ChildResponse | null>(null);
   const [savedChildren, setSavedChildren] = useState<ChildResponse[]>([]);
@@ -63,6 +77,9 @@ export function BriefCanvas() {
   const [isRegenerating, setIsRegenerating] = useState(false);
   const lastPlanRevisionRef = useRef<number | null>(null);
   const regenerateMutation = useRequestRegenerationMutation();
+  // Story 3.29 — toggle for the degraded inline note.
+  const sovereigntyMutation = useUpdateSovereigntyModeMutation();
+  const [sovereigntyError, setSovereigntyError] = useState(false);
   // Capture the tile element that opened the picker so dismiss can return
   // focus to it (WCAG 2.4.3 Focus Order). The ref persists across rerenders
   // and is cleared on dismiss to avoid stale focus targets.
@@ -83,6 +100,26 @@ export function BriefCanvas() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [JSON.stringify(clearedAllergies)],
   );
+
+  // Story pre-4-s3 — map flagged_items (child_id only) to banner shape
+  // (childName + childId). Resolve from cleared_allergies; fall back to a
+  // generic label so the banner is still informative when no prior plan has
+  // cleared (first-ever hard-fail, brief is null).
+  const flaggedItems = useMemo<readonly AllergyUncertaintyFlaggedItem[]>(() => {
+    if (flaggedItemsRaw.length === 0) return [];
+    const nameById = new Map<string, string>();
+    for (const entry of clearedAllergies) {
+      if (!nameById.has(entry.child_id)) nameById.set(entry.child_id, entry.child_name);
+    }
+    return flaggedItemsRaw.map((item) => ({
+      childId: item.child_id,
+      childName: nameById.get(item.child_id) ?? 'your child',
+      ingredient: item.ingredient,
+      slot: item.slot,
+      day: item.day,
+    }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [JSON.stringify(flaggedItemsRaw), JSON.stringify(clearedAllergies)]);
   // brief.plan_id is null on pre-migration rows; swap UI requires it.
   const planId = brief?.plan_id ?? null;
   const canSwap = planId !== null;
@@ -121,6 +158,26 @@ export function BriefCanvas() {
     }
   }, [brief]);
 
+  function handleToggleAlternatingSovereignty() {
+    if (!householdId || sovereigntyMutation.isPending) return;
+    setSovereigntyError(false);
+    sovereigntyMutation.mutate(
+      { householdId, input: { sovereignty_mode: 'alternating' }, idempotencyKey: crypto.randomUUID() },
+      {
+        onSuccess: () => {
+          if (brief) {
+            lastPlanRevisionRef.current = brief.plan_revision;
+          }
+          setIsRegenerating(true);
+        },
+        onError: (err) => {
+          console.error('sovereignty mode toggle failed', err);
+          setSovereigntyError(true);
+        },
+      },
+    );
+  }
+
   function handleRegenerate(scope: 'week' | 'day', day?: string) {
     if (!planId || isRegenerating) return;
     regenerateMutation.mutate(
@@ -137,6 +194,18 @@ export function BriefCanvas() {
         },
       },
     );
+  }
+
+  // Story pre-4-s3 — banner-driven recovery. In hard-fail state planId is null
+  // (no plan committed); fall back to invalidating plan + brief queries so the
+  // UI picks up backend recovery on the next poll cycle.
+  function handleBannerRetry() {
+    if (planId) {
+      handleRegenerate('week');
+    } else {
+      void queryClient.invalidateQueries({ queryKey: QueryKeys.planByWeek('current') });
+      void queryClient.invalidateQueries({ queryKey: ['brief'] });
+    }
   }
 
   if (isLoading && brief === null) {
@@ -156,6 +225,21 @@ export function BriefCanvas() {
             ))}
           </div>
         </div>
+      </main>
+    );
+  }
+
+  // Story pre-4-s3 — when brief is null because the first-ever plan hard-failed
+  // with compound-uncertain ingredients, surface the banner instead of the
+  // "preparing your first plan" empty state. flaggedItems guarantees the
+  // hard-fail signal carries actionable recovery info.
+  if (!isLoading && !isPlanLoading && brief === null && !isError && flaggedItems.length > 0) {
+    return (
+      <main className="mx-auto w-full max-w-7xl flex-grow px-6 pt-12 pb-24">
+        <AllergyUncertaintyBanner
+          flaggedItems={flaggedItems}
+          onRetry={handleBannerRetry}
+        />
       </main>
     );
   }
@@ -218,6 +302,15 @@ export function BriefCanvas() {
 
   return (
     <main className="mx-auto w-full max-w-7xl flex-grow px-6 pt-12 pb-24">
+      {/* Story pre-4-s3 — compound-uncertain hard-fail surface; banner self-hides on empty. */}
+      {flaggedItems.length > 0 && (
+        <div className="mb-6">
+          <AllergyUncertaintyBanner
+            flaggedItems={flaggedItems}
+            onRetry={handleBannerRetry}
+          />
+        </div>
+      )}
       {brief !== null && (
         <>
           {clearedAllergies.length > 0 && (
@@ -243,6 +336,32 @@ export function BriefCanvas() {
                 summary={brief.scaffolding_diff.summary}
                 explanation={brief.scaffolding_diff.explanation}
               />
+            </div>
+          )}
+
+          {brief.plan_state === 'degraded' && brief.plan_state_message !== null && (
+            <div
+              className="mb-6 rounded-lg border border-foliage-200 bg-foliage-50 px-4 py-3 flex flex-col gap-2"
+              role="region"
+              aria-label="Cultural intersection notice"
+            >
+              <p className="font-sans text-[14px] text-foliage-800 leading-relaxed">
+                {brief.plan_state_message}
+              </p>
+              <button
+                type="button"
+                onClick={handleToggleAlternatingSovereignty}
+                disabled={sovereigntyMutation.isPending || isRegenerating}
+                className="self-start rounded-full border border-foliage-400 px-3 py-1 font-sans text-[13px] text-foliage-800 hover:bg-foliage-100 transition-colors motion-reduce:transition-none focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-foliage-400 disabled:opacity-50"
+                aria-label="Switch to alternating sovereignty mode"
+              >
+                {sovereigntyMutation.isPending ? 'Switching…' : 'Try alternating'}
+              </button>
+              {sovereigntyError && (
+                <p className="font-sans text-[12px] text-clay-600">
+                  Something went wrong. Please try again.
+                </p>
+              )}
             </div>
           )}
 
@@ -275,6 +394,7 @@ export function BriefCanvas() {
                   summary={summary}
                   state={tileState}
                   childColorMap={childColorMap}
+                  childRatings={summary.child_ratings}
                   onSwapIntent={
                     canSwap && !summary.paused && swappingItemId === null
                       ? () => {

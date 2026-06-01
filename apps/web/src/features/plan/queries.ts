@@ -10,7 +10,7 @@ import { QueryKeys } from '@/lib/realtime/query-keys.js';
 //
 // staleTime 30s keeps the tab snappy when the user toggles back and forth
 // without dogpiling the API. SSE-driven invalidation lands in Story 5.2.
-export function usePlanQuery(week: 'current' | 'next') {
+export function usePlanQuery(week: 'current' | 'next', options?: { enabled?: boolean }) {
   return useQuery({
     queryKey: QueryKeys.planByWeek(week),
     queryFn: ({ signal }) =>
@@ -19,6 +19,7 @@ export function usePlanQuery(week: 'current' | 'next') {
         signal,
       }),
     staleTime: 30_000,
+    enabled: options?.enabled ?? true,
   });
 }
 

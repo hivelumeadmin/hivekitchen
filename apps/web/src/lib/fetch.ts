@@ -81,6 +81,52 @@ export function tryRefreshSession(): Promise<string | null> {
   return _refreshPromise;
 }
 
+/**
+ * Unauthenticated GET — for public endpoints that children access without
+ * logging in (e.g. the Lunch Link verify route). Returns the raw status code
+ * plus a parsed JSON body so callers can route on 200 vs 410 vs 404 without
+ * the hkFetch throw-on-non-2xx contract.
+ */
+export async function publicGet(
+  path: string,
+): Promise<{ status: number; body: unknown }> {
+  const res = await fetch(`${API_BASE_URL}${path}`, {
+    method: 'GET',
+    credentials: 'omit',
+  });
+  let body: unknown = null;
+  try {
+    body = await res.json();
+  } catch {
+    // no JSON body
+  }
+  return { status: res.status, body };
+}
+
+/**
+ * Unauthenticated POST — for public endpoints that children access without
+ * logging in (emoji rating, etc.). Parallel to publicGet; never throws so
+ * callers can fire-and-forget.
+ */
+export async function publicPost(
+  path: string,
+  body: unknown,
+): Promise<{ status: number; body: unknown }> {
+  const res = await fetch(`${API_BASE_URL}${path}`, {
+    method: 'POST',
+    credentials: 'omit',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  let respBody: unknown = null;
+  try {
+    respBody = await res.json();
+  } catch {
+    // 204 or non-JSON body — ignore
+  }
+  return { status: res.status, body: respBody };
+}
+
 export async function hkFetch<T = unknown>(path: string, init: HkFetchInit): Promise<T> {
   const accessToken = useAuthStore.getState().accessToken;
   // Caller headers first; then overwrite with Content-Type and Authorization so auth always wins.

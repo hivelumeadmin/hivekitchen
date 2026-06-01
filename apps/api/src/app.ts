@@ -37,6 +37,8 @@ import { planGenerationJobPlugin } from './jobs/plan-generation.job.js';
 import { planRegenerationJobPlugin } from './jobs/plan-regeneration.job.js';
 import { dayOverrideRevertJobPlugin } from './jobs/day-override-revert.job.js';
 import { catalogSeedJobPlugin } from './jobs/catalog-seed.job.js';
+import { catalogRecoveryJobPlugin } from './jobs/catalog-recovery.job.js';
+import { heartNoteDeliveryJobPlugin } from './jobs/heart-note-delivery.job.js';
 import { healthRoutes } from './modules/internal/health.routes.js';
 import { eventsRoutes } from './routes/v1/events/events.routes.js';
 import { authRoutes } from './modules/auth/auth.routes.js';
@@ -73,6 +75,10 @@ export async function buildApp(opts: BuildAppOptions) {
 
   const app = Fastify({
     logger,
+    // Slice 4-S3 Lunch Link tokens are ~310 chars (base64url payload + 64 hex).
+    // find-my-way's default maxParamLength is 100, which would 404 the public
+    // GET /v1/lunch-link/:token route. 1024 leaves headroom for future shapes.
+    routerOptions: { maxParamLength: 1024 },
     genReqId(req) {
       const incoming = req.headers['x-request-id'];
       const header = Array.isArray(incoming) ? incoming[0] : incoming;
@@ -118,6 +124,15 @@ export async function buildApp(opts: BuildAppOptions) {
   await app.register(dayOverrideRevertJobPlugin);
   // Slice 2.6-s3 — must register BEFORE onboardingRoutes so the queue is
   // available when OnboardingService submits its M2 trigger.
+  // Slice 2.6-s5 — recovery plugin registered first so the recovery queue
+  // exists when Stage 1 needs to enqueue. bullmq.getQueue is idempotent, so
+  // registration order is functionally independent, but keeping it
+  // recovery-before-seed makes the dependency graph explicit.
+  await app.register(catalogRecoveryJobPlugin);
+  // Slice 4-S6 — daily 06:00 UTC sweep that flips scheduled heart notes to
+  // delivered. Independent of catalog jobs; ordered after recovery to keep
+  // the (recovery → seed) catalog pair contiguous in the registration list.
+  await app.register(heartNoteDeliveryJobPlugin);
   await app.register(catalogSeedJobPlugin);
 
   await app.register(cookie);

@@ -17,15 +17,16 @@ import type { PlansRepository } from './plans.repository.js';
 import type { BriefStateRepository } from './brief-state.repository.js';
 import type { BriefStateComposer } from './brief-state.composer.js';
 import type { ExtraRemovalSignalService } from './extra-removal-signal.service.js';
-import type { SnackSkusRepository } from './snack-skus.repository.js';
 import type { RecipeService } from '../recipe/recipe.service.js';
 import type { RecipesRepository } from '../recipe/recipes.repository.js';
 import type { RecipeAgent } from '../../agents/recipe-agent.js';
 import type { PlanRegenerationJobData } from '../../jobs/plan-regeneration.job.js';
 import type { VariantProposalService } from './variant-proposal.service.js';
+import { FlaggedCompoundItemSchema } from '@hivekitchen/contracts';
 import type {
   BriefStateRow,
   CommitPlanInput,
+  FlaggedCompoundItem,
   GuardrailResult,
   PausePlanDayInput,
   PlanComposeInput,
@@ -51,7 +52,6 @@ export interface PlansServiceDeps {
   // tests that pre-date the dep can construct PlansService without wiring it.
   // The swapItem hook is a no-op when the service is not provided.
   extraRemovalSignalService?: ExtraRemovalSignalService;
-  snackSkusRepository?: SnackSkusRepository;
   // Slice D — at plan-commit time, main-slot items are materialized into
   // the recipes catalog and household_recipe_usage is bumped. Optional so
   // tests pre-dating slice D can construct PlansService without it; when
@@ -90,7 +90,6 @@ export class PlansService {
   private readonly redis: Redis;
   private readonly regenQueue: Queue;
   private readonly extraRemovalSignalService: ExtraRemovalSignalService | null;
-  private readonly snackSkusRepository: SnackSkusRepository | null;
   private readonly recipeService: RecipeService | null;
   private readonly recipesRepo: RecipesRepository | null;
   private readonly recipeAgent: RecipeAgent | null;
@@ -106,7 +105,6 @@ export class PlansService {
     this.redis = deps.redis;
     this.regenQueue = deps.regenQueue;
     this.extraRemovalSignalService = deps.extraRemovalSignalService ?? null;
-    this.snackSkusRepository = deps.snackSkusRepository ?? null;
     this.recipeService = deps.recipeService ?? null;
     this.recipesRepo = deps.recipesRepo ?? null;
     this.recipeAgent = deps.recipeAgent ?? null;
@@ -372,17 +370,107 @@ export class PlansService {
     throw new GuardrailRejectionError(planId, lastAttempt);
   }
 
+  // Story 3.29 — soft cultural-degradation signal. Invoked from
+  // plan-generation.job AFTER PlansService.commit() clears the guardrail and
+  // briefStateComposer.refresh() writes the projection. The plan is committed
+  // either way; this overlays plan_state='degraded' on brief_state so
+  // BriefCanvas can render the inline note + "try alternating" toggle.
+  //
+  // Failure mode: caller treats as best-effort. The plan is the canonical
+  // delivery; a missing brief_state update degrades the UX (no toggle) but
+  // does not block the plan. Errors are logged and propagated; the job
+  // catches them so plan delivery is unaffected.
+  async handleDegradedPlan(opts: {
+    householdId: string;
+    requestId: string;
+  }): Promise<void> {
+    const message =
+      "This week's plan couldn't honor every rule strictly. Try alternating whose rules lead each day?";
+    await this.briefStateRepo.setPlanState({
+      householdId: opts.householdId,
+      planState: 'degraded',
+      setAt: new Date().toISOString(),
+      message,
+    });
+    try {
+      await this.auditService.write({
+        event_type: 'plan.cultural_degraded',
+        household_id: opts.householdId,
+        request_id: opts.requestId,
+        metadata: { reason: 'CULTURAL_INTERSECTION_EMPTY' },
+      });
+    } catch (err) {
+      this.logger.error(
+        { err, household_id: opts.householdId },
+        'audit write failed for plan.cultural_degraded',
+      );
+    }
+  }
+
+  // Story 3.29 — clears the degraded plan_state once the parent picks a mode
+  // (called from PATCH /v1/households/:id/sovereignty-mode). Idempotent — a
+  // null plan_state row is left untouched.
+  async clearDegradedPlanState(householdId: string): Promise<void> {
+    await this.briefStateRepo.clearDegradedPlanState(householdId);
+  }
+
   // Story 3.25 — does a plan.hard_fail audit row exist for this household+week?
   // Slow-path read only — invoked by GET /v1/plans when plan===null && !isDraft
   // so the response can carry { hard_fail: { week_of, failed_at } } and the
   // frontend can render the FreshnessState variant="reworking" copy with a
   // real ETA instead of the "Lumi is drafting" copy.
+  // Story pre-4-s3 — also returns flagged_items extracted from the audit's
+  // `stages` JSON array (any stage with verdict==='uncertain' &&
+  // reason==='compound_ingredient_unverified'). Deduped by (child_id,
+  // ingredient, slot, day). Empty array when no compound-uncertain stage exists.
   async getHardFailStatus(
     householdId: string,
     weekOf: string,
-  ): Promise<{ week_of: string; failed_at: string } | null> {
+  ): Promise<{ week_of: string; failed_at: string; flagged_items: FlaggedCompoundItem[] } | null> {
     const result = await this.repo.findHardFailAudit(householdId, weekOf);
-    return result !== null ? { week_of: weekOf, failed_at: result.failedAt } : null;
+    if (result === null) return null;
+    const flaggedItems = this.extractFlaggedItems(result.stages);
+    return { week_of: weekOf, failed_at: result.failedAt, flagged_items: flaggedItems };
+  }
+
+  // Story pre-4-s3 — narrow the untyped JSONB `stages` column safely. Each
+  // stage that isn't compound-uncertain (e.g. blocked) is skipped, not thrown.
+  // A malformed flagged_items entry that fails Zod parsing logs and is skipped.
+  // Dedup key: (child_id, ingredient, slot, day) — same compound flagged across
+  // multiple retry attempts collapses to one banner item.
+  private extractFlaggedItems(rawStages: unknown): FlaggedCompoundItem[] {
+    if (!Array.isArray(rawStages)) return [];
+    const seen = new Set<string>();
+    const flagged: FlaggedCompoundItem[] = [];
+    for (const stage of rawStages) {
+      if (
+        typeof stage !== 'object' ||
+        stage === null ||
+        !('verdict' in stage) ||
+        stage.verdict !== 'uncertain' ||
+        !('reason' in stage) ||
+        stage.reason !== 'compound_ingredient_unverified' ||
+        !('flagged_items' in stage) ||
+        !Array.isArray(stage.flagged_items)
+      ) {
+        continue;
+      }
+      for (const raw of stage.flagged_items) {
+        const parsed = FlaggedCompoundItemSchema.safeParse(raw);
+        if (!parsed.success) {
+          this.logger.warn(
+            { issues: parsed.error.issues },
+            'skipping malformed flagged_item in plan.hard_fail stages',
+          );
+          continue;
+        }
+        const key = JSON.stringify([parsed.data.child_id, parsed.data.ingredient, parsed.data.slot, parsed.data.day]);
+        if (seen.has(key)) continue;
+        seen.add(key);
+        flagged.push(parsed.data);
+      }
+    }
+    return flagged;
   }
 
   // Story 3.12 — per-slot ingredient swap with guardrail validation.
@@ -519,24 +607,17 @@ export class PlansService {
     return updatedItem;
   }
 
-  // Coarse component-type inference for the bias signal — snack_skus.category
-  // when the swapped-out item referenced a SKU, otherwise the first ingredient
-  // (best effort). A precise per-item component_type column on plan_items is
-  // captured as deferred work; until then the planner sees "sweet treat" or
-  // "granola bar" depending on whether the item came from the SKU catalog.
+  // Coarse component-type inference for the bias signal. With snack_skus
+  // folded into recipes (Story 3-DM-A2), the SKU.category lookup retired;
+  // we now use the swapped-out item's first ingredient as a best-effort
+  // component label. A precise per-item component_type column is captured
+  // as deferred work.
   private async recordExtraRemovalSignal(
     oldItem: PlanItemRow,
     opts: { householdId: string; requestId: string },
   ): Promise<void> {
     if (this.extraRemovalSignalService === null) return;
-    let componentType: string | null = null;
-    if (oldItem.item_sku_id !== null && this.snackSkusRepository !== null) {
-      const sku = await this.snackSkusRepository.findById(oldItem.item_sku_id);
-      componentType = sku?.category ?? null;
-    }
-    if (componentType === null) {
-      componentType = oldItem.ingredients[0] ?? null;
-    }
+    const componentType = oldItem.ingredients[0] ?? null;
     if (componentType === null) return;
 
     await this.extraRemovalSignalService.recordRemoval({
@@ -550,8 +631,9 @@ export class PlansService {
 
   // Slice D — walk every main-slot item, materialize a recipe row (or reuse an
   // existing one with the same canonical name in this household), and stamp
-  // the recipe_id onto the item. Snack + extra slots are passed through
-  // untouched (they reference snack_skus.item_sku_id, not recipe_id).
+  // the recipe_id onto the item. Snack + extra slots pass through unchanged
+  // — they already carry a recipe_id pointing at a folded recipes row from
+  // the curated catalog (Story 3-DM-A2).
   //
   // Returns a new CommitPlanInput so the caller can pass it to repo.commit.
   // Populates recordedRecipeIds (out-param) for the post-commit usage bump.

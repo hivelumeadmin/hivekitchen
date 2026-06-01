@@ -1,12 +1,16 @@
 import { Buffer } from 'node:buffer';
 import fp from 'fastify-plugin';
 import type { FastifyPluginAsync } from 'fastify';
-import type { Job } from 'bullmq';
+import type { Job, Queue } from 'bullmq';
 import { AllergyGuardrailRepository } from '../modules/allergy-guardrail/allergy-guardrail.repository.js';
 import { CuratedBaselineRepository } from '../modules/catalog/curated-baseline.repository.js';
 import { CatalogSeedService } from '../modules/catalog/catalog-seed.service.js';
 import { HouseholdsRepository } from '../modules/households/households.repository.js';
 import { RecipesRepository } from '../modules/recipe/recipes.repository.js';
+import {
+  CATALOG_RECOVERY_QUEUE,
+  type CatalogRecoveryJobData,
+} from './catalog-recovery.job.js';
 
 // Slice 2.6-s3 — Stage 1 catalog seeding BullMQ plugin.
 //
@@ -62,6 +66,12 @@ const catalogSeedPlugin: FastifyPluginAsync = async (fastify) => {
   const recipesRepo = new RecipesRepository(fastify.supabase);
   const curatedBaselineRepo = new CuratedBaselineRepository(fastify.supabase);
 
+  // Slice 2.6-s5 — recovery queue for Stage 2 enqueues from Stage 1 completion.
+  // Queue is created lazily via bullmq.getQueue; idempotent across plugins.
+  const recoveryQueue = fastify.bullmq.getQueue(
+    CATALOG_RECOVERY_QUEUE,
+  ) as Queue<CatalogRecoveryJobData>;
+
   const service = new CatalogSeedService({
     openai: fastify.openai,
     kitchenMapService: fastify.kitchenMapService,
@@ -69,6 +79,7 @@ const catalogSeedPlugin: FastifyPluginAsync = async (fastify) => {
     guardrailRepo,
     recipesRepo,
     curatedBaselineRepo,
+    recoveryQueue,
     logger: fastify.log,
   });
 

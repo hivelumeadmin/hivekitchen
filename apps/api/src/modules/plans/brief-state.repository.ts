@@ -7,7 +7,7 @@ import type {
 } from '@hivekitchen/types';
 
 const BRIEF_STATE_COLUMNS =
-  'household_id, plan_id, moment_headline, lumi_note, memory_prose, plan_tile_summaries, cleared_allergies, scaffolding_diff, generated_at, plan_revision, updated_at';
+  'household_id, plan_id, moment_headline, lumi_note, memory_prose, plan_tile_summaries, cleared_allergies, scaffolding_diff, generated_at, plan_revision, updated_at, plan_state, plan_state_set_at, plan_state_message';
 
 export interface BriefStateUpsertInput {
   household_id: string;
@@ -57,6 +57,49 @@ export class BriefStateRepository extends BaseRepository {
         { ...input, updated_at: new Date().toISOString() },
         { onConflict: 'household_id' },
       );
+    if (error) throw error;
+  }
+
+  // Story 3.29 — set the soft plan_state signal AFTER the briefStateComposer
+  // has run; an UPDATE (not upsert) since the row must already exist for a
+  // degraded state to be meaningful (degradation describes a committed plan).
+  async setPlanState(opts: {
+    householdId: string;
+    planState: 'degraded' | 'hard_failed';
+    setAt: string;
+    message: string;
+  }): Promise<void> {
+    const { data, error } = await this.client
+      .from('brief_state')
+      .update({
+        plan_state: opts.planState,
+        plan_state_set_at: opts.setAt,
+        plan_state_message: opts.message,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('household_id', opts.householdId)
+      .select('household_id')
+      .maybeSingle();
+    if (error) throw error;
+    if (data === null) {
+      throw new Error(`setPlanState: no brief_state row for household ${opts.householdId} — degraded flag not set`);
+    }
+  }
+
+  // Story 3.29 — clears the degraded plan_state once the parent picks a
+  // sovereignty mode. Filtered by plan_state='degraded' so a future hard_failed
+  // row isn't accidentally cleared by the same code path.
+  async clearDegradedPlanState(householdId: string): Promise<void> {
+    const { error } = await this.client
+      .from('brief_state')
+      .update({
+        plan_state: null,
+        plan_state_set_at: null,
+        plan_state_message: null,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('household_id', householdId)
+      .eq('plan_state', 'degraded');
     if (error) throw error;
   }
 }

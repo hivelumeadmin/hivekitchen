@@ -62,17 +62,10 @@ export const KitchenMapCaregiverSchema = z.object({
 
 // ---- Children -------------------------------------------------------------
 
-// Slice 2.5-s1 — parent-stated bag composition pattern. The existing
-// BagCompositionSchema ({ main, snack, extra } booleans) is the derived
-// per-slot truth used by the planner; bag_composition_pattern is the
-// parent's mental model captured in Moment 4. Both coexist; the booleans
-// may be deprecated post-Epic-2.5.
-export const BagCompositionPatternSchema = z.enum([
-  'main_only',
-  'main_plus_snack',
-  'main_plus_extra',
-  'main_plus_snack_plus_extra',
-]);
+// Story 3-DM-B1 — BagCompositionPatternSchema moved to children.ts (canonical
+// column home). Re-export from this module so existing imports continue to work.
+import { BagCompositionPatternSchema } from './children.js';
+export { BagCompositionPatternSchema };
 export type BagCompositionPattern = z.infer<typeof BagCompositionPatternSchema>;
 
 // Re-uses AgeBandSchema + BagCompositionSchema from children.ts to avoid

@@ -18,7 +18,8 @@
 export type PlanAdjustmentTriggerType =
   | 'school_policy_changed'
   | 'pantry_leftover_changed'
-  | 'cultural_calendar_event';
+  | 'cultural_calendar_event'
+  | 'cultural_sovereignty_mode_changed';
 
 // `slotScope: null` means bag-wide or scope-unknown; the regen job will plan
 // the full bag. `dayScope: null` means all future days; a non-null ISO weekday

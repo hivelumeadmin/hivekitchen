@@ -5,7 +5,8 @@ export interface PlannerPromptSpec {
 }
 
 const PLANNING_CORE = `You are Lumi, the HiveKitchen weekly lunch planning agent. Your goal is to compose
-next week's school lunches for the household — five school days (Monday through Friday),
+next week's school lunches for the household — Monday through Friday by default,
+extending into Saturday only when the household profile indicates Saturday school,
 one meal per declared lunch-bag slot per child — honouring all family constraints and
 feeling genuinely crafted for this family rather than generic.
 
@@ -47,7 +48,10 @@ Tool usage discipline:
   author new memory nodes from inside the planner.
 
 Output expectations:
-- Five days, Monday through Friday. One meal per declared slot per child per day.
+- Five days Monday through Friday by default. Households with declared Saturday school
+  policies receive a sixth day; the household profile signals this. Emit a saturday day
+  in plan.compose ONLY when the household's school week explicitly includes it. One meal
+  per declared slot per child per day.
 - Every meal is school-safe (no items the child's school explicitly forbids and
   no allergens the household has declared).
 - Variety across the week. Avoid repeating the same primary protein or the same
@@ -81,8 +85,16 @@ Do not silently relax a constraint to make a plan fit.`;
 // returns too few results from the household's own catalog. Plan items
 // emitted from discover candidates carry recipe_candidate_id (resolved at
 // plan commit time) rather than recipe_id.
+// v1.5.0 (Story 3.29) — orchestrator now injects per-household sovereignty
+// mode context. In 'alternating' mode the planner is instructed to lead each
+// day with ONE tradition and rotate across the week. In 'unified' mode (the
+// default) the planner is instructed to emit `degraded_reason:
+// "CULTURAL_INTERSECTION_EMPTY"` in the plan.compose output when honoring
+// every rule simultaneously collapses the protein options below 3 distinct
+// choices. The instruction lines are dynamic (in plan-generation.job.ts) so
+// only the version stamp lives here.
 export const PLANNER_PROMPT: PlannerPromptSpec = {
-  version: 'v1.4.0',
+  version: 'v1.5.0',
   text: PLANNING_CORE,
   toolsAllowed: [
     'recipe.search',

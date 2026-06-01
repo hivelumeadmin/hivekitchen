@@ -14,6 +14,10 @@ export interface RecipeAgentPromptSpec {
   readonly template: string;
 }
 
+// v1.2.0 — Story 3-DM-A1: flat `instructions` array replaced with structured
+// `steps`, each tagged with activity mode (prep | finish). New
+// `finish_time_minutes` field complements prep_time_minutes for the dual-
+// budget rendering on the Wall Card.
 // v1.1.0 — added school-lunch framing (F-P11) and allergen exclusion
 // instruction (F-P10). Bump version so prompt cache invalidates on deploy.
 
@@ -60,7 +64,7 @@ Discard and never reproduce:
 - Tips, variations, serving suggestions, reader-addressed conversational text.
 - URLs, brand names, or affiliate references beyond the source URL you were given.
 
-# Instruction Rewriting
+# Step Rewriting (Functional Directive + Mode Tagging)
 
 Never copy and paste the source's instructions. Rewrite each step using the
 Functional Directive method:
@@ -74,6 +78,23 @@ Functional Directive method:
 - Remove every adjective that doesn't carry cooking meaning. "Saute until
   golden brown" keeps "golden brown" because it's a doneness cue. "Saute
   the gloriously fragrant onions" drops "gloriously fragrant".
+
+Every step MUST also carry a "mode" tag:
+
+- "prep" — make-ahead activity. Marinating overnight, chopping vegetables the
+  night before, soaking beans, mixing dressing, baking cookies that get packed
+  in the morning. Anything that can be done outside the morning-of window.
+- "finish" — morning-of activity. Assembling sandwiches, packing the bag,
+  reheating a cooked dish, slicing fruit fresh. Anything that must happen
+  the morning the lunch is packed.
+
+When uncertain (e.g. the step is genuinely flexible — "season to taste"), tag
+"prep". The Wall Card's mode filter treats "prep" as the safe default;
+parents can still see the step in Finish mode by toggling.
+
+A recipe that is pure morning-of (e.g. PB&J) emits all "finish" steps. A
+recipe that is pure make-ahead (e.g. overnight oats) emits all "prep" steps.
+Mixed recipes (the common case) carry both.
 
 # Ingredient Head-Noun Discipline
 
@@ -173,6 +194,7 @@ emit null (or [] for arrays). Do not fabricate.
   "dietary_flags": ["from the controlled list above"],
   "allergen_flags": ["from the controlled list above"],
   "prep_time_minutes": number | null,
+  "finish_time_minutes": number | null,
   "ingredients": [
     {
       "key": "string — base food, snake_case",
@@ -184,13 +206,18 @@ emit null (or [] for arrays). Do not fabricate.
       "substitutes": []
     }
   ],
-  "instructions": ["one imperative sentence per step"],
+  "steps": [
+    {
+      "mode": "prep" | "finish",
+      "text": "one imperative sentence per step"
+    }
+  ],
   "allergen_info_from_source": "string | null — verbatim only"
 }
 `;
 
 export const RECIPE_AGENT_SYSTEM_PROMPT_V1_0_0: RecipeAgentPromptSpec = {
-  version: 'recipe-agent.v1.1.0',
+  version: 'recipe-agent.v1.2.0',
   template: TEMPLATE,
 };
 

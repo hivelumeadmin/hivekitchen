@@ -25,6 +25,7 @@ import { HouseholdsService } from '../households/households.service.js';
 import { AllergyGuardrailRepository } from '../allergy-guardrail/allergy-guardrail.repository.js';
 import { CuratedBaselineRepository } from '../catalog/curated-baseline.repository.js';
 import { CuratedBaselineMaterializationService } from '../catalog/curated-baseline.service.js';
+import { CatalogProjectionService } from '../catalog/catalog-projection.service.js';
 import { CATALOG_SEED_QUEUE } from '../../jobs/catalog-seed.job.js';
 import type { CatalogSeedJobData } from '../../jobs/catalog-seed.job.js';
 import type { Queue } from 'bullmq';
@@ -117,6 +118,15 @@ const onboardingRoutesPlugin: FastifyPluginAsync = async (fastify) => {
     ? (fastify.bullmq.getQueue(CATALOG_SEED_QUEUE) as Queue<CatalogSeedJobData>)
     : undefined;
 
+  // Slice 2.6-s4 — per-household M5 chip projection. Reads the catalog at
+  // turn-time and returns ChipOption[] with provenance for the Moment 5
+  // starting-line chip card. Replaces the deleted static 18-chip set.
+  const catalogProjection = new CatalogProjectionService({
+    recipesRepository,
+    householdsRepository,
+    logger: fastify.log,
+  });
+
   const service = new OnboardingService({
     threads,
     agent,
@@ -137,6 +147,7 @@ const onboardingRoutesPlugin: FastifyPluginAsync = async (fastify) => {
     recipesRepository,
     curatedBaseline,
     catalogSeedQueue,
+    catalogProjection,
   });
 
   // Slice 2-S26 — fire-and-forget audit writer for resume / reset events.

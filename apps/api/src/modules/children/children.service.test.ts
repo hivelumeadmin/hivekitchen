@@ -15,9 +15,10 @@ function makeExistingRow(overrides: Partial<DecryptedChildRow> = {}): DecryptedC
     declared_allergens: ['peanut'],
     cultural_identifiers: [],
     dietary_preferences: [],
-    allergen_rule_version: '1',
-    bag_composition: { main: true, snack: true, extra: true },
-    bag_composition_pattern: null,
+    appetite_level: 'normal',
+    texture_needs: 'normal',
+    spice_tolerance: 'mild',
+    bag_composition_pattern: 'main_plus_snack_plus_extra',
     created_at: '2026-05-21T00:00:00.000Z',
     ...overrides,
   };

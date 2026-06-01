@@ -44,6 +44,8 @@ describe('AddChildBodySchema', () => {
 });
 
 describe('ChildResponseSchema / wrappers', () => {
+  // Story 3-DM-B1: response shape drops bag_composition jsonb + allergen_rule_version;
+  // adds appetite_level / texture_needs / spice_tolerance + bag_composition_pattern enum.
   const baseChild = {
     id: VALID_UUID,
     household_id: VALID_UUID,
@@ -53,8 +55,10 @@ describe('ChildResponseSchema / wrappers', () => {
     declared_allergens: ['peanut'],
     cultural_identifiers: ['south_asian'],
     dietary_preferences: ['vegetarian'],
-    allergen_rule_version: 'v1',
-    bag_composition: { main: true as const, snack: true, extra: true },
+    appetite_level: 'normal' as const,
+    texture_needs: 'normal' as const,
+    spice_tolerance: 'mild' as const,
+    bag_composition_pattern: 'main_plus_snack_plus_extra' as const,
     created_at: '2026-04-28T10:00:00.000Z',
   };
 
@@ -64,9 +68,9 @@ describe('ChildResponseSchema / wrappers', () => {
     expect(GetChildResponseSchema.safeParse({ child: baseChild }).success).toBe(true);
   });
 
-  it('rejects a child row whose bag_composition is missing', () => {
-    const { bag_composition: _drop, ...withoutBag } = baseChild;
-    expect(ChildResponseSchema.safeParse(withoutBag).success).toBe(false);
+  it('rejects a child row whose bag_composition_pattern is missing (story 3-DM-B1)', () => {
+    const { bag_composition_pattern: _drop, ...withoutPattern } = baseChild;
+    expect(ChildResponseSchema.safeParse(withoutPattern).success).toBe(false);
   });
 
   it('AgeBandSchema enumerates all four bands', () => {
@@ -146,7 +150,7 @@ describe('SetBagCompositionBodySchema', () => {
 });
 
 describe('SetBagCompositionResponseSchema', () => {
-  it('wraps a ChildResponse including bag_composition', () => {
+  it('wraps a ChildResponse with the new B1 fields', () => {
     const child = {
       id: VALID_UUID,
       household_id: VALID_UUID,
@@ -156,8 +160,10 @@ describe('SetBagCompositionResponseSchema', () => {
       declared_allergens: [],
       cultural_identifiers: [],
       dietary_preferences: [],
-      allergen_rule_version: 'v1',
-      bag_composition: { main: true as const, snack: false, extra: true },
+      appetite_level: 'normal' as const,
+      texture_needs: 'normal' as const,
+      spice_tolerance: 'mild' as const,
+      bag_composition_pattern: 'main_plus_extra' as const,
       created_at: '2026-04-28T10:00:00.000Z',
     };
     expect(SetBagCompositionResponseSchema.safeParse({ child }).success).toBe(true);

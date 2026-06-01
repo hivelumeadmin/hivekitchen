@@ -119,7 +119,6 @@ const childrenRoutesPlugin: FastifyPluginAsync = async (fastify) => {
         request_id: request.id,
         metadata: {
           child_id: child.id,
-          allergen_rule_version: child.allergen_rule_version,
           declared_allergen_count: body.declared_allergens.length,
           cultural_identifier_count: body.cultural_identifiers.length,
           dietary_preference_count: body.dietary_preferences.length,

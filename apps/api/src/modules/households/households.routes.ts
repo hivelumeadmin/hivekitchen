@@ -12,10 +12,13 @@ import {
   HouseholdIdParamSchema,
   HouseholdProfilePatchBodySchema,
   HouseholdProfileResponseSchema,
+  UpdateSovereigntyModeInputSchema,
+  UpdateSovereigntyModeResponseSchema,
 } from '@hivekitchen/contracts';
 import type {
   TileRetryRequest,
   HouseholdProfilePatchBody,
+  UpdateSovereigntyModeInput,
 } from '@hivekitchen/contracts';
 import type { CreateExtraLibraryItemInput } from '@hivekitchen/types';
 import { AuditRepository } from '../../audit/audit.repository.js';
@@ -336,6 +339,79 @@ const householdsRoutesPlugin: FastifyPluginAsync = async (fastify) => {
       };
 
       return updated;
+    },
+  );
+
+  // Story 3.29 — PATCH /v1/households/:id/sovereignty-mode
+  // Primary Parent toggles cultural rule reconciliation between 'unified' (the
+  // default — honor all rules simultaneously) and 'alternating' (rotate which
+  // tradition leads each day). On success: clears any active degraded
+  // plan_state in brief_state and triggers a regen so the parent sees the
+  // alternating plan immediately.
+  fastify.patch(
+    '/v1/households/:id/sovereignty-mode',
+    {
+      preHandler: authorize(['primary_parent']),
+      schema: {
+        params: HouseholdIdParamSchema,
+        body: UpdateSovereigntyModeInputSchema,
+        response: { 200: UpdateSovereigntyModeResponseSchema },
+      },
+    },
+    async (request, reply) => {
+      const { id: householdId } = request.params as { id: string };
+      if (householdId !== request.user.household_id) {
+        throw new ForbiddenError('Not your household');
+      }
+      const body = request.body as UpdateSovereigntyModeInput;
+
+      const currentMode = await households.getSovereigntyMode(householdId);
+      if (currentMode === body.sovereignty_mode) {
+        return reply.send({ sovereignty_mode: body.sovereignty_mode });
+      }
+
+      await households.setSovereigntyMode(householdId, body.sovereignty_mode);
+
+      // Clear the degraded plan_state — the parent has acknowledged and chosen
+      // a mode. Filtered to plan_state='degraded' inside the repo so a future
+      // 'hard_failed' row is not accidentally cleared.
+      await fastify.plansService.clearDegradedPlanState(householdId);
+
+      try {
+        await auditService.write({
+          event_type: 'household.sovereignty_mode_changed',
+          user_id: request.user.id,
+          household_id: householdId,
+          request_id: request.id,
+          metadata: { sovereignty_mode: body.sovereignty_mode },
+        });
+      } catch (err) {
+        request.log.error(
+          { err, household_id: householdId },
+          'audit write failed for household.sovereignty_mode_changed',
+        );
+      }
+
+      // Fire a regen so the parent sees the new plan immediately. Failure here
+      // is non-fatal — the mode change is persisted; the next scheduled fan-out
+      // will pick it up.
+      try {
+        await fastify.planAdjustmentService.triggerAdjustment({
+          type: 'cultural_sovereignty_mode_changed',
+          householdId,
+          slotScope: 'bag_wide',
+          dayScope: null,
+          requestId: request.id,
+          metadata: { sovereignty_mode: body.sovereignty_mode },
+        });
+      } catch (err) {
+        request.log.error(
+          { err, household_id: householdId },
+          'plan-adjustment regen trigger failed — mode change persisted',
+        );
+      }
+
+      return reply.send({ sovereignty_mode: body.sovereignty_mode });
     },
   );
 };

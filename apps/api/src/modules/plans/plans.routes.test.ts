@@ -598,7 +598,7 @@ describe('GET /v1/plans', () => {
     const service = buildMockService({
       getHardFailStatus: vi
         .fn()
-        .mockResolvedValue({ week_of: '2026-05-04', failed_at: '2026-05-25T08:00:00Z' }),
+        .mockResolvedValue({ week_of: '2026-05-04', failed_at: '2026-05-25T08:00:00Z', flagged_items: [] }),
     });
     app = await buildTestApp(service);
     const token = signPrimary(app);
@@ -627,7 +627,7 @@ describe('GET /v1/plans', () => {
       }),
       getHardFailStatus: vi
         .fn()
-        .mockResolvedValue({ week_of: '2026-05-11', failed_at: '2026-05-25T08:00:00Z' }),
+        .mockResolvedValue({ week_of: '2026-05-11', failed_at: '2026-05-25T08:00:00Z', flagged_items: [] }),
     });
     app = await buildTestApp(service);
     const token = signPrimary(app);
@@ -674,6 +674,73 @@ describe('GET /v1/plans', () => {
     expect(res.statusCode).toBe(200);
     expect(service.getHardFailStatus).not.toHaveBeenCalled();
     const body = JSON.parse(res.body) as Record<string, unknown>;
+    expect('hard_fail' in body).toBe(false);
+  });
+
+  // Story pre-4-s3 — flagged_items surface for AllergyUncertaintyBanner
+  it('returns flagged_items when hard-fail carries compound-uncertain items (AC1)', async () => {
+    const childA = '11111111-1111-4111-8111-111111111111';
+    const childB = '22222222-2222-4222-8222-222222222222';
+    const flaggedItems = [
+      { child_id: childA, ingredient: 'garam masala', slot: 'main', day: 'monday' },
+      { child_id: childB, ingredient: 'ranch dressing', slot: 'main', day: 'tuesday' },
+    ];
+    const service = buildMockService({
+      getHardFailStatus: vi.fn().mockResolvedValue({
+        week_of: '2026-05-04',
+        failed_at: '2026-05-25T08:00:00Z',
+        flagged_items: flaggedItems,
+      }),
+    });
+    app = await buildTestApp(service);
+    const token = signPrimary(app);
+    const res = await app.inject({
+      method: 'GET',
+      url: '/v1/plans',
+      headers: { authorization: `Bearer ${token}` },
+    });
+    expect(res.statusCode).toBe(200);
+    const body = JSON.parse(res.body) as {
+      hard_fail?: { week_of: string; failed_at: string };
+      flagged_items?: Array<{ child_id: string; ingredient: string; slot: string; day: string }>;
+    };
+    expect(body.flagged_items).toEqual(flaggedItems);
+    expect(body.hard_fail).toEqual({ week_of: '2026-05-04', failed_at: '2026-05-25T08:00:00Z' });
+  });
+
+  it('omits flagged_items when hard-fail has no compound-uncertain items (blocked-only) (AC2)', async () => {
+    const service = buildMockService({
+      getHardFailStatus: vi.fn().mockResolvedValue({
+        week_of: '2026-05-04',
+        failed_at: '2026-05-25T08:00:00Z',
+        flagged_items: [],
+      }),
+    });
+    app = await buildTestApp(service);
+    const token = signPrimary(app);
+    const res = await app.inject({
+      method: 'GET',
+      url: '/v1/plans',
+      headers: { authorization: `Bearer ${token}` },
+    });
+    expect(res.statusCode).toBe(200);
+    const body = JSON.parse(res.body) as Record<string, unknown>;
+    expect('flagged_items' in body).toBe(false);
+    expect('hard_fail' in body).toBe(true);
+  });
+
+  it('omits flagged_items when there is no plan failure (AC3)', async () => {
+    const service = buildMockService();
+    app = await buildTestApp(service);
+    const token = signPrimary(app);
+    const res = await app.inject({
+      method: 'GET',
+      url: '/v1/plans',
+      headers: { authorization: `Bearer ${token}` },
+    });
+    expect(res.statusCode).toBe(200);
+    const body = JSON.parse(res.body) as Record<string, unknown>;
+    expect('flagged_items' in body).toBe(false);
     expect('hard_fail' in body).toBe(false);
   });
 });

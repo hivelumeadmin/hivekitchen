@@ -22,18 +22,24 @@ import type {
 const ZERO_RETENTION_HEADER = { 'OpenAI-Data-Privacy': 'zero-retention' } as const;
 
 /**
- * Returns the headers to pass to chat.completions.create. When traces are
- * disabled (default), we send `OpenAI-Data-Privacy: zero-retention` so OpenAI
- * processes the request but stores no body/response — billing counters still
- * tick, but the Activity / Logs / Traces dashboard panels are empty.
+ * Returns the headers to pass to chat.completions.create.
  *
- * When traces are enabled (dev-only — env validation hard-blocks staging/prod),
- * the header is omitted entirely so requests appear in the OpenAI dashboard
- * for debugging. An empty object — not `undefined` — keeps the SDK call shape
- * stable across both paths.
+ * Default (both flags false): send `OpenAI-Data-Privacy: zero-retention` so
+ * OpenAI processes the request but stores no body/response.
+ *
+ * tracesEnabled=true (dev-only): omit ZDR so full requests appear in the
+ * OpenAI dashboard Activity/Logs panel for debugging.
+ *
+ * storeCompletions=true: omit ZDR because `store: true` on the request body
+ * is mutually exclusive with the ZDR header — OpenAI cannot store a completion
+ * it was instructed to discard. The stored completions surface in the Evals
+ * API, not the general Activity dashboard.
  */
-function buildRequestHeaders(tracesEnabled: boolean): Record<string, string> {
-  return tracesEnabled ? {} : { ...ZERO_RETENTION_HEADER };
+function buildRequestHeaders(opts: {
+  tracesEnabled: boolean;
+  storeCompletions: boolean;
+}): Record<string, string> {
+  return opts.tracesEnabled || opts.storeCompletions ? {} : { ...ZERO_RETENTION_HEADER };
 }
 
 // Slice B — semantic tier → concrete OpenAI model id. Bump the values here
@@ -225,14 +231,18 @@ function mapChatCompletion(response: ChatCompletion): LLMResponse {
 export class OpenAIAdapter implements LLMProvider {
   readonly name = 'openai';
   private readonly tracesEnabled: boolean;
+  private readonly storeCompletions: boolean;
 
   constructor(
     private readonly client: OpenAI,
-    options: { tracesEnabled?: boolean } = {},
+    options: { tracesEnabled?: boolean; storeCompletions?: boolean } = {},
   ) {
-    // Default false → ZDR header is sent on every call. The orchestrator hook
-    // passes env.OPENAI_TRACES_ENABLED; tests can opt in explicitly.
     this.tracesEnabled = options.tracesEnabled ?? false;
+    // When true: ZDR header is dropped so OpenAI can persist the completion,
+    // and `store: true` + metadata are added to every complete/completeWithMessages
+    // call. Used to accumulate a dataset for the Evals API. Probe and stream
+    // calls are excluded — health checks and voice streams are not eval targets.
+    this.storeCompletions = options.storeCompletions ?? false;
   }
 
   async complete(
@@ -246,10 +256,17 @@ export class OpenAIAdapter implements LLMProvider {
       ...(options.temperature !== undefined ? { temperature: options.temperature } : {}),
       ...(options.maxTokens !== undefined ? { max_tokens: options.maxTokens } : {}),
       ...(tools.length > 0 ? { tools: toOpenAITools(tools), tool_choice: 'auto' } : {}),
+      ...(this.storeCompletions ? { store: true } : {}),
+      ...(this.storeCompletions && options.metadata !== undefined
+        ? { metadata: options.metadata }
+        : {}),
     };
 
     const response = (await this.client.chat.completions.create(params, {
-      headers: buildRequestHeaders(this.tracesEnabled),
+      headers: buildRequestHeaders({
+        tracesEnabled: this.tracesEnabled,
+        storeCompletions: this.storeCompletions,
+      }),
     })) as ChatCompletion;
 
     return mapChatCompletion(response);
@@ -270,10 +287,17 @@ export class OpenAIAdapter implements LLMProvider {
       ...(options.temperature !== undefined ? { temperature: options.temperature } : {}),
       ...(options.maxTokens !== undefined ? { max_tokens: options.maxTokens } : {}),
       ...(tools.length > 0 ? { tools: toOpenAITools(tools), tool_choice: 'auto' } : {}),
+      ...(this.storeCompletions ? { store: true } : {}),
+      ...(this.storeCompletions && options.metadata !== undefined
+        ? { metadata: options.metadata }
+        : {}),
     };
 
     const response = (await this.client.chat.completions.create(params, {
-      headers: buildRequestHeaders(this.tracesEnabled),
+      headers: buildRequestHeaders({
+        tracesEnabled: this.tracesEnabled,
+        storeCompletions: this.storeCompletions,
+      }),
     })) as ChatCompletion;
 
     return mapChatCompletion(response);
@@ -294,7 +318,9 @@ export class OpenAIAdapter implements LLMProvider {
     };
 
     const stream = await this.client.chat.completions.create(params, {
-      headers: buildRequestHeaders(this.tracesEnabled),
+      // Stream calls are excluded from storeCompletions — streaming + store=true
+      // is not supported by the Evals API. Only tracesEnabled affects stream headers.
+      headers: buildRequestHeaders({ tracesEnabled: this.tracesEnabled, storeCompletions: false }),
     });
 
     // The streaming overload returns an async iterable; the union return
@@ -338,7 +364,10 @@ export class OpenAIAdapter implements LLMProvider {
           messages: [{ role: 'user', content: 'ping' }],
           max_tokens: 1,
         },
-        { headers: buildRequestHeaders(this.tracesEnabled) },
+        {
+          // probe() is a health check — never store it, never affect evals counts.
+          headers: buildRequestHeaders({ tracesEnabled: this.tracesEnabled, storeCompletions: false }),
+        },
       );
       return true;
     } catch {

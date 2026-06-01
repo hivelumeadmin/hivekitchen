@@ -174,7 +174,6 @@ test.describe('Story 3-22: AC1 path — swapping an Extra-slot item', () => {
             slot: 'extra',
             recipe_id: null,
             item_id: null,
-            item_sku_id: null,
             ingredients: ['fruit cup'],
             paused_at: null,
             created_at: '2026-05-02T11:00:00.000Z',

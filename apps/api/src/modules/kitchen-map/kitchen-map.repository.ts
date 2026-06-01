@@ -1,6 +1,7 @@
 import type { Buffer } from 'node:buffer';
 import type { FastifyBaseLogger } from 'fastify';
 import type { SupabaseClient } from '@supabase/supabase-js';
+import type { BagCompositionPattern } from '@hivekitchen/types';
 import { BaseRepository } from '../../repository/base.repository.js';
 import { decryptField } from '../../lib/envelope-encryption.js';
 import { getHouseholdDek } from '../../lib/household-key.js';
@@ -40,7 +41,11 @@ export interface RawChildRow {
   declared_allergens: string[]; // decrypted from jsonb-ciphertext
   cultural_identifiers: string[];
   dietary_preferences: string[];
-  bag_composition: { main: boolean; snack: boolean; extra: boolean };
+  // Story 3-DM-B1 — bag_composition booleans are derived in the composer from
+  // bag_composition_pattern (the column post-B1). The raw row carries the enum
+  // directly; downstream readers call bagCompositionFromPattern when they need
+  // the boolean struct.
+  bag_composition_pattern: BagCompositionPattern;
   extra_rules: { pins: string[]; bans: string[] };
 }
 
@@ -176,7 +181,7 @@ interface EncryptedChildRow {
   declared_allergens: string;
   cultural_identifiers: string;
   dietary_preferences: string;
-  bag_composition: { main?: unknown; snack?: unknown; extra?: unknown } | string | null;
+  bag_composition_pattern: BagCompositionPattern;
   extra_rules: { pins?: unknown; bans?: unknown } | null;
 }
 
@@ -237,7 +242,7 @@ const HOUSEHOLD_COLUMNS =
   'id, tier, tier_variant, timezone, kitchen_map_version, display_name, cultural_identifiers, dietary_preferences, declared_allergens';
 const CAREGIVER_COLUMNS = 'id, role, display_name, cultural_language';
 const CHILD_COLUMNS =
-  'id, name, age_band, declared_allergens, cultural_identifiers, dietary_preferences, bag_composition, extra_rules';
+  'id, name, age_band, declared_allergens, cultural_identifiers, dietary_preferences, bag_composition_pattern, extra_rules';
 const CULTURAL_PRIOR_COLUMNS = 'key, label, tier, state, confidence, presence, enforcement';
 const MEMORY_COLUMNS = 'node_type, facet, prose_text, subject_child_id';
 const SCHOOL_POLICY_COLUMNS = 'child_id, policy_type, policy_description, slot_scope';
@@ -499,7 +504,7 @@ export class KitchenMapRepository extends BaseRepository {
           declared_allergens: allergensByChild.get(row.id) ?? [],
           cultural_identifiers: decryptField<string[]>(row.cultural_identifiers, dek),
           dietary_preferences: decryptField<string[]>(row.dietary_preferences, dek),
-          bag_composition: this.normaliseBagComposition(row.bag_composition),
+          bag_composition_pattern: row.bag_composition_pattern,
           extra_rules: this.normaliseExtraRules(row.extra_rules),
         });
       } catch (err) {
@@ -631,20 +636,6 @@ export class KitchenMapRepository extends BaseRepository {
       });
     }
     return out;
-  }
-
-  private normaliseBagComposition(
-    raw: EncryptedChildRow['bag_composition'],
-  ): { main: boolean; snack: boolean; extra: boolean } {
-    if (raw === null || raw === undefined) {
-      return { main: true, snack: false, extra: false };
-    }
-    const obj = typeof raw === 'string' ? this.parseObject(raw) : raw;
-    return {
-      main: obj?.main === true || obj?.main === undefined ? true : Boolean(obj.main),
-      snack: Boolean(obj?.snack),
-      extra: Boolean(obj?.extra),
-    };
   }
 
   private normaliseExtraRules(

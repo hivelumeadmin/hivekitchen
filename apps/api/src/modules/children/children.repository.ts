@@ -1,9 +1,15 @@
 import type { Buffer } from 'node:buffer';
 import type { SupabaseClient } from '@supabase/supabase-js';
-import type { BagCompositionPattern } from '@hivekitchen/types';
+import type {
+  AppetiteLevel,
+  BagCompositionPattern,
+  SpiceTolerance,
+  TextureNeeds,
+} from '@hivekitchen/types';
 import { BaseRepository } from '../../repository/base.repository.js';
 import { decryptField, encryptField } from '../../lib/envelope-encryption.js';
 import { getHouseholdDek, getOrCreateHouseholdDek } from '../../lib/household-key.js';
+import { bagCompositionFromPattern } from '@hivekitchen/contracts';
 import type { ChildAllergensRepository } from './child-allergens.repository.js';
 
 export interface InsertChildParams {
@@ -14,9 +20,20 @@ export interface InsertChildParams {
   declared_allergens: string[];
   cultural_identifiers: string[];
   dietary_preferences: string[];
-  bag_composition_pattern?: BagCompositionPattern | null | undefined;
+  bag_composition_pattern?: BagCompositionPattern | undefined;
+  // Story 3-DM-B1 — variation-driving attributes. Optional on insert so
+  // pre-3-DM-B1 callers compile unchanged; DB defaults supply 'normal' /
+  // 'normal' / 'mild' when omitted.
+  appetite_level?: AppetiteLevel;
+  texture_needs?: TextureNeeds;
+  spice_tolerance?: SpiceTolerance;
 }
 
+// Story 3-DM-B1: BagComposition is now a DERIVED view from
+// bag_composition_pattern. The storage layer no longer carries the booleans;
+// any path that needs them calls `bagCompositionFromPattern()` from
+// @hivekitchen/contracts. The interface is kept for the planner / kitchen-map
+// projection which still consumes the boolean struct.
 export interface BagComposition {
   main: true;
   snack: boolean;
@@ -32,20 +49,14 @@ export interface DecryptedChildRow {
   declared_allergens: string[];
   cultural_identifiers: string[];
   dietary_preferences: string[];
-  allergen_rule_version: string;
-  bag_composition: BagComposition;
-  bag_composition_pattern: BagCompositionPattern | null;
+  // Story 3-DM-B1 — variation-driving attributes (NOT NULL columns post-migration).
+  appetite_level: AppetiteLevel;
+  texture_needs: TextureNeeds;
+  spice_tolerance: SpiceTolerance;
+  // Story 3-DM-B1 — promoted enum, NOT NULL post-migration.
+  bag_composition_pattern: BagCompositionPattern;
   created_at: string;
 }
-
-// PostgREST returns JSONB columns as already-parsed JS values, so
-// bag_composition is typed as the structured object — not a string. The DB
-// CHECK constraint guarantees main=true on every row, but we still narrow it
-// defensively in decryptRow rather than asserting.
-type RawBagComposition =
-  | { main?: unknown; snack?: unknown; extra?: unknown }
-  | string
-  | null;
 
 interface ChildRow {
   id: string;
@@ -56,14 +67,15 @@ interface ChildRow {
   declared_allergens: string;
   cultural_identifiers: string;
   dietary_preferences: string;
-  allergen_rule_version: string;
-  bag_composition: RawBagComposition;
-  bag_composition_pattern: string | null;
+  appetite_level: AppetiteLevel;
+  texture_needs: TextureNeeds;
+  spice_tolerance: SpiceTolerance;
+  bag_composition_pattern: BagCompositionPattern;
   created_at: string;
 }
 
 const CHILD_COLUMNS =
-  'id, household_id, name, age_band, school_policy_notes, declared_allergens, cultural_identifiers, dietary_preferences, allergen_rule_version, bag_composition, bag_composition_pattern, created_at';
+  'id, household_id, name, age_band, school_policy_notes, declared_allergens, cultural_identifiers, dietary_preferences, appetite_level, texture_needs, spice_tolerance, bag_composition_pattern, created_at';
 
 interface RepositoryLogger {
   error: (obj: Record<string, unknown>, msg: string) => void;
@@ -190,19 +202,24 @@ export class ChildrenRepository extends BaseRepository {
   // Skips envelope decryption because the planner only needs each child's
   // name + bag composition; allergens / cultural identifiers travel through
   // the allergy guardrail and cultural-prior services on a separate path.
+  //
+  // Story 3-DM-B1: bag_composition jsonb is dropped. We read the canonical
+  // bag_composition_pattern enum and derive the boolean struct via the
+  // shared contract helper so downstream callers (planner-context.loader,
+  // catalog-seed.service) keep their current shape.
   async findBagCompositionsByHousehold(
     householdId: string,
   ): Promise<Array<{ child_id: string; name: string; bag_composition: BagComposition }>> {
     const { data, error } = await this.client
       .from('children')
-      .select('id, name, bag_composition')
+      .select('id, name, bag_composition_pattern')
       .eq('household_id', householdId);
     if (error) throw error;
-    type Row = { id: string; name: string; bag_composition: RawBagComposition };
+    type Row = { id: string; name: string; bag_composition_pattern: BagCompositionPattern };
     return ((data as Row[] | null) ?? []).map((row) => ({
       child_id: row.id,
       name: row.name,
-      bag_composition: parseBagComposition(row.bag_composition),
+      bag_composition: bagCompositionFromPattern(row.bag_composition_pattern),
     }));
   }
 
@@ -303,17 +320,20 @@ export class ChildrenRepository extends BaseRepository {
     householdId: string,
     composition: { snack: boolean; extra: boolean },
   ): Promise<DecryptedChildRow | null> {
-    // Scope the update by both id and household_id so a token from a
-    // different household cannot overwrite this row. Zero rows updated
-    // collapses to null and the caller raises 403.
-    const next: BagComposition = {
-      main: true,
-      snack: composition.snack,
-      extra: composition.extra,
-    };
+    // Story 3-DM-B1: the boolean body collapses into the bag_composition_pattern
+    // enum (main is always true). Scope the update by both id + household_id
+    // so a token from a different household cannot overwrite this row.
+    const pattern: BagCompositionPattern =
+      composition.snack && composition.extra
+        ? 'main_plus_snack_plus_extra'
+        : composition.snack
+          ? 'main_plus_snack'
+          : composition.extra
+            ? 'main_plus_extra'
+            : 'main_only';
     const { data, error } = await this.client
       .from('children')
-      .update({ bag_composition: next, updated_at: new Date().toISOString() })
+      .update({ bag_composition_pattern: pattern, updated_at: new Date().toISOString() })
       .eq('id', id)
       .eq('household_id', householdId)
       .select(CHILD_COLUMNS)
@@ -343,9 +363,11 @@ export class ChildrenRepository extends BaseRepository {
       declared_allergens: [],
       cultural_identifiers: decryptArrayField(row.cultural_identifiers, dek),
       dietary_preferences: decryptArrayField(row.dietary_preferences, dek),
-      allergen_rule_version: row.allergen_rule_version,
-      bag_composition: parseBagComposition(row.bag_composition),
-      bag_composition_pattern: (row.bag_composition_pattern as BagCompositionPattern | null) ?? null,
+      // Story 3-DM-B1 — variation-driving attributes (NOT NULL in DB).
+      appetite_level: row.appetite_level,
+      texture_needs: row.texture_needs,
+      spice_tolerance: row.spice_tolerance,
+      bag_composition_pattern: row.bag_composition_pattern,
       created_at: row.created_at,
     };
   }
@@ -353,23 +375,4 @@ export class ChildrenRepository extends BaseRepository {
 
 function decryptArrayField(value: string, dek: Buffer | null): string[] {
   return decryptField<string[]>(value, dek);
-}
-
-// PostgREST returns JSONB pre-parsed, but if a future driver or test fixture
-// hands us a raw string we accept it. Defaults absorb a missing column
-// (e.g. row written before the migration ran in a developer-local DB).
-function parseBagComposition(raw: RawBagComposition): BagComposition {
-  let parsed: unknown = raw ?? {};
-  if (typeof raw === 'string') {
-    parsed = JSON.parse(raw);
-  }
-  const obj: { main?: unknown; snack?: unknown; extra?: unknown } =
-    typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)
-      ? (parsed as { main?: unknown; snack?: unknown; extra?: unknown })
-      : {};
-  return {
-    main: true,
-    snack: obj.snack === undefined ? true : Boolean(obj.snack),
-    extra: obj.extra === undefined ? true : Boolean(obj.extra),
-  };
 }

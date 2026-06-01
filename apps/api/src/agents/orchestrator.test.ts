@@ -714,7 +714,12 @@ describe('DomainOrchestrator', () => {
         culturalTemplates: ['hindu_vegetarian'],
       };
 
-      await orchestrator.planWeek(HOUSEHOLD_ID, '2026-11-02', 'req-1', undefined, undefined, ctx);
+      await orchestrator.planWeek({
+        householdId: HOUSEHOLD_ID,
+        weekOf: '2026-11-02',
+        requestId: 'req-1',
+        culturalContext: ctx,
+      });
 
       expect(capturedUserContent).toContain('Hindu vegetarian');
       expect(capturedUserContent).toContain('Diwali');
@@ -752,15 +757,12 @@ describe('DomainOrchestrator', () => {
         { child_id: CHILD_ID, child_name: 'Asha', snack: false, extra: true },
       ];
 
-      await orchestrator.planWeek(
-        HOUSEHOLD_ID,
-        '2026-11-02',
-        'req-bag',
-        undefined,
-        undefined,
-        undefined,
+      await orchestrator.planWeek({
+        householdId: HOUSEHOLD_ID,
+        weekOf: '2026-11-02',
+        requestId: 'req-bag',
         bagCompositions,
-      );
+      });
 
       expect(capturedUserContent).toContain('Per-child bag composition');
       expect(capturedUserContent).toContain('Asha');
@@ -796,7 +798,11 @@ describe('DomainOrchestrator', () => {
         fn: vi.fn().mockResolvedValue(MINIMAL_PLAN_OUTPUT),
       });
 
-      await orchestrator.planWeek(HOUSEHOLD_ID, '2026-11-02', 'req-2');
+      await orchestrator.planWeek({
+        householdId: HOUSEHOLD_ID,
+        weekOf: '2026-11-02',
+        requestId: 'req-2',
+      });
 
       expect(capturedUserContent).not.toContain('Cultural templates');
       expect(capturedUserContent).not.toContain('Upcoming cultural observances');

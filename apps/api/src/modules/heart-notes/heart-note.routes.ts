@@ -1,3 +1,4 @@
+import { Buffer } from 'node:buffer';
 import fp from 'fastify-plugin';
 import type { FastifyPluginAsync } from 'fastify';
 import {
@@ -6,12 +7,15 @@ import {
   HeartNoteIdParamSchema,
   HeartNoteNullablePayloadSchema,
   HeartNotePayloadSchema,
+  HeartNotesListPayloadSchema,
+  HeartNotesListQuerySchema,
   PatchHeartNoteBodySchema,
 } from '@hivekitchen/contracts';
 import type {
   CreateHeartNoteBody,
   GetHeartNotesQuery,
   HeartNoteIdParam,
+  HeartNotesListQuery,
   PatchHeartNoteBody,
 } from '@hivekitchen/contracts';
 import { authorize } from '../../middleware/authorize.hook.js';
@@ -19,7 +23,10 @@ import { HeartNoteRepository } from './heart-note.repository.js';
 import { HeartNoteService } from './heart-note.service.js';
 
 const heartNoteRoutesPlugin: FastifyPluginAsync = async (fastify) => {
-  const repository = new HeartNoteRepository(fastify.supabase);
+  const kek = fastify.env.ENVELOPE_ENCRYPTION_MASTER_KEY
+    ? Buffer.from(fastify.env.ENVELOPE_ENCRYPTION_MASTER_KEY, 'hex')
+    : null;
+  const repository = new HeartNoteRepository(fastify.supabase, kek);
   const service = new HeartNoteService(repository);
 
   // Slice 4-S1 — either caregiver in the household may compose a heart note.
@@ -79,6 +86,28 @@ const heartNoteRoutesPlugin: FastifyPluginAsync = async (fastify) => {
         isoDate,
       );
       return { note };
+    },
+  );
+
+  // Slice 4-S6 — All Notes delivery-status list. Registered before the
+  // PATCH /v1/heart-notes/:id route so '/history' is matched as a literal
+  // path even though there is currently no GET /:id route; this keeps the
+  // ordering intent explicit if a wildcard GET is ever added.
+  fastify.get(
+    '/v1/heart-notes/history',
+    {
+      preHandler: requireMember,
+      schema: {
+        querystring: HeartNotesListQuerySchema,
+        response: { 200: HeartNotesListPayloadSchema },
+      },
+    },
+    async (request) => {
+      const query = request.query as HeartNotesListQuery;
+      const notes = await service.listNotes(request.user.household_id, {
+        status: query.status,
+      });
+      return { notes };
     },
   );
 

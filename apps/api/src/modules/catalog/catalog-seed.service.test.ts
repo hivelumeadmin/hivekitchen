@@ -108,13 +108,17 @@ function buildKitchenMap(): KitchenMap {
 type Deps = {
   openai: { chat: { completions: { create: ReturnType<typeof vi.fn> } } };
   kitchenMapService: { get: ReturnType<typeof vi.fn> };
-  recipesRepo: { seedFromCatalogBaseline: ReturnType<typeof vi.fn> };
+  recipesRepo: {
+    seedFromCatalogBaseline: ReturnType<typeof vi.fn>;
+    countCatalogSeededForHousehold: ReturnType<typeof vi.fn>;
+  };
   householdsRepo: {
     getStage1CompletedAt: ReturnType<typeof vi.fn>;
     setStage1CompletedAt: ReturnType<typeof vi.fn>;
   };
   guardrailRepo: { getRulesForHousehold: ReturnType<typeof vi.fn> };
   curatedBaselineRepo: { findAllActive: ReturnType<typeof vi.fn> };
+  recoveryQueue: { add: ReturnType<typeof vi.fn> } | undefined;
 };
 
 function buildDeps(overrides: Partial<Deps> = {}): Deps {
@@ -148,6 +152,8 @@ function buildDeps(overrides: Partial<Deps> = {}): Deps {
     },
     recipesRepo: {
       seedFromCatalogBaseline: vi.fn().mockResolvedValue(12),
+      // Default: above STAGE2_FLOOR=35, so no floor-breach trigger fires.
+      countCatalogSeededForHousehold: vi.fn().mockResolvedValue(50),
     },
     householdsRepo: {
       getStage1CompletedAt: vi.fn().mockResolvedValue(null),
@@ -159,6 +165,7 @@ function buildDeps(overrides: Partial<Deps> = {}): Deps {
     curatedBaselineRepo: {
       findAllActive: vi.fn().mockResolvedValue([]),
     },
+    recoveryQueue: { add: vi.fn().mockResolvedValue(undefined) },
     ...overrides,
   };
 }
@@ -172,6 +179,12 @@ function buildService(deps: Deps, logger = buildLogger()): CatalogSeedService {
     guardrailRepo: deps.guardrailRepo as unknown as AllergyGuardrailRepository,
     curatedBaselineRepo:
       deps.curatedBaselineRepo as unknown as CatalogSeedServiceDeps['curatedBaselineRepo'],
+    recoveryQueue:
+      deps.recoveryQueue === undefined
+        ? undefined
+        : (deps.recoveryQueue as unknown as NonNullable<
+            CatalogSeedServiceDeps['recoveryQueue']
+          >),
     logger,
   });
 }
@@ -537,5 +550,216 @@ describe('CatalogSeedService — seedForHousehold', () => {
     }>;
     expect(survivors.map((s) => s.canonical_name)).not.toContain('peanut butter sandwich');
     expect(survivors.map((s) => s.canonical_name)).toContain('chicken rice bowl');
+  });
+
+  // ============================================================================
+  // Slice 2.6-s5 — Stage 2 recovery triggers
+  // ============================================================================
+
+  it('Stage 2 trigger: LLM timeout → enqueueRecovery called with stage1_failure', async () => {
+    const deps = buildDeps();
+    const abortErr = new Error('aborted');
+    abortErr.name = 'AbortError';
+    deps.openai.chat.completions.create.mockRejectedValue(abortErr);
+
+    await buildService(deps).seedForHousehold(HOUSEHOLD_ID, REQUEST_ID);
+
+    expect(deps.recoveryQueue!.add).toHaveBeenCalledTimes(1);
+    const callArgs = deps.recoveryQueue!.add.mock.calls[0]!;
+    expect(callArgs[0]).toBe('catalog.recover.stage2');
+    expect(callArgs[1]).toMatchObject({
+      household_id: HOUSEHOLD_ID,
+      request_id: REQUEST_ID,
+      triggered_by: 'stage1_failure',
+    });
+    // jobId dedup uses householdId
+    expect(callArgs[2]).toMatchObject({
+      jobId: `catalog.recover.stage2:${HOUSEHOLD_ID}`,
+    });
+  });
+
+  it('Stage 2 trigger: non-JSON LLM response → enqueueRecovery called with stage1_failure', async () => {
+    const deps = buildDeps();
+    deps.openai.chat.completions.create.mockResolvedValue({
+      choices: [{ message: { content: 'not json' } }],
+    });
+
+    await buildService(deps).seedForHousehold(HOUSEHOLD_ID, REQUEST_ID);
+
+    expect(deps.recoveryQueue!.add).toHaveBeenCalledTimes(1);
+    expect(deps.recoveryQueue!.add.mock.calls[0]![1]).toMatchObject({
+      triggered_by: 'stage1_failure',
+    });
+  });
+
+  it('Stage 2 trigger: schema-invalid LLM response → enqueueRecovery called with stage1_failure', async () => {
+    const deps = buildDeps();
+    deps.openai.chat.completions.create.mockResolvedValue({
+      choices: [{ message: { content: JSON.stringify({ wrong: 'shape' }) } }],
+    });
+
+    await buildService(deps).seedForHousehold(HOUSEHOLD_ID, REQUEST_ID);
+
+    expect(deps.recoveryQueue!.add).toHaveBeenCalledTimes(1);
+    expect(deps.recoveryQueue!.add.mock.calls[0]![1]).toMatchObject({
+      triggered_by: 'stage1_failure',
+    });
+  });
+
+  it('Stage 2 trigger: mass-block (> 50% blocked) → enqueueRecovery with mass_block + emitted/blocked counts; logs mass_block_detected', async () => {
+    const logger = buildLogger();
+    const deps = buildDeps();
+    // 10 items: 6 blocked by guardrail (canonical_name 'pasta dish N' matches
+    // wheat synonym 'pasta'), 4 clean. Ratio 6/10 > 0.5 → mass-block fires.
+    // Note: pre-filter checks bare FALCPA keys ('wheat', 'dairy', ...) only,
+    // NOT synonyms — so 'pasta dish' passes pre-filter then hits guardrail.
+    const blocked = Array.from({ length: 6 }, (_, i) => ({
+      canonical_name: `pasta dish ${i + 1}`,
+      allergen_flags: [],
+      dietary_flags: [],
+      cultural_tags: [],
+      cuisine_tags: ['south_asian'],
+      applicable_slots: ['main'],
+    }));
+    const clean = Array.from({ length: 4 }, (_, i) => ({
+      canonical_name: `safe rice bowl ${i + 1}`,
+      allergen_flags: [],
+      dietary_flags: [],
+      cultural_tags: [],
+      cuisine_tags: ['south_asian'],
+      applicable_slots: ['main'],
+    }));
+    deps.openai.chat.completions.create.mockResolvedValue({
+      choices: [
+        {
+          message: {
+            content: JSON.stringify({ items: [...blocked, ...clean] }),
+          },
+        },
+      ],
+    });
+    deps.recipesRepo.seedFromCatalogBaseline.mockResolvedValue(4);
+
+    await buildService(deps, logger).seedForHousehold(HOUSEHOLD_ID, REQUEST_ID);
+
+    // At least one mass_block enqueue (may also be floor_breach since 50 default
+    // — but a different test verifies floor-breach gating; this asserts the
+    // mass_block call shape).
+    const massBlockCall = deps.recoveryQueue!.add.mock.calls.find(
+      (c) => (c[1] as { triggered_by?: string }).triggered_by === 'mass_block',
+    );
+    expect(massBlockCall).toBeDefined();
+    expect(massBlockCall![1]).toMatchObject({
+      household_id: HOUSEHOLD_ID,
+      triggered_by: 'mass_block',
+      emitted_count: 10,
+      blocked_count: 6,
+    });
+    const warnCalls = (logger.warn as ReturnType<typeof vi.fn>).mock.calls;
+    const massBlockLog = warnCalls.find(
+      ([ctx]) =>
+        (ctx as { action?: string }).action === 'catalog.stage1.mass_block_detected',
+    );
+    expect(massBlockLog).toBeDefined();
+    expect((massBlockLog![0] as { ratio: number }).ratio).toBeCloseTo(0.6, 5);
+  });
+
+  it('Stage 2 trigger: floor-breach (totalSeeded < 35) → enqueueRecovery with floor_breach after stage1_completed_at', async () => {
+    const logger = buildLogger();
+    const deps = buildDeps();
+    // Total household catalog count post-Stage-1 is below STAGE2_FLOOR=35.
+    deps.recipesRepo.countCatalogSeededForHousehold.mockResolvedValue(20);
+
+    await buildService(deps, logger).seedForHousehold(HOUSEHOLD_ID, REQUEST_ID);
+
+    expect(deps.householdsRepo.setStage1CompletedAt).toHaveBeenCalled();
+    const floorBreachCall = deps.recoveryQueue!.add.mock.calls.find(
+      (c) => (c[1] as { triggered_by?: string }).triggered_by === 'floor_breach',
+    );
+    expect(floorBreachCall).toBeDefined();
+    expect(floorBreachCall![1]).toMatchObject({
+      household_id: HOUSEHOLD_ID,
+      triggered_by: 'floor_breach',
+    });
+    // No emitted/blocked counts on floor_breach (those are mass_block-only).
+    expect((floorBreachCall![1] as Record<string, unknown>).emitted_count).toBeUndefined();
+    expect((floorBreachCall![1] as Record<string, unknown>).blocked_count).toBeUndefined();
+    const warnCalls = (logger.warn as ReturnType<typeof vi.fn>).mock.calls;
+    const floorBreachLog = warnCalls.find(
+      ([ctx]) =>
+        (ctx as { action?: string }).action === 'catalog.stage2.floor_breach_detected',
+    );
+    expect(floorBreachLog).toBeDefined();
+  });
+
+  it('Stage 2 trigger: NO enqueue when totalSeeded >= 35 (default happy path)', async () => {
+    const deps = buildDeps();
+    // Default mock returns 50 — above the floor.
+    await buildService(deps).seedForHousehold(HOUSEHOLD_ID, REQUEST_ID);
+    const floorBreachCall = deps.recoveryQueue!.add.mock.calls.find(
+      (c) => (c[1] as { triggered_by?: string }).triggered_by === 'floor_breach',
+    );
+    expect(floorBreachCall).toBeUndefined();
+  });
+
+  it('Stage 2 trigger: countCatalogSeededForHousehold throws → no enqueue; floor_breach_check_failed logged; no rethrow', async () => {
+    const logger = buildLogger();
+    const deps = buildDeps();
+    deps.recipesRepo.countCatalogSeededForHousehold.mockRejectedValue(
+      new Error('db connection lost'),
+    );
+
+    await buildService(deps, logger).seedForHousehold(HOUSEHOLD_ID, REQUEST_ID);
+
+    // setStage1CompletedAt still fires (we don't undo Stage 1 success on a
+    // post-completion check failure).
+    expect(deps.householdsRepo.setStage1CompletedAt).toHaveBeenCalled();
+    // No floor_breach enqueue (the check failed).
+    const floorBreachCall = deps.recoveryQueue!.add.mock.calls.find(
+      (c) => (c[1] as { triggered_by?: string }).triggered_by === 'floor_breach',
+    );
+    expect(floorBreachCall).toBeUndefined();
+    const errCalls = (logger.error as ReturnType<typeof vi.fn>).mock.calls;
+    const checkFailed = errCalls.find(
+      ([ctx]) =>
+        (ctx as { action?: string }).action === 'catalog.stage2.floor_breach_check_failed',
+    );
+    expect(checkFailed).toBeDefined();
+  });
+
+  it('Stage 2 trigger: no recoveryQueue dep → recovery_skipped_no_queue warn; no crash', async () => {
+    const logger = buildLogger();
+    const deps = buildDeps({ recoveryQueue: undefined });
+    deps.recipesRepo.countCatalogSeededForHousehold.mockResolvedValue(10);
+
+    await buildService(deps, logger).seedForHousehold(HOUSEHOLD_ID, REQUEST_ID);
+
+    const warnCalls = (logger.warn as ReturnType<typeof vi.fn>).mock.calls;
+    const skipped = warnCalls.find(
+      ([ctx]) =>
+        (ctx as { action?: string }).action ===
+        'catalog.stage2.recovery_skipped_no_queue',
+    );
+    expect(skipped).toBeDefined();
+  });
+
+  it('Stage 2 trigger: queue.add rejection is caught (fire-and-forget); enqueue_failed logged', async () => {
+    const logger = buildLogger();
+    const deps = buildDeps();
+    deps.recipesRepo.countCatalogSeededForHousehold.mockResolvedValue(10);
+    deps.recoveryQueue!.add.mockRejectedValue(new Error('redis down'));
+
+    await buildService(deps, logger).seedForHousehold(HOUSEHOLD_ID, REQUEST_ID);
+
+    // Wait for next microtask so the .catch handler fires.
+    await Promise.resolve();
+    await Promise.resolve();
+
+    const errCalls = (logger.error as ReturnType<typeof vi.fn>).mock.calls;
+    const enqueueFailed = errCalls.find(
+      ([ctx]) =>
+        (ctx as { action?: string }).action === 'catalog.stage2.enqueue_failed',
+    );
+    expect(enqueueFailed).toBeDefined();
   });
 });

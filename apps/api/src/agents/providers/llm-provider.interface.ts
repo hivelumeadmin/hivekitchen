@@ -29,6 +29,11 @@ export interface LLMCallOptions {
   temperature?: number;
   maxTokens?: number;
   systemPrompt?: string;
+  /** Key/value tags forwarded to OpenAI as `metadata` when
+   *  OPENAI_STORE_COMPLETIONS is enabled. Used to filter stored completions
+   *  by agent_type and prompt_version when running evals. Ignored when
+   *  storeCompletions is false. Values must be strings (OpenAI requirement). */
+  metadata?: Record<string, string>;
 }
 
 export interface LLMToolCall {

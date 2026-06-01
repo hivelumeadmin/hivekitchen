@@ -266,9 +266,9 @@ describe('OnboardingText', () => {
     options: [
       { key: 'none', label: 'No known allergens' },
       { key: 'peanut', label: 'Peanut' },
-      { key: 'tree-nuts', label: 'Tree nuts' },
+      { key: 'tree_nut', label: 'Tree nuts' },
       { key: 'dairy', label: 'Dairy' },
-      { key: 'eggs', label: 'Eggs' },
+      { key: 'egg', label: 'Eggs' },
       { key: 'soy', label: 'Soy' },
       { key: 'wheat', label: 'Wheat / gluten' },
       { key: 'fish', label: 'Fish' },
@@ -885,6 +885,113 @@ describe('OnboardingText', () => {
       expect(cards[0]!.textContent).toMatch(/1 lunches — Lumi has a starting line\./);
       expect(cards[0]!.textContent).toMatch(/started with fewer/);
     });
+  });
+
+  // -------------------------------------------------------------------------
+  // Slice 2.6-s4 — M5 chip provenance badge (parent_added marker)
+  // -------------------------------------------------------------------------
+
+  it('renders a ＋ badge on M5 chips with provenance="parent_added" (Slice 2.6-s4)', async () => {
+    const M5_PERSONALIZED = {
+      mode: 'choice',
+      options: [
+        { key: 'r-1', label: 'Anjero + suqaar', provenance: 'inferred' },
+        { key: 'r-2', label: 'Bariis iskukaris', provenance: 'declared' },
+        { key: 'r-3', label: 'Date bread + halib', provenance: 'parent_added' },
+      ],
+    };
+    globalThis.fetch = vi.fn().mockResolvedValueOnce(
+      mockTurnResponse({
+        lumi_response: "Tap any that fit.",
+        moment_key: 'm5_starting_line',
+        chip_config: M5_PERSONALIZED,
+      }),
+    ) as unknown as typeof fetch;
+
+    render(
+      <MemoryRouter>
+        <OnboardingText />
+      </MemoryRouter>,
+    );
+
+    fireEvent.change(screen.getByLabelText(/your message to lumi/i), {
+      target: { value: 'Halal household.' },
+    });
+    fireEvent.submit(screen.getByRole('button', { name: /send/i }).closest('form')!);
+
+    await waitFor(() => {
+      const badges = screen.getAllByTestId('chip-parent-added-badge');
+      expect(badges.length).toBe(1);
+      expect(badges[0]!.textContent).toBe('＋');
+    });
+  });
+
+  it('renders no badge on M5 chips with provenance="inferred" or "declared" (Slice 2.6-s4)', async () => {
+    const M5_NO_PARENT_ADDED = {
+      mode: 'choice',
+      options: [
+        { key: 'r-1', label: 'Anjero + suqaar', provenance: 'inferred' },
+        { key: 'r-2', label: 'Bariis iskukaris', provenance: 'declared' },
+      ],
+    };
+    globalThis.fetch = vi.fn().mockResolvedValueOnce(
+      mockTurnResponse({
+        lumi_response: "Tap any that fit.",
+        moment_key: 'm5_starting_line',
+        chip_config: M5_NO_PARENT_ADDED,
+      }),
+    ) as unknown as typeof fetch;
+
+    render(
+      <MemoryRouter>
+        <OnboardingText />
+      </MemoryRouter>,
+    );
+
+    fireEvent.change(screen.getByLabelText(/your message to lumi/i), {
+      target: { value: 'Halal household.' },
+    });
+    fireEvent.submit(screen.getByRole('button', { name: /send/i }).closest('form')!);
+
+    await waitFor(() => {
+      expect(screen.getByText('Anjero + suqaar')).toBeDefined();
+    });
+    expect(screen.queryAllByTestId('chip-parent-added-badge')).toHaveLength(0);
+  });
+
+  it('renders no badge on legacy chips without a provenance field (Slice 2.6-s4)', async () => {
+    // M2 allergen chips never carry provenance; this asserts the badge branch
+    // does not fire on non-M5 chip surfaces.
+    const M2_LEGACY = {
+      mode: 'choice',
+      options: [
+        { key: 'none', label: 'No known allergens' },
+        { key: 'peanut', label: 'Peanut' },
+      ],
+    };
+    globalThis.fetch = vi.fn().mockResolvedValueOnce(
+      mockTurnResponse({
+        lumi_response: 'Any allergens?',
+        moment_key: 'm2_safe',
+        chip_config: M2_LEGACY,
+      }),
+    ) as unknown as typeof fetch;
+
+    render(
+      <MemoryRouter>
+        <OnboardingText />
+      </MemoryRouter>,
+    );
+
+    fireEvent.change(screen.getByLabelText(/your message to lumi/i), {
+      target: { value: 'Hi' },
+    });
+    fireEvent.submit(screen.getByRole('button', { name: /send/i }).closest('form')!);
+
+    await waitFor(() => {
+      expect(screen.getByText('Peanut')).toBeDefined();
+    });
+    expect(screen.queryAllByTestId('chip-parent-added-badge')).toHaveLength(0);
   });
 
   // =========================================================================

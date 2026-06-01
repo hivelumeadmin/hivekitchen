@@ -3,15 +3,19 @@ import type { FastifyBaseLogger } from 'fastify';
 import { BriefStateComposer } from './brief-state.composer.js';
 import type { PlansRepository } from './plans.repository.js';
 import type { BriefStateRepository } from './brief-state.repository.js';
+import type { LunchLinkSessionRepository } from './lunch-link-session.repository.js';
 import type {
   ChildrenRepository,
   DecryptedChildRow,
 } from '../children/children.repository.js';
 import type { AuditService } from '../../audit/audit.service.js';
 import type { PlanItemRow, PlanRow } from '@hivekitchen/types';
+import { buildPlan, buildPlanItem } from '../../../test/factories/index.js';
 
-const PLAN_ID = '11111111-1111-4111-8111-111111111111';
-const HOUSEHOLD_ID = '22222222-2222-4222-8222-222222222222';
+// Story 3-DM-A3: aligned with shared factory convention
+// (household=1's, plan=2's) to keep buildPlan / buildPlanItem defaults compatible.
+const HOUSEHOLD_ID = '11111111-1111-4111-8111-111111111111';
+const PLAN_ID = '22222222-2222-4222-8222-222222222222';
 const WEEK_ID = '33333333-3333-4333-8333-333333333333';
 const CHILD_A = '44444444-4444-4444-8444-444444444444';
 const CHILD_B = '55555555-5555-4555-8555-555555555555';
@@ -45,41 +49,6 @@ function buildLogger(): FastifyBaseLogger & {
   };
 }
 
-function buildPlanRow(overrides: Partial<PlanRow> = {}): PlanRow {
-  return {
-    id: PLAN_ID,
-    household_id: HOUSEHOLD_ID,
-    week_id: WEEK_ID,
-    week_of: null,
-    revision: 1,
-    generated_at: '2026-05-02T11:00:00.000Z',
-    guardrail_cleared_at: '2026-05-02T11:00:01.000Z',
-    guardrail_version: '1.1.0',
-    prompt_version: 'v1.0.0',
-    created_at: '2026-05-02T11:00:00.000Z',
-    updated_at: '2026-05-02T11:00:01.000Z',
-    ...overrides,
-  };
-}
-
-function makeItem(overrides: Partial<PlanItemRow> = {}): PlanItemRow {
-  return {
-    id: '99999999-9999-4999-8999-999999999990',
-    plan_id: PLAN_ID,
-    child_id: CHILD_A,
-    day: 'monday',
-    slot: 'main',
-    recipe_id: null,
-    item_id: null,
-    item_sku_id: null,
-    ingredients: ['rice', 'lentils'],
-    paused_at: null,
-    replaced_by_plan_id: null,
-    created_at: '2026-05-02T11:00:00.000Z',
-    updated_at: '2026-05-02T11:00:00.000Z',
-    ...overrides,
-  };
-}
 
 function buildPlansRepo(opts: {
   currentPlan?: PlanRow | null;
@@ -139,9 +108,10 @@ function makeChild(overrides: Partial<DecryptedChildRow> = {}): DecryptedChildRo
     declared_allergens: [],
     cultural_identifiers: [],
     dietary_preferences: [],
-    allergen_rule_version: '1.0.0',
-    bag_composition: { main: true, snack: true, extra: true },
-    bag_composition_pattern: null,
+    appetite_level: 'normal',
+    texture_needs: 'normal',
+    spice_tolerance: 'mild',
+    bag_composition_pattern: 'main_plus_snack_plus_extra',
     created_at: '2026-05-02T11:00:00.000Z',
     ...overrides,
   };
@@ -164,10 +134,10 @@ function buildChildrenRepo(opts: {
 
 describe('BriefStateComposer.refresh', () => {
   it('reads cleared plan, builds tile summaries, and calls upsert with the plan revision', async () => {
-    const plan = buildPlanRow({ revision: 3 });
+    const plan = buildPlan({ revision: 3 });
     const items = [
-      makeItem({ id: 'a', child_id: CHILD_A, day: 'monday', slot: 'main', ingredients: ['rice'] }),
-      makeItem({ id: 'b', child_id: CHILD_B, day: 'monday', slot: 'main', ingredients: ['quinoa'] }),
+      buildPlanItem({ id: 'a', child_id: CHILD_A, day: 'monday', slot: 'main', ingredients: ['rice'] }),
+      buildPlanItem({ id: 'b', child_id: CHILD_B, day: 'monday', slot: 'main', ingredients: ['quinoa'] }),
     ];
     const plansRepo = buildPlansRepo({ currentPlan: plan, items });
     const briefRepo = buildBriefStateRepo();
@@ -208,6 +178,8 @@ describe('BriefStateComposer.refresh', () => {
           { plan_item_id: 'b', child_id: CHILD_B, slot: 'main', ingredients: ['quinoa'] },
         ],
         paused: false,
+        lunch_link_suppressed_children: [],
+        child_ratings: {},
       },
     ]);
     // No children supplied → no cleared_allergies entries; default to [].
@@ -235,7 +207,7 @@ describe('BriefStateComposer.refresh', () => {
   });
 
   it('does NOT throw when findItemsByPlanId fails — logs error, audits brief.projection.failure', async () => {
-    const plan = buildPlanRow();
+    const plan = buildPlan();
     const plansRepo = buildPlansRepo({
       currentPlan: plan,
       findItemsThrows: new Error('plan_items query failed'),
@@ -271,8 +243,8 @@ describe('BriefStateComposer.refresh', () => {
   });
 
   it('does NOT throw when upsert fails — logs error, audits brief.projection.failure', async () => {
-    const plan = buildPlanRow();
-    const plansRepo = buildPlansRepo({ currentPlan: plan, items: [makeItem()] });
+    const plan = buildPlan();
+    const plansRepo = buildPlansRepo({ currentPlan: plan, items: [buildPlanItem()] });
     const briefRepo = buildBriefStateRepo({ upsertThrows: new Error('upsert failed') });
     const audit = buildAudit();
     const logger = buildLogger();
@@ -294,7 +266,7 @@ describe('BriefStateComposer.refresh', () => {
   });
 
   it('logs a secondary error and does not rethrow when audit write also fails', async () => {
-    const plan = buildPlanRow();
+    const plan = buildPlan();
     const plansRepo = buildPlansRepo({
       currentPlan: plan,
       findItemsThrows: new Error('primary failure'),
@@ -319,19 +291,19 @@ describe('BriefStateComposer.refresh', () => {
   });
 
   it('groups items by day, skips non-school days (sun), and emits days in Mon→Sat order', async () => {
-    const plan = buildPlanRow();
+    const plan = buildPlan();
     const items = [
-      makeItem({ id: 'sat', day: 'saturday' }),
-      makeItem({ id: 'fri', day: 'friday', child_id: CHILD_B, ingredients: ['pasta'] }),
-      makeItem({ id: 'tue', day: 'tuesday', child_id: CHILD_A, ingredients: ['oats'] }),
-      makeItem({ id: 'tue2', day: 'tuesday', child_id: CHILD_B, ingredients: ['oats'] }),
-      makeItem({
+      buildPlanItem({ id: 'sat', day: 'saturday' }),
+      buildPlanItem({ id: 'fri', day: 'friday', child_id: CHILD_B, ingredients: ['pasta'] }),
+      buildPlanItem({ id: 'tue', day: 'tuesday', child_id: CHILD_A, ingredients: ['oats'] }),
+      buildPlanItem({ id: 'tue2', day: 'tuesday', child_id: CHILD_B, ingredients: ['oats'] }),
+      buildPlanItem({
         id: 'mon',
         day: 'monday',
         recipe_id: '00000000-0000-4000-8000-000000000020',
         item_id: '00000000-0000-4000-8000-000000000021',
       }),
-      makeItem({ id: 'sun', day: 'sunday' }),
+      buildPlanItem({ id: 'sun', day: 'sunday' }),
     ];
     const plansRepo = buildPlansRepo({ currentPlan: plan, items });
     const briefRepo = buildBriefStateRepo();
@@ -362,7 +334,7 @@ describe('BriefStateComposer.refresh', () => {
   });
 
   it('produces plan_tile_summaries: [] when items array is empty', async () => {
-    const plan = buildPlanRow();
+    const plan = buildPlan();
     const plansRepo = buildPlansRepo({ currentPlan: plan, items: [] });
     const briefRepo = buildBriefStateRepo();
     const composer = new BriefStateComposer({
@@ -381,8 +353,8 @@ describe('BriefStateComposer.refresh', () => {
   });
 
   it('emits scaffolding_diff: null unconditionally until Story 3.12', async () => {
-    const plan = buildPlanRow();
-    const plansRepo = buildPlansRepo({ currentPlan: plan, items: [makeItem()] });
+    const plan = buildPlan();
+    const plansRepo = buildPlansRepo({ currentPlan: plan, items: [buildPlanItem()] });
     const briefRepo = buildBriefStateRepo();
     const composer = new BriefStateComposer({
       plansRepository: plansRepo,
@@ -401,8 +373,8 @@ describe('BriefStateComposer.refresh', () => {
 
 describe('BriefStateComposer.refresh — cleared_allergies (Story 3.10)', () => {
   it('emits cleared_allergies entries for children-with-allergens whose plan items appear', async () => {
-    const plan = buildPlanRow();
-    const items = [makeItem({ child_id: CHILD_A, day: 'monday', slot: 'main' })];
+    const plan = buildPlan();
+    const items = [buildPlanItem({ child_id: CHILD_A, day: 'monday', slot: 'main' })];
     const children = [
       makeChild({ id: CHILD_A, name: 'Asha', declared_allergens: ['peanut'] }),
     ];
@@ -425,8 +397,8 @@ describe('BriefStateComposer.refresh — cleared_allergies (Story 3.10)', () => 
   });
 
   it('omits children whose declared_allergens is empty', async () => {
-    const plan = buildPlanRow();
-    const items = [makeItem({ child_id: CHILD_A })];
+    const plan = buildPlan();
+    const items = [buildPlanItem({ child_id: CHILD_A })];
     const children = [makeChild({ id: CHILD_A, declared_allergens: [] })];
     const plansRepo = buildPlansRepo({ currentPlan: plan, items });
     const briefRepo = buildBriefStateRepo();
@@ -445,8 +417,8 @@ describe('BriefStateComposer.refresh — cleared_allergies (Story 3.10)', () => 
   });
 
   it('omits children not present in plan_items', async () => {
-    const plan = buildPlanRow();
-    const items = [makeItem({ child_id: CHILD_A })];
+    const plan = buildPlan();
+    const items = [buildPlanItem({ child_id: CHILD_A })];
     const children = [
       makeChild({ id: CHILD_A, name: 'Asha', declared_allergens: ['peanut'] }),
       makeChild({ id: CHILD_B, name: 'Rohan', declared_allergens: ['gluten'] }),
@@ -470,8 +442,8 @@ describe('BriefStateComposer.refresh — cleared_allergies (Story 3.10)', () => 
   });
 
   it('emits empty array when no household child has declared allergens', async () => {
-    const plan = buildPlanRow();
-    const items = [makeItem({ child_id: CHILD_A })];
+    const plan = buildPlan();
+    const items = [buildPlanItem({ child_id: CHILD_A })];
     const children = [
       makeChild({ id: CHILD_A, declared_allergens: [] }),
       makeChild({ id: CHILD_B, declared_allergens: [] }),
@@ -493,8 +465,8 @@ describe('BriefStateComposer.refresh — cleared_allergies (Story 3.10)', () => 
   });
 
   it('emits one entry per (child, allergen) pair when a child has multiple allergens', async () => {
-    const plan = buildPlanRow();
-    const items = [makeItem({ child_id: CHILD_A })];
+    const plan = buildPlan();
+    const items = [buildPlanItem({ child_id: CHILD_A })];
     const children = [
       makeChild({
         id: CHILD_A,
@@ -523,8 +495,8 @@ describe('BriefStateComposer.refresh — cleared_allergies (Story 3.10)', () => 
   });
 
   it('does NOT throw when childrenRepository.findByHouseholdId fails — audits brief.projection.failure', async () => {
-    const plan = buildPlanRow();
-    const plansRepo = buildPlansRepo({ currentPlan: plan, items: [makeItem()] });
+    const plan = buildPlan();
+    const plansRepo = buildPlansRepo({ currentPlan: plan, items: [buildPlanItem()] });
     const briefRepo = buildBriefStateRepo();
     const audit = buildAudit();
     const childrenRepo = buildChildrenRepo({
@@ -574,8 +546,8 @@ describe('BriefStateComposer.refresh — Story 3.12 (plan_id, paused, scaffoldin
   }
 
   it('exposes plan.id as plan_id in upsertInput', async () => {
-    const plan = buildPlanRow();
-    const plansRepo = buildPlansRepo({ currentPlan: plan, items: [makeItem()] });
+    const plan = buildPlan();
+    const plansRepo = buildPlansRepo({ currentPlan: plan, items: [buildPlanItem()] });
     const briefRepo = buildBriefStateRepoWithPrevious(null);
     const composer = new BriefStateComposer({
       plansRepository: plansRepo,
@@ -592,8 +564,8 @@ describe('BriefStateComposer.refresh — Story 3.12 (plan_id, paused, scaffoldin
   });
 
   it('emits plan_item_id on each tile item (matches plan_items.id)', async () => {
-    const plan = buildPlanRow();
-    const items = [makeItem({ id: 'item-1', child_id: CHILD_A, day: 'monday' })];
+    const plan = buildPlan();
+    const items = [buildPlanItem({ id: 'item-1', child_id: CHILD_A, day: 'monday' })];
     const plansRepo = buildPlansRepo({ currentPlan: plan, items });
     const briefRepo = buildBriefStateRepoWithPrevious(null);
     const composer = new BriefStateComposer({
@@ -613,11 +585,11 @@ describe('BriefStateComposer.refresh — Story 3.12 (plan_id, paused, scaffoldin
   });
 
   it('emits paused: true when ALL items for a day have paused_at set', async () => {
-    const plan = buildPlanRow();
+    const plan = buildPlan();
     const pausedAt = '2026-05-04T12:00:00.000Z';
     const items = [
-      makeItem({ id: 'a', child_id: CHILD_A, day: 'tuesday', paused_at: pausedAt }),
-      makeItem({ id: 'b', child_id: CHILD_B, day: 'tuesday', paused_at: pausedAt }),
+      buildPlanItem({ id: 'a', child_id: CHILD_A, day: 'tuesday', paused_at: pausedAt }),
+      buildPlanItem({ id: 'b', child_id: CHILD_B, day: 'tuesday', paused_at: pausedAt }),
     ];
     const plansRepo = buildPlansRepo({ currentPlan: plan, items });
     const briefRepo = buildBriefStateRepoWithPrevious(null);
@@ -639,15 +611,15 @@ describe('BriefStateComposer.refresh — Story 3.12 (plan_id, paused, scaffoldin
   });
 
   it('emits paused: false when only some items for a day are paused (partial)', async () => {
-    const plan = buildPlanRow();
+    const plan = buildPlan();
     const items = [
-      makeItem({
+      buildPlanItem({
         id: 'a',
         child_id: CHILD_A,
         day: 'tuesday',
         paused_at: '2026-05-04T12:00:00.000Z',
       }),
-      makeItem({ id: 'b', child_id: CHILD_B, day: 'tuesday', paused_at: null }),
+      buildPlanItem({ id: 'b', child_id: CHILD_B, day: 'tuesday', paused_at: null }),
     ];
     const plansRepo = buildPlansRepo({ currentPlan: plan, items });
     const briefRepo = buildBriefStateRepoWithPrevious(null);
@@ -669,7 +641,7 @@ describe('BriefStateComposer.refresh — Story 3.12 (plan_id, paused, scaffoldin
   });
 
   it('scaffolding_diff stays null when userInitiated:true even if ingredients differ', async () => {
-    const plan = buildPlanRow();
+    const plan = buildPlan();
     const previousTileSummaries = [
       {
         day: 'monday',
@@ -677,7 +649,7 @@ describe('BriefStateComposer.refresh — Story 3.12 (plan_id, paused, scaffoldin
       },
     ];
     const items = [
-      makeItem({ id: 'item-1', child_id: CHILD_A, day: 'monday', ingredients: ['hummus'] }),
+      buildPlanItem({ id: 'item-1', child_id: CHILD_A, day: 'monday', ingredients: ['hummus'] }),
     ];
     const plansRepo = buildPlansRepo({ currentPlan: plan, items });
     const briefRepo = buildBriefStateRepoWithPrevious(previousTileSummaries);
@@ -698,8 +670,8 @@ describe('BriefStateComposer.refresh — Story 3.12 (plan_id, paused, scaffoldin
   });
 
   it('scaffolding_diff stays null when no previous brief_state exists', async () => {
-    const plan = buildPlanRow();
-    const items = [makeItem({ ingredients: ['hummus'] })];
+    const plan = buildPlan();
+    const items = [buildPlanItem({ ingredients: ['hummus'] })];
     const plansRepo = buildPlansRepo({ currentPlan: plan, items });
     const briefRepo = buildBriefStateRepoWithPrevious(null);
     const composer = new BriefStateComposer({
@@ -717,7 +689,7 @@ describe('BriefStateComposer.refresh — Story 3.12 (plan_id, paused, scaffoldin
   });
 
   it('scaffolding_diff non-null when system-initiated and ingredients differ', async () => {
-    const plan = buildPlanRow();
+    const plan = buildPlan();
     const previousTileSummaries = [
       {
         day: 'monday',
@@ -725,7 +697,7 @@ describe('BriefStateComposer.refresh — Story 3.12 (plan_id, paused, scaffoldin
       },
     ];
     const items = [
-      makeItem({ id: 'item-1', child_id: CHILD_A, day: 'monday', ingredients: ['hummus'] }),
+      buildPlanItem({ id: 'item-1', child_id: CHILD_A, day: 'monday', ingredients: ['hummus'] }),
     ];
     const plansRepo = buildPlansRepo({ currentPlan: plan, items });
     const briefRepo = buildBriefStateRepoWithPrevious(previousTileSummaries);
@@ -746,7 +718,7 @@ describe('BriefStateComposer.refresh — Story 3.12 (plan_id, paused, scaffoldin
   });
 
   it('scaffolding_diff null when system-initiated and ingredients are unchanged', async () => {
-    const plan = buildPlanRow();
+    const plan = buildPlan();
     const previousTileSummaries = [
       {
         day: 'monday',
@@ -754,7 +726,7 @@ describe('BriefStateComposer.refresh — Story 3.12 (plan_id, paused, scaffoldin
       },
     ];
     const items = [
-      makeItem({ id: 'item-1', child_id: CHILD_A, day: 'monday', ingredients: ['rice', 'lentils'] }),
+      buildPlanItem({ id: 'item-1', child_id: CHILD_A, day: 'monday', ingredients: ['rice', 'lentils'] }),
     ];
     const plansRepo = buildPlansRepo({ currentPlan: plan, items });
     const briefRepo = buildBriefStateRepoWithPrevious(previousTileSummaries);
@@ -770,5 +742,152 @@ describe('BriefStateComposer.refresh — Story 3.12 (plan_id, paused, scaffoldin
 
     const upsertArg = briefRepo.upsert.mock.calls[0]?.[0];
     expect(upsertArg.scaffolding_diff).toBeNull();
+  });
+});
+
+// Slice 4-S4 — per-child ratings overlay
+describe('BriefStateComposer.refresh — Story 4-S4 (child_ratings)', () => {
+  function buildLunchLinkSessionRepo(opts: {
+    suppressionByDate?: Map<string, string[]>;
+    ratingsByDate?: Map<string, Map<string, 'loved' | 'ok' | 'not-really'>>;
+    findRatingsThrows?: Error;
+  }): LunchLinkSessionRepository & {
+    findSuppressedChildrenInRange: ReturnType<typeof vi.fn>;
+    findRatingsInRange: ReturnType<typeof vi.fn>;
+  } {
+    return {
+      findSuppressedChildrenInRange: vi
+        .fn()
+        .mockResolvedValue(opts.suppressionByDate ?? new Map()),
+      findRatingsInRange: vi.fn(async () => {
+        if (opts.findRatingsThrows) throw opts.findRatingsThrows;
+        return opts.ratingsByDate ?? new Map();
+      }),
+    } as unknown as LunchLinkSessionRepository & {
+      findSuppressedChildrenInRange: ReturnType<typeof vi.fn>;
+      findRatingsInRange: ReturnType<typeof vi.fn>;
+    };
+  }
+
+  it('populates child_ratings on a tile when findRatingsInRange returns a rating', async () => {
+    // 2026-05-04 is a Monday.
+    const plan = buildPlan({ week_of: '2026-05-04' });
+    const items = [buildPlanItem({ id: 'mon-a', child_id: CHILD_A, day: 'monday' })];
+    const plansRepo = buildPlansRepo({ currentPlan: plan, items });
+    const briefRepo = buildBriefStateRepo();
+    const lunchLinkRepo = buildLunchLinkSessionRepo({
+      ratingsByDate: new Map([['2026-05-04', new Map([[CHILD_A, 'loved']])]]),
+    });
+    const composer = new BriefStateComposer({
+      plansRepository: plansRepo,
+      briefStateRepository: briefRepo,
+      childrenRepository: buildChildrenRepo(),
+      lunchLinkSessionRepository: lunchLinkRepo,
+      auditService: buildAudit(),
+      logger: buildLogger(),
+    });
+
+    await composer.refresh(HOUSEHOLD_ID, WEEK_ID, REQUEST_ID);
+
+    expect(lunchLinkRepo.findRatingsInRange).toHaveBeenCalledWith(
+      HOUSEHOLD_ID,
+      '2026-05-04',
+      '2026-05-09',
+    );
+    const upsertArg = briefRepo.upsert.mock.calls[0]?.[0];
+    expect(upsertArg.plan_tile_summaries[0]).toMatchObject({
+      day: 'monday',
+      child_ratings: { [CHILD_A]: 'loved' },
+    });
+  });
+
+  it('leaves child_ratings as {} when no ratings exist for the week', async () => {
+    const plan = buildPlan({ week_of: '2026-05-04' });
+    const items = [buildPlanItem({ id: 'mon-a', child_id: CHILD_A, day: 'monday' })];
+    const plansRepo = buildPlansRepo({ currentPlan: plan, items });
+    const briefRepo = buildBriefStateRepo();
+    const lunchLinkRepo = buildLunchLinkSessionRepo({});
+    const composer = new BriefStateComposer({
+      plansRepository: plansRepo,
+      briefStateRepository: briefRepo,
+      childrenRepository: buildChildrenRepo(),
+      lunchLinkSessionRepository: lunchLinkRepo,
+      auditService: buildAudit(),
+      logger: buildLogger(),
+    });
+
+    await composer.refresh(HOUSEHOLD_ID, WEEK_ID, REQUEST_ID);
+
+    const upsertArg = briefRepo.upsert.mock.calls[0]?.[0];
+    expect(upsertArg.plan_tile_summaries[0].child_ratings).toEqual({});
+  });
+
+  it('emits {} for child_ratings when the lunchLinkSessionRepository is not wired', async () => {
+    const plan = buildPlan({ week_of: '2026-05-04' });
+    const items = [buildPlanItem({ id: 'mon-a', child_id: CHILD_A, day: 'monday' })];
+    const plansRepo = buildPlansRepo({ currentPlan: plan, items });
+    const briefRepo = buildBriefStateRepo();
+    const composer = new BriefStateComposer({
+      plansRepository: plansRepo,
+      briefStateRepository: briefRepo,
+      childrenRepository: buildChildrenRepo(),
+      auditService: buildAudit(),
+      logger: buildLogger(),
+    });
+
+    await composer.refresh(HOUSEHOLD_ID, WEEK_ID, REQUEST_ID);
+
+    const upsertArg = briefRepo.upsert.mock.calls[0]?.[0];
+    expect(upsertArg.plan_tile_summaries[0].child_ratings).toEqual({});
+  });
+
+  it('calls findRatingsInRange in parallel with findSuppressedChildrenInRange', async () => {
+    const plan = buildPlan({ week_of: '2026-05-04' });
+    const items = [buildPlanItem({ id: 'mon-a', child_id: CHILD_A, day: 'monday' })];
+    const plansRepo = buildPlansRepo({ currentPlan: plan, items });
+    const briefRepo = buildBriefStateRepo();
+    const lunchLinkRepo = buildLunchLinkSessionRepo({});
+    const composer = new BriefStateComposer({
+      plansRepository: plansRepo,
+      briefStateRepository: briefRepo,
+      childrenRepository: buildChildrenRepo(),
+      lunchLinkSessionRepository: lunchLinkRepo,
+      auditService: buildAudit(),
+      logger: buildLogger(),
+    });
+
+    await composer.refresh(HOUSEHOLD_ID, WEEK_ID, REQUEST_ID);
+
+    expect(lunchLinkRepo.findSuppressedChildrenInRange).toHaveBeenCalledTimes(1);
+    expect(lunchLinkRepo.findRatingsInRange).toHaveBeenCalledTimes(1);
+  });
+
+  it('does NOT throw when findRatingsInRange fails — audits brief.projection.failure', async () => {
+    const plan = buildPlan({ week_of: '2026-05-04' });
+    const items = [buildPlanItem({ id: 'mon-a', child_id: CHILD_A, day: 'monday' })];
+    const plansRepo = buildPlansRepo({ currentPlan: plan, items });
+    const briefRepo = buildBriefStateRepo();
+    const audit = buildAudit();
+    const lunchLinkRepo = buildLunchLinkSessionRepo({
+      findRatingsThrows: new Error('ratings query failed'),
+    });
+    const composer = new BriefStateComposer({
+      plansRepository: plansRepo,
+      briefStateRepository: briefRepo,
+      childrenRepository: buildChildrenRepo(),
+      lunchLinkSessionRepository: lunchLinkRepo,
+      auditService: audit,
+      logger: buildLogger(),
+    });
+
+    await expect(
+      composer.refresh(HOUSEHOLD_ID, WEEK_ID, REQUEST_ID),
+    ).resolves.toBeUndefined();
+    expect(briefRepo.upsert).not.toHaveBeenCalled();
+    expect(audit.write).toHaveBeenCalledTimes(1);
+    expect(audit.write.mock.calls[0]?.[0]).toMatchObject({
+      event_type: 'brief.projection.failure',
+      metadata: expect.objectContaining({ error: 'ratings query failed' }),
+    });
   });
 });

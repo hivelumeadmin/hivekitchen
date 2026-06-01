@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import type { FastifyBaseLogger } from 'fastify';
 import type { Queue } from 'bullmq';
-import { OPENING_GREETING, type ChipConfig } from '@hivekitchen/contracts';
+import { OPENING_GREETING, type ChipConfig, type ChipOption } from '@hivekitchen/contracts';
 import type { KitchenMap } from '@hivekitchen/types';
 import {
   CATALOG_SEED_JOB_OPTS,
@@ -21,6 +21,7 @@ import type { RecipesRepository } from '../recipe/recipes.repository.js';
 import type { HouseholdRulesRepository } from '../household-rules/household-rules.repository.js';
 import type { HouseholdsService } from '../households/households.service.js';
 import type { CuratedBaselineMaterializationService } from '../catalog/curated-baseline.service.js';
+import type { CatalogProjectionService } from '../catalog/catalog-projection.service.js';
 import type { KitchenMapService } from '../kitchen-map/kitchen-map.service.js';
 import type { MemoryService } from '../memory/memory.service.js';
 import type { VocabularyService } from '../vocabulary/vocabulary.service.js';
@@ -83,6 +84,11 @@ export interface OnboardingServiceDeps {
   // Fire-and-forget enqueue at m2_safe exit. Optional so legacy tests that
   // don't wire the queue still compile.
   catalogSeedQueue?: Queue<CatalogSeedJobData>;
+  // Slice 2.6-s4 — per-household M5 chip projection. Reads the catalog
+  // (recipes + household_recipe_usage) at turn-time and returns ChipOption[]
+  // with provenance. Optional: legacy tests that don't wire the catalog still
+  // pass; when absent, M5 chip_config falls back to null (deleted static set).
+  catalogProjection?: CatalogProjectionService;
 }
 
 export interface SubmitTextTurnInput {
@@ -119,6 +125,11 @@ export interface SubmitTextTurnResult {
   // True when the household already had ≥1 message turn on this thread
   // before this call ran — i.e., the user is mid-conversation, not on turn 1.
   _was_resumed: boolean;
+  // Slice 2.6-s6 — cold-start fallback mode for M5. When true, the client
+  // renders the conversational tail (no chip card, 3-dish gate) instead
+  // of the chip catalog. Sticky: once true for a household, stays true on
+  // every subsequent turn this session.
+  cold_start_mode: boolean;
 }
 
 export interface FinalizeTextOnboardingResult {
@@ -259,9 +270,9 @@ export function momentToChipConfig(moment: CurrentMoment): ChipConfig | null {
         options: [
           { key: 'none', label: 'No known allergens' },
           { key: 'peanut', label: 'Peanut' },
-          { key: 'tree-nuts', label: 'Tree nuts' },
+          { key: 'tree_nut', label: 'Tree nuts' },
           { key: 'dairy', label: 'Dairy' },
-          { key: 'eggs', label: 'Eggs' },
+          { key: 'egg', label: 'Eggs' },
           { key: 'soy', label: 'Soy' },
           { key: 'wheat', label: 'Wheat / gluten' },
           { key: 'fish', label: 'Fish' },
@@ -301,36 +312,11 @@ export function momentToChipConfig(moment: CurrentMoment): ChipConfig | null {
         ],
       };
     case 'm5_starting_line':
-      // Slice 2.5-s9 — M5 is a required-response gate (no skip_label) capturing
-      // ≥10 favorite household lunches as the cold-start seed (FR124). The 18
-      // chip keys + labels are copied verbatim from Moment5Page.tsx so the agent
-      // can resolve key → label via its prompt-side lookup table. Multi-select
-      // (mode: 'choice'). The 'override_fewer' early-exit chip is NOT part of
-      // the static list — it is appended dynamically in submitTextTurn when
-      // counts.favorite_lunch_count >= 4.
-      return {
-        mode: 'choice',
-        options: [
-          { key: 'paratha-roll', label: 'Paratha roll' },
-          { key: 'dal-rice-thermos', label: 'Dal + rice (thermos)' },
-          { key: 'idli', label: 'Idli + chutney' },
-          { key: 'dosa', label: 'Dosa roll' },
-          { key: 'khichdi', label: 'Khichdi thermos' },
-          { key: 'biryani', label: 'Biryani (thermos)' },
-          { key: 'sandwich', label: 'Sandwich' },
-          { key: 'wrap', label: 'Wrap' },
-          { key: 'pasta-salad', label: 'Pasta salad' },
-          { key: 'rice-bowl', label: 'Rice bowl' },
-          { key: 'quesadilla', label: 'Quesadilla' },
-          { key: 'hummus-pita', label: 'Hummus + pita' },
-          { key: 'noodle-box', label: 'Noodle box' },
-          { key: 'pizza-slice', label: 'Pizza slice' },
-          { key: 'sushi-roll', label: 'Sushi roll' },
-          { key: 'bagel-spread', label: 'Bagel + spread' },
-          { key: 'bento-box', label: 'Bento box' },
-          { key: 'tortilla-pinwheels', label: 'Tortilla pinwheels' },
-        ],
-      };
+      // Slice 2.6-s4 — the static 18-chip catalog was deleted. M5 chips are
+      // now injected dynamically in submitTextTurn from CatalogProjectionService
+      // (per-household catalog read at turn-time). Returning null here keeps
+      // the moment-to-config mapping honest: it has no static answer for M5.
+      return null;
     case 'pre_start':
     case 'summary':
     case 'finalized':
@@ -376,6 +362,8 @@ export class OnboardingService {
   private readonly curatedBaseline?: CuratedBaselineMaterializationService;
   // Slice 2.6-s3 — Stage 1 catalog seed fire-and-forget queue at M2 exit
   private readonly catalogSeedQueue?: Queue<CatalogSeedJobData>;
+  // Slice 2.6-s4 — M5 personalized chip projection
+  private readonly catalogProjection?: CatalogProjectionService;
 
   constructor(deps: OnboardingServiceDeps) {
     this.threads = deps.threads;
@@ -397,6 +385,7 @@ export class OnboardingService {
     this.recipesRepository = deps.recipesRepository;
     this.curatedBaseline = deps.curatedBaseline;
     this.catalogSeedQueue = deps.catalogSeedQueue;
+    this.catalogProjection = deps.catalogProjection;
   }
 
   /**
@@ -738,6 +727,24 @@ export class OnboardingService {
     // (legacy/test path); the gate falls back to the legacy isComplete CTA.
     let required_set_complete: boolean | null = null;
     let missing_required_set: string[] = [];
+    // Slice 2.6-s6 — cold-start state. Carried forward from the pre-turn
+    // row when present, then upgraded if this turn fires cold-start.
+    // Sticky: once `coldStartTriggered` is true it never resets to false.
+    let coldStartTriggered: boolean =
+      preTurnMomentState?.cold_start_triggered ?? false;
+    let coldStartTriggerReason: string | null =
+      preTurnMomentState?.cold_start_trigger_reason ?? null;
+    // Whether *this turn* discovered cold-start (drives the chip-config
+    // branch + the carry-forward-vs-fresh telemetry log split).
+    let coldStartTriggeredThisTurn = false;
+    // Cached output of catalogProjection.getM5Chips(): the projection runs
+    // inside the moment block (so cold-start flags are known before upsert)
+    // and the result is reused when chip_config is assembled below.
+    // null = projection not run this turn; { chips: [], coldStartReason: null }
+    // = projection succeeded with no chips (rare; healthy catalog but
+    // diversity cap left zero).
+    let m5ProjectionResult: { chips: ChipOption[]; coldStartReason: string | null } | null = null;
+    let m5ProjectionFailed = false;
     if (this.momentRepository !== undefined) {
       try {
         const counts = await this.momentRepository.countRequiredSetSources(
@@ -772,19 +779,88 @@ export class OnboardingService {
           preTurnMomentState?.required_set_status.m2_allergen_response === true ||
           advancedOutOfM2;
 
+        // Slice 2.6-s6 — run the catalog projection BEFORE we compute
+        // m5_complete + override-fewer thresholds and BEFORE upsertState,
+        // so a fresh cold-start trigger this turn flows into the persisted
+        // flag and into the relaxed (3 vs 10) m5_complete threshold.
+        // Result cached in m5ProjectionResult and reused when chip_config
+        // is assembled outside this block.
+        if (
+          nextCurrentMoment === 'm5_starting_line' &&
+          this.catalogProjection !== undefined &&
+          !coldStartTriggered
+        ) {
+          let declaredCuisineTags: string[] = [];
+          if (this.culturalPriorRepository !== undefined) {
+            try {
+              const priors = await this.culturalPriorRepository.findByHousehold(
+                input.householdId,
+              );
+              declaredCuisineTags = priors.map((p) => p.key);
+            } catch (err) {
+              this.logger.warn(
+                {
+                  err,
+                  module: 'onboarding',
+                  action: 'catalog.m5.cuisine_tag_read_failed',
+                  household_id: input.householdId,
+                },
+                'cuisine tag read failed — per-cuisine floor check skipped',
+              );
+            }
+          }
+          try {
+            const { chips: personalizedChips, coldStartReason } =
+              await this.catalogProjection.getM5Chips(
+                input.householdId,
+                declaredCuisineTags,
+              );
+            m5ProjectionResult = {
+              chips: personalizedChips,
+              coldStartReason,
+            };
+            if (coldStartReason !== null) {
+              coldStartTriggeredThisTurn = true;
+              coldStartTriggered = true;
+              coldStartTriggerReason = coldStartReason;
+            }
+          } catch (err) {
+            this.logger.warn(
+              {
+                err,
+                module: 'onboarding',
+                action: 'catalog.m5.projection_failed',
+                household_id: input.householdId,
+              },
+              'm5 personalized chips fetch failed — chip_config left as null',
+            );
+            m5ProjectionFailed = true;
+          }
+        }
+
         // Slice 2.5-s10 — override path: parent explicitly advanced out of
         // m5_starting_line with 4+ items (tapped override_fewer chip). Treat
         // as complete even if count < 10.
+        //
+        // Slice 2.6-s6 — in cold-start mode the override floor relaxes to 1
+        // (a household with even one declared dish is enough to seed Lumi
+        // when no other chip path is available).
+        const m5OverrideFloor = coldStartTriggered ? 1 : 4;
         const m5OverridePath =
           previousMoment === 'm5_starting_line' &&
           nextCurrentMoment !== 'm5_starting_line' &&
-          counts.favorite_lunch_count >= 4;
+          counts.favorite_lunch_count >= m5OverrideFloor;
 
         // Slice 2.5-s10 — sticky: once m5_complete is true (natural 10-item
         // path OR override), preserve across subsequent turns in
         // summary/finalized so the gate stays open.
+        //
+        // Slice 2.6-s6 — cold-start mode relaxes the natural threshold from
+        // 10 to 3 declared items. The override path remains parallel and
+        // also gates m5_complete; sticky behavior is unchanged.
+        const m5NaturalThreshold = coldStartTriggered ? 3 : 10;
         const m5_complete =
-          counts.favorite_lunch_count >= 10 ||
+          counts.favorite_lunch_count >= m5NaturalThreshold ||
           m5OverridePath ||
           preTurnMomentState?.required_set_status.m5_complete === true;
 
@@ -799,7 +875,28 @@ export class OnboardingService {
         await this.momentRepository.upsertState(input.householdId, {
           current_moment: nextCurrentMoment,
           required_set_status: requiredSetStatus,
+          cold_start_triggered: coldStartTriggered,
+          cold_start_trigger_reason: coldStartTriggerReason,
         });
+
+        // Slice 2.6-s6 — telemetry: log when cold-start is *active this
+        // turn but was set in a prior turn* (the carry-forward case). The
+        // first-time trigger log fires inside CatalogProjectionService.
+        if (
+          coldStartTriggered &&
+          !coldStartTriggeredThisTurn
+        ) {
+          this.logger.info(
+            {
+              module: 'catalog',
+              action: 'catalog.m5.cold_start_active',
+              household_id: input.householdId,
+              cold_start_trigger_reason: coldStartTriggerReason,
+              favorite_lunch_count: counts.favorite_lunch_count,
+            },
+            'M5 cold-start mode active this turn',
+          );
+        }
 
         // Slice 2.6-s3 — Stage 1 trigger: parent just advanced OUT of m2_safe.
         // Fire-and-forget BullMQ enqueue — do NOT await. queue.add is
@@ -927,6 +1024,33 @@ export class OnboardingService {
     // parent must pick one; the soft path is 'just-context'). tag_label is
     // already echoed by the agent in the prose; here we only ship the keys.
     let chip_config: ChipConfig | null = momentToChipConfig(nextCurrentMoment);
+
+    // Slice 2.6-s4 — assemble chip_config from the catalog projection run
+    // earlier in the moment block. The projection result was cached so we
+    // don't double-call the catalog read.
+    //
+    // Slice 2.6-s6 — when m5ProjectionResult.coldStartReason is set, render
+    // no chip card. When the projection failed (m5ProjectionFailed=true)
+    // chip_config falls through to momentToChipConfig (null for M5 after
+    // 2.6-s4) and the parent still sees the prose — degraded state.
+    if (
+      nextCurrentMoment === 'm5_starting_line' &&
+      m5ProjectionResult !== null
+    ) {
+      if (m5ProjectionResult.coldStartReason !== null || m5ProjectionResult.chips.length === 0) {
+        chip_config = null;
+      } else {
+        chip_config = {
+          mode: 'choice',
+          options: m5ProjectionResult.chips,
+        };
+      }
+    }
+    // m5ProjectionFailed branch is a silent no-op: chip_config stays at
+    // whatever momentToChipConfig returned (null for M5). Logged inside
+    // the moment block above.
+    void m5ProjectionFailed;
+
     if (elevation.prompt !== null) {
       chip_config = {
         mode: 'action',
@@ -943,9 +1067,16 @@ export class OnboardingService {
     // committed to at least 4 favorites — matching the Moment5Page.tsx mock
     // threshold. The agent treats 'override_fewer' as a control key (no
     // favorite_lunch.add fired) and embeds [NEXT_MOMENT:summary].
+    //
+    // Slice 2.6-s6 — in cold-start mode the override threshold drops to 1.
+    // chip_config is always null in cold-start (no chip card), so the
+    // injection block no-ops — the override chip is not shown alongside the
+    // conversational prompt. The relaxed threshold here is for future-proofing
+    // if cold-start ever rides a non-null chip_config code path.
+    const overrideThreshold = coldStartTriggered ? 1 : 4;
     if (
       nextCurrentMoment === 'm5_starting_line' &&
-      favoriteLunchCount >= 4 &&
+      favoriteLunchCount >= overrideThreshold &&
       chip_config !== null &&
       chip_config.mode === 'choice' &&
       chip_config.options !== undefined
@@ -997,6 +1128,7 @@ export class OnboardingService {
       required_set_complete,
       missing_required_set,
       _was_resumed: wasResumed,
+      cold_start_mode: coldStartTriggered,
     };
   }
 
@@ -1301,6 +1433,26 @@ export class OnboardingService {
       'text onboarding finalised',
     );
 
+    // Slice 2.6-s6 — under-floor telemetry: a cold-start household that
+    // finalized with fewer than 3 declared items used the override path.
+    // Tracking this lets ops measure how often Lumi enters "less than a
+    // starting line" mode.
+    if (
+      finalizeState !== null &&
+      finalizeState.cold_start_triggered === true &&
+      finalizeState.required_set_status.m5_favorite_count < 3
+    ) {
+      this.logger.info(
+        {
+          module: 'catalog',
+          action: 'catalog.m5.cold_start_under_floor',
+          household_id: input.householdId,
+          favorite_lunch_count: finalizeState.required_set_status.m5_favorite_count,
+        },
+        'M5 finalized in cold-start mode below 3-item floor (override taken)',
+      );
+    }
+
     return { thread_id: thread.id, summary };
   }
 
@@ -1558,6 +1710,11 @@ function renderKitchenMapBlock(map: KitchenMap): string {
 // prompt on every text-mode turn. Small (~15 lines); the agent reads
 // current_moment + required_set_status to decide which moment to work
 // within and whether the finalize gate is satisfied.
+//
+// Slice 2.6-s6 — when cold_start_triggered is true, surface the flag (and
+// its reason) so the agent emits the cold-start M5 prompt instead of
+// describing the chip card. The reason line is only rendered when the
+// flag is true so the legacy chip-path prompt cache stays warm.
 export function renderMomentStateBlock(state: MomentState | null): string {
   if (state === null) {
     return `CURRENT ONBOARDING STATE
@@ -1568,7 +1725,8 @@ required_set:
   m2_allergen_response: false
   m5_favorite_count: 0
   m5_complete: false
-required_set_complete: false`;
+required_set_complete: false
+cold_start_triggered: false`;
   }
   const rss = state.required_set_status;
   const complete =
@@ -1576,6 +1734,9 @@ required_set_complete: false`;
     rss.m1_child_declared &&
     rss.m2_allergen_response &&
     rss.m5_complete;
+  const coldStartReasonLine = state.cold_start_triggered
+    ? `\ncold_start_trigger_reason: ${state.cold_start_trigger_reason ?? 'unknown'}`
+    : '';
   return `CURRENT ONBOARDING STATE
 current_moment: ${state.current_moment}
 required_set:
@@ -1584,7 +1745,8 @@ required_set:
   m2_allergen_response: ${rss.m2_allergen_response}
   m5_favorite_count: ${rss.m5_favorite_count}
   m5_complete: ${rss.m5_complete}
-required_set_complete: ${complete}`;
+required_set_complete: ${complete}
+cold_start_triggered: ${state.cold_start_triggered}${coldStartReasonLine}`;
 }
 
 function renderVocabularyBlock(vocab: VocabularyService): string {

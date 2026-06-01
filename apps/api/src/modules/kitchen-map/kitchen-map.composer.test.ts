@@ -82,7 +82,7 @@ describe('composeKitchenMap — household + meta', () => {
             declared_allergens: [],
             cultural_identifiers: [],
             dietary_preferences: [],
-            bag_composition: { main: true, snack: true, extra: false },
+            bag_composition_pattern: 'main_plus_snack' as const,
             extra_rules: { pins: [], bans: [] },
           },
         ],
@@ -167,7 +167,7 @@ describe('composeKitchenMap — children + school_policies', () => {
             declared_allergens: ['peanut'],
             cultural_identifiers: ['south_asian'],
             dietary_preferences: ['vegetarian'],
-            bag_composition: { main: true, snack: true, extra: false },
+            bag_composition_pattern: 'main_plus_snack' as const,
             extra_rules: { pins: ['hummus'], bans: ['fruit_snack'] },
           },
         ],
@@ -210,7 +210,7 @@ describe('composeKitchenMap — children + school_policies', () => {
             declared_allergens: [],
             cultural_identifiers: [],
             dietary_preferences: [],
-            bag_composition: { main: true, snack: false, extra: true },
+            bag_composition_pattern: 'main_plus_extra' as const,
             extra_rules: { pins: ['cheese_stick'], bans: ['gummy'] },
           },
         ],
@@ -233,7 +233,7 @@ describe('composeKitchenMap — children + school_policies', () => {
             declared_allergens: [],
             cultural_identifiers: [],
             dietary_preferences: [],
-            bag_composition: { main: false, snack: false, extra: false }, // shouldn't happen but defended
+            bag_composition_pattern: 'main_only' as const, // shouldn't happen but defended
             extra_rules: { pins: [], bans: [] },
           },
         ],
@@ -313,6 +313,17 @@ describe('composeKitchenMap — cultural priors bucketing', () => {
 // Slice 2.5-s1 — bag_composition_pattern is derived from the booleans.
 describe('composeKitchenMap — bag_composition_pattern derivation', () => {
   function childRow(snack: boolean, extra: boolean) {
+    // Story 3-DM-B1: kitchen-map raw row now carries bag_composition_pattern
+    // (the canonical column). Map the (snack, extra) test input to the enum
+    // value the composer expects.
+    const pattern =
+      snack && extra
+        ? ('main_plus_snack_plus_extra' as const)
+        : snack
+          ? ('main_plus_snack' as const)
+          : extra
+            ? ('main_plus_extra' as const)
+            : ('main_only' as const);
     return {
       id: UUID(10),
       name: 'Layla',
@@ -320,7 +331,7 @@ describe('composeKitchenMap — bag_composition_pattern derivation', () => {
       declared_allergens: [],
       cultural_identifiers: [],
       dietary_preferences: [],
-      bag_composition: { main: true, snack, extra },
+      bag_composition_pattern: pattern,
       extra_rules: { pins: [], bans: [] },
     };
   }

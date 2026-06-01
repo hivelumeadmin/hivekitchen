@@ -1,3 +1,4 @@
+import type { CatalogProvenance } from '@hivekitchen/types';
 import { BaseRepository } from '../../repository/base.repository.js';
 
 // ===========================================================================
@@ -10,7 +11,7 @@ import { BaseRepository } from '../../repository/base.repository.js';
 // ===========================================================================
 
 const RECIPE_COLUMNS =
-  'id, canonical_name, slug, ingredients, instructions, ingredient_keys, primary_ingredient_key, allergen_flags, dietary_flags, cultural_tags, cuisine_tags, applicable_slots, prep_time_minutes, source, created_by_household_id, visibility, community_use_count, community_rating_avg, community_rating_count, is_active, created_at, updated_at';
+  'id, canonical_name, slug, ingredients, ingredient_keys, primary_ingredient_key, allergen_flags, dietary_flags, cultural_tags, cuisine_tags, applicable_slots, prep_time_minutes, finish_time_minutes, source, created_by_household_id, visibility, community_use_count, community_rating_avg, community_rating_count, is_active, created_at, updated_at';
 
 const PREVIEW_COLUMNS =
   'id, canonical_name, primary_ingredient_key, cuisine_tags, allergen_flags, dietary_flags, prep_time_minutes, community_use_count';
@@ -28,7 +29,6 @@ export interface RecipeRow {
   canonical_name: string;
   slug: string | null;
   ingredients: unknown; // jsonb — service validates via RecipeIngredientSchema
-  instructions: string | string[] | null;
   ingredient_keys: string[];
   primary_ingredient_key: string | null;
   allergen_flags: string[];
@@ -37,6 +37,10 @@ export interface RecipeRow {
   cuisine_tags: string[];
   applicable_slots: string[];
   prep_time_minutes: number | null;
+  // Story 3-DM-A1: morning-of cook time, separate from prep_time_minutes so
+  // the planner can enforce the dual budget (Finish ≤15 / Total ≤40) at
+  // recipe granularity.
+  finish_time_minutes: number | null;
   source: 'agent_generated' | 'curated' | 'imported' | 'catalog_seeded' | 'parent_declared';
   created_by_household_id: string | null;
   visibility: 'private' | 'shared';
@@ -80,10 +84,6 @@ export interface InsertRecipeInput {
     optional: boolean;
     substitutes: Array<{ key: string; modifier: string | null }>;
   }>;
-  // F-P12: instruction steps extracted by RecipeAgent (rewritten as functional
-  // imperatives). Optional so the existing materializeFromPlanItem path
-  // (which has no instructions) continues to work unchanged.
-  instructions?: string[];
   ingredient_keys: string[];
   primary_ingredient_key: string | null;
   allergen_flags: string[];
@@ -92,9 +92,27 @@ export interface InsertRecipeInput {
   cuisine_tags: string[];
   applicable_slots: Array<'main' | 'snack' | 'extra'>;
   prep_time_minutes: number | null;
+  // Story 3-DM-A1: finish-mode cook time (morning-of). Optional — the
+  // materializeFromPlanItem path leaves it null; RecipeAgent extractions
+  // populate when present on the source page.
+  finish_time_minutes?: number | null;
+  // Story 3-DM-A1: structured method steps, tagged with activity mode. When
+  // provided, persisted into recipe_steps in the same logical commit as the
+  // recipes INSERT. Replaces the legacy `instructions` string[] field.
+  steps?: ReadonlyArray<{ mode: 'prep' | 'finish'; text: string }>;
   source: 'agent_generated' | 'curated' | 'imported' | 'catalog_seeded' | 'parent_declared';
   created_by_household_id: string;
   visibility: 'private' | 'shared';
+}
+
+// Story 3-DM-A1 — full recipe_steps row shape returned by findStepsByRecipeId.
+export interface RecipeStepRow {
+  id: string;
+  recipe_id: string;
+  sequence: number;
+  mode: 'prep' | 'finish';
+  text: string;
+  created_at: string;
 }
 
 /**
@@ -136,7 +154,6 @@ export class RecipesRepository extends BaseRepository {
       .insert({
         canonical_name: input.canonical_name,
         ingredients: input.ingredients,
-        ...(input.instructions !== undefined ? { instructions: input.instructions } : {}),
         ingredient_keys: input.ingredient_keys,
         primary_ingredient_key: input.primary_ingredient_key,
         allergen_flags: input.allergen_flags,
@@ -145,6 +162,7 @@ export class RecipesRepository extends BaseRepository {
         cuisine_tags: input.cuisine_tags,
         applicable_slots: input.applicable_slots,
         prep_time_minutes: input.prep_time_minutes,
+        finish_time_minutes: input.finish_time_minutes ?? null,
         source: input.source,
         created_by_household_id: input.created_by_household_id,
         visibility: input.visibility,
@@ -152,7 +170,45 @@ export class RecipesRepository extends BaseRepository {
       .select('id, canonical_name')
       .single();
     if (error) throw error;
-    return data as RecipeRowMinimal;
+    const row = data as RecipeRowMinimal;
+
+    // Story 3-DM-A1: when steps were provided, persist them now via a single
+    // multi-row INSERT. recipes ↔ recipe_steps live in separate tables; we
+    // can't co-commit atomically without an RPC, so on step-insert failure
+    // we best-effort delete the just-inserted recipe to avoid an orphaned
+    // recipe with no method. ON DELETE CASCADE on recipe_steps means future
+    // re-attempts start clean.
+    if (input.steps !== undefined && input.steps.length > 0) {
+      const stepRows = input.steps.map((s, i) => ({
+        recipe_id: row.id,
+        sequence: i + 1,
+        mode: s.mode,
+        text: s.text,
+      }));
+      const stepsResult = await this.client.from('recipe_steps').insert(stepRows);
+      if (stepsResult.error !== null) {
+        await this.client.from('recipes').delete().eq('id', row.id);
+        throw stepsResult.error;
+      }
+    }
+
+    return row;
+  }
+
+  /**
+   * Story 3-DM-A1 — fetch the structured method for a recipe, ordered by
+   * sequence. The Wall Card renderer filters by mode client-side; the API
+   * returns all steps so the toggle has both modes available without a
+   * round-trip.
+   */
+  async findStepsByRecipeId(recipeId: string): Promise<RecipeStepRow[]> {
+    const { data, error } = await this.client
+      .from('recipe_steps')
+      .select('id, recipe_id, sequence, mode, text, created_at')
+      .eq('recipe_id', recipeId)
+      .order('sequence', { ascending: true });
+    if (error) throw error;
+    return (data ?? []) as RecipeStepRow[];
   }
 
   /**
@@ -507,6 +563,89 @@ export class RecipesRepository extends BaseRepository {
   }
 
   /**
+   * Slice 2.6-s4 — projection read for M5 chip personalization.
+   *
+   * Returns every catalog row visible to the household (banned rows excluded
+   * at the SQL layer to keep the projection size small). Sort + diversity
+   * shaping happens in CatalogProjectionService — this method is intentionally
+   * a single-purpose SELECT-with-join with no business logic so it stays
+   * cheap to test and reason about.
+   *
+   * Mirrors the join shape KitchenMapRepository uses
+   * (USAGE_JOIN_COLUMNS) — household_recipe_usage → recipes is many-to-one
+   * so PostgREST may return `recipes` as an array or object; we normalize.
+   */
+  async findCatalogProjectionForHousehold(
+    householdId: string,
+  ): Promise<
+    Array<{
+      id: string;
+      canonical_name: string;
+      cuisine_tags: string[];
+      cultural_tags: string[];
+      catalog_provenance: CatalogProvenance;
+      confidence_score: number;
+      is_household_favorite: boolean;
+    }>
+  > {
+    const { data, error } = await this.client
+      .from('household_recipe_usage')
+      .select(
+        'catalog_provenance, confidence_score, is_household_favorite, recipes!inner(id, canonical_name, cuisine_tags, cultural_tags, is_active)',
+      )
+      .eq('household_id', householdId)
+      .eq('is_household_banned', false);
+    if (error) throw error;
+
+    const out: Array<{
+      id: string;
+      canonical_name: string;
+      cuisine_tags: string[];
+      cultural_tags: string[];
+      catalog_provenance: CatalogProvenance;
+      confidence_score: number;
+      is_household_favorite: boolean;
+    }> = [];
+    for (const raw of (data ?? []) as Array<{
+      catalog_provenance: CatalogProvenance;
+      confidence_score: number;
+      is_household_favorite: boolean;
+      recipes:
+        | Array<{
+            id: string;
+            canonical_name: string;
+            cuisine_tags: string[] | null;
+            cultural_tags: string[] | null;
+            is_active: boolean;
+          }>
+        | {
+            id: string;
+            canonical_name: string;
+            cuisine_tags: string[] | null;
+            cultural_tags: string[] | null;
+            is_active: boolean;
+          }
+        | null;
+    }>) {
+      const joined = Array.isArray(raw.recipes)
+        ? raw.recipes[0]
+        : (raw.recipes ?? undefined);
+      if (joined === undefined) continue;
+      if (!joined.is_active) continue;
+      out.push({
+        id: joined.id,
+        canonical_name: joined.canonical_name,
+        cuisine_tags: joined.cuisine_tags ?? [],
+        cultural_tags: joined.cultural_tags ?? [],
+        catalog_provenance: raw.catalog_provenance,
+        confidence_score: raw.confidence_score,
+        is_household_favorite: raw.is_household_favorite,
+      });
+    }
+    return out;
+  }
+
+  /**
    * Slice 2.6-s1 — count of declared favourite rows for a household. Used by
    * `favorite_lunch.add` to derive the agent-facing position field after the
    * cold-start seed write (FR124's "10 items" progress UX).
@@ -519,6 +658,21 @@ export class RecipesRepository extends BaseRepository {
       .eq('catalog_provenance', 'declared');
     if (error) throw error;
     return count ?? 0;
+  }
+
+  /**
+   * Slice 2.6-s5 — count of catalog-seeded recipes available to a household.
+   * Uses an RPC (raw SQL function) rather than a supabase-js joined-table count
+   * because cross-table column filters on head:true count queries have
+   * inconsistent behavior across PostgREST versions.
+   * Migration: 20260920000200_2_6_s5_count_catalog_seeded_rpc.sql
+   */
+  async countCatalogSeededForHousehold(householdId: string): Promise<number> {
+    const { data, error } = await this.client.rpc('count_catalog_seeded_for_household', {
+      p_household_id: householdId,
+    });
+    if (error) throw error;
+    return Number(data ?? 0);
   }
 
   /**

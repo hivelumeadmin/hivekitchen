@@ -86,8 +86,18 @@ const orchestratorHookPlugin: FastifyPluginAsync = async (fastify) => {
       'OPENAI_TRACES_ENABLED=true — OpenAI dashboard will log full request bodies (zero-retention disabled)',
     );
   }
+
+  const openaiStoreCompletions = fastify.env?.OPENAI_STORE_COMPLETIONS ?? false;
+  if (openaiStoreCompletions) {
+    fastify.log.info(
+      { module: 'orchestrator', node_env: fastify.env?.NODE_ENV },
+      'OPENAI_STORE_COMPLETIONS=true — completions stored in OpenAI Evals dataset (zero-retention disabled)',
+    );
+  }
+
   const openaiAdapter = new OpenAIAdapter(fastify.openai, {
     tracesEnabled: openaiTracesEnabled,
+    storeCompletions: openaiStoreCompletions,
   });
   const anthropicAdapter = new AnthropicAdapter();
   // Story 3-31 — RecipeAgent wires Tavily + OpenAI + vocabulary. Stateless

@@ -135,7 +135,7 @@ function validExtractionJson(opts: { sourceUrl: string; sourceSite: string }): s
         substitutes: [],
       },
     ],
-    instructions: ['Cook the chicken.'],
+    steps: [{ mode: 'prep' as const, text: 'Cook the chicken.' }],
     allergen_info_from_source: null,
   });
 }
@@ -311,7 +311,7 @@ describe('RecipeAgent.discover — failure modes', () => {
         dietary_flags: [],
         allergen_flags: [],
         prep_time_minutes: null,
-        instructions: ['Cook it.'],
+        steps: [{ mode: 'prep' as const, text: 'Cook it.' }],
         allergen_info_from_source: null,
       }),
     ]);
@@ -364,7 +364,7 @@ describe('RecipeAgent.discover — vocabulary post-pass (AC5)', () => {
         ingredients: [
           { key: 'rice', modifier: null, display: '1 cup rice', quantity: 1, unit: 'cup', optional: false, substitutes: [] },
         ],
-        instructions: ['Cook the rice.'],
+        steps: [{ mode: 'prep' as const, text: 'Cook the rice.' }],
         allergen_info_from_source: null,
       }),
     ]);
@@ -413,7 +413,11 @@ describe('RecipeAgent.discover — head-noun discipline fixture pages (AC4)', ()
         // Compound spice product — should NOT be split
         { key: 'garam_masala', modifier: null, display: '1 tsp garam masala', quantity: 1, unit: 'tsp', optional: false, substitutes: [] },
       ],
-      instructions: ['Marinate chicken.', 'Cook rice.', 'Layer and steam.'],
+      steps: [
+        { mode: 'prep' as const, text: 'Marinate chicken.' },
+        { mode: 'prep' as const, text: 'Cook rice.' },
+        { mode: 'finish' as const, text: 'Layer and steam.' },
+      ],
       allergen_info_from_source: null,
     });
   }
@@ -433,7 +437,11 @@ describe('RecipeAgent.discover — head-noun discipline fixture pages (AC4)', ()
         { key: 'tofu_firm', modifier: null, display: '400g firm tofu', quantity: 400, unit: 'g', optional: false, substitutes: [] },
         { key: 'broccoli', modifier: null, display: '2 cups broccoli florets', quantity: 2, unit: 'cup', optional: false, substitutes: [] },
       ],
-      instructions: ['Press tofu.', 'Stir-fry vegetables.', 'Add sauce.'],
+      steps: [
+        { mode: 'prep' as const, text: 'Press tofu.' },
+        { mode: 'finish' as const, text: 'Stir-fry vegetables.' },
+        { mode: 'finish' as const, text: 'Add sauce.' },
+      ],
       allergen_info_from_source: 'Contains soy.',
     });
   }
@@ -453,7 +461,11 @@ describe('RecipeAgent.discover — head-noun discipline fixture pages (AC4)', ()
         { key: 'chickpea_canned', modifier: null, display: '1 can chickpeas, drained', quantity: 1, unit: 'can', optional: false, substitutes: [] },
         { key: 'tomato', modifier: null, display: '2 diced tomatoes', quantity: 2, unit: 'piece', optional: false, substitutes: [] },
       ],
-      instructions: ['Sauté aromatics.', 'Add chickpeas and tomatoes.', 'Simmer 15 minutes.'],
+      steps: [
+        { mode: 'finish' as const, text: 'Sauté aromatics.' },
+        { mode: 'finish' as const, text: 'Add chickpeas and tomatoes.' },
+        { mode: 'finish' as const, text: 'Simmer 15 minutes.' },
+      ],
       allergen_info_from_source: null,
     });
   }

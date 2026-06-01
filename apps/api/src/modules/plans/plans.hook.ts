@@ -11,7 +11,6 @@ import { ChildrenRepository } from '../children/children.repository.js';
 import { REGEN_QUEUE } from '../../jobs/plan-regeneration.job.js';
 import { DayOverridesRepository } from './day-overrides.repository.js';
 import { DayOverridesService } from './day-overrides.service.js';
-import { SnackSkusRepository } from './snack-skus.repository.js';
 import { ExtraRulesRepository } from '../children/extra-rules.repository.js';
 import { ExtraRemovalSignalService } from './extra-removal-signal.service.js';
 import { RecipeService } from '../recipe/recipe.service.js';
@@ -89,7 +88,6 @@ const plansHookPlugin: FastifyPluginAsync = async (fastify) => {
   // because the swap path is the only signal source today; co-locating avoids
   // a separate plugin for a single fire-and-forget hook.
   const extraRulesRepositoryForBias = new ExtraRulesRepository(fastify.supabase);
-  const snackSkusRepository = new SnackSkusRepository(fastify.supabase);
   const extraRemovalSignalService = new ExtraRemovalSignalService({
     client: fastify.supabase,
     extraRulesRepo: extraRulesRepositoryForBias,
@@ -138,7 +136,6 @@ const plansHookPlugin: FastifyPluginAsync = async (fastify) => {
     redis: fastify.redis,                              // Story 3.13
     regenQueue: fastify.bullmq.getQueue(REGEN_QUEUE),  // Story 3.13
     extraRemovalSignalService,                         // Story 3.22
-    snackSkusRepository,                               // Story 3.22
     recipeService,                                     // Slice D
     recipesRepo: recipesRepository,                    // Slice 2.6-s3
     recipeAgent,                                        // Slice 2.6-s3
@@ -181,7 +178,6 @@ const plansHookPlugin: FastifyPluginAsync = async (fastify) => {
   fastify.decorate('briefStateComposer', briefStateComposer);
   fastify.decorate('planAdjustmentService', planAdjustmentService);
   fastify.decorate('dayOverridesService', dayOverridesService);
-  fastify.decorate('snackSkusRepository', snackSkusRepository);
   fastify.decorate('lunchLinkSessionRepository', lunchLinkSessionRepository);
   fastify.decorate('variantProposalService', variantProposalService);
 };

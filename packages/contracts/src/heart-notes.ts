@@ -25,9 +25,14 @@ export const CreateHeartNoteBodySchema = z.object({
   scheduled_for: z.string().date().optional(),
 });
 
+// Slice 4-S6: PATCH may either edit content/schedule or explicitly cancel a
+// scheduled note. `delivered` is system-only (set by the delivery job) — the
+// status enum here is narrowed to `'cancelled'` to keep that invariant on the
+// wire.
 export const PatchHeartNoteBodySchema = z.object({
   content: z.string().max(HEART_NOTE_CONTENT_MAX).optional(),
   scheduled_for: z.string().date().nullable().optional(),
+  status: z.enum(['cancelled']).optional(),
 });
 
 export const HeartNoteResponseSchema = z.object({
@@ -38,6 +43,8 @@ export const HeartNoteResponseSchema = z.object({
   content: z.string(),
   status: HeartNoteStatusSchema,
   scheduled_for: z.string().date().nullable(),
+  delivered_at: z.string().datetime({ offset: true }).nullable(),
+  cancelled_at: z.string().datetime({ offset: true }).nullable(),
   created_at: z.string().datetime({ offset: true }),
   updated_at: z.string().datetime({ offset: true }),
 });
@@ -57,6 +64,28 @@ export const HeartNoteIdParamSchema = z.object({
   id: z.string().uuid(),
 });
 
+// Slice 4-S6: GET /v1/heart-notes/history — list endpoint for the All Notes
+// delivery-status view. `status` is a comma-separated set; the transform
+// produces a typed array or undefined.
+export const HeartNotesListQuerySchema = z.object({
+  status: z
+    .string()
+    .optional()
+    .transform((v, ctx) => {
+      if (!v) return undefined;
+      const result = z.array(HeartNoteStatusSchema).safeParse(v.split(','));
+      if (!result.success) {
+        result.error.issues.forEach((issue) => ctx.addIssue(issue));
+        return z.NEVER;
+      }
+      return result.data;
+    }),
+});
+
+export const HeartNotesListPayloadSchema = z.object({
+  notes: z.array(HeartNoteResponseSchema),
+});
+
 export type HeartNoteStatus = z.infer<typeof HeartNoteStatusSchema>;
 export type CreateHeartNoteBody = z.infer<typeof CreateHeartNoteBodySchema>;
 export type PatchHeartNoteBody = z.infer<typeof PatchHeartNoteBodySchema>;
@@ -65,3 +94,5 @@ export type HeartNotePayload = z.infer<typeof HeartNotePayloadSchema>;
 export type HeartNoteNullablePayload = z.infer<typeof HeartNoteNullablePayloadSchema>;
 export type GetHeartNotesQuery = z.infer<typeof GetHeartNotesQuerySchema>;
 export type HeartNoteIdParam = z.infer<typeof HeartNoteIdParamSchema>;
+export type HeartNotesListQuery = z.infer<typeof HeartNotesListQuerySchema>;
+export type HeartNotesListPayload = z.infer<typeof HeartNotesListPayloadSchema>;

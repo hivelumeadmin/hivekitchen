@@ -39,6 +39,18 @@ const EnvSchema = z
         z.boolean(),
       )
       .default(false),
+    // When true, chat.completions.create calls include `store: true` and a
+    // metadata block (agent_type, prompt_version) so completions accumulate
+    // in the OpenAI Evals API dataset. The ZDR header is dropped automatically
+    // when this flag is on — `store: true` and zero-retention are mutually
+    // exclusive. Safe to enable in staging/production; stored completions are
+    // accessible only via the OpenAI API, not the general Activity dashboard.
+    OPENAI_STORE_COMPLETIONS: z
+      .preprocess(
+        (v) => (typeof v === 'string' ? v.toLowerCase() === 'true' : false),
+        z.boolean(),
+      )
+      .default(false),
     // Slice C — when true, the OnboardingAgent uses an OpenAI function-call
     // loop in text mode to populate the kitchen map (children, cultural
     // priors, memory nodes) progressively during the conversation. When

@@ -208,6 +208,93 @@ describe('OpenAIAdapter', () => {
     });
   });
 
+  describe('storeCompletions (eval dataset accumulation)', () => {
+    it('adds store=true to complete() params when storeCompletions=true', async () => {
+      const create = vi.fn().mockResolvedValue(buildResponse({ content: 'ok' }));
+      const adapter = new OpenAIAdapter(buildClient(create), { storeCompletions: true });
+
+      await adapter.complete('hi', [], BASE_OPTIONS);
+
+      const [params] = create.mock.calls[0] as [{ store?: boolean }];
+      expect(params.store).toBe(true);
+    });
+
+    it('adds metadata to complete() params when storeCompletions=true and metadata is set', async () => {
+      const create = vi.fn().mockResolvedValue(buildResponse({ content: 'ok' }));
+      const adapter = new OpenAIAdapter(buildClient(create), { storeCompletions: true });
+      const metadata = { agent_type: 'planner', prompt_version: 'v1.5.0' };
+
+      await adapter.complete('hi', [], { ...BASE_OPTIONS, metadata });
+
+      const [params] = create.mock.calls[0] as [{ metadata?: Record<string, string> }];
+      expect(params.metadata).toEqual(metadata);
+    });
+
+    it('omits store and metadata from complete() when storeCompletions=false (default)', async () => {
+      const create = vi.fn().mockResolvedValue(buildResponse({ content: 'ok' }));
+      const adapter = new OpenAIAdapter(buildClient(create));
+
+      await adapter.complete('hi', [], { ...BASE_OPTIONS, metadata: { agent_type: 'planner' } });
+
+      const [params] = create.mock.calls[0] as [{ store?: boolean; metadata?: unknown }];
+      expect(params.store).toBeUndefined();
+      expect(params.metadata).toBeUndefined();
+    });
+
+    it('drops the ZDR header when storeCompletions=true', async () => {
+      const create = vi.fn().mockResolvedValue(buildResponse({ content: 'ok' }));
+      const adapter = new OpenAIAdapter(buildClient(create), { storeCompletions: true });
+
+      await adapter.complete('hi', [], BASE_OPTIONS);
+
+      const [, requestOptions] = create.mock.calls[0] as [
+        unknown,
+        { headers?: Record<string, string> } | undefined,
+      ];
+      expect(requestOptions?.headers?.['OpenAI-Data-Privacy']).toBeUndefined();
+    });
+
+    it('adds store=true to completeWithMessages() when storeCompletions=true', async () => {
+      const create = vi.fn().mockResolvedValue(buildResponse({ content: 'ok' }));
+      const adapter = new OpenAIAdapter(buildClient(create), { storeCompletions: true });
+
+      await adapter.completeWithMessages(
+        [{ role: 'user', content: 'hi' }],
+        [],
+        { ...BASE_OPTIONS, metadata: { agent_type: 'swap', prompt_version: 'v1.0.0' } },
+      );
+
+      const [params] = create.mock.calls[0] as [{ store?: boolean; metadata?: Record<string, string> }];
+      expect(params.store).toBe(true);
+      expect(params.metadata).toEqual({ agent_type: 'swap', prompt_version: 'v1.0.0' });
+    });
+
+    it('probe() never sends store=true even when storeCompletions=true', async () => {
+      const create = vi.fn().mockResolvedValue(buildResponse({ content: 'pong' }));
+      const adapter = new OpenAIAdapter(buildClient(create), { storeCompletions: true });
+
+      await adapter.probe();
+
+      const [params] = create.mock.calls[0] as [{ store?: boolean }];
+      expect(params.store).toBeUndefined();
+    });
+
+    it('probe() still drops ZDR when storeCompletions=true (health checks are not stored but do not need ZDR)', async () => {
+      const create = vi.fn().mockResolvedValue(buildResponse({ content: 'pong' }));
+      const adapter = new OpenAIAdapter(buildClient(create), { storeCompletions: true });
+
+      await adapter.probe();
+
+      const [, requestOptions] = create.mock.calls[0] as [
+        unknown,
+        { headers?: Record<string, string> } | undefined,
+      ];
+      // probe() explicitly sets storeCompletions=false in its header call,
+      // so ZDR is sent (probe uses the same ZDR-on path as the default).
+      expect(requestOptions?.headers?.['OpenAI-Data-Privacy']).toBe('zero-retention');
+    });
+  });
+
   describe('tracesEnabled (env-gated ZDR toggle)', () => {
     it('omits OpenAI-Data-Privacy when tracesEnabled=true (dashboard logs requests)', async () => {
       const create = vi.fn().mockResolvedValue(buildResponse({ content: 'ok' }));

@@ -17,6 +17,9 @@ const SAMPLE_HOUSEHOLD_ID = '22222222-2222-4222-8222-222222222222';
 const OTHER_HOUSEHOLD_ID = '33333333-3333-4333-8333-333333333333';
 const JWT_SECRET = 'a'.repeat(32);
 
+// Story 3-DM-B1: legacy bag_composition jsonb + allergen_rule_version dropped;
+// 3 new variation-driving enums + promoted bag_composition_pattern enum take
+// their place.
 interface ChildRowDb {
   id: string;
   household_id: string;
@@ -26,8 +29,14 @@ interface ChildRowDb {
   declared_allergens: string | null;
   cultural_identifiers: string | null;
   dietary_preferences: string | null;
-  allergen_rule_version: string;
-  bag_composition: { main: true; snack: boolean; extra: boolean };
+  appetite_level: 'light' | 'normal' | 'heavy';
+  texture_needs: 'soft' | 'mixed' | 'normal';
+  spice_tolerance: 'mild' | 'regular' | 'spicy';
+  bag_composition_pattern:
+    | 'main_only'
+    | 'main_plus_snack'
+    | 'main_plus_extra'
+    | 'main_plus_snack_plus_extra';
   extra_rules: { pins: string[]; bans: string[] };
   created_at: string;
   updated_at: string;
@@ -220,7 +229,7 @@ function plansTable(state: MockDbState) {
 
 function childrenTable(state: MockDbState) {
   return {
-    insert(row: Omit<ChildRowDb, 'id' | 'allergen_rule_version' | 'bag_composition' | 'created_at'>) {
+    insert(row: Omit<ChildRowDb, 'id' | 'appetite_level' | 'texture_needs' | 'spice_tolerance' | 'bag_composition_pattern' | 'extra_rules' | 'created_at' | 'updated_at'>) {
       return {
         select() {
           return {
@@ -234,10 +243,11 @@ function childrenTable(state: MockDbState) {
                 declared_allergens: row.declared_allergens,
                 cultural_identifiers: row.cultural_identifiers,
                 dietary_preferences: row.dietary_preferences,
-                allergen_rule_version: 'v1',
-                // DB default for bag_composition — main always true,
-                // snack/extra default to true.
-                bag_composition: { main: true, snack: true, extra: true },
+                // Story 3-DM-B1 — DB defaults for the new enum columns.
+                appetite_level: 'normal',
+                texture_needs: 'normal',
+                spice_tolerance: 'mild',
+                bag_composition_pattern: 'main_plus_snack_plus_extra',
                 extra_rules: { pins: [], bans: [] },
                 created_at: '2026-04-28T10:00:00.000Z',
                 updated_at: '2026-04-28T10:00:00.000Z',
@@ -628,19 +638,21 @@ describe('POST /v1/households/:id/children', () => {
     });
 
     expect(res.statusCode).toBe(201);
-    const body = JSON.parse(res.body) as { child: { name: string; declared_allergens: string[]; cultural_identifiers: string[]; dietary_preferences: string[]; allergen_rule_version: string } };
+    // Story 3-DM-B1: response shape now includes appetite_level/texture_needs/
+    // spice_tolerance/bag_composition_pattern; drops allergen_rule_version.
+    const body = JSON.parse(res.body) as { child: { name: string; declared_allergens: string[]; cultural_identifiers: string[]; dietary_preferences: string[]; bag_composition_pattern: string } };
     expect(body.child.name).toBe('Asha');
     expect(body.child.declared_allergens).toEqual(['peanut', 'shellfish']);
     expect(body.child.cultural_identifiers).toEqual(['south_asian']);
     expect(body.child.dietary_preferences).toEqual(['vegetarian']);
-    expect(body.child.allergen_rule_version).toBe('v1');
+    expect(body.child.bag_composition_pattern).toBe('main_plus_snack_plus_extra');
 
     expect(captured.value).toBeDefined();
     expect(captured.value?.event_type).toBe('child.add');
     expect(captured.value?.household_id).toBe(SAMPLE_HOUSEHOLD_ID);
     const meta = captured.value?.metadata ?? {};
     expect(meta).toMatchObject({
-      allergen_rule_version: 'v1',
+      // Story 3-DM-B1: allergen_rule_version dropped from audit metadata.
       declared_allergen_count: 2,
       cultural_identifier_count: 1,
       dietary_preference_count: 1,
@@ -873,10 +885,11 @@ describe('GET /v1/households/:id/children/:childId', () => {
     });
 
     expect(res.statusCode).toBe(200);
+    // Story 3-DM-B1: response carries bag_composition_pattern enum.
     const body = JSON.parse(res.body) as {
-      child: { bag_composition: { main: boolean; snack: boolean; extra: boolean } };
+      child: { bag_composition_pattern: string };
     };
-    expect(body.child.bag_composition).toEqual({ main: true, snack: true, extra: true });
+    expect(body.child.bag_composition_pattern).toBe('main_plus_snack_plus_extra');
   });
 });
 
@@ -913,11 +926,12 @@ describe('PATCH /v1/children/:id/bag-composition', () => {
     });
 
     expect(res.statusCode).toBe(200);
+    // Story 3-DM-B1: response carries bag_composition_pattern enum.
     const body = JSON.parse(res.body) as {
-      child: { id: string; bag_composition: { main: boolean; snack: boolean; extra: boolean } };
+      child: { id: string; bag_composition_pattern: string };
     };
     expect(body.child.id).toBe(childId);
-    expect(body.child.bag_composition).toEqual({ main: true, snack: false, extra: true });
+    expect(body.child.bag_composition_pattern).toBe('main_plus_extra');
 
     expect(captured.value).toBeDefined();
     expect(captured.value?.event_type).toBe('child.bag_updated');
@@ -925,8 +939,9 @@ describe('PATCH /v1/children/:id/bag-composition', () => {
     const meta = captured.value?.metadata ?? {};
     expect(meta).toMatchObject({
       child_id: childId,
-      old: { main: true, snack: true, extra: true },
-      new: { main: true, snack: false, extra: true },
+      // Story 3-DM-B1: audit captures pattern enum values now, not boolean structs.
+      old: 'main_plus_snack_plus_extra',
+      new: 'main_plus_extra',
     });
   });
 
@@ -1067,10 +1082,11 @@ describe('PATCH /v1/children/:id/bag-composition', () => {
     });
 
     expect(res.statusCode).toBe(200);
+    // Story 3-DM-B1: response carries bag_composition_pattern enum.
     const body = JSON.parse(res.body) as {
-      child: { bag_composition: { main: boolean; snack: boolean; extra: boolean } };
+      child: { bag_composition_pattern: string };
     };
-    expect(body.child.bag_composition).toEqual({ main: true, snack: false, extra: false });
+    expect(body.child.bag_composition_pattern).toBe('main_only');
   });
 });
 

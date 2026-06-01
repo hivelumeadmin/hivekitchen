@@ -46,6 +46,10 @@ function toPlanTileSummaries(items: PlanItemRow[]): PlanTileSummary[] {
       day,
       paused: dayItems.length > 0 && dayItems.every((it) => it.paused_at !== null),
       lunch_link_suppressed_children: [],
+      // Story 4-S4: PlanPage uses GetPlansResponse (plan + items) which has no
+      // brief_state ratings overlay; PlanTile shows ratings only when fed via
+      // BriefCanvas → summary.child_ratings.
+      child_ratings: {},
       items: dayItems.map((it) => ({
         plan_item_id: it.id,
         child_id: it.child_id,

@@ -1,5 +1,5 @@
 # generated: 2026-04-23
-# last_updated: 2026-05-25 (Epic 2.6 in-progress; 2.6-s1..s3,s7,s8 → done; 2.6-s4 → review; 3-23..3-26 → done; 3-27 → review; 3-29 → ready-for-dev)
+# last_updated: 2026-05-26 (Epic 2.6 in-progress; 2.6-s1..s8 → done; epic-3 retro → done; pre-4-s0..s4 → done; 4-s3 → done)
 # project: hivekitchen
 # project_key: NOKEY
 # tracking_system: file-system
@@ -52,7 +52,7 @@
 # Walls (decision moments) are flagged with `# WALL:` markers.
 
 generated: 2026-04-23
-last_updated: 2026-05-25 (Epic 2.6 in-progress; 2.6-s1..s3,s7,s8 → done; 2.6-s4 → review; 3-23..3-26 → done; 3-27 → review; 3-29 → ready-for-dev)
+last_updated: 2026-05-31 (4-s10 → done)
 project: hivekitchen
 project_key: NOKEY
 tracking_system: file-system
@@ -166,9 +166,9 @@ development_status:
   2.6-s1-foundation-catalog-as-recipes-migrate-favorite-lunches: done          # code review complete 2026-05-24 — 3-layer adversarial pass; 6 decisions resolved; 11 patches applied + committed; 1 false positive (P8) dismissed
   2.6-s2-stage-0-curated-baseline: done                                         # code review complete 2026-05-24 — 3-layer adversarial pass; 6 decisions resolved; 4 patches applied (F1 Buffer import, F3 persisted log, F4 no_candidates test, F5 timestamp-skip assertion); 1 dismissed (F2); 1 deferred (F6 below_floor threshold); 14/14 tests pass
   2.6-s3-stage-1-async-seeding-layer-1: done                                   # code review complete 2026-05-25 — 3-layer adversarial pass; 5 patches applied (void.add catch, empty-ingredients guard, markDiscoverFailed 0-row warn, below_floor TODO, 50→48→43 test shape); 5 deferred; 11 dismissed
-  2.6-s4-m5-chip-personalization: review                                       # WALL: MVP wall; impl complete 2026-05-25 — ChipOption.provenance contract, CatalogProjectionService (Stage 1 poll, sort, diversity cap-3/relax-5), momentToChipConfig('m5_starting_line')=null, submitTextTurn injection, prompt KEY_LABEL deleted, web ＋ badge; 12+44+32+3 new tests pass
-  2.6-s5-stage-2-recovery-handler: backlog                                     # floor breach (<35) + mass-block (>50% blocked) only; NOT scheduled; AC explicitly forbids cron/background-enrichment
-  2.6-s6-cold-start-fallback-conversational: backlog                           # MOCK-REF (new mockup pending); conversational tail when Stage 1 confidence below threshold
+  2.6-s4-m5-chip-personalization: done                                          # WALL: MVP wall; code review complete 2026-05-25 — 4 patches applied (waitForStage1 DB-error fall-through, is_active filter, log key prefix, E2E Playwright auto-wait); 6 E2E tests generated; 2 decisions resolved; 3 deferred
+  2.6-s5-stage-2-recovery-handler: done                                        # code review complete 2026-05-25 — 5 patches applied (stage1_failure guard bypass, countCatalogSeededForHousehold→RPC, post_count_failed log, mass_block-only opts spread, resolves.toBeUndefined assertions); 7 deferred; 5 dismissed; 214/215 pass (1 pre-existing failure)
+  2.6-s6-cold-start-fallback-conversational: done                              # impl complete 2026-05-26; all 15 ACs satisfied; 97 targeted tests pass; MOCK-REF (Moment5ColdStartPage.tsx); 5 review patches applied 2026-05-26
   2.6-s7-allergy-rules-drop-guardrail-swap-to-allergen-tags: done              # impl complete 2026-05-24; code review complete 2026-05-24 — 3 patches applied (stale keys in 4 test files, mock filter-arg validation + is_active coverage test, stale test title strings); 44/44 guardrail tests pass
   2.6-s8-allergen-storage-cutover-children-declared-allergens-to-child-allergens: done            # code review complete 2026-05-25 — 4 patches applied: deleteByChild() added (allergen removal), updateBagComposition overlay fixed, backfill switched to declareIfNew(), P4 test added; 196/196 pass
   epic-2.6-retrospective: optional
@@ -212,29 +212,36 @@ development_status:
   3-26-graceful-degradation-state-ux: done                                  # impl complete 2026-05-25; AC1–AC11 satisfied; FreshnessState variant=reworking shipped; awaiting code review
   3-27-variant-preparation-active-learning-visible-to-parent-before-delivery: done    # code review complete 2026-05-25 — 7 patches applied (zero-row confirm/reject guard, committedPlanId fix, regen job wired, surgical-swap clear, pills state guard, day enum Saturday removed, border test added); 1 false positive dismissed (P3 name encryption); 6 deferred
   3-28-pause-lunch-link-for-child-on-day-without-altering-plan: done          # CONTINUES IN PARALLEL — infrastructure, no contract dependency
-  3-29-degraded-propose-state-with-try-alternating-sovereignty-toggle: ready-for-dev  # unblocked by Epic 2.5 (tight-constraints set knowledge shipped)
+  3-29-degraded-propose-state-with-try-alternating-sovereignty-toggle: done    # code review complete 2026-05-25 — 3 decisions resolved; 9 patches applied (no-op guard, committedPlanId log, CHECK constraint, role=region ARIA, idempotency key to caller, NotFoundError fallback, setPlanState row check, toggle error feedback, min(1) schema); 1 false positive dismissed; 5 deferred
   3-30-llm-provider-failover-circuit-breaker-audit: done                      # Code review 2026-05-22: 12 patches applied (auth, retry, breaker timer-leak fix, branch-coverage tests, auth tests). 7 deferred. CONTINUES IN PARALLEL — infrastructure, no contract dependency
-  epic-3-retrospective: optional
+  epic-3-retrospective: done                                                  # retro completed 2026-05-25; see epic-3-retro-2026-05-25.md
 
   # ==========================================================================
+  # Pre-Epic-4 safety prep — must complete before Epic 4 s3
+  pre-4-s0-falcpa-synonym-alignment: done                                      # ⚠️ SAFETY: M2 chip keys aligned to FALCPA canonical singular; backfill script + tests; synonym expansion suite (11 new tests, all 9 canonical keys + egg/tree_nut regression guards); code review complete 2026-05-25 — 9 patches applied (keyset pagination, canonicalize case+trim, negative regression tests, dry-run delete reporting, kitchen_map_version RPC, updated_at, dedup-before-changed, household_id filter, Windows pathToFileURL)
+  pre-4-s1-planweek-options-object-refactor: done                            # mechanical refactor complete 2026-05-26 — PlanWeekOptions interface; 4 prod call sites + 11 test call sites converted; 51/51 affected tests pass; silent slotScopeContext→culturalContext bug closed; awaiting code review
+  pre-4-s2-heart-note-date-filter-fix: done                                    # code review complete 2026-05-26 — 0 patches; 2 deferred (positional route mocks pre-existing; UTC date default pre-existing 4-s6 scope); 11 dismissed
+  pre-4-s3-allergy-uncertainty-banner-wiring: done                             # code review complete 2026-05-26 — 1 decision dismissed (banner placement kept at top, UX rationale); 6 patches applied (swap button removed from hard-fail banner, plan query key fixed, enabled guard, flicker fix, log msg, dedup key); 5 deferred; 2 dismissed
+  pre-4-s4-stub-real-pattern-documentation: done                               # code review complete 2026-05-26 — 2 patches applied (2.5-s9 table name corrected to favorite_lunches, completion slice step 3 conditionality added); 2 deferred; 4 dismissed
+
   # Epic 4: Lunch Link & Heart Note Sacred Channel — 18 slices (was 16 stories)
   # See: _bmad-output/planning-artifacts/epic-4-vertical-slices.md
   # ==========================================================================
   epic-4: in-progress
   4-s1-compose-heart-note-draft: done                                         # folds: 4.4 (partial). Shipped to review 2026-05-15; review pass 1 2026-05-17
   4-s2-render-heart-note-on-child-surface-stub-token: done                    # folds: 4.2 (partial)
-  4-s3-real-signed-tokens-8pm-window: backlog                                 # folds: 4.1, 4.3
-  4-s4-emoji-rating: backlog                                                  # folds: 4.2 (full), 4.14 (partial)
-  4-s5-sacred-channel-doctrine-encryption-lint: backlog                       # WALL: MVP wall; folds: 4.5, 4.4 (encryption)
-  4-s6-scheduling-edit-cancel-delivery-status: backlog                        # folds: 4.6
-  4-s7-hold-to-talk-voice-composition: backlog                                # folds: 4.4 (voice path)
-  4-s8-sendgrid-email-delivery: backlog                                       # folds: 4.7 (email)
-  4-s9-twilio-sms-whatsapp-parent-copied-url: backlog                         # folds: 4.7 (remaining)
-  4-s10-service-worker-offline-lunch-link: backlog                            # folds: 4.8
+  4-s3-real-signed-tokens-8pm-window: done                                    # folds: 4.1, 4.3; HMAC signed tokens + 8pm window + public child route; 7-patch review pass 2026-05-26
+  4-s4-emoji-rating: done                                                     # folds: 4.2 (full), 4.14 (partial); 6-patch review pass 2026-05-27
+  4-s5-sacred-channel-doctrine-encryption-lint: done                          # WALL: MVP wall; folds: 4.5, 4.4 (encryption); code review complete 2026-05-28 — 3-layer adversarial pass; 1 decision resolved (BackfillEnvSchema); 2 patches applied (race-window runbook, .d.ts lint filter); 5 deferred; 108/108 targeted tests pass
+  4-s6-scheduling-edit-cancel-delivery-status: done                           # code review complete 2026-05-28 — 3-layer adversarial pass; 1 decision resolved (findByChildAndDate revert); 5 patches applied (TOCTOU optimistic lock, Zod enum validation, click-to-compose link, status filter route test, test mock gte/lt); 6 deferred; all heart-note tests pass
+  4-s7-hold-to-talk-voice-composition: deferred                               # folds: 4.4 (voice path) — deferred 2026-05-29
+  4-s8-sendgrid-email-delivery: deferred                                      # folds: 4.7 (email) — deferred 2026-05-29
+  4-s9-twilio-sms-whatsapp-parent-copied-url: deferred                        # folds: 4.7 (remaining) — deferred 2026-05-29
+  4-s10-service-worker-offline-lunch-link: done                              # folds: 4.8; code review complete 2026-05-31 — 2 patches applied (isOnline badge-clear AC4, snapshot.rating != null); 9/9 E2E tests pass
   4-s11-layer-2-signal-planner-feedback-loop: backlog                         # folds: 4.14 (full)
   4-s12-flavorpassport: backlog                                               # folds: 4.9
   4-s13-grandparent-composer-at-cap-rhythm: backlog                           # folds: 4.10
-  4-s14-premium-voice-playback: backlog                                       # folds: 4.11
+  4-s14-premium-voice-playback: deferred                                      # folds: 4.11 — deferred 2026-05-29
   4-s15-child-request-a-lunch-parent-approval: backlog                        # folds: 4.12
   4-s16-multilingual-fonts-rtl: backlog                                       # folds: 4.16
   4-s17-allergy-transparency-log-export: backlog                              # folds: 4.15

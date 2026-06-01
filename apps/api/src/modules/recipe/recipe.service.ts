@@ -382,10 +382,10 @@ export class RecipeService {
         optional: i.optional,
         substitutes: i.substitutes,
       })),
-      // F-P12: persist extraction instructions so recipe cards + voice step-
-      // through have content. Steps are already rewritten as functional
-      // imperatives by the RecipeAgent prompt (copyright-safe form).
-      instructions: input.extraction.instructions,
+      // Story 3-DM-A1: persist structured steps (mode-tagged for the Wall
+      // Card's Prep / Finish toggle). The RecipeAgent prompt produces
+      // functional-imperative text and the activity-mode tag per step.
+      steps: input.extraction.steps,
       ingredient_keys: ingredientKeys,
       primary_ingredient_key: primaryIngredientKey,
       // Tag arrays already filtered through VocabularyService.filterActive
@@ -397,6 +397,7 @@ export class RecipeService {
       cuisine_tags: input.extraction.cuisine_tags,
       applicable_slots: ['main'],
       prep_time_minutes: input.extraction.prep_time_minutes,
+      finish_time_minutes: input.extraction.finish_time_minutes ?? null,
       source: 'agent_generated',
       created_by_household_id: input.householdId,
       visibility: 'private',

@@ -3,7 +3,6 @@ import type {
   FlaggedCompoundItem,
   GuardrailResult,
   PlanItemForGuardrail,
-  SnackSku,
 } from '@hivekitchen/types';
 
 export const GUARDRAIL_VERSION = '1.1.0' as const;
@@ -259,52 +258,3 @@ export function evaluate(
   return { verdict: 'cleared', conflicts: [] };
 }
 
-// Story 3.20 — structured-flag evaluation for Snack SKUs. Snack items in
-// plan_items reference snack_skus.id rather than carrying a free-text
-// ingredient list, and snack_skus pre-computes the FALCPA top-9 presence
-// flags. This is more reliable than text matching for unit-level products
-// (e.g. a granola bar SKU explicitly contains_wheat=true even if the
-// ingredient string is "Granola Bar" with no token expansion).
-//
-// Caller resolves item_sku_id → SnackSku and passes the declared allergens
-// for the child. Returns the matched FALCPA categories so the caller can
-// build a Conflict with the original ingredient context.
-const FALCPA_FLAG_MAP: Readonly<Record<string, keyof SnackSku>> = {
-  peanut: 'contains_peanut',
-  peanuts: 'contains_peanut',
-  tree_nut: 'contains_tree_nut',
-  tree_nuts: 'contains_tree_nut',
-  dairy: 'contains_dairy',
-  milk: 'contains_dairy',
-  egg: 'contains_egg',
-  eggs: 'contains_egg',
-  wheat: 'contains_wheat',
-  gluten: 'contains_wheat',
-  soy: 'contains_soy',
-  fish: 'contains_fish',
-  shellfish: 'contains_shellfish',
-  sesame: 'contains_sesame',
-};
-
-export interface SnackSkuVerdict {
-  verdict: 'cleared' | 'blocked';
-  matched: string[];  // canonical declared-allergen names that matched the SKU's flags
-}
-
-export function evaluateSnackSku(
-  sku: SnackSku,
-  declaredAllergens: readonly string[],
-): SnackSkuVerdict {
-  const matched: string[] = [];
-  for (const allergen of declaredAllergens) {
-    const normalized = allergen.trim().toLowerCase();
-    const flag = FALCPA_FLAG_MAP[normalized];
-    if (flag === undefined) continue;
-    if (sku[flag] === true) {
-      matched.push(allergen);
-    }
-  }
-  return matched.length > 0
-    ? { verdict: 'blocked', matched }
-    : { verdict: 'cleared', matched: [] };
-}

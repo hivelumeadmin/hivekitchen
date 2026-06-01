@@ -5,7 +5,7 @@
  * Truncates all household/session data so you can start fresh. Preserves:
  *   - users + refresh_tokens (auth identity survives; browser stays logged in)
  *   - Static vocabulary tables: allergen_tags, dietary_tags, cuisine_tags,
- *     cultural_tags, cultural_calendar_observances, snack_skus,
+ *     cultural_tags, cultural_calendar_observances,
  *     curated_baseline_items
  *
  * Also flushes Redis (removes stale kitchen-map cache + BullMQ job queues).

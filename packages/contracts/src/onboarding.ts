@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { CatalogProvenanceSchema } from './kitchen-map.js';
 
 // Opening greeting rendered by the text-onboarding client and prepended to
 // the agent's history on the very first text turn so the LLM has matching
@@ -35,6 +36,16 @@ export const TextOnboardingTurnRequestSchema = z.union([
   ChipTurnBodySchema,
 ]);
 
+// Slice 2.6-s4 — ChipOption may carry `provenance` for M5 personalized chips
+// fetched from the catalog (recipes + household_recipe_usage). Optional so all
+// non-M5 surfaces (M1 hints, M2 allergens, M3 hints, M4 bag, M5 override_fewer,
+// M3 elevation prompt) keep their existing shape unchanged.
+export const ChipOptionSchema = z.object({
+  key: z.string(),
+  label: z.string(),
+  provenance: CatalogProvenanceSchema.optional(),
+});
+
 // Chip config returned by the agent to tell the client which chips to render
 // alongside Lumi's next question. `chip_config: null` (or absent) means the
 // client should render text-only input.
@@ -45,7 +56,7 @@ export const TextOnboardingTurnRequestSchema = z.union([
 //  - 'choice' — multi-select; `options` populated
 export const ChipConfigSchema = z.object({
   mode: z.enum(['hint', 'action', 'choice']),
-  options: z.array(z.object({ key: z.string(), label: z.string() })).optional(),
+  options: z.array(ChipOptionSchema).optional(),
   hints: z.array(z.string()).optional(),
   skip_label: z.string().optional(),
 });
@@ -70,6 +81,10 @@ export const TextOnboardingTurnResponseSchema = z.object({
   // Slice 2.5-s10 — moment keys ('m1_table'|'m2_safe'|'m5_starting_line')
   // whose required answers are still missing. Empty when all complete.
   missing_required_set: z.array(z.string()).optional(),
+  // Slice 2.6-s6 — cold-start fallback mode for M5. When true, the client
+  // renders the conversational tail (no chip card, "3 dishes" gate) instead
+  // of the chip catalog. Sticky once true on the client.
+  cold_start_mode: z.boolean().optional().default(false),
 });
 
 // POST /v1/onboarding/text/finalize — response (no request body)
@@ -101,6 +116,7 @@ export const TileRetryRequestSchema = z.object({
 
 export type TextTurnBody = z.infer<typeof TextTurnBodySchema>;
 export type ChipTurnBody = z.infer<typeof ChipTurnBodySchema>;
+export type ChipOption = z.infer<typeof ChipOptionSchema>;
 export type ChipConfig = z.infer<typeof ChipConfigSchema>;
 export type TextOnboardingTurnRequest = z.infer<typeof TextOnboardingTurnRequestSchema>;
 export type TextOnboardingTurnResponse = z.infer<typeof TextOnboardingTurnResponseSchema>;

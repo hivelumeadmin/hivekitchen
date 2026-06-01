@@ -79,14 +79,18 @@ async function landOnM5(page: Parameters<typeof loginAndNavigate>[0]) {
 }
 
 test.describe('Slice 2.5-s9: Moment 5 — A starting line for Lumi', () => {
-  // AC1 — chip config renders all 18 multi-select choice chips with correct labels.
-  // Verifies the static catalog in momentToChipConfig matches Moment5Page.tsx verbatim.
-  test('renders all 18 M5 choice chips with correct labels', async ({ page }) => {
+  // Slice 2.6-s4 — the static 18-chip catalog was deleted; M5 chips are now
+  // injected from the per-household catalog projection. The chip-rendering
+  // pipeline is still under test, but the assertion no longer claims a fixed
+  // catalog size. The mocked turn payload above keeps the labels we need for
+  // the targeted-chip tests below; here we only assert "≥ 1 chip rendered."
+  test('renders ≥ 1 M5 choice chip after entering m5_starting_line (Slice 2.6-s4)', async ({
+    page,
+  }) => {
     await landOnM5(page);
 
-    for (const { label } of M5_CHIP_CONFIG.options) {
-      await expect(page.getByRole('checkbox', { name: label, exact: true })).toBeVisible();
-    }
+    const checkboxes = page.getByRole('group', { name: 'Suggested replies' }).getByRole('checkbox');
+    await expect(checkboxes.first()).toBeVisible();
   });
 
   // AC1 — "Tap any that apply" appears for choice mode; "Tap one" must not appear.

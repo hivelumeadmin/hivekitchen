@@ -1,4 +1,5 @@
 import type { FastifyBaseLogger } from 'fastify';
+import type { Queue } from 'bullmq';
 import type OpenAI from 'openai';
 import { z } from 'zod';
 import {
@@ -17,6 +18,12 @@ import {
   buildCatalogSeedPrompt,
   type CatalogSeedSnapshot,
 } from '../../agents/prompts/catalog-seed.prompt.js';
+import {
+  CATALOG_RECOVERY_QUEUE,
+  CATALOG_RECOVERY_JOB_OPTS,
+  type CatalogRecoveryJobData,
+} from '../../jobs/catalog-recovery.job.js';
+import type { Stage2Trigger } from './catalog-recovery.service.js';
 
 // Slice 2.6-s3 — Stage 1 LLM-driven catalog seeding service.
 //
@@ -46,8 +53,17 @@ const STAGE1_LLM_MODEL = 'gpt-4o';
 const STAGE1_LLM_TEMPERATURE = 0.7;
 const STAGE1_LLM_MAX_TOKENS = 4_000;
 // Below this many validated items, log floor_breach. Stage 1 still persists
-// whatever survived; 2.6-s5 will eventually enqueue a recovery job here.
+// whatever survived. This local floor is distinct from the Stage 2 trigger
+// floor below — STAGE1_FLOOR governs only the warning emitted by Stage 1.
 const STAGE1_FLOOR = 10;
+// Slice 2.6-s5 — household-wide post-Stage-1 catalog count below this floor
+// triggers a Stage 2 recovery job. Includes both Stage 0 and Stage 1
+// catalog_seeded rows; queried via RecipesRepository.countCatalogSeededForHousehold.
+const STAGE2_FLOOR = 35;
+// Slice 2.6-s5 — guardrail-block ratio threshold for the mass-block trigger.
+// Denominator = LLM emission count (candidateCount); a ratio above this
+// threshold enqueues a Stage 2 recovery job after the persist step.
+const STAGE2_MASS_BLOCK_RATIO = 0.5;
 // FALCPA category words the LLM MUST not introduce. Tracked alongside the
 // household's declared allergens so a peanut household never gets a peanut
 // item even if the LLM mis-tags allergen_flags as [].
@@ -101,6 +117,9 @@ export interface CatalogSeedServiceDeps {
       }>
     >;
   };
+  // Slice 2.6-s5 — Stage 2 recovery queue. Optional so legacy tests that don't
+  // wire it continue to compile; absence is logged as a warn at trigger time.
+  recoveryQueue?: Queue<CatalogRecoveryJobData>;
   logger: FastifyBaseLogger;
 }
 
@@ -111,6 +130,7 @@ export class CatalogSeedService {
   private readonly householdsRepo: HouseholdsRepository;
   private readonly guardrailRepo: AllergyGuardrailRepository;
   private readonly curatedBaselineRepo: CatalogSeedServiceDeps['curatedBaselineRepo'];
+  private readonly recoveryQueue: Queue<CatalogRecoveryJobData> | undefined;
   private readonly logger: FastifyBaseLogger;
 
   constructor(deps: CatalogSeedServiceDeps) {
@@ -120,7 +140,66 @@ export class CatalogSeedService {
     this.householdsRepo = deps.householdsRepo;
     this.guardrailRepo = deps.guardrailRepo;
     this.curatedBaselineRepo = deps.curatedBaselineRepo;
+    this.recoveryQueue = deps.recoveryQueue;
     this.logger = deps.logger;
+  }
+
+  /**
+   * Slice 2.6-s5 — fire-and-forget Stage 2 recovery enqueue. NEVER awaited
+   * by callers; queue.add rejections are caught + logged so Stage 1's hot
+   * path is never blocked. BullMQ jobId dedup ensures only one Stage 2 job
+   * runs per household even if both mass-block and floor-breach trigger.
+   */
+  private enqueueRecovery(
+    householdId: string,
+    requestId: string,
+    triggeredBy: Stage2Trigger,
+    opts?: { emitted_count?: number; blocked_count?: number },
+  ): void {
+    if (this.recoveryQueue === undefined) {
+      this.logger.warn(
+        {
+          module: 'catalog',
+          action: 'catalog.stage2.recovery_skipped_no_queue',
+          household_id: householdId,
+          request_id: requestId,
+          triggered_by: triggeredBy,
+        },
+        'stage 2 recovery skipped — recoveryQueue not wired',
+      );
+      return;
+    }
+    const jobData: CatalogRecoveryJobData = {
+      household_id: householdId,
+      request_id: requestId,
+      triggered_by: triggeredBy,
+      ...(opts?.emitted_count !== undefined
+        ? { emitted_count: opts.emitted_count }
+        : {}),
+      ...(opts?.blocked_count !== undefined
+        ? { blocked_count: opts.blocked_count }
+        : {}),
+    };
+    void this.recoveryQueue
+      .add(CATALOG_RECOVERY_QUEUE, jobData, {
+        ...CATALOG_RECOVERY_JOB_OPTS,
+        // BullMQ dedup: at most one Stage 2 job per household at a time.
+        // If a job with the same id is already queued, the add is a no-op.
+        jobId: `${CATALOG_RECOVERY_QUEUE}:${householdId}`,
+      })
+      .catch((err: unknown) => {
+        this.logger.error(
+          {
+            module: 'catalog',
+            action: 'catalog.stage2.enqueue_failed',
+            household_id: householdId,
+            request_id: requestId,
+            triggered_by: triggeredBy,
+            err,
+          },
+          'stage 2 recovery enqueue failed',
+        );
+      });
   }
 
   /**
@@ -216,7 +295,7 @@ export class CatalogSeedService {
           },
           'stage 1 LLM call failed — stage1_completed_at left NULL',
         );
-        // TODO(2.6-s5): enqueue catalog.recover.stage2 job here on failure
+        this.enqueueRecovery(householdId, requestId, 'stage1_failure');
         return;
       } finally {
         clearTimeout(timeoutHandle);
@@ -237,7 +316,7 @@ export class CatalogSeedService {
           },
           'stage 1 LLM emitted non-JSON output — stage1_completed_at left NULL',
         );
-        // TODO(2.6-s5): enqueue catalog.recover.stage2 job here on failure
+        this.enqueueRecovery(householdId, requestId, 'stage1_failure');
         return;
       }
 
@@ -256,7 +335,7 @@ export class CatalogSeedService {
           },
           'stage 1 LLM response failed schema parse — stage1_completed_at left NULL',
         );
-        // TODO(2.6-s5): enqueue catalog.recover.stage2 job here on failure
+        this.enqueueRecovery(householdId, requestId, 'stage1_failure');
         return;
       }
 
@@ -414,6 +493,30 @@ export class CatalogSeedService {
         guardrailBlocked += 1;
       }
 
+      // Slice 2.6-s5 — mass-block detection. Fires BEFORE persist so Stage 2
+      // is queued even if persist later fails. Denominator = LLM emission
+      // count (candidateCount); brief rev 3 locks this denominator.
+      const massBlockRatio =
+        candidateCount > 0 ? guardrailBlocked / candidateCount : 0;
+      if (massBlockRatio > STAGE2_MASS_BLOCK_RATIO) {
+        this.logger.warn(
+          {
+            module: 'catalog',
+            action: 'catalog.stage1.mass_block_detected',
+            household_id: householdId,
+            request_id: requestId,
+            emitted_count: candidateCount,
+            blocked_count: guardrailBlocked,
+            ratio: massBlockRatio,
+          },
+          'stage 1 mass-block detected — Stage 2 recovery enqueued',
+        );
+        this.enqueueRecovery(householdId, requestId, 'mass_block', {
+          emitted_count: candidateCount,
+          blocked_count: guardrailBlocked,
+        });
+      }
+
       // ---- Step 7: persist survivors --------------------------------------
       const persisted = await this.recipesRepo.seedFromCatalogBaseline(
         householdId,
@@ -450,6 +553,10 @@ export class CatalogSeedService {
       );
 
       if (persisted < STAGE1_FLOOR) {
+        // Diagnostic warning — Stage 1's own batch fell below STAGE1_FLOOR.
+        // Distinct from the Stage 2 trigger below which evaluates total
+        // household catalog count (Stage 0 + Stage 1 combined) against
+        // STAGE2_FLOOR.
         this.logger.warn(
           {
             module: 'catalog',
@@ -459,12 +566,48 @@ export class CatalogSeedService {
             persisted_count: persisted,
             floor: STAGE1_FLOOR,
           },
-          'stage 1 persisted below floor — 2.6-s5 recovery TBD',
+          'stage 1 persisted below local floor — see stage2.floor_breach for trigger evaluation',
         );
-        // TODO(2.6-s5): enqueue catalog.recover.stage2 job here on floor breach
       }
 
       await this.householdsRepo.setStage1CompletedAt(householdId);
+
+      // Slice 2.6-s5 — floor-breach detection. Runs AFTER stage1_completed_at
+      // is set so the Stage 2 worker's stage1-in-flight guard sees a real
+      // completion timestamp. Total count includes Stage 0 + Stage 1 rows.
+      try {
+        const totalSeeded = await this.recipesRepo.countCatalogSeededForHousehold(
+          householdId,
+        );
+        if (totalSeeded < STAGE2_FLOOR) {
+          this.logger.warn(
+            {
+              module: 'catalog',
+              action: 'catalog.stage2.floor_breach_detected',
+              household_id: householdId,
+              request_id: requestId,
+              total_seeded: totalSeeded,
+              floor: STAGE2_FLOOR,
+            },
+            'stage 2 floor breach detected — recovery enqueued',
+          );
+          this.enqueueRecovery(householdId, requestId, 'floor_breach');
+        }
+      } catch (err) {
+        // Count query failure is non-fatal — log and continue. Stage 1's
+        // happy path already succeeded; the next M5 entry will route through
+        // whatever catalog exists.
+        this.logger.error(
+          {
+            module: 'catalog',
+            action: 'catalog.stage2.floor_breach_check_failed',
+            household_id: householdId,
+            request_id: requestId,
+            err,
+          },
+          'stage 2 floor-breach check failed — Stage 1 succeeded; no recovery enqueued',
+        );
+      }
     } catch (err) {
       // Catch-all so the BullMQ worker never sees an exception. Treat as a
       // failure path — leave stage1_completed_at NULL.

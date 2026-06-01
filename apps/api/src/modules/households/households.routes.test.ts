@@ -815,3 +815,246 @@ describe('PATCH /v1/households/:id', () => {
     expect(body.type).toBe('/errors/forbidden');
   });
 });
+
+// ===========================================================================
+// Story 3.29 — PATCH /v1/households/:id/sovereignty-mode
+// ===========================================================================
+
+interface SovereigntyMockState {
+  sovereigntyMode: 'unified' | 'alternating';
+  sovereigntyModeUpdatedAt: string | null;
+  audit: Array<{ event_type: string; metadata: Record<string, unknown> }>;
+}
+
+function buildSovereigntyMockSupabase(state: SovereigntyMockState) {
+  return {
+    from(table: string) {
+      if (table === 'households') {
+        return {
+          select: (_cols: string) => ({
+            eq: () => ({
+              maybeSingle: vi
+                .fn()
+                .mockImplementation(() =>
+                  Promise.resolve({
+                    data: { sovereignty_mode: state.sovereigntyMode },
+                    error: null,
+                  }),
+                ),
+            }),
+          }),
+          update: (patch: Record<string, unknown>) => ({
+            eq: vi.fn().mockImplementation(() => {
+              if (typeof patch.sovereignty_mode === 'string') {
+                state.sovereigntyMode = patch.sovereignty_mode as 'unified' | 'alternating';
+              }
+              if (typeof patch.sovereignty_mode_updated_at === 'string') {
+                state.sovereigntyModeUpdatedAt = patch.sovereignty_mode_updated_at;
+              }
+              return {
+                select: () => ({
+                  maybeSingle: vi
+                    .fn()
+                    .mockResolvedValue({ data: { id: SAMPLE_HOUSEHOLD_ID }, error: null }),
+                }),
+              };
+            }),
+          }),
+        };
+      }
+      if (table === 'audit_log') {
+        return {
+          insert: (row: { event_type: string; metadata: Record<string, unknown> }) => {
+            state.audit.push({
+              event_type: row.event_type,
+              metadata: row.metadata ?? {},
+            });
+            return Promise.resolve({ data: null, error: null });
+          },
+        };
+      }
+      throw new Error(`unexpected table ${table}`);
+    },
+    rpc: vi.fn().mockResolvedValue({ data: null, error: null }),
+  };
+}
+
+async function buildSovereigntyApp(
+  state: SovereigntyMockState,
+  hooks: {
+    clearDegradedPlanState?: ReturnType<typeof vi.fn>;
+    triggerAdjustment?: ReturnType<typeof vi.fn>;
+  } = {},
+): Promise<FastifyInstance> {
+  const app = Fastify({ logger: false, genReqId: () => randomUUID() });
+  app.setValidatorCompiler(validatorCompiler);
+  app.setSerializerCompiler(serializerCompiler);
+
+  const env = {
+    NODE_ENV: 'development' as const,
+    JWT_SECRET,
+    ENVELOPE_ENCRYPTION_MASTER_KEY: '',
+  };
+  app.decorate('env', env as unknown as FastifyInstance['env']);
+  app.decorate(
+    'supabase',
+    buildSovereigntyMockSupabase(state) as unknown as FastifyInstance['supabase'],
+  );
+  app.decorate(
+    'vocabularyService',
+    VOCAB_OK_PATCH as unknown as FastifyInstance['vocabularyService'],
+  );
+  app.decorate(
+    'plansService',
+    {
+      getBrief: vi.fn(),
+      clearDegradedPlanState:
+        hooks.clearDegradedPlanState ?? vi.fn().mockResolvedValue(undefined),
+    } as unknown as FastifyInstance['plansService'],
+  );
+  app.decorate(
+    'planAdjustmentService',
+    {
+      triggerAdjustment:
+        hooks.triggerAdjustment ??
+        vi.fn().mockResolvedValue({ plansQueued: 1, enqueuedPlanIds: [], failedPlanIds: [] }),
+    } as unknown as FastifyInstance['planAdjustmentService'],
+  );
+
+  await app.register(jwt, { secret: env.JWT_SECRET, sign: { expiresIn: '15m' } });
+  await app.register(authenticateHook);
+
+  app.setErrorHandler((err, request, reply) => {
+    if (isDomainError(err)) {
+      void reply.status(err.status).type('application/problem+json').send({
+        type: err.type,
+        status: err.status,
+        title: err.title,
+        detail: err.detail,
+        instance: request.id,
+      });
+      return;
+    }
+    if (err instanceof ZodError) {
+      void reply.status(400).send({ type: '/errors/validation', status: 400 });
+      return;
+    }
+    const validation = (err as { validation?: unknown }).validation;
+    if (Array.isArray(validation) && validation.length > 0) {
+      void reply.status(400).send({ type: '/errors/validation', status: 400 });
+      return;
+    }
+    void reply.status(500).send({ type: '/errors/internal', status: 500 });
+  });
+
+  await app.register(householdsRoutes);
+  await app.ready();
+  return app;
+}
+
+describe('PATCH /v1/households/:id/sovereignty-mode (Story 3.29)', () => {
+  let app: FastifyInstance;
+  afterEach(async () => {
+    if (app) await app.close();
+  });
+
+  it('200 — updates sovereignty_mode, clears degraded plan_state, audits, and triggers regen', async () => {
+    const state: SovereigntyMockState = {
+      sovereigntyMode: 'unified',
+      sovereigntyModeUpdatedAt: null,
+      audit: [],
+    };
+    const clearDegradedPlanState = vi.fn().mockResolvedValue(undefined);
+    const triggerAdjustment = vi
+      .fn()
+      .mockResolvedValue({ plansQueued: 1, enqueuedPlanIds: [], failedPlanIds: [] });
+    app = await buildSovereigntyApp(state, { clearDegradedPlanState, triggerAdjustment });
+    const token = signPatchToken(app);
+
+    const res = await app.inject({
+      method: 'PATCH',
+      url: `/v1/households/${SAMPLE_HOUSEHOLD_ID}/sovereignty-mode`,
+      headers: { authorization: `Bearer ${token}` },
+      payload: { sovereignty_mode: 'alternating' },
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(JSON.parse(res.body)).toEqual({ sovereignty_mode: 'alternating' });
+    expect(state.sovereigntyMode).toBe('alternating');
+    expect(state.sovereigntyModeUpdatedAt).not.toBeNull();
+    expect(clearDegradedPlanState).toHaveBeenCalledWith(SAMPLE_HOUSEHOLD_ID);
+    expect(triggerAdjustment).toHaveBeenCalledTimes(1);
+    expect(triggerAdjustment.mock.calls[0]![0]).toMatchObject({
+      type: 'cultural_sovereignty_mode_changed',
+      householdId: SAMPLE_HOUSEHOLD_ID,
+      slotScope: 'bag_wide',
+      dayScope: null,
+      metadata: { sovereignty_mode: 'alternating' },
+    });
+    expect(state.audit.some((r) => r.event_type === 'household.sovereignty_mode_changed')).toBe(true);
+  });
+
+  it('403 when URL id is not the caller\'s household', async () => {
+    const state: SovereigntyMockState = {
+      sovereigntyMode: 'unified',
+      sovereigntyModeUpdatedAt: null,
+      audit: [],
+    };
+    const clearDegradedPlanState = vi.fn().mockResolvedValue(undefined);
+    const triggerAdjustment = vi.fn().mockResolvedValue({ plansQueued: 0, enqueuedPlanIds: [], failedPlanIds: [] });
+    app = await buildSovereigntyApp(state, { clearDegradedPlanState, triggerAdjustment });
+    const token = signPatchToken(app); // hh = SAMPLE_HOUSEHOLD_ID
+
+    const res = await app.inject({
+      method: 'PATCH',
+      url: `/v1/households/${OTHER_HOUSEHOLD_ID}/sovereignty-mode`,
+      headers: { authorization: `Bearer ${token}` },
+      payload: { sovereignty_mode: 'alternating' },
+    });
+
+    expect(res.statusCode).toBe(403);
+    expect(state.sovereigntyMode).toBe('unified');
+    expect(clearDegradedPlanState).not.toHaveBeenCalled();
+    expect(triggerAdjustment).not.toHaveBeenCalled();
+  });
+
+  it('403 for secondary_caregiver — toggle is primary-parent only', async () => {
+    const state: SovereigntyMockState = {
+      sovereigntyMode: 'unified',
+      sovereigntyModeUpdatedAt: null,
+      audit: [],
+    };
+    app = await buildSovereigntyApp(state);
+    const token = signPatchToken(app, { role: 'secondary_caregiver' });
+
+    const res = await app.inject({
+      method: 'PATCH',
+      url: `/v1/households/${SAMPLE_HOUSEHOLD_ID}/sovereignty-mode`,
+      headers: { authorization: `Bearer ${token}` },
+      payload: { sovereignty_mode: 'alternating' },
+    });
+
+    expect(res.statusCode).toBe(403);
+    expect(state.sovereigntyMode).toBe('unified');
+  });
+
+  it('400 on invalid sovereignty_mode enum value', async () => {
+    const state: SovereigntyMockState = {
+      sovereigntyMode: 'unified',
+      sovereigntyModeUpdatedAt: null,
+      audit: [],
+    };
+    app = await buildSovereigntyApp(state);
+    const token = signPatchToken(app);
+
+    const res = await app.inject({
+      method: 'PATCH',
+      url: `/v1/households/${SAMPLE_HOUSEHOLD_ID}/sovereignty-mode`,
+      headers: { authorization: `Bearer ${token}` },
+      payload: { sovereignty_mode: 'monarchy' },
+    });
+
+    expect(res.statusCode).toBe(400);
+    expect(state.sovereigntyMode).toBe('unified');
+  });
+});

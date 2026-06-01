@@ -2,11 +2,10 @@ import { describe, it, expect } from 'vitest';
 import {
   COMPOUND_SUSPECT_TOKENS,
   evaluate,
-  evaluateSnackSku,
   isSuspectCompound,
   type AllergyRule,
 } from './allergy-rules.engine.js';
-import type { PlanItemForGuardrail, SnackSku } from '@hivekitchen/types';
+import type { PlanItemForGuardrail } from '@hivekitchen/types';
 
 const HOUSEHOLD_ID = '11111111-1111-4111-8111-111111111111';
 const CHILD_A = '22222222-2222-4222-8222-222222222222';
@@ -207,6 +206,7 @@ describe('allergy-rules.engine.evaluate', () => {
   });
 
   // -------------------- D4: Conflict.day field (P18) --------------------
+
 
   it('emits day on every conflict', () => {
     const items = [
@@ -473,78 +473,88 @@ describe('allergy-rules.engine.evaluate', () => {
   });
 });
 
-// Story 3.20 — structured-flag SKU evaluation. Pure function: caller resolves
-// the SKU and the child's declared allergens; helper returns a verdict +
-// matched canonical names. Aliases (milk→dairy, gluten→wheat) collapse to the
-// same flag column on snack_skus.
-function sku(overrides: Partial<SnackSku> = {}): SnackSku {
-  return {
-    id: '88888888-8888-4888-8888-888888888888',
-    name: 'Test Snack',
-    brand: null,
-    category: 'grain',
-    contains_peanut: false,
-    contains_tree_nut: false,
-    contains_dairy: false,
-    contains_egg: false,
-    contains_wheat: false,
-    contains_soy: false,
-    contains_fish: false,
-    contains_shellfish: false,
-    contains_sesame: false,
-    is_halal: true,
-    is_kosher: true,
-    is_vegetarian: true,
-    is_vegan: true,
-    is_active: true,
-    ...overrides,
-  };
-}
+// pre-4-s0 — Canonical-key synonym expansion coverage.
+//
+// Story 2.6-s7 renamed the engine's FALCPA canonical keys from plural to
+// singular (eggs→egg, tree_nuts→tree_nut). Onboarding chip keys and stored
+// allergen rows were not updated, so synonym expansion broke for `egg` and
+// `tree_nut`. This block locks in correct expansion for every canonical key
+// and gives the two previously-broken keys an explicit regression guard.
+describe('FALCPA synonym expansion — canonical key coverage', () => {
+  function declareRule(allergen: string): AllergyRule {
+    return {
+      id: 'rule-pd',
+      household_id: HOUSEHOLD_ID,
+      child_id: null,
+      rule_type: 'parent_declared',
+      allergen,
+    };
+  }
 
-describe('evaluateSnackSku (Story 3.20)', () => {
-  it('clears a SKU with no declared allergens', () => {
-    expect(evaluateSnackSku(sku({ contains_dairy: true }), [])).toEqual({
-      verdict: 'cleared',
-      matched: [],
+  // For each canonical key, a known synonym must yield a `blocked` verdict.
+  // Rules: one parent_declared rule for the canonical key, plus the FALCPA
+  // baseline so the engine's "baseline missing" fail-closed branch is bypassed.
+  const cases: ReadonlyArray<[string, string]> = [
+    ['peanut', 'groundnut paste'],
+    ['tree_nut', 'sliced almonds'],
+    ['dairy', 'butter'],
+    ['egg', 'mayonnaise'],
+    ['wheat', 'semolina'],
+    ['soy', 'edamame'],
+    ['fish', 'worcestershire'],
+    ['shellfish', 'calamari'],
+    ['sesame', 'tahini'],
+  ];
+
+  for (const [canonicalKey, synonym] of cases) {
+    it(`canonical "${canonicalKey}" rule blocks ingredient "${synonym}"`, () => {
+      const rules = [...FALCPA_BASELINE, declareRule(canonicalKey)];
+      const result = evaluate([item({ ingredients: [synonym] })], rules);
+      expect(result.verdict).toBe('blocked');
+      if (result.verdict === 'blocked') {
+        expect(result.conflicts.some((c) => c.allergen === canonicalKey)).toBe(true);
+      }
     });
-  });
+  }
 
-  it('clears when declared allergens do not match any contains_* flag', () => {
-    expect(
-      evaluateSnackSku(sku({ contains_dairy: true }), ['peanut', 'soy']),
-    ).toEqual({ verdict: 'cleared', matched: [] });
-  });
-
-  it('blocks when a declared allergen matches its FALCPA flag', () => {
-    expect(
-      evaluateSnackSku(sku({ contains_peanut: true }), ['peanut']),
-    ).toEqual({ verdict: 'blocked', matched: ['peanut'] });
-  });
-
-  it('blocks via the milk → contains_dairy alias', () => {
-    expect(
-      evaluateSnackSku(sku({ contains_dairy: true }), ['milk']),
-    ).toEqual({ verdict: 'blocked', matched: ['milk'] });
-  });
-
-  it('blocks via the gluten → contains_wheat alias', () => {
-    expect(
-      evaluateSnackSku(sku({ contains_wheat: true }), ['gluten']),
-    ).toEqual({ verdict: 'blocked', matched: ['gluten'] });
-  });
-
-  it('returns every matched declared allergen, preserving caller casing', () => {
-    const result = evaluateSnackSku(
-      sku({ contains_peanut: true, contains_dairy: true }),
-      ['Peanut', 'milk', 'soy'],
-    );
+  // Regression guards — the two keys that 2.6-s7 left orphaned in the
+  // onboarding chip set. A parent_declared 'egg' rule MUST detect 'albumin';
+  // a 'tree_nut' rule MUST detect 'cashews'.
+  it('previously-broken key: "egg" rule detects "albumin"', () => {
+    const rules = [...FALCPA_BASELINE, declareRule('egg')];
+    const result = evaluate([item({ ingredients: ['albumin'] })], rules);
     expect(result.verdict).toBe('blocked');
-    expect(result.matched).toEqual(['Peanut', 'milk']);
   });
 
-  it('ignores unknown allergen names that do not map to a FALCPA flag', () => {
-    expect(
-      evaluateSnackSku(sku({ contains_peanut: true }), ['mango']),
-    ).toEqual({ verdict: 'cleared', matched: [] });
+  it('previously-broken key: "tree_nut" rule detects "cashews"', () => {
+    const rules = [...FALCPA_BASELINE, declareRule('tree_nut')];
+    const result = evaluate([item({ ingredients: ['cashews'] })], rules);
+    expect(result.verdict).toBe('blocked');
+  });
+
+  // Backfill safety guards — assert that a STALE parent_declared rule does NOT
+  // expand synonyms when there is no canonical falcpa rule for that allergen.
+  //
+  // The FALCPA_BASELINE (all 9 canonical falcpa rules) is intentionally EXCLUDED
+  // from these tests so the parent_declared path is isolated. Including the
+  // 'egg' falcpa baseline would cause it to expand to 'mayonnaise' via
+  // FALCPA_SYNONYMS.egg — masking the exact gap the backfill closes.
+  //
+  // In production a child whose backfill row was skipped has ONLY the stale
+  // parent_declared rule (the falcpa rule uses the canonical key from
+  // allergen_tags and fires separately); this test captures that scenario.
+  it('legacy key "eggs" parent_declared rule does NOT expand to mayonnaise (backfill safety guard)', () => {
+    // One unrelated falcpa rule satisfies the engine's fail-closed baseline check.
+    const rules = [rule({ allergen: 'peanut', rule_type: 'falcpa' }), declareRule('eggs')];
+    const result = evaluate([item({ ingredients: ['mayonnaise'] })], rules);
+    // targetsFor('eggs') === ['eggs']; 'mayonnaise'.includes('eggs') === false
+    expect(result.verdict).toBe('cleared');
+  });
+
+  it('legacy key "tree-nuts" parent_declared rule does NOT expand to almonds (backfill safety guard)', () => {
+    const rules = [rule({ allergen: 'peanut', rule_type: 'falcpa' }), declareRule('tree-nuts')];
+    const result = evaluate([item({ ingredients: ['almonds'] })], rules);
+    // targetsFor('tree-nuts') === ['tree-nuts']; no match for 'almonds'
+    expect(result.verdict).toBe('cleared');
   });
 });

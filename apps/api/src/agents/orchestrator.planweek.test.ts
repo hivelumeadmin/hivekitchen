@@ -191,7 +191,11 @@ describe('DomainOrchestrator.planWeek', () => {
     const orchestrator = buildOrchestrator(buildProvider({ completeWithMessages }));
     wirePlanComposeStub(async () => makeValidPlanComposeOutput());
 
-    const result = await orchestrator.planWeek(HOUSEHOLD_ID, '2026-05-11', REQUEST_ID);
+    const result = await orchestrator.planWeek({
+      householdId: HOUSEHOLD_ID,
+      weekOf: '2026-05-11',
+      requestId: REQUEST_ID,
+    });
 
     expect(result.plan_id).toBe(PLAN_ID);
     expect(result.household_id).toBe(HOUSEHOLD_ID);
@@ -214,7 +218,11 @@ describe('DomainOrchestrator.planWeek', () => {
     const orchestrator = buildOrchestrator(buildProvider({ completeWithMessages }));
 
     await expect(
-      orchestrator.planWeek(HOUSEHOLD_ID, '2026-05-11', REQUEST_ID),
+      orchestrator.planWeek({
+        householdId: HOUSEHOLD_ID,
+        weekOf: '2026-05-11',
+        requestId: REQUEST_ID,
+      }),
     ).rejects.toThrow(/did not call plan\.compose/);
   });
 
@@ -228,12 +236,12 @@ describe('DomainOrchestrator.planWeek', () => {
     const orchestrator = buildOrchestrator(buildProvider({ completeWithMessages }));
     wirePlanComposeStub(async () => makeValidPlanComposeOutput());
 
-    await orchestrator.planWeek(
-      HOUSEHOLD_ID,
-      '2026-05-11',
-      REQUEST_ID,
-      'allergen: peanut, ingredient: peanut butter',
-    );
+    await orchestrator.planWeek({
+      householdId: HOUSEHOLD_ID,
+      weekOf: '2026-05-11',
+      requestId: REQUEST_ID,
+      rejectionContext: 'allergen: peanut, ingredient: peanut butter',
+    });
 
     const messages = completeWithMessages.mock.calls[0]?.[0] as Array<{
       role: string;
@@ -255,7 +263,11 @@ describe('DomainOrchestrator.planWeek', () => {
     const orchestrator = buildOrchestrator(buildProvider({ completeWithMessages }));
     wirePlanComposeStub(async () => makeValidPlanComposeOutput());
 
-    await orchestrator.planWeek(HOUSEHOLD_ID, '2026-05-11', REQUEST_ID);
+    await orchestrator.planWeek({
+      householdId: HOUSEHOLD_ID,
+      weekOf: '2026-05-11',
+      requestId: REQUEST_ID,
+    });
 
     const messages = completeWithMessages.mock.calls[0]?.[0] as Array<{
       role: string;
@@ -276,7 +288,11 @@ describe('DomainOrchestrator.planWeek', () => {
     const orchestrator = buildOrchestrator(buildProvider({ completeWithMessages }));
     wirePlanComposeStub(async () => makeValidPlanComposeOutput());
 
-    await orchestrator.planWeek(HOUSEHOLD_ID, '2026-05-11', REQUEST_ID);
+    await orchestrator.planWeek({
+      householdId: HOUSEHOLD_ID,
+      weekOf: '2026-05-11',
+      requestId: REQUEST_ID,
+    });
 
     // The loop exits after the first iteration once plan.compose returns.
     // completeWithMessages is called exactly once (the first turn); there is
@@ -295,7 +311,11 @@ describe('DomainOrchestrator.planWeek', () => {
     const orchestrator = buildOrchestrator(buildProvider({ completeWithMessages }));
 
     await expect(
-      orchestrator.planWeek(HOUSEHOLD_ID, '2026-05-11', REQUEST_ID),
+      orchestrator.planWeek({
+        householdId: HOUSEHOLD_ID,
+        weekOf: '2026-05-11',
+        requestId: REQUEST_ID,
+      }),
     ).rejects.toBeInstanceOf(ForbiddenToolCallError);
   });
 
@@ -312,7 +332,11 @@ describe('DomainOrchestrator.planWeek', () => {
     });
 
     await expect(
-      orchestrator.planWeek(HOUSEHOLD_ID, '2026-05-11', REQUEST_ID),
+      orchestrator.planWeek({
+        householdId: HOUSEHOLD_ID,
+        weekOf: '2026-05-11',
+        requestId: REQUEST_ID,
+      }),
     ).rejects.toThrow(/plan\.compose fatal/);
   });
 });

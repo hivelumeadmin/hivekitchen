@@ -267,6 +267,38 @@ export class HouseholdsRepository extends BaseRepository {
     };
   }
 
+  // Story 3.29 — household sovereignty-mode for cultural-rule reconciliation.
+  // Defaults are enforced at the column level (NOT NULL DEFAULT 'unified'); the
+  // null branch here only covers a missing row, surfaced via NotFoundError.
+  async getSovereigntyMode(householdId: string): Promise<'unified' | 'alternating'> {
+    const { data, error } = await this.client
+      .from('households')
+      .select('sovereignty_mode')
+      .eq('id', householdId)
+      .maybeSingle();
+    if (error) throw error;
+    const row = data as { sovereignty_mode: 'unified' | 'alternating' } | null;
+    if (row === null) throw new NotFoundError(`household not found: ${householdId}`);
+    return row.sovereignty_mode;
+  }
+
+  async setSovereigntyMode(
+    householdId: string,
+    mode: 'unified' | 'alternating',
+  ): Promise<void> {
+    const { data, error } = await this.client
+      .from('households')
+      .update({
+        sovereignty_mode: mode,
+        sovereignty_mode_updated_at: new Date().toISOString(),
+      })
+      .eq('id', householdId)
+      .select('id')
+      .maybeSingle();
+    if (error) throw error;
+    if (data === null) throw new NotFoundError(`household not found: ${householdId}`);
+  }
+
   async bumpKitchenMapVersion(householdId: string): Promise<void> {
     const { error } = await this.client.rpc('bump_kitchen_map_version_for_household', {
       p_household_id: householdId,

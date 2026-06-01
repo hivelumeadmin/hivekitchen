@@ -483,21 +483,24 @@ describe('PlansRepository.commit', () => {
   });
 });
 
-describe('PlansRepository.findHardFailAudit (Story 3.25 / 3.26)', () => {
-  it('returns { failedAt } when a matching plan.hard_fail row exists for (householdId, weekOf)', async () => {
+describe('PlansRepository.findHardFailAudit (Story 3.25 / 3.26 / pre-4-s3)', () => {
+  it('returns { failedAt, stages } when a matching plan.hard_fail row exists for (householdId, weekOf)', async () => {
+    const stages = [
+      { stage: 'guardrail_rejection', attempt: 1, verdict: 'blocked', conflicts: [] },
+    ];
     const { client, steps } = buildSelectClient({
-      data: { id: 'audit-1', created_at: '2026-05-25T08:00:00Z' },
+      data: { id: 'audit-1', created_at: '2026-05-25T08:00:00Z', stages },
       error: null,
     });
     const repo = new PlansRepository(client);
 
     const out = await repo.findHardFailAudit(HOUSEHOLD_ID, '2026-05-04');
 
-    expect(out).toEqual({ failedAt: '2026-05-25T08:00:00Z' });
+    expect(out).toEqual({ failedAt: '2026-05-25T08:00:00Z', stages });
     expect(steps).toEqual(
       expect.arrayContaining([
         { op: 'from', args: ['audit_log'] },
-        { op: 'select', args: ['id, created_at'] },
+        { op: 'select', args: ['id, created_at, stages'] },
         { op: 'eq', args: ['event_type', 'plan.hard_fail'] },
         { op: 'eq', args: ['household_id', HOUSEHOLD_ID] },
         { op: 'eq', args: ['metadata->>week_of', '2026-05-04'] },

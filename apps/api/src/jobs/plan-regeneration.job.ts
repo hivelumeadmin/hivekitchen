@@ -14,6 +14,7 @@ import { CulturalCalendarService } from '../services/cultural-calendar.service.j
 import { MemoryContextService } from '../services/memory-context.service.js';
 import { ExtraRulesRepository } from '../modules/children/extra-rules.repository.js';
 import { ExtraLibraryRepository } from '../modules/households/extra-library.repository.js';
+import { HouseholdsRepository } from '../modules/households/households.repository.js';
 import { DayOverridesRepository } from '../modules/plans/day-overrides.repository.js';
 import {
   loadBagCompositionsForHousehold,
@@ -96,6 +97,7 @@ const planRegenerationPlugin: FastifyPluginAsync = async (fastify) => {
   const extraRulesRepository = new ExtraRulesRepository(fastify.supabase);
   const extraLibraryRepository = new ExtraLibraryRepository(fastify.supabase);
   const dayOverridesRepository = new DayOverridesRepository(fastify.supabase);
+  const householdsRepository = new HouseholdsRepository(fastify.supabase, null);
   const regenWorker = fastify.bullmq.getWorker(
     REGEN_QUEUE,
     async (job: Job<PlanRegenerationJobData>) => {
@@ -126,11 +128,18 @@ const planRegenerationPlugin: FastifyPluginAsync = async (fastify) => {
         'plan-regeneration job started',
       );
 
-      const [culturalContext, bagCompositions, extraLibraryItems, variantEligibleChildren] = await Promise.all([
+      const [culturalContext, bagCompositions, extraLibraryItems, variantEligibleChildren, sovereigntyMode] = await Promise.all([
         loadCulturalContextForHousehold(household_id, week_of, culturalPriorRepository, culturalCalendarService, memoryContextService),
         loadBagCompositionsForHousehold(household_id, childrenRepository),
         loadExtraLibraryForHousehold(household_id, extraLibraryRepository),
         loadVariantEligibleChildrenForHousehold(household_id, childrenRepository),
+        householdsRepository.getSovereigntyMode(household_id).catch((err: unknown) => {
+          fastify.log.warn(
+            { err, household_id },
+            'getSovereigntyMode failed — falling back to unified mode',
+          );
+          return 'unified' as const;
+        }),
       ]);
       // Story 3.22 — extra_rules read fans out per-child; depends on bagCompositions.
       // High-activity proposals also depend on bagCompositions, so both are loaded
@@ -149,21 +158,20 @@ const planRegenerationPlugin: FastifyPluginAsync = async (fastify) => {
       // the agent to only plan for that day. The compose output may include only
       // that day's items (agent-guided) or the full week (if the LLM doesn't
       // comply) — the worker filters to just the target day in the day-scope path.
-      const composeOutput = await fastify.orchestrator.planWeek(
-        household_id,
-        week_of,
-        request_id,
-        undefined,
-        scope === 'day' ? day : undefined,
+      const composeOutput = await fastify.orchestrator.planWeek({
+        householdId: household_id,
+        weekOf: week_of,
+        requestId: request_id,
+        dayScope: scope === 'day' ? day : undefined,
         culturalContext,
         bagCompositions,
         extraRules,
         extraLibraryItems,
         extraProposals,
         slotScopeContext,
-        undefined,
         variantEligibleChildren,
-      );
+        sovereigntyMode,
+      });
 
       // For day-scope: filter the output to only include items for the target day.
       // Guards against LLM non-compliance with the day-scope prompt instruction.
@@ -204,7 +212,6 @@ const planRegenerationPlugin: FastifyPluginAsync = async (fastify) => {
             ingredients: item.ingredients,
             ...(item.recipe_id != null ? { recipe_id: item.recipe_id } : {}),
             ...(item.item_id != null ? { item_id: item.item_id } : {}),
-            ...(item.item_sku_id != null ? { item_sku_id: item.item_sku_id } : {}),
           }));
         commitInput.items = [...otherDayItems, ...commitInput.items];
       }
@@ -275,12 +282,12 @@ const planRegenerationPlugin: FastifyPluginAsync = async (fastify) => {
             return `ALLERGEN-UNCERTAIN: Replace the following items — use only single-ingredient items of unambiguous provenance (no sauces, spice blends, pastes, or compound products): ${slots}`;
           })();
 
-          const retryOutput = await fastify.orchestrator.planWeek(
-            household_id,
-            week_of,
-            request_id,
+          const retryOutput = await fastify.orchestrator.planWeek({
+            householdId: household_id,
+            weekOf: week_of,
+            requestId: request_id,
             rejectionContext,
-            scope === 'day' ? day : undefined,
+            dayScope: scope === 'day' ? day : undefined,
             culturalContext,
             bagCompositions,
             extraRules,
@@ -289,7 +296,8 @@ const planRegenerationPlugin: FastifyPluginAsync = async (fastify) => {
             slotScopeContext,
             uncertainContext,
             variantEligibleChildren,
-          );
+            sovereigntyMode,
+          });
 
           const filteredRetry =
             scope === 'day' && day !== undefined

@@ -93,12 +93,6 @@ export const RecipeRowSchema = z.object({
   slug: z.string().min(1).max(256).nullable(),
 
   ingredients: z.array(RecipeIngredientSchema).max(40),
-  instructions: z
-    .union([
-      z.string(),
-      z.array(z.string().min(1).max(2000)).max(40),
-    ])
-    .nullable(),
 
   // Denormalised lookups (RecipesService maintains these from ingredients)
   ingredient_keys: z.array(z.string().min(1).max(64)).max(40),
@@ -113,6 +107,9 @@ export const RecipeRowSchema = z.object({
 
   applicable_slots: z.array(RecipeSlotSchema).min(1),
   prep_time_minutes: z.number().int().min(0).max(600).nullable(),
+  // Story 3-DM-A1: morning-of (finish) time, read alongside prep_time_minutes
+  // to compute the dual-budget total. NULL until next recipe-agent fetch.
+  finish_time_minutes: z.number().int().min(0).max(600).nullable(),
 
   source: RecipeSourceSchema,
   created_by_household_id: z.string().uuid().nullable(),
@@ -126,6 +123,26 @@ export const RecipeRowSchema = z.object({
   created_at: z.string().datetime({ offset: true }),
   updated_at: z.string().datetime({ offset: true }),
 });
+
+// ---- Recipe step (structured method) -------------------------------------
+//
+// Story 3-DM-A1 — replaces the opaque recipes.instructions jsonb. One row
+// per step in recipe_steps. mode classifies the step as part of the
+// make-ahead (prep) or morning-of (finish) phase; the Wall Card's mode
+// toggle filters by this tag.
+
+export const StepModeSchema = z.enum(['prep', 'finish']);
+
+export const RecipeStepSchema = z.object({
+  id: z.string().uuid(),
+  recipe_id: z.string().uuid(),
+  sequence: z.number().int().min(1).max(40),
+  mode: StepModeSchema,
+  text: z.string().min(1).max(600),
+  created_at: z.string().datetime({ offset: true }),
+});
+
+export const RecipeStepsArraySchema = z.array(RecipeStepSchema).max(40);
 
 // ---- Household usage row --------------------------------------------------
 
@@ -233,15 +250,29 @@ export const RecipeAgentExtractionSchema = z.object({
   allergen_flags: z.array(z.string().min(1).max(64)).max(20),
 
   prep_time_minutes: z.number().int().positive().max(600).nullable(),
+  // Story 3-DM-A1: morning-of cook time. Optional on the extraction (some
+  // recipes are pure prep or pure finish). Service layer fills NULL when
+  // the LLM omits.
+  finish_time_minutes: z.number().int().min(0).max(600).nullable().optional(),
 
   // Ingredients use the SAME shape as the catalog row. The agent prompt
   // enforces head-noun discipline (key = base food, modifier = variant).
   ingredients: z.array(RecipeIngredientSchema).min(1).max(40),
 
-  // Instructions: array of imperative steps. The agent rewrites verbatim
-  // source text into functional directives to stay clear of copyright on
-  // creative expression.
-  instructions: z.array(z.string().min(1).max(2000)).min(1).max(40),
+  // Story 3-DM-A1 — structured steps with mode tags. Replaces the legacy
+  // flat `instructions` array. The agent emits each step tagged 'prep'
+  // (make-ahead) or 'finish' (morning-of); when the mode tag is missing,
+  // we default to 'prep' (the conservative choice — surfaces in both Wall
+  // Card filters today but lets future planner logic catch the omission).
+  steps: z
+    .array(
+      z.object({
+        mode: StepModeSchema.default('prep'),
+        text: z.string().min(1).max(600),
+      }),
+    )
+    .min(1)
+    .max(40),
 
   // Verbatim allergen warning printed on the source page (e.g. "Contains:
   // wheat, soy"). Never inferred. Null when no such text appears.

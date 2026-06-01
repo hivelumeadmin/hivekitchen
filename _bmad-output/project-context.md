@@ -384,6 +384,34 @@ These are the invariants that silently break HiveKitchen if violated. If any are
 
 ---
 
+## Implementation Patterns
+
+### Stub→Real Slice Progression
+
+**When to use:** Any feature that introduces ≥4 agent tool calls with separate DB persistence tables. Validated across Epic 2.5 (11 slices), adopted as doctrine.
+
+**What it is:** The foundation slice (s1 or equivalent) creates all tool factories with stub implementations — deterministic return values, no real DB writes, correct Zod schemas. Each subsequent moment slice replaces exactly one stub with real DB persistence. The contract and tool interface land in the stub slice; real wiring lands per-slice.
+
+**Why it works:**
+- Contract-landing is decoupled from wiring — downstream consumers can build against the interface immediately
+- Each subsequent slice is independently reviewable (one stub → one real implementation per PR)
+- Parallel review is possible because the interface is stable from slice 1
+- Rollback is cheaper — a bad DB implementation doesn't corrupt the tool interface
+
+**How to apply:**
+1. **Foundation slice** — define all tool Zod schemas, all tool factory functions, stub implementations returning deterministic UUIDs / empty arrays / success: true. Wire into orchestrator. Ship to review.
+2. **Moment slices (one per tool)** — replace one stub with: migration, repository method, service call. The tool's Zod schema is unchanged. Ship each slice independently.
+3. **Completion slice** (if the feature requires cross-table gate logic) — finalize gate logic that reads across all now-real tables (e.g., required-set completeness check). Skip if the feature has no completeness gate.
+
+**Example from Epic 2.5:**
+- `2.5-s1` (foundation): created stub tool factories for `allergen.declare`, `cuisine.declare`, `bag.declare`, `favorite_lunch.add` with deterministic UUIDs
+- `2.5-s6` through `2.5-s9` (moment slices): each replaced one stub with real DB persistence (`child_allergens`, `food_preferences`, `bag_composition_pattern`, `favorite_lunches`)
+- `2.5-s10` (completion): required-set gate reading across all now-real tables
+
+**Do NOT apply when:** The feature has 1–3 tool calls, or all tool calls share one table (single migration + wiring is cleaner than staggered stubs).
+
+---
+
 ## Usage Guidelines
 
 **For AI Agents:**
@@ -398,4 +426,4 @@ These are the invariants that silently break HiveKitchen if violated. If any are
 - Review periodically (e.g., at each epic retrospective) and remove rules that have become obvious or obsolete.
 - If you find yourself giving an agent the same correction twice, that correction belongs here.
 
-Last Updated: 2026-04-23
+Last Updated: 2026-05-25

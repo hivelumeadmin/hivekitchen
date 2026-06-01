@@ -4,6 +4,7 @@ import {
   HeartNotePayloadSchema,
   ListChildrenResponseSchema,
   type HeartNoteResponse,
+  type HeartNoteStatus,
 } from '@hivekitchen/contracts';
 import { hkFetch } from '@/lib/fetch.js';
 import { useAuthStore } from '@/stores/auth.store.js';
@@ -12,12 +13,23 @@ import { HeartNoteActions } from '@/features/heart-note/components/HeartNoteActi
 import { LumiPresenceCard } from '@/features/heart-note/components/LumiPresenceCard.js';
 import { MealPreviewCard } from '@/features/heart-note/components/MealPreviewCard.js';
 import { ReactionCard } from '@/features/heart-note/components/ReactionCard.js';
+import { ScheduleDatePicker } from '@/features/heart-note/components/ScheduleDatePicker.js';
 import { StationeryCard } from '@/features/heart-note/components/StationeryCard.js';
+import { StatusPill } from '@/features/heart-note/components/StatusPill.js';
 
 const HEART_NOTE_PLACEHOLDER =
   'Hope today is a calm one — a few words for your child here.';
 const HEART_NOTE_CHAR_CAP = 280;
 const AUTOSAVE_DEBOUNCE_MS = 1500;
+
+// Slice 4-S6 — once a note reaches any of these terminal statuses the
+// textarea, date picker, and Cancel button all go read-only.
+const TERMINAL_STATUSES: readonly HeartNoteStatus[] = [
+  'delivered',
+  'viewed',
+  'rated',
+  'cancelled',
+];
 
 interface ChildSummary {
   readonly id: string;
@@ -48,6 +60,8 @@ export default function HeartNoteRoute() {
   const [savedHint, setSavedHint] = useState<string>('');
   const [saveError, setSaveError] = useState<boolean>(false);
   const [bootError, setBootError] = useState<string | null>(null);
+  const [copyState, setCopyState] = useState<'idle' | 'copying' | 'copied'>('idle');
+  const [isSaving, setIsSaving] = useState(false);
 
   // Stored mutably because the debounce timer + the in-flight note id need
   // to be read inside async callbacks without triggering re-renders.
@@ -56,6 +70,9 @@ export default function HeartNoteRoute() {
   const noteIdRef = useRef<string | null>(null);
   const inFlightRef = useRef<boolean>(false);
   const childRef = useRef<ChildSummary | null>(null);
+  // Captured at page-load so "Copy link" always targets today's date even if
+  // the user leaves the page open past midnight.
+  const noteDateRef = useRef<string>(isoToday());
 
   useEffect(() => {
     childRef.current = activeChild;
@@ -118,6 +135,7 @@ export default function HeartNoteRoute() {
     const child = childRef.current;
     if (child === null || inFlightRef.current) return;
     inFlightRef.current = true;
+    setIsSaving(true);
     setSavedHint('Saving…');
     setSaveError(false);
     try {
@@ -143,6 +161,7 @@ export default function HeartNoteRoute() {
       setSaveError(true);
     } finally {
       inFlightRef.current = false;
+      setIsSaving(false);
       // If the user typed more while the save was in flight, drain it.
       if (pendingTextRef.current !== null && pendingTextRef.current !== text) {
         const next = pendingTextRef.current;
@@ -175,12 +194,63 @@ export default function HeartNoteRoute() {
     if (pending !== null) void flushSave(pending);
   }, [flushSave]);
 
+  const handleCopyLink = useCallback(async () => {
+    const child = childRef.current;
+    if (child === null) return;
+    setCopyState('copying');
+    try {
+      const { url } = await hkFetch<{ url: string }>('/v1/lunch-link/generate', {
+        method: 'POST',
+        body: { child_id: child.id, date: noteDateRef.current },
+      });
+      await navigator.clipboard.writeText(url);
+      setCopyState('copied');
+      setTimeout(() => setCopyState('idle'), 2000);
+    } catch {
+      setCopyState('idle');
+    }
+  }, []);
+
+  // Slice 4-S6 — scheduling and cancel mutations are direct PATCH calls.
+  // They bypass the autosave debounce because they're discrete intent
+  // changes, not stream-of-keystroke edits.
+  const handleScheduleChange = useCallback(async (date: string | null) => {
+    if (noteIdRef.current === null) return;
+    try {
+      const raw = await hkFetch<unknown>(`/v1/heart-notes/${noteIdRef.current}`, {
+        method: 'PATCH',
+        body: { scheduled_for: date },
+      });
+      const { note } = HeartNotePayloadSchema.parse(raw);
+      setDraft(note);
+    } catch {
+      // Scheduling failure is non-fatal — the optimistic state stays out of
+      // sync, but the input value reflects the unchanged server draft on the
+      // next render.
+    }
+  }, []);
+
+  const handleCancel = useCallback(async () => {
+    if (noteIdRef.current === null) return;
+    try {
+      const raw = await hkFetch<unknown>(`/v1/heart-notes/${noteIdRef.current}`, {
+        method: 'PATCH',
+        body: { status: 'cancelled' },
+      });
+      const { note } = HeartNotePayloadSchema.parse(raw);
+      setDraft(note);
+    } catch {
+      // Best-effort: leave the existing draft visible if the cancel fails.
+    }
+  }, []);
+
+  const isTerminal = draft !== null && TERMINAL_STATUSES.includes(draft.status);
   const childName = activeChild?.name ?? '…';
   const eyebrow = `${formatDayLabel(new Date())} · A note for ${childName}`;
   const envelope = {
     toLabel: activeChild?.name ?? '',
-    deliveryTime: '12:15',
-    scheduled: false,
+    deliveryTime: draft?.scheduled_for ? formatShortDate(draft.scheduled_for) : '12:15',
+    scheduled: draft?.status === 'scheduled',
   };
 
   return (
@@ -199,6 +269,15 @@ export default function HeartNoteRoute() {
                 {bootError}
               </p>
             ) : null}
+            {draft !== null ? (
+              <div className="mb-3">
+                <StatusPill
+                  status={draft.status}
+                  scheduledFor={draft.scheduled_for}
+                  deliveredAt={draft.delivered_at}
+                />
+              </div>
+            ) : null}
             <StationeryCard
               envelope={envelope}
               draftText={draft?.content ?? ''}
@@ -206,8 +285,22 @@ export default function HeartNoteRoute() {
               charCap={HEART_NOTE_CHAR_CAP}
               savedHint={savedHint}
               saveError={saveError}
-              onTextChange={handleTextChange}
+              onTextChange={isTerminal ? undefined : handleTextChange}
             />
+            <ScheduleDatePicker
+              value={draft?.scheduled_for ?? null}
+              disabled={isTerminal}
+              onChange={handleScheduleChange}
+            />
+            {draft?.status === 'scheduled' ? (
+              <button
+                type="button"
+                onClick={handleCancel}
+                className="mt-2 self-start text-sm text-safety-red/70 underline underline-offset-2 hover:text-safety-red"
+              >
+                Cancel note
+              </button>
+            ) : null}
           </div>
           <aside className="flex w-full flex-col gap-8 pt-20 md:w-[280px]">
             <MealPreviewCard childName={childName} meal={PLACEHOLDER_MEAL} />
@@ -219,7 +312,12 @@ export default function HeartNoteRoute() {
           </aside>
         </div>
       </main>
-      <HeartNoteActions onSave={handleManualSave} />
+      <HeartNoteActions
+        onSave={handleManualSave}
+        onCopyLink={activeChild !== null ? handleCopyLink : undefined}
+        copyState={copyState}
+        isSaving={isSaving}
+      />
     </>
   );
 }
@@ -239,5 +337,16 @@ function formatDayLabel(d: Date): string {
     weekday: 'long',
     day: 'numeric',
     month: 'short',
+  });
+}
+
+// Local mirror of the StatusPill date formatter — keeping it in the route
+// keeps the StationeryCard envelope label consistent without a shared util.
+function formatShortDate(isoDate: string): string {
+  const [year, month, day] = isoDate.split('-').map(Number);
+  return new Date(year ?? 0, (month ?? 1) - 1, day ?? 1).toLocaleDateString(undefined, {
+    weekday: 'short',
+    month: 'short',
+    day: 'numeric',
   });
 }

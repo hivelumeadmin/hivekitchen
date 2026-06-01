@@ -64,7 +64,7 @@ function buildPreview(overrides: Partial<RecipePreviewRow> & { id: string; canon
 
 describe('RecipeService — slice D server write path', () => {
   describe('materializeFromPlanItem', () => {
-    it('skips materialization for snack-slot items (snack uses item_sku_id)', async () => {
+    it('skips materialization for snack-slot items (snack resolves via curated recipes catalog)', async () => {
       const repo = buildRepo();
       const svc = new RecipeService(repo, buildLogger());
       const result = await svc.materializeFromPlanItem({
@@ -77,7 +77,7 @@ describe('RecipeService — slice D server write path', () => {
       expect(repo.insertRecipe).not.toHaveBeenCalled();
     });
 
-    it('skips materialization for extra-slot items (extras use item_sku_id)', async () => {
+    it('skips materialization for extra-slot items (extras resolve via curated recipes catalog)', async () => {
       const repo = buildRepo();
       const svc = new RecipeService(repo, buildLogger());
       const result = await svc.materializeFromPlanItem({
@@ -340,7 +340,6 @@ describe('RecipeService — slice D.2 agent read path', () => {
         canonical_name: 'Lentil dal',
         slug: null,
         ingredients: [],
-        instructions: null,
         ingredient_keys: ['red_lentils'],
         primary_ingredient_key: 'red_lentils',
         allergen_flags: [],
@@ -349,6 +348,7 @@ describe('RecipeService — slice D.2 agent read path', () => {
         cuisine_tags: ['indian'],
         applicable_slots: ['main'],
         prep_time_minutes: 25,
+        finish_time_minutes: null,
         source: 'agent_generated',
         created_by_household_id: HOUSEHOLD_ID,
         visibility: 'private',
@@ -476,7 +476,7 @@ function buildExtraction(opts: Partial<RecipeAgentExtraction> = {}): RecipeAgent
         substitutes: [],
       },
     ],
-    instructions: ['Cook the chicken.'],
+    steps: [{ mode: 'prep' as const, text: 'Cook the chicken.' }],
     allergen_info_from_source: null,
     ...opts,
   };

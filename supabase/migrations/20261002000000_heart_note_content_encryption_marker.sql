@@ -1,0 +1,21 @@
+-- heart_notes.content is now persisted as envelope-encrypted ciphertext.
+-- The 'content' column schema (text NOT NULL DEFAULT '') is unchanged;
+-- the application layer (HeartNoteRepository) encrypts on write and decrypts
+-- on read using AES-256-GCM with a per-household DEK.
+--
+-- Backfill: run `pnpm --filter @hivekitchen/api backfill:heart-notes` BEFORE
+-- deploying the 4-s5 API code, to re-encrypt any plaintext rows written
+-- by the 4-S1 implementation.
+--
+-- Operator runbook:
+--   1. Apply this migration.
+--   2. Run: pnpm --filter @hivekitchen/api backfill:heart-notes
+--   3. Verify: SELECT COUNT(*) FROM heart_notes WHERE content NOT LIKE 'NOOP:%' AND length(content) < 40;
+--      → should return 0 (all rows now encrypted or empty-string encrypted).
+--   4. IMPORTANT — deployment race window: any heart_notes rows written by the old
+--      API (pre-4-s5) between step 2 and step 4 will be stored as plaintext and
+--      will fail decryption under the new API. To close this window either:
+--      (a) re-run the backfill immediately before cutting traffic to the 4-s5
+--          binary (recommended for zero-downtime deploys), or
+--      (b) use a maintenance window that stops writes between step 2 and step 4.
+--   5. Deploy 4-s5 API code.

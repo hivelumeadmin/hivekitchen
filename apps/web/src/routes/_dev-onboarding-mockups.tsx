@@ -6,6 +6,7 @@ import { Moment2PersonalizedPage } from '../features/onboarding-mockups/Moment2P
 import { Moment3PersonalizedPage } from '../features/onboarding-mockups/Moment3PersonalizedPage.js';
 import { Moment4PersonalizedPage } from '../features/onboarding-mockups/Moment4PersonalizedPage.js';
 import { Moment5PersonalizedPage } from '../features/onboarding-mockups/Moment5PersonalizedPage.js';
+import { Moment5ColdStartPage } from '../features/onboarding-mockups/Moment5ColdStartPage.js';
 
 export function DevOnboardingMockupsPage() {
   return (
@@ -17,6 +18,7 @@ export function DevOnboardingMockupsPage() {
       <Moment3PersonalizedPage />
       <Moment4PersonalizedPage />
       <Moment5PersonalizedPage />
+      <Moment5ColdStartPage />
       <AppFooter />
     </div>
   );

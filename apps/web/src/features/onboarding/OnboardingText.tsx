@@ -1028,6 +1028,17 @@ export function OnboardingText({ onFinalized, initialTurns }: OnboardingTextProp
   // Slice 2.5-s10 — which required moments are incomplete, from the server.
   // Each element is a moment key (e.g. 'm5_starting_line'). Empty = all OK.
   const [missingRequiredSet, setMissingRequiredSet] = useState<string[]>([]);
+  // Slice 2.6-s6 — M5 cold-start fallback mode. Once true for a session it
+  // latches; the client never derives it back to false. The server already
+  // persists the flag stickily in onboarding_moment_state, so a turn that
+  // (for any reason) returns cold_start_mode=false after a true wouldn't
+  // be a downgrade signal — it would be a transient drop or carry-forward
+  // gap. We refuse to act on it.
+  const [coldStartMode, setColdStartMode] = useState<boolean>(false);
+  // Slice 2.6-s6 — tracks free-text dish submissions in cold-start M5. Separate
+  // from m5StartingLine.count which only counts chip selections (always 0 in
+  // cold-start mode where chip_config is null).
+  const [coldStartDishCount, setColdStartDishCount] = useState<number>(0);
   const abortRef = useRef<AbortController | null>(null);
   const conversationEndRef = useRef<HTMLDivElement | null>(null);
 
@@ -1243,12 +1254,23 @@ export function OnboardingText({ onFinalized, initialTurns }: OnboardingTextProp
                 : prev,
             );
           }
+          // Slice 2.6-s6 — in cold-start mode chip_config is null, so addedCount
+          // is always 0. Count each successful turn as one declared dish instead.
+          if (coldStartMode && !advancedOutOfM5) {
+            setColdStartDishCount((prev) => prev + 1);
+          }
         }
         setChipConfig(parsed.chip_config ?? null);
         // Slice 2.5-s5 — track the post-turn moment so the header renders the
         // correct "Moment X of 5" copy. null/undefined preserves the previous
         // moment so a transient drop doesn't flicker the header.
         setCurrentMomentKey(parsed.moment_key ?? null);
+        // Slice 2.6-s6 — latch cold-start mode on first true. We never
+        // downgrade because the server flag is sticky; any false after a
+        // true is a transient signal, not a state change.
+        if (parsed.cold_start_mode === true) {
+          setColdStartMode(true);
+        }
         // Slice 2.5-s10 — update required-set status from server. Skipped when
         // the field is undefined (legacy path) or null (momentRepository absent).
         if (
@@ -1285,7 +1307,7 @@ export function OnboardingText({ onFinalized, initialTurns }: OnboardingTextProp
         }
       }
     },
-    [pending, currentMomentKey, chipConfig],
+    [pending, currentMomentKey, chipConfig, coldStartMode],
   );
 
   const handleSubmit = useCallback(
@@ -1517,6 +1539,22 @@ export function OnboardingText({ onFinalized, initialTurns }: OnboardingTextProp
                                       label={opt.label}
                                       mode={chipConfig.mode === 'action' ? 'single' : 'multi'}
                                       selected={chipSelections.includes(opt.key)}
+                                      // Slice 2.6-s4 — M5 personalized chip with
+                                      // provenance='parent_added' renders a leading
+                                      // amber ＋ badge (mockup parity:
+                                      // Moment5PersonalizedPage.tsx:637–653).
+                                      // Other provenances + absent provenance →
+                                      // no icon (identical to 2.5-s9 treatment).
+                                      icon={
+                                        opt.provenance === 'parent_added' ? (
+                                          <span
+                                            data-testid="chip-parent-added-badge"
+                                            className="text-amber font-bold leading-none"
+                                          >
+                                            ＋
+                                          </span>
+                                        ) : undefined
+                                      }
                                       onClick={() => {
                                         if (chipConfig.mode === 'action') {
                                           setChipSelections([opt.key]);
@@ -1678,11 +1716,13 @@ export function OnboardingText({ onFinalized, initialTurns }: OnboardingTextProp
                   // Slice 2.5-s6 — M2 placeholder asks the parent to add
                   // context (which child, severity) alongside the chips.
                   placeholder={
-                    currentMomentKey === 'm2_safe'
-                      ? 'Add details — which child, severity, anything special I should know…'
-                      : chipConfig
-                        ? 'Add a note…'
-                        : 'Type your answer...'
+                    currentMomentKey === 'm5_starting_line' && coldStartMode
+                      ? 'Type a dish your family eats most weeks…'
+                      : currentMomentKey === 'm2_safe'
+                        ? 'Add details — which child, severity, anything special I should know…'
+                        : chipConfig
+                          ? 'Add a note…'
+                          : 'Type your answer...'
                   }
                   disabled={pending}
                   onKeyDown={(e) => {
@@ -1715,6 +1755,67 @@ export function OnboardingText({ onFinalized, initialTurns }: OnboardingTextProp
                   and an "all clear" confirmation in addition to the generic
                   count copy. */}
               {(() => {
+                // Slice 2.6-s6 — cold-start M5 gate line. Drives the parent
+                // to declare 3 free-text dishes; copy adjusts per count
+                // (0 → "tell Lumi three dishes", 1 → "2 more dishes", etc.)
+                if (
+                  currentMomentKey === 'm5_starting_line' &&
+                  coldStartMode
+                ) {
+                  const count = coldStartDishCount;
+                  if (count === 0) {
+                    return (
+                      <p
+                        data-testid="cold-start-gate-line"
+                        className="mt-2 text-center font-sans text-xs italic text-amber/80"
+                      >
+                        Tell Lumi three dishes your family eats most weeks.
+                      </p>
+                    );
+                  }
+                  if (count === 1) {
+                    return (
+                      <p
+                        data-testid="cold-start-gate-line"
+                        className="mt-2 text-center font-sans text-xs italic text-fg-muted"
+                      >
+                        2 more dishes for a solid starting point.{' '}
+                        <button
+                          type="button"
+                          onClick={() => void submitTurn(['override_fewer'], '')}
+                          className="text-amber underline hover:text-amber-warm"
+                        >
+                          Or start with what you&rsquo;ve shared
+                        </button>
+                      </p>
+                    );
+                  }
+                  if (count === 2) {
+                    return (
+                      <p
+                        data-testid="cold-start-gate-line"
+                        className="mt-2 text-center font-sans text-xs italic text-fg-muted"
+                      >
+                        1 more and Lumi has a place to start.{' '}
+                        <button
+                          type="button"
+                          onClick={() => void submitTurn(['override_fewer'], '')}
+                          className="text-amber underline hover:text-amber-warm"
+                        >
+                          Or start with what you&rsquo;ve shared
+                        </button>
+                      </p>
+                    );
+                  }
+                  return (
+                    <p
+                      data-testid="cold-start-gate-line"
+                      className="mt-2 text-center font-sans text-xs italic text-foliage"
+                    >
+                      Three dishes captured — Lumi has a starting point.
+                    </p>
+                  );
+                }
                 if (currentMomentKey === 'm2_safe') {
                   const hasResponse =
                     chipSelections.length > 0 || draft.trim().length > 0;

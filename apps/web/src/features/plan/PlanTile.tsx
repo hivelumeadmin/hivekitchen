@@ -42,7 +42,15 @@ export interface PlanTileProps {
   // parent's choice is dispatched via onVariantChoice.
   variantProposal?: VariantProposal;
   onVariantChoice?: (proposalId: string, choice: 'try_variant' | 'keep_original') => void;
+  // Story 4-S4 — keyed by child_id; only children who have rated appear here.
+  childRatings?: Record<string, 'loved' | 'ok' | 'not-really'>;
 }
+
+const RATING_EMOJIS: Record<'loved' | 'ok' | 'not-really', string> = {
+  loved: '😋',
+  ok: '🙂',
+  'not-really': '😕',
+};
 
 function ChildChip({ name, color }: { name: string; color: ChildDotColor }) {
   const dotClass = color === 'foliage' ? 'bg-foliage' : 'bg-lumi-terracotta';
@@ -104,6 +112,7 @@ export function PlanTile({
   forceVariant,
   variantProposal,
   onVariantChoice,
+  childRatings,
 }: PlanTileProps) {
   const variant = forceVariant ?? deriveVariant(summary.day);
   const tileRef = useRef<HTMLElement>(null);
@@ -119,14 +128,14 @@ export function PlanTile({
   const dishLine = deriveDishLine(summary);
 
   function handleKeyDown(e: ReactKeyboardEvent<HTMLElement>) {
+    if (e.key === 'Escape') {
+      tileRef.current?.blur();
+      return;
+    }
     if (!isInteractive) return;
     if (e.key === 'Enter' || e.key === ' ') {
       e.preventDefault();
       onSwapIntent?.();
-      return;
-    }
-    if (e.key === 'Escape') {
-      tileRef.current?.blur();
     }
   }
 
@@ -223,20 +232,33 @@ export function PlanTile({
       )}
 
       {childColorMap !== undefined && childColorMap.size > 0 && (() => {
-        const chips = summary.items
-          .map((item) => childColorMap.get(item.child_id))
-          .filter((info): info is ChildInfo => info !== undefined && info.name !== '');
         const seen = new Set<string>();
-        const unique = chips.filter((info) => {
-          if (seen.has(info.name)) return false;
-          seen.add(info.name);
+        const uniqueItems = summary.items.filter((item) => {
+          const info = childColorMap.get(item.child_id);
+          if (info === undefined || info.name === '') return false;
+          if (seen.has(item.child_id)) return false;
+          seen.add(item.child_id);
           return true;
         });
-        return unique.length > 0 ? (
-          <div className="flex flex-wrap gap-1.5 mb-3">
-            {unique.map((info) => (
-              <ChildChip key={info.name} name={info.name} color={info.color} />
-            ))}
+        return uniqueItems.length > 0 ? (
+          <div className="flex flex-wrap items-center gap-1.5 mb-3">
+            {uniqueItems.map((item) => {
+              const info = childColorMap.get(item.child_id)!;
+              const rating = childRatings?.[item.child_id];
+              return (
+                <span key={item.child_id} className="inline-flex items-center gap-1.5">
+                  <ChildChip name={info.name} color={info.color} />
+                  {rating !== undefined && (
+                    <span
+                      aria-label={`Rated: ${rating}`}
+                      className="text-[14px] leading-none"
+                    >
+                      {RATING_EMOJIS[rating]}
+                    </span>
+                  )}
+                </span>
+              );
+            })}
           </div>
         ) : null;
       })()}

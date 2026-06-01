@@ -50,7 +50,10 @@ export interface SetBagCompositionInput {
 
 export interface SetBagCompositionResult {
   child: ChildResponse;
-  audit: { old: BagComposition; new: BagComposition };
+  // Story 3-DM-B1 — audit shape moved to bag_composition_pattern values
+  // (the canonical column). Downstream audit consumers can derive the
+  // boolean struct via bagCompositionFromPattern if needed.
+  audit: { old: BagCompositionPattern; new: BagCompositionPattern };
 }
 
 export class ChildrenService {
@@ -132,7 +135,7 @@ export class ChildrenService {
           declared_allergens: input.body.declared_allergens ?? [],
           cultural_identifiers: input.body.cultural_identifiers ?? [],
           dietary_preferences: input.body.dietary_preferences ?? [],
-          bag_composition_pattern: input.body.bag_composition_pattern,
+          bag_composition_pattern: input.body.bag_composition_pattern ?? undefined,
         });
         return { child: toChildResponse(inserted), was_existing: false };
       }
@@ -149,7 +152,7 @@ export class ChildrenService {
       declared_allergens: input.body.declared_allergens ?? [],
       cultural_identifiers: input.body.cultural_identifiers ?? [],
       dietary_preferences: input.body.dietary_preferences ?? [],
-      bag_composition_pattern: input.body.bag_composition_pattern,
+      bag_composition_pattern: input.body.bag_composition_pattern ?? undefined,
     });
     return { child: toChildResponse(inserted), was_existing: false };
   }
@@ -202,8 +205,10 @@ export class ChildrenService {
     return {
       child: toChildResponse(updated),
       audit: {
-        old: existing.bag_composition,
-        new: updated.bag_composition,
+        // Story 3-DM-B1 — audit logs the pattern change (the canonical column);
+        // the boolean struct can be derived from these in any reader.
+        old: existing.bag_composition_pattern,
+        new: updated.bag_composition_pattern,
       },
     };
   }
@@ -219,8 +224,11 @@ function toChildResponse(row: DecryptedChildRow): ChildResponse {
     declared_allergens: row.declared_allergens,
     cultural_identifiers: row.cultural_identifiers,
     dietary_preferences: row.dietary_preferences,
-    allergen_rule_version: row.allergen_rule_version,
-    bag_composition: row.bag_composition,
+    // Story 3-DM-B1 — new variation-driving attributes + promoted enum.
+    appetite_level: row.appetite_level,
+    texture_needs: row.texture_needs,
+    spice_tolerance: row.spice_tolerance,
+    bag_composition_pattern: row.bag_composition_pattern,
     created_at: row.created_at,
   };
 }

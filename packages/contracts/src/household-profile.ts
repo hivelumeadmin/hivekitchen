@@ -55,8 +55,22 @@ export const HouseholdUpsertOutputSchema = z.object({
   was_existing: z.literal(true),
 });
 
+// Story 3.29 — PATCH /v1/households/:id/sovereignty-mode body. The toggle
+// switches how the planner reconciles overlapping cultural rule sets across
+// the household: 'unified' (default) honors all rules simultaneously;
+// 'alternating' rotates which tradition leads each day.
+export const UpdateSovereigntyModeInputSchema = z.object({
+  sovereignty_mode: z.enum(['unified', 'alternating']),
+});
+
+export const UpdateSovereigntyModeResponseSchema = z.object({
+  sovereignty_mode: z.enum(['unified', 'alternating']),
+});
+
 export type HouseholdProfilePatchBody = z.infer<typeof HouseholdProfilePatchBodySchema>;
 export type HouseholdProfileResponse = z.infer<typeof HouseholdProfileResponseSchema>;
 export type HouseholdIdParam = z.infer<typeof HouseholdIdParamSchema>;
 export type HouseholdUpsertInput = z.infer<typeof HouseholdUpsertInputSchema>;
 export type HouseholdUpsertOutput = z.infer<typeof HouseholdUpsertOutputSchema>;
+export type UpdateSovereigntyModeInput = z.infer<typeof UpdateSovereigntyModeInputSchema>;
+export type UpdateSovereigntyModeResponse = z.infer<typeof UpdateSovereigntyModeResponseSchema>;

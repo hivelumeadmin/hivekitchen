@@ -39,7 +39,6 @@ function makeExistingItem(day: PlanItemRow['day']): PlanItemRow {
     slot: 'main',
     recipe_id: null,
     item_id: null,
-    item_sku_id: null,
     ingredients: ['rice', 'lentils'],
     paused_at: null,
     replaced_by_plan_id: null,
@@ -71,14 +70,13 @@ async function runRegenerationJob(
       `Keep ALL other slot items (Main/Snack/Extra as applicable) identical to the previous plan.`;
   }
 
-  const composeOutput: PlanComposeOutput = await deps.planWeek(
-    household_id,
-    week_of,
-    request_id,
-    undefined,
-    scope === 'day' ? day : undefined,
+  const composeOutput: PlanComposeOutput = await deps.planWeek({
+    householdId: household_id,
+    weekOf: week_of,
+    requestId: request_id,
+    dayScope: scope === 'day' ? day : undefined,
     slotScopeContext,
-  );
+  });
 
   const filteredOutput =
     scope === 'day' && day !== undefined
@@ -158,7 +156,15 @@ describe('plan-regeneration job (Story 3.13)', () => {
       { planWeek, commit, getCurrentPlanItems },
     );
 
-    expect(planWeek).toHaveBeenCalledWith(HOUSEHOLD_ID, '2026-05-04', REQUEST_ID, undefined, undefined, undefined);
+    expect(planWeek).toHaveBeenCalledWith(
+      expect.objectContaining({
+        householdId: HOUSEHOLD_ID,
+        weekOf: '2026-05-04',
+        requestId: REQUEST_ID,
+        dayScope: undefined,
+        slotScopeContext: undefined,
+      }),
+    );
     expect(getCurrentPlanItems).not.toHaveBeenCalled();
     const commitInput = commit.mock.calls[0]?.[0] as CommitPlanInput;
     expect(commitInput.items).toHaveLength(2);
@@ -194,12 +200,13 @@ describe('plan-regeneration job (Story 3.13)', () => {
     );
 
     expect(planWeek).toHaveBeenCalledWith(
-      HOUSEHOLD_ID,
-      '2026-05-04',
-      REQUEST_ID,
-      undefined,
-      'tuesday',
-      undefined,
+      expect.objectContaining({
+        householdId: HOUSEHOLD_ID,
+        weekOf: '2026-05-04',
+        requestId: REQUEST_ID,
+        dayScope: 'tuesday',
+        slotScopeContext: undefined,
+      }),
     );
     expect(getCurrentPlanItems).toHaveBeenCalledWith(PLAN_ID, HOUSEHOLD_ID);
     const commitInput = commit.mock.calls[0]?.[0] as CommitPlanInput;
@@ -280,10 +287,10 @@ describe('plan-regeneration job (Story 3.13)', () => {
       { planWeek, commit, getCurrentPlanItems },
     );
 
-    const slotScopeArg = planWeek.mock.calls[0]?.[5] as string | undefined;
-    expect(slotScopeArg).toBeDefined();
-    expect(slotScopeArg).toContain('Snack slot');
-    expect(slotScopeArg).toContain('SLOT-SCOPED REGENERATION');
+    const planWeekArgs = planWeek.mock.calls[0]?.[0] as { slotScopeContext?: string } | undefined;
+    expect(planWeekArgs?.slotScopeContext).toBeDefined();
+    expect(planWeekArgs?.slotScopeContext).toContain('Snack slot');
+    expect(planWeekArgs?.slotScopeContext).toContain('SLOT-SCOPED REGENERATION');
   });
 
   it('no slot_scope: planWeek receives slotScopeContext = undefined', async () => {
@@ -311,7 +318,8 @@ describe('plan-regeneration job (Story 3.13)', () => {
       { planWeek, commit, getCurrentPlanItems },
     );
 
-    expect(planWeek.mock.calls[0]?.[5]).toBeUndefined();
+    const planWeekArgs = planWeek.mock.calls[0]?.[0] as { slotScopeContext?: string } | undefined;
+    expect(planWeekArgs?.slotScopeContext).toBeUndefined();
   });
 
   it('scope=day with empty target-day output: throws (job fails)', async () => {
