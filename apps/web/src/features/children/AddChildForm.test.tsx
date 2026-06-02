@@ -19,8 +19,13 @@ function mockSuccessResponse(): Response {
         declared_allergens: ['peanut'],
         cultural_identifiers: [],
         dietary_preferences: [],
-        allergen_rule_version: 'v1',
-        bag_composition: { main: true, snack: true, extra: true },
+        // Story 3-DM-B1: response shape replaces bag_composition jsonb +
+        // allergen_rule_version with the three variation enums +
+        // bag_composition_pattern enum.
+        appetite_level: 'normal',
+        texture_needs: 'normal',
+        spice_tolerance: 'mild',
+        bag_composition_pattern: 'main_plus_snack_plus_extra',
         created_at: '2026-04-28T10:00:00.000Z',
       },
     }),

@@ -1,6 +1,6 @@
 # Story 3-DM-B1: Child profile attributes + bag_composition_pattern enum promotion
 
-Status: planned
+Status: done
 
 ## Story
 

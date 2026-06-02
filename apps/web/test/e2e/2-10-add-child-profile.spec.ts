@@ -13,8 +13,13 @@ function childResponse(overrides: { name?: string; age_band?: string } = {}) {
     declared_allergens: [],
     cultural_identifiers: [],
     dietary_preferences: [],
-    allergen_rule_version: 'v1',
-    bag_composition: { main: true, snack: true, extra: true },
+    // Story 3-DM-B1: ChildResponseSchema swapped bag_composition jsonb +
+    // allergen_rule_version for the three variation enums + the
+    // bag_composition_pattern enum.
+    appetite_level: 'normal',
+    texture_needs: 'normal',
+    spice_tolerance: 'mild',
+    bag_composition_pattern: 'main_plus_snack_plus_extra',
     created_at: '2026-04-29T10:00:00.000Z',
     ...overrides,
   };

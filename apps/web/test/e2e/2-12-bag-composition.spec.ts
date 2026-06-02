@@ -4,6 +4,10 @@ import { loginAndNavigate, userProfile, SAMPLE_HOUSEHOLD_ID } from './_helpers.j
 const SAMPLE_CHILD_ID = '44444444-4444-4444-8444-444444444444';
 const CHILD_NAME = 'Maya';
 
+// Story 3-DM-B1: ChildResponseSchema replaced bag_composition jsonb +
+// allergen_rule_version with bag_composition_pattern enum + the three
+// variation enums. Accept the legacy (main, snack, extra) call-site shape and
+// fold it into the new pattern so spec call-sites stay unchanged.
 function childResponse(
   bag_composition: { main: true; snack: boolean; extra: boolean } = {
     main: true,
@@ -11,6 +15,13 @@ function childResponse(
     extra: true,
   },
 ) {
+  const pattern = bag_composition.snack
+    ? bag_composition.extra
+      ? 'main_plus_snack_plus_extra'
+      : 'main_plus_snack'
+    : bag_composition.extra
+      ? 'main_plus_extra'
+      : 'main_only';
   return {
     id: SAMPLE_CHILD_ID,
     household_id: SAMPLE_HOUSEHOLD_ID,
@@ -20,8 +31,10 @@ function childResponse(
     declared_allergens: [],
     cultural_identifiers: [],
     dietary_preferences: [],
-    allergen_rule_version: 'v1',
-    bag_composition,
+    appetite_level: 'normal',
+    texture_needs: 'normal',
+    spice_tolerance: 'mild',
+    bag_composition_pattern: pattern,
     created_at: '2026-04-29T10:00:00.000Z',
   };
 }

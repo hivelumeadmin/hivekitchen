@@ -205,8 +205,13 @@ describe('ListChildrenResponseSchema', () => {
     declared_allergens: [],
     cultural_identifiers: [],
     dietary_preferences: [],
-    allergen_rule_version: 'v1',
-    bag_composition: { main: true as const, snack: true, extra: false },
+    // Story 3-DM-B1: ChildResponseSchema dropped allergen_rule_version +
+    // bag_composition jsonb; the three variation enums + the bag_composition_pattern
+    // enum took their place.
+    appetite_level: 'normal' as const,
+    texture_needs: 'normal' as const,
+    spice_tolerance: 'mild' as const,
+    bag_composition_pattern: 'main_plus_snack_plus_extra' as const,
     created_at: '2026-05-15T12:00:00.000Z',
   };
 

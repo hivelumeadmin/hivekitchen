@@ -31,8 +31,19 @@ function childBody(opts: { snack: boolean; extra: boolean } = { snack: true, ext
       declared_allergens: [],
       cultural_identifiers: [],
       dietary_preferences: [],
-      allergen_rule_version: 'v1',
-      bag_composition: { main: true, snack: opts.snack, extra: opts.extra },
+      // Story 3-DM-B1: schema now uses bag_composition_pattern enum + the
+      // three variation enums; bag_composition jsonb + allergen_rule_version
+      // dropped.
+      appetite_level: 'normal',
+      texture_needs: 'normal',
+      spice_tolerance: 'mild',
+      bag_composition_pattern: opts.snack
+        ? opts.extra
+          ? 'main_plus_snack_plus_extra'
+          : 'main_plus_snack'
+        : opts.extra
+          ? 'main_plus_extra'
+          : 'main_only',
       created_at: '2026-04-28T10:00:00.000Z',
     },
   };

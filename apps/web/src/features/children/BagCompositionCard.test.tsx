@@ -12,6 +12,20 @@ interface CapturedRequest {
   init: RequestInit | undefined;
 }
 
+// Story 3-DM-B1 — ChildResponseSchema dropped bag_composition jsonb +
+// allergen_rule_version; replaced by bag_composition_pattern enum + the three
+// variation enums. Map the (snack, extra) pair to a pattern slug for the mock.
+function patternFor(snack: boolean, extra: boolean):
+  | 'main_only'
+  | 'main_plus_snack'
+  | 'main_plus_extra'
+  | 'main_plus_snack_plus_extra' {
+  if (snack && extra) return 'main_plus_snack_plus_extra';
+  if (snack) return 'main_plus_snack';
+  if (extra) return 'main_plus_extra';
+  return 'main_only';
+}
+
 function mockSavedResponse(snack: boolean, extra: boolean): Response {
   return new Response(
     JSON.stringify({
@@ -24,8 +38,10 @@ function mockSavedResponse(snack: boolean, extra: boolean): Response {
         declared_allergens: [],
         cultural_identifiers: [],
         dietary_preferences: [],
-        allergen_rule_version: 'v1',
-        bag_composition: { main: true, snack, extra },
+        appetite_level: 'normal',
+        texture_needs: 'normal',
+        spice_tolerance: 'mild',
+        bag_composition_pattern: patternFor(snack, extra),
         created_at: '2026-04-28T10:00:00.000Z',
       },
     }),
@@ -95,12 +111,19 @@ describe('BagCompositionCard', () => {
       expect(onSaved).toHaveBeenCalledTimes(1);
     });
     expect(onSkip).not.toHaveBeenCalled();
+    // Story 3-DM-B1: onSaved now receives a ChildResponse with
+    // bag_composition_pattern (no jsonb struct). snack=off + extra=on → pattern
+    // 'main_plus_extra'.
     const child = onSaved.mock.calls[0]![0] as {
       id: string;
-      bag_composition: { main: boolean; snack: boolean; extra: boolean };
+      bag_composition_pattern:
+        | 'main_only'
+        | 'main_plus_snack'
+        | 'main_plus_extra'
+        | 'main_plus_snack_plus_extra';
     };
     expect(child.id).toBe(CHILD_ID);
-    expect(child.bag_composition).toEqual({ main: true, snack: false, extra: true });
+    expect(child.bag_composition_pattern).toBe('main_plus_extra');
 
     expect(captured.url).toContain(`/v1/children/${CHILD_ID}/bag-composition`);
     expect(captured.init?.method).toBe('PATCH');
