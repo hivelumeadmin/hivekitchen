@@ -4,6 +4,53 @@ Status: in-progress
 
 ## Implementation log
 
+### 2026-06-01 — Phase 7 done (plan-generation.job buildCommitInputTree)
+
+Authored:
+
+- `apps/api/src/jobs/plan-generation.job.ts` — `buildCommitInputTree(output, requestId)`
+  added next to `buildCommitInput`. Pure conversion from `PlanComposeTreeOutput`
+  → `CommitPlanTreeInput`. Simpler than the flat path because the tree shape is
+  already canonical: `main_assignments` and `days[].slots[].variations` pass
+  through 1:1; the new `commit_plan()` RPC resolves
+  `slot.main_assignment_sequence` against just-inserted assignments DB-side.
+  `requestId` threads through as `plan_build_id` for Story 3-31's discover-
+  candidate resolver. `week_id` intentionally absent — the migration drops
+  `plans.week_id` and `week_of` becomes the sole plan identifier.
+- `apps/api/src/jobs/plan-generation.job.tree.test.ts` — 9 tests:
+  pass-through of plan_id / household_id / week_of / prompt_version,
+  requestId → plan_build_id wiring, revision=1 + fresh generated_at,
+  main_assignments 1:1, days[] 1:1 (no flattening), variation attribute
+  preservation (portion_size / texture / removals / add_ons), snack slot
+  with recipe_candidate_id (discover path), absence of legacy week_id
+  and items[] fields.
+
+Out of scope for Phase 7 (deferred to Phase 9):
+
+- **`PlanRegenerationJobData.week_id` drop** — the job-data payload reshape
+  cascades through plans.routes / regen worker / plan-adjustment.service /
+  day-overrides.service — every consumer in the regen chain swaps together
+  in the Phase 9 commit.
+- **`PlansService.commitTree()` wiring** — the flat `commit()` carries
+  substantial business logic (guardrail clearance loop with retries,
+  recipe materialization for main-slot items, household_recipe_usage
+  bumps, brief refresh, variant_proposal handoff, audit writes). The
+  tree-shape commit path is simpler (no recipe materialization — the
+  planner emits real recipe_ids from recipe.search / recipe.fetch under
+  PLANNER_PROMPT_TREE; discover candidates live only on snack/extra
+  slots), but replicating the surrounding orchestration cleanly is more
+  scope than Phase 7 should swallow. Phase 9 wires this through.
+
+Verification:
+- 9/9 new Phase 7 tests pass.
+- Full API sweep: 12 files / 33 tests fail — same baseline. Total
+  passing tests up by 9 (1347 → 1356).
+- Typecheck: 20 errors — same baseline.
+
+Phase 8 (test factory rewrite — `buildPlanMainAssignment`, `buildPlanDay`,
+`buildPlanSlot`, `buildPlanSlotVariation`; remove `buildPlanItem`; refactor
+60-80 plan test call sites) is the heaviest mechanical sweep of the cutover.
+
 ### 2026-06-01 — Phase 6 done (adjacent services tree-shape, additive)
 
 Two repositories + two services gain tree-shape mirror methods. Plan-adjustment

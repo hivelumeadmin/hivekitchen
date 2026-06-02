@@ -4,8 +4,10 @@ import type { FastifyPluginAsync } from 'fastify';
 import type { Job } from 'bullmq';
 import type {
   CommitPlanInput,
+  CommitPlanTreeInput,
   GuardrailResult,
   PlanComposeOutput,
+  PlanComposeTreeOutput,
   PlanItemWrite,
 } from '@hivekitchen/types';
 import { GuardrailRejectionError } from '../common/errors.js';
@@ -121,6 +123,45 @@ export function buildCommitInput(
     // resolver read those cached extractions under the same namespace.
     plan_build_id: requestId,
     items,
+  };
+}
+
+// Story 3-DM-C1 Phase 7 — tree-shape mirror. Converts PlanComposeTreeOutput
+// (what plan.compose.tree returns) into CommitPlanTreeInput (what the new
+// commit_plan() RPC accepts).
+//
+// Simpler than the flat path because the tree shape is already canonical:
+// main_assignments and days[].slots[].variations pass through 1:1. The new
+// RPC resolves slot.main_assignment_sequence against just-inserted
+// plan_main_assignments rows on the DB side.
+//
+// week_id is intentionally absent — the migration drops plans.week_id;
+// week_of is the sole plan identifier in the tree path. The job's data
+// payload reshape (drop PlanRegenerationJobData.week_id) is Phase 9 scope
+// because every job-data consumer in the regen path swaps together.
+//
+// Phase 9 wires this through PlansService.commitTree() (the analogue of
+// commit() with guardrail loop + brief refresh + variant_proposal handoff).
+// Until then this function is callable but the production commit path still
+// uses buildCommitInput() + commit().
+export function buildCommitInputTree(
+  output: PlanComposeTreeOutput,
+  requestId: string,
+): CommitPlanTreeInput {
+  return {
+    plan_id: output.plan_id,
+    household_id: output.household_id,
+    week_of: output.week_of,
+    revision: 1,
+    generated_at: new Date().toISOString(),
+    prompt_version: output.prompt_version,
+    // Story 3-31 carry-through: requestId IS the plan_build_id used by
+    // recipe.discover's Redis cache. In the tree path, recipe_candidate_id
+    // only appears on snack/extra slot rows (mains use main_assignment.recipe_id
+    // which is always a real catalog id).
+    plan_build_id: requestId,
+    main_assignments: output.main_assignments,
+    days: output.days,
   };
 }
 
