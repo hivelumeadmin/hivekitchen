@@ -1,6 +1,48 @@
 # Story 3-DM-C1: Plan structure — atomic cutover (the big one)
 
-Status: planned
+Status: in-progress
+
+## Implementation log
+
+### 2026-06-01 — Phase 1 staged (schema + RPC only; NOT yet applied)
+
+Authored: `supabase/migrations/20261010000000_plan_structure_canonical.sql`
+(~360 lines). Covers AC1, AC2, AC3, AC9, AC10 + the FK retargets on AC8 dependents
+(day_overrides, extra_removal_signals, variant_proposals — pre-beta TRUNCATE before
+column swap). The migration is staged in the repo but **not applied to a running
+database yet** because the cutover is meant to be ATOMIC and the code side has
+not been migrated.
+
+**Why staged-only**: 60 files in the codebase reference `plan_items` / `PlanItemRow` /
+`PlanComposeItem` / `commit_plan(uuid,uuid,uuid,...)` / `findItemsByPlanId` /
+`plan_item_id`. Applying the migration without the corresponding code rewrite
+would leave the API expecting the old shape against a schema that no longer has
+it. The atomic-cutover discipline only works if every layer moves in the same
+PR. Phase 1's value: the schema target is concrete and reviewable, the RPC
+contract is fixed, and the code-side work is no longer estimating against
+TBD shape.
+
+### Hand-off — phases remaining (8 of 9)
+
+In execution order, each one self-contained enough to land in a single
+follow-up session:
+
+| Phase | Scope | AC coverage | Realistic session count |
+|---|---|---|---|
+| 2 | Contracts rewrite — `PlanComposeOutputSchema` → tree shape; add `PlanMainAssignmentSchema`, `PlanDaySchema`, `PlanSlotSchema`, `PlanSlotVariationSchema`; remove `PlanItemRowSchema`, `PlanComposeItemSchema`. | AC5 | 1 |
+| 3 | `PlansRepository` rewrite — drop `findItemsByPlanId` / `findItemById`; add `findMainAssignmentsByPlanId` / `findDaysByPlanId` / `findSlotsByPlanId` / `findVariationsBySlotIds` / `swapDays` / `updateVariation` / `pauseDayById` / `pauseChildOnDay` / `swapMain` per §9. | AC4 | 1 |
+| 4 | `BriefStateComposer` rewrite — `refresh()` per §9.1 (parallel reads), `buildTileSummaries()` walks the tree, flat-array methods removed. | AC4 | 1 |
+| 5 | Orchestrator `plan.compose` tool schema → tree shape; planner prompt examples rewritten (shared-Main day + allergen-fork day); synthetic plan_compose test against stubbed LLM. | AC6, AC7 | 1 |
+| 6 | Adjacent services — `plan-adjustment.service.ts` → `plan_slots`/`plan_slot_variations`; `day-overrides.service.ts` → `plan_slot_id` FK + drop pause-overlapping enum values; `variant-proposal.service.ts` → `plan_slot_variation_id` rename. | AC8 | 1 |
+| 7 | `plan-generation.job.ts` — `buildCommitInput()` emits tree shape against new `commit_plan()` signature. | AC8 | 0.5 |
+| 8 | Test factories — `apps/api/test/factories/index.ts` adds `buildPlanMainAssignment` / `buildPlanDay` / `buildPlanSlot` / `buildPlanSlotVariation`; removes `buildPlanItem`. Refactor ~60-80 test call sites. | AC11 | 1-2 |
+| 9 | Pre-cutover gates — synthetic plan_compose Vitest gate (Task 10); load-test gate (100 concurrent `commit_plan()`, p99 < 250ms) is DEFERRED to staging environment validation, not Vitest. Apply migration. Status flip. | AC12 | 0.5 |
+
+**60-file impact surface** (grep `plan_items|PlanItemRow|PlanComposeItem|buildPlanItem|makeItemRow|item_sku_id|commit_plan|findItemsByPlanId|plan_item_id` in `apps/` + `packages/`). The TypeScript compiler is the primary breakage detector — phases 2 → 3 → 4 cascade through the type system; phases 5 → 8 are mostly mechanical.
+
+**Recommended cadence**: phases 2–4 in one session (contracts + repository + composer rewrite + immediate consumer fixes), phases 5–7 in a second session (agents + services + job), phase 8 in a third session (test factory sweep), phase 9 as a small final session including the migration apply + status flip. Each session ends with a committable green state.
+
+**Rollback for the staged migration**: delete `supabase/migrations/20261010000000_plan_structure_canonical.sql` and revert this status flip. Pre-beta hard-cutover means no production-side concerns until the migration is applied.
 
 ## Story
 
