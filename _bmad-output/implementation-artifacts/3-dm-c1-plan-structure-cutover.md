@@ -4,6 +4,56 @@ Status: in-progress
 
 ## Implementation log
 
+### 2026-06-01 — Phase 5 done (orchestrator + planner prompt tree-shape, additive)
+
+Authored:
+
+- `apps/api/src/modules/plans/plans.service.ts` — `composeTree()` method
+  added alongside `compose()`. Same pass-through-with-plan_id pattern;
+  accepts `PlanComposeTreeInput`, returns `PlanComposeTreeOutput`.
+- `apps/api/src/agents/tools/plan.tools.ts` — `createPlanComposeTreeSpec()`
+  registers a second tool named `plan.compose.tree`. Same shape as
+  `createPlanComposeSpec` but uses the tree contract schemas + routes
+  through `planService.composeTree`. `MANIFESTED_TOOL_NAMES` extended to
+  `['plan.compose', 'plan.compose.tree']`.
+- `apps/api/src/agents/orchestrator.ts` — `TOOL_MANIFEST.set('plan.compose.tree', ...)`
+  registered next to the flat one. Both tools live side-by-side; only the
+  prompt's `toolsAllowed` list determines which the LLM sees.
+- `apps/api/src/agents/prompts/planner.prompt.ts` — `PLANNER_PROMPT_TREE`
+  exported (v2.0.0). New body documents the tree shape (main_assignments
+  + days[].slots[].variations), the slot↔FK XOR rules per slot_kind, the
+  variation attribute set, the family-first allergen-fork pattern via
+  removals + add_ons. Embeds **two worked examples** inline per §10.7's
+  prompt-engineering risk control: Example 1 (shared-Main Monday, 2 kids,
+  portion + texture variation), Example 2 (allergen-fork Wednesday, 3 kids,
+  one variation removes peanut paste + adds coconut cream — same Main,
+  same row count, no Main split). `toolsAllowed` swaps `plan.compose` →
+  `plan.compose.tree`. The legacy `PLANNER_PROMPT` (v1.5.0) is unchanged
+  and remains the live default; `PlansService.planWeek()` still points at
+  it. Phase 9 swaps the active prompt.
+- `apps/api/src/agents/tools/plan.tools.tree.test.ts` — §10.7's
+  "synthetic plan_compose gate" surfaced as 8 Vitest checks. Drives the
+  two worked examples through `plan.compose.tree`'s input + output schemas
+  + the tool fn (with a stubbed `plansService.composeTree`), then exercises
+  the three most likely LLM regression shapes: flat items[] body, main slot
+  carrying recipe_id (XOR violation), slot referencing an undeclared
+  main_assignment_sequence.
+
+Prompt rollback plan (documented inline above PLANNER_PROMPT_TREE per §10.7):
+if post-cutover bad-output rate >5% in the first 24 hours, restore
+`PLANNER_PROMPT` text-only to its v1.5.0 body while `PLANNER_PROMPT_TREE.toolsAllowed`
+keeps pointing at the new tool. The resulting flat output will be rejected
+by the new RPC — that's the correct failure mode, not silent shape mixing.
+
+Verification:
+- 8/8 synthetic plan_compose tree-shape tests pass.
+- Full API sweep: 12 files / 33 tests fail — same baseline. Total
+  passing tests up by 8 (1324 → 1332).
+- Typecheck: 20 errors — same baseline.
+
+Phase 6 (adjacent services migration: plan-adjustment / day-overrides /
+variant-proposal) is next.
+
 ### 2026-06-01 — Phase 4 done (BriefStateComposer additive tree-shape)
 
 Authored: `apps/api/src/modules/plans/brief-state.composer.ts` (+

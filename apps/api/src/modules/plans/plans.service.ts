@@ -31,6 +31,8 @@ import type {
   PausePlanDayInput,
   PlanComposeInput,
   PlanComposeOutput,
+  PlanComposeTreeInput,
+  PlanComposeTreeOutput,
   PlanItemForGuardrail,
   PlanItemRow,
   PlanItemSwapSummary,
@@ -158,6 +160,21 @@ export class PlansService {
       plan_id: randomUUID(),
       household_id: input.household_id,
       week_of: input.week_of,
+      days: input.days,
+      prompt_version: input.prompt_version,
+    });
+  }
+
+  // Story 3-DM-C1 Phase 5 — tree-shape planner tool entry. Same shape as
+  // compose() (attach a plan_id, pass through), but operates on the
+  // canonical tree (main_assignments + days[].slots[].variations) instead
+  // of the flat days[].items[] array. Coexists with compose() until Phase 9.
+  async composeTree(input: PlanComposeTreeInput): Promise<PlanComposeTreeOutput> {
+    return Promise.resolve({
+      plan_id: randomUUID(),
+      household_id: input.household_id,
+      week_of: input.week_of,
+      main_assignments: input.main_assignments,
       days: input.days,
       prompt_version: input.prompt_version,
     });

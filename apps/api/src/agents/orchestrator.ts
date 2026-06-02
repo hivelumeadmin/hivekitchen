@@ -21,7 +21,7 @@ import {
 } from './tools/recipe.tools.js';
 import type { RecipeAgent } from './recipe-agent.js';
 import { createPantryReadSpec } from './tools/pantry.tools.js';
-import { createPlanComposeSpec } from './tools/plan.tools.js';
+import { createPlanComposeSpec, createPlanComposeTreeSpec } from './tools/plan.tools.js';
 import { createCulturalLookupSpec } from './tools/cultural.tools.js';
 import { PLANNER_PROMPT } from './prompts/planner.prompt.js';
 import { SWAP_PROMPT } from './prompts/swap.prompt.js';
@@ -175,6 +175,10 @@ export class DomainOrchestrator {
     TOOL_MANIFEST.set('recipe.fetch', createRecipeFetchSpec(services.recipe, redis));
     TOOL_MANIFEST.set('pantry.read', createPantryReadSpec(services.pantry, redis));
     TOOL_MANIFEST.set('plan.compose', createPlanComposeSpec(services.plan, redis));
+    // Story 3-DM-C1 Phase 5 — tree-shape variant. Registered alongside the
+    // flat one so PLANNER_PROMPT_TREE consumers see it. The active prompt
+    // (PLANNER_PROMPT) still references plan.compose; Phase 9 swaps that.
+    TOOL_MANIFEST.set('plan.compose.tree', createPlanComposeTreeSpec(services.plan, redis));
     TOOL_MANIFEST.set('cultural.lookup', createCulturalLookupSpec(services.culturalPrior, redis));
 
     this.breaker = new CircuitBreaker({
