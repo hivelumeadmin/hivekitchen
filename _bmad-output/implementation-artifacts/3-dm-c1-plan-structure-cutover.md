@@ -4,6 +4,74 @@ Status: in-progress
 
 ## Implementation log
 
+### 2026-06-01 — Phase 9b part 1 done (obsolete-test deletion)
+
+Scope this pass: delete the tests that exercised production code 9a already
+removed. Keeps the file tree honest before the bigger 9b sweep
+(fixture migration + flat-surface deletion + tree-merge re-implementation).
+
+Deleted (4 files):
+- `apps/api/src/jobs/plan-regeneration.job.test.ts` — re-implemented the
+  worker body against flat CommitPlanInput; the production worker is now
+  tree-shape and the harness duplication pattern is a maintenance trap.
+  Re-authored coverage for the live worker shape belongs in 9b part 2
+  alongside the proper day-scope merge.
+- `apps/api/src/jobs/swap-retry.helper.test.ts` — tested the flat merge
+  that 9a replaced with a transitional stub. Coverage of the proper tree
+  merge lands when the merge does (9b part 2).
+- `apps/api/src/modules/plans/plan-commit-layer2.test.ts` — exercised
+  the `materializeRecipesForCommit` + `layer2Materialize` paths that 9a
+  deleted entirely.
+- `apps/api/src/jobs/plan-generation.job.tree.test.ts` — Phase-7 tree-shape
+  variant; folded into `plan-generation.job.test.ts` so there is one
+  canonical test file per source file (mirrors what 9a did for
+  `plan.tools.test.ts`).
+
+Modified:
+- `apps/api/src/jobs/plan-generation.job.test.ts` — `@ts-nocheck` banner
+  removed; flat `buildCommitInput` describe block deleted; tree-shape
+  `buildCommitInputTree` describe block (from the now-deleted `.tree.test.ts`)
+  consolidated in. `deriveWeekId` + `getNextMondayFrom` + `getLocalSixPmUtcMs`
+  describes kept as-is.
+- `apps/api/src/modules/plans/plans.service.test.ts` — three obsolete
+  describe blocks deleted (lines 164–225 `PlansService.compose`, 944–1134
+  `PlansService.commit — discover candidate resolution`, 2084–2329 `Slice D
+  recipe materialization`). File shrunk from 2426 → ~1928 lines.
+  `@ts-nocheck` banner updated to point at the remaining migration sub-task:
+  the `commit` + `commit — plan.hard_fail` describes still construct flat
+  `CommitPlanInput` fixtures (~14 call sites) that need a `buildPlanTree`
+  rewrite. The other surviving describes (`getHardFailStatus`, `swapItem`,
+  `pauseDay`, `requestRegeneration`, `getPlanForWeek`, `getPlanHistory`,
+  `handleDegradedPlan`, `week-monday helpers`) typecheck independent of
+  this commit-fixture issue — once those ~14 call sites are migrated, the
+  banner removes cleanly.
+
+Verification:
+- API typecheck: 14 errors, unchanged baseline.
+- Test suite: not run.
+
+What 9b part 1 did NOT do (deferred to 9b part 2 / 9c):
+- Migrate the remaining ~14 call sites in `plans.service.test.ts` commit +
+  hard_fail describes to tree fixtures. Once done, `@ts-nocheck` banner
+  goes away in that single edit.
+- Re-implement the proper tree merges in `swap-retry.helper.ts` (per-
+  variation overlay onto previousCommit while preserving siblings) and
+  `plan-regeneration.job.ts` day-scope (overlay planner-emitted new day
+  onto existing tree via `getCurrentPlanTree`, keep other-day subtrees
+  + main_assignments intact).
+- Items 7 + 8 from the hand-off: delete the flat surface in
+  `packages/contracts/src/plan.ts` + `packages/types`; delete the flat
+  methods on `PlansRepository`, `BriefStateComposer`, `DayOverridesService`
+  / `DayOverridesRepository`, `VariantProposalService` /
+  `VariantProposalRepository`. Coordinate with item 5 (day-overrides route
+  param swap + corresponding service/route rewrite) and the swapItem +
+  pauseDay rewrites on top of the new repository surface.
+- Item 1, 11–13: migration apply, load test, status flip → 9c.
+
+The realistic shape for the 3-session split was always: 9a swaps live path,
+9b sweeps tests + deletes flat surface, 9c applies + verifies + flips. This
+part-1 commit slims the 9b target list before the heavier sub-task.
+
 ### 2026-06-01 — Phase 9a done (production swap to typecheck-green)
 
 Items landed in this session (per hand-off note's 9a sub-list): 2, 3, 4, 6, 10.
