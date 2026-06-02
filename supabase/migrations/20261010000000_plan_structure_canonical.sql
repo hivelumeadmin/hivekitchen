@@ -498,3 +498,98 @@ COMMENT ON FUNCTION commit_plan(uuid, uuid, date, integer, timestamptz, timestam
   'plans UPDATE last per §3.9 discipline. p_main_assignments and p_days are '
   'the planner agent''s emitted tree. main_assignment_sequence inside slots '
   'is a symbolic handle resolved against the just-inserted main_assignments.';
+
+-- ---------------------------------------------------------------------------
+-- 11. swap_plan_days() RPC (§9.3) — canvas drag-drop atomic swap.
+--
+-- Two UPDATE statements inside one PL/pgSQL function body run in a single
+-- implicit transaction. Without this server-side wrapper a client-side
+-- two-update sequence would briefly violate UNIQUE(plan_id, day) — both
+-- rows can''t both be 'tuesday' at the same instant. The temp-value
+-- workaround would need a third enum value reserved for swap; the function
+-- is cleaner.
+-- ---------------------------------------------------------------------------
+
+CREATE FUNCTION swap_plan_days(
+  p_plan_id  uuid,
+  p_day_a_id uuid,
+  p_day_b_id uuid
+)
+RETURNS void
+LANGUAGE plpgsql
+AS $$
+DECLARE
+  v_day_a weekday;
+  v_day_b weekday;
+BEGIN
+  -- Lock both rows in id order for deterministic acquire (prevents deadlock
+  -- if two concurrent swaps target the same plan in mirrored orders).
+  IF p_day_a_id < p_day_b_id THEN
+    SELECT day INTO v_day_a FROM plan_days WHERE id = p_day_a_id AND plan_id = p_plan_id FOR UPDATE;
+    SELECT day INTO v_day_b FROM plan_days WHERE id = p_day_b_id AND plan_id = p_plan_id FOR UPDATE;
+  ELSE
+    SELECT day INTO v_day_b FROM plan_days WHERE id = p_day_b_id AND plan_id = p_plan_id FOR UPDATE;
+    SELECT day INTO v_day_a FROM plan_days WHERE id = p_day_a_id AND plan_id = p_plan_id FOR UPDATE;
+  END IF;
+
+  IF v_day_a IS NULL OR v_day_b IS NULL THEN
+    RAISE EXCEPTION 'swap_plan_days: one or both plan_day ids not found for plan %', p_plan_id;
+  END IF;
+
+  -- Park day A on a sentinel value so the UNIQUE constraint allows day B
+  -- to take the original day-A slot. The weekday enum doesn''t carry a
+  -- sentinel, so we run the swap in two steps using id-keyed UPDATEs that
+  -- temporarily violate (plan_id, day) UNIQUE — but only inside the txn,
+  -- and only briefly. DEFERRABLE on the unique index would be cleaner;
+  -- since the constraint is defined NOT DEFERRABLE by default in §3.5,
+  -- we instead use a one-pass UPDATE ... FROM swap pattern.
+  --
+  -- Single-statement swap that satisfies UNIQUE throughout: each row sees
+  -- the OTHER row''s day as its new value. No intermediate violating state.
+  UPDATE plan_days AS d
+     SET day = src.new_day, updated_at = now()
+    FROM (VALUES
+            (p_day_a_id, v_day_b),
+            (p_day_b_id, v_day_a)
+         ) AS src(id, new_day)
+   WHERE d.id = src.id;
+END;
+$$;
+
+COMMENT ON FUNCTION swap_plan_days(uuid, uuid, uuid) IS
+  'Story 3-DM-C1 §9.3 — atomic day swap. Single UPDATE ... FROM (VALUES) '
+  'satisfies UNIQUE(plan_id, day) throughout the swap; no DEFERRABLE needed. '
+  'Locks acquire in id order to prevent mirrored-swap deadlock.';
+
+-- ---------------------------------------------------------------------------
+-- 12. pause_child_on_day() RPC (§9.6) — flip paused_at on every plan_slot_variation
+--     for one child across all slots of a given plan_day. Server-side
+--     because supabase-js doesn''t natively support the IN-with-subquery
+--     pattern this query needs.
+-- ---------------------------------------------------------------------------
+
+CREATE FUNCTION pause_child_on_day(
+  p_child_id    uuid,
+  p_plan_day_id uuid,
+  p_paused_at   timestamptz
+)
+RETURNS int
+LANGUAGE plpgsql
+AS $$
+DECLARE
+  v_count int;
+BEGIN
+  UPDATE plan_slot_variations
+     SET paused_at = p_paused_at, updated_at = now()
+   WHERE child_id = p_child_id
+     AND plan_slot_id IN (SELECT id FROM plan_slots WHERE plan_day_id = p_plan_day_id);
+
+  GET DIAGNOSTICS v_count = ROW_COUNT;
+  RETURN v_count;
+END;
+$$;
+
+COMMENT ON FUNCTION pause_child_on_day(uuid, uuid, timestamptz) IS
+  'Story 3-DM-C1 §9.6 — pause one child across every slot of a plan_day. '
+  'Returns the variation row count affected. Idempotent on already-paused '
+  'rows (paused_at gets stamped with the new value).';

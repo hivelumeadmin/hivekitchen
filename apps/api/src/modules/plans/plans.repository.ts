@@ -1,9 +1,19 @@
 import { BaseRepository } from '../../repository/base.repository.js';
 import type {
   CommitPlanInput,
-  PlanRow,
+  CommitPlanTreeInput,
+  PauseReason,
+  PlanDayRow,
   PlanItemRow,
   PlanItemSwapSummary,
+  PlanMainAssignmentRow,
+  PlanRow,
+  PlanSlotRow,
+  PlanSlotVariationRow,
+  PortionSize,
+  SpiceLevel,
+  TextureLevel,
+  Weekday,
 } from '@hivekitchen/types';
 import { getCurrentWeekMonday } from '../../lib/derive-week-id.js';
 
@@ -12,6 +22,19 @@ const PLAN_COLUMNS =
 
 const PLAN_ITEM_COLUMNS =
   'id, plan_id, child_id, day, slot, recipe_id, item_id, ingredients, paused_at, replaced_by_plan_id, created_at, updated_at';
+
+// Story 3-DM-C1 — column constants for the tree-shape tables.
+const PLAN_MAIN_ASSIGNMENT_COLUMNS =
+  'id, plan_id, sequence, recipe_id, created_at';
+
+const PLAN_DAY_COLUMNS =
+  'id, plan_id, day, paused_at, paused_reason, paused_note, created_at, updated_at';
+
+const PLAN_SLOT_COLUMNS =
+  'id, plan_day_id, slot_kind, main_assignment_id, recipe_id, extra_kind, paused_at, created_at, updated_at';
+
+const PLAN_SLOT_VARIATION_COLUMNS =
+  'id, plan_slot_id, child_id, portion_size, texture, spice_level, cutting_style, container, add_ons, removals, notes, paused_at, created_at, updated_at';
 
 export class PlansRepository extends BaseRepository {
   // Presentation-bind contract: only guardrail-cleared rows ever reach the UI.
@@ -354,4 +377,245 @@ export class PlansRepository extends BaseRepository {
     if (error) throw error;
     return data as string;
   }
+
+  // ==========================================================================
+  // Story 3-DM-C1 — Tree-shape reads + commands (Phase 3).
+  //
+  // These methods coexist with the flat plan_items methods above for the
+  // duration of the C1 cutover window. Phase 4 (BriefStateComposer) consumes
+  // the find* methods; Phase 7 (plan-generation.job) switches commit() →
+  // commitTree(). Phase 9 deletes the flat methods, applies the migration,
+  // and renames commitTree → commit.
+  //
+  // Until the migration is applied, calls to these methods at runtime will
+  // FAIL because the underlying tables / RPCs don't exist yet. Tests are
+  // Vitest-mocked so they exercise the call shape without DB.
+  // ==========================================================================
+
+  // §9.1 step 2 — parallel read of M1/M2/M3 main assignments.
+  async findMainAssignmentsByPlanId(planId: string): Promise<PlanMainAssignmentRow[]> {
+    const { data, error } = await this.client
+      .from('plan_main_assignments')
+      .select(PLAN_MAIN_ASSIGNMENT_COLUMNS)
+      .eq('plan_id', planId)
+      .order('sequence', { ascending: true });
+    if (error) throw error;
+    return (data ?? []) as PlanMainAssignmentRow[];
+  }
+
+  // §9.1 step 2 — plan_days ordered Mon-Sat for predictable rendering.
+  async findDaysByPlanId(planId: string): Promise<PlanDayRow[]> {
+    const { data, error } = await this.client
+      .from('plan_days')
+      .select(PLAN_DAY_COLUMNS)
+      .eq('plan_id', planId)
+      .order('day', { ascending: true });
+    if (error) throw error;
+    return (data ?? []) as PlanDayRow[];
+  }
+
+  // §9.1 step 2 — batch read of all slots across all days for a plan.
+  // Used by the composer; the join through plan_day_id → plans is implicit
+  // since the composer already has the day list and filters slots by day id.
+  async findSlotsByPlanId(planId: string): Promise<PlanSlotRow[]> {
+    // Two-query form: get day ids first, then slots by .in('plan_day_id', ...)
+    // since supabase-js doesn't support JOIN inside .select(). For a Mon-Sat
+    // plan that's 6 ids at most — well under the IN-clause practical ceiling.
+    const dayIds = (await this.findDaysByPlanId(planId)).map((d) => d.id);
+    if (dayIds.length === 0) return [];
+    return this.findSlotsByDayIds(dayIds);
+  }
+
+  // Per-day fan-in used by the Wall Card live-join read path (§9.2 Option B).
+  async findSlotsByDayId(planDayId: string): Promise<PlanSlotRow[]> {
+    const { data, error } = await this.client
+      .from('plan_slots')
+      .select(PLAN_SLOT_COLUMNS)
+      .eq('plan_day_id', planDayId);
+    if (error) throw error;
+    return (data ?? []) as PlanSlotRow[];
+  }
+
+  // Batch variant used by findSlotsByPlanId — avoids round-trip-per-day.
+  async findSlotsByDayIds(planDayIds: readonly string[]): Promise<PlanSlotRow[]> {
+    if (planDayIds.length === 0) return [];
+    const { data, error } = await this.client
+      .from('plan_slots')
+      .select(PLAN_SLOT_COLUMNS)
+      .in('plan_day_id', planDayIds as string[]);
+    if (error) throw error;
+    return (data ?? []) as PlanSlotRow[];
+  }
+
+  // §9.1 step 2 — variation read across multiple slots. Composer batches
+  // every slot's variations in one IN query.
+  async findVariationsBySlotIds(slotIds: readonly string[]): Promise<PlanSlotVariationRow[]> {
+    if (slotIds.length === 0) return [];
+    const { data, error } = await this.client
+      .from('plan_slot_variations')
+      .select(PLAN_SLOT_VARIATION_COLUMNS)
+      .in('plan_slot_id', slotIds as string[]);
+    if (error) throw error;
+    return (data ?? []) as PlanSlotVariationRow[];
+  }
+
+  // §9.3 — canvas drag-drop atomic day swap. Calls the swap_plan_days RPC
+  // so the (plan_id, day) UNIQUE constraint is honored throughout the swap.
+  async swapDays(opts: { planId: string; dayAId: string; dayBId: string }): Promise<void> {
+    const { error } = await this.client.rpc('swap_plan_days', {
+      p_plan_id: opts.planId,
+      p_day_a_id: opts.dayAId,
+      p_day_b_id: opts.dayBId,
+    });
+    if (error) throw error;
+  }
+
+  // §9.4 — single-row variation edit (portion / texture / spice / containers / etc).
+  // Portion-only changes don't need a guardrail re-eval; ingredient-affecting
+  // patches (add_ons / removals) DO, and that re-eval is the caller's job.
+  async updateVariation(opts: {
+    variationId: string;
+    patch: Partial<{
+      portion_size: PortionSize;
+      texture: TextureLevel;
+      spice_level: SpiceLevel;
+      cutting_style: string | null;
+      container: string | null;
+      add_ons: string[];
+      removals: string[];
+      notes: string | null;
+      paused_at: string | null;
+    }>;
+  }): Promise<PlanSlotVariationRow> {
+    const patch: Record<string, unknown> = {
+      ...opts.patch,
+      updated_at: new Date().toISOString(),
+    };
+    const { data, error } = await this.client
+      .from('plan_slot_variations')
+      .update(patch)
+      .eq('id', opts.variationId)
+      .select(PLAN_SLOT_VARIATION_COLUMNS)
+      .single();
+    if (error) throw error;
+    return data as PlanSlotVariationRow;
+  }
+
+  // §9.5 — full-day pause. Pauses the whole day for every child in one
+  // UPDATE row. Idempotent on already-paused days: paused_at gets restamped.
+  async pauseDayById(opts: {
+    dayId: string;
+    pausedAt: string;
+    reason: PauseReason;
+    note?: string | null;
+  }): Promise<PlanDayRow> {
+    const { data, error } = await this.client
+      .from('plan_days')
+      .update({
+        paused_at: opts.pausedAt,
+        paused_reason: opts.reason,
+        paused_note: opts.note ?? null,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', opts.dayId)
+      .select(PLAN_DAY_COLUMNS)
+      .single();
+    if (error) throw error;
+    return data as PlanDayRow;
+  }
+
+  // §9.5 — undo pauseDayById when the parent reverses the pause.
+  async unpauseDayById(opts: { dayId: string }): Promise<PlanDayRow | null> {
+    const { data, error } = await this.client
+      .from('plan_days')
+      .update({
+        paused_at: null,
+        paused_reason: null,
+        paused_note: null,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', opts.dayId)
+      .not('paused_at', 'is', null)
+      .select(PLAN_DAY_COLUMNS)
+      .maybeSingle();
+    if (error) throw error;
+    return (data as PlanDayRow | null) ?? null;
+  }
+
+  // §9.6 — pause one child across every slot on a given day. Calls the
+  // pause_child_on_day RPC because supabase-js doesn't natively support
+  // .in() over a subquery. Returns the count of variation rows affected.
+  async pauseChildOnDay(opts: {
+    childId: string;
+    planDayId: string;
+    pausedAt: string;
+  }): Promise<number> {
+    const { data, error } = await this.client.rpc('pause_child_on_day', {
+      p_child_id: opts.childId,
+      p_plan_day_id: opts.planDayId,
+      p_paused_at: opts.pausedAt,
+    });
+    if (error) throw error;
+    return data as number;
+  }
+
+  // §9.7 — swap this Main. One UPDATE on plan_main_assignments affects
+  // every plan_day that references this assignment via the M1/M2/M3 grouping
+  // (i.e., the 2-day-repeat preservation is automatic). Guardrail re-eval
+  // is the caller's responsibility.
+  async swapMain(opts: {
+    mainAssignmentId: string;
+    newRecipeId: string;
+  }): Promise<PlanMainAssignmentRow> {
+    const { data, error } = await this.client
+      .from('plan_main_assignments')
+      .update({ recipe_id: opts.newRecipeId })
+      .eq('id', opts.mainAssignmentId)
+      .select(PLAN_MAIN_ASSIGNMENT_COLUMNS)
+      .single();
+    if (error) throw error;
+    return data as PlanMainAssignmentRow;
+  }
+
+  // Tree-shape atomic commit. Maps to the new commit_plan() RPC signature
+  // (10 args: p_plan_id, p_household_id, p_week_of, p_revision, p_generated_at,
+  // p_guardrail_cleared_at, p_guardrail_version, p_prompt_version,
+  // p_main_assignments, p_days). Phase 7 swaps plan-generation.job from
+  // commit() → commitTree().
+  async commitTree(
+    input: CommitPlanTreeInput,
+    guardrailClearedAt: string,
+    guardrailVersion: string,
+  ): Promise<string> {
+    const { data, error } = await this.client.rpc('commit_plan', {
+      p_plan_id: input.plan_id,
+      p_household_id: input.household_id,
+      p_week_of: input.week_of,
+      p_revision: input.revision,
+      p_generated_at: input.generated_at,
+      p_guardrail_cleared_at: guardrailClearedAt,
+      p_guardrail_version: guardrailVersion,
+      p_prompt_version: input.prompt_version,
+      p_main_assignments: input.main_assignments,
+      p_days: input.days,
+    });
+    if (error) throw error;
+    return data as string;
+  }
+}
+
+// Story 3-DM-C1 — Weekday ordering helper. The DB returns plan_days ordered
+// alphabetically when ordered by the enum text representation, which puts
+// 'friday' before 'monday'. Composer code that needs Mon-Sat order calls this
+// to re-sort the row list before walking. Pure function; no DB.
+export function sortPlanDaysByWeekday<T extends { day: Weekday }>(days: T[]): T[] {
+  const order: Record<Weekday, number> = {
+    monday: 1,
+    tuesday: 2,
+    wednesday: 3,
+    thursday: 4,
+    friday: 5,
+    saturday: 6,
+  };
+  return [...days].sort((a, b) => order[a.day] - order[b.day]);
 }

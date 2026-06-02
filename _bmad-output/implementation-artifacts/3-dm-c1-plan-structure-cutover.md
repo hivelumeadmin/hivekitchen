@@ -4,6 +4,56 @@ Status: in-progress
 
 ## Implementation log
 
+### 2026-06-01 — Phase 3 done (PlansRepository additive tree-shape methods)
+
+Authored: `apps/api/src/modules/plans/plans.repository.ts` (+ tree-shape
+methods) and `apps/api/src/modules/plans/plans.repository.tree.test.ts`
+(17 tests, all green). The flat plan_items methods (`findItemsByPlanId`,
+`findItemById`, `updateItemIngredients`, `pauseDay`, `pauseItemById`,
+`unpauseItemById`, `countItemsForDay`, `findAllItemsByPlanId`,
+`findSwapHistory`, `commit`) stay in place — Phase 9 removes them along
+with applying the migration in one coordinated commit.
+
+Methods added (per §9 query patterns):
+
+- **Reads**: `findMainAssignmentsByPlanId`, `findDaysByPlanId`,
+  `findSlotsByPlanId` (composer's batch), `findSlotsByDayId` (per-day
+  Wall-Card path), `findSlotsByDayIds` (IN-clause batch),
+  `findVariationsBySlotIds` (IN-clause batch). All short-circuit on
+  empty inputs to avoid wasted DB round-trips.
+- **Commands**: `swapDays` (§9.3 — calls new `swap_plan_days` RPC),
+  `updateVariation` (§9.4), `pauseDayById` + `unpauseDayById` (§9.5),
+  `pauseChildOnDay` (§9.6 — calls new `pause_child_on_day` RPC),
+  `swapMain` (§9.7).
+- **Commit**: `commitTree(input: CommitPlanTreeInput, ...)` maps to the
+  new commit_plan() 10-arg signature (drops p_week_id, drops p_items,
+  adds p_main_assignments + p_days).
+- **Helper**: `sortPlanDaysByWeekday()` — pure function. The DB returns
+  plan_days alphabetically by enum text (friday before monday); the
+  composer + Wall Card paths re-sort with this for predictable rendering.
+
+Migration update: `supabase/migrations/20261010000000_plan_structure_canonical.sql`
+extended with two server-side RPCs the new repository methods reference:
+
+- `swap_plan_days(p_plan_id, p_day_a_id, p_day_b_id)` — single
+  `UPDATE ... FROM (VALUES)` that satisfies `UNIQUE(plan_id, day)`
+  throughout the swap (no DEFERRABLE needed). FOR UPDATE locks acquire
+  in id order to prevent mirrored-swap deadlock.
+- `pause_child_on_day(p_child_id, p_plan_day_id, p_paused_at)` —
+  wraps the IN-with-subquery pattern that supabase-js doesn't natively
+  support. Returns affected row count.
+
+Verification:
+- 17/17 new tree-shape repository tests pass — exercises call shapes for
+  every find / update / RPC method.
+- Full API sweep: 12 files / 33 tests fail — same count via stash-and-rerun.
+  Total passing tests up by 17. All pre-existing failures unrelated.
+- Typecheck: 20 errors — same baseline (pre-existing, all in unrelated
+  files: voice.routes / voice.service.test / plans.service.test
+  RecipeService duplicate / heart-notes $ZodIssue).
+
+Phase 4 (BriefStateComposer rewrite) consumes the new find* methods next.
+
 ### 2026-06-01 — Phase 2 done (contracts additive tree-shape schemas)
 
 Authored: `packages/contracts/src/plan.ts` (+ tree-shape schemas additively
