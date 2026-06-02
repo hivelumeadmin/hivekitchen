@@ -4,6 +4,129 @@ Status: in-progress
 
 ## Implementation log
 
+### 2026-06-02 — Phase 9b part 3 done (tree-shape merges replace 9a stubs)
+
+Lands the two proper tree merges that 9a left as transitional stubs. Surgical
+swap-retry now does per-variation overlay onto previousCommit; day-scope
+plan regeneration overlays the planner-emitted target day onto the existing
+plan tree (via `getCurrentPlanTree`) so sibling days + plan-level
+`main_assignments` survive the round-trip. Cost regression from 9a closes:
+surgical-eligible guardrail blocks no longer pay the extra `planWeek` call,
+and day-scope regen stops silently dropping other-day subtrees.
+
+Production code changes:
+
+- `apps/api/src/jobs/swap-retry.helper.ts` — rewritten from the 9a null-stub
+  into the proper tree-shape merge (~270 lines including helpers + header
+  comment). Block grain unchanged from the pre-9a flat helper:
+  `(child_id, day, slot_kind)`. Coverage check preserved — every blocked
+  tuple must have a swap variation in the output, else fall through to
+  full `planWeek`. Defense against agent overstep preserved — swap
+  variations whose `(child_id, day, slot_kind)` isn't in the blocked set
+  are dropped. Merge semantics:
+  - `main_assignments` overlay by `sequence` — swap entries replace prev
+    entries with the same sequence; new sequences appended.
+  - Days matched by `day`; untouched prev days pass through by reference.
+  - Slots matched by `slot_kind`; field-level merge so swap's recipe_id /
+    main_assignment_sequence / recipe_candidate_id / extra_kind take
+    precedence when defined.
+  - Variations matched by `child_id`; field-level merge so an allergen-
+    fork-only swap (just removals + add_ons) preserves portion / texture /
+    spice / cutting_style / container / notes from prev.
+  - `BlockedItem.original_ingredients` derived from `variation.add_ons`
+    (matches the 9a guardrail's per-variation grain — recipe-base join
+    deferred per the in-helper note).
+  - Compound-uncertain rejections still produce `uncertainContext` and
+    are merged with hard blocks into the same coverage check.
+
+- `apps/api/src/jobs/day-scope-merge.helper.ts` — NEW (~200 lines). Three
+  pure helpers used by `plan-regeneration.job`:
+  - `existingTreeToPlannerShape(existing)` — converts DB-row tree
+    (`PlanMainAssignmentRow[]`, `PlanDayRow[]`, `PlanSlotRow[]`,
+    `PlanSlotVariationRow[]`) to planner-input shape
+    (`PlannerMainAssignmentInput[]`, `PlannerDayInput[]`). Resolves
+    `main_assignment_id` → `sequence` by lookup map; throws on phantom
+    references. Drops `plan_slots.paused_at` (intentional — no current
+    path writes it; not part of `PlannerSlotInputSchema`). Preserves
+    `plan_days.paused_at` + `plan_slot_variations.paused_at` round-trip.
+  - `existingTreeToCommitInput(opts)` — packs converted tree into
+    `CommitPlanTreeInput` using worker-supplied
+    `plan_id / household_id / week_of / revision / prompt_version /
+    generated_at / plan_build_id?`.
+  - `overlayDayScopeOntoFullTree({ fullCommit, dayScopedCommit, targetDay })`
+    — replaces the target day in `fullCommit.days` with `dayScopedCommit`'s
+    emission; sibling days pass through by reference; if the target day
+    isn't in `fullCommit.days` it's appended. `main_assignments` are
+    discarded from `dayScopedCommit` and kept from `fullCommit` — Mains
+    are plan-level and day-scope regen must not mutate them. Metadata
+    (revision, generated_at, prompt_version) inherits from
+    `dayScopedCommit` so the new revision survives. Throws if the
+    `dayScopedCommit` lacks the target day (defensive — the worker
+    already throws on this earlier).
+
+- `apps/api/src/jobs/plan-regeneration.job.ts` — day-scope merge wired
+  in at two points:
+  - Before the initial commit: when `scope === 'day' && day !== undefined`,
+    load `existingTree` via `plansService.getCurrentPlanTree(plan_id,
+    household_id)`, convert to `CommitPlanTreeInput`, overlay the
+    planner-emitted day onto it.
+  - Inside the rejection retry callback (full-`planWeek` fallback path):
+    overlay the retry's planner-emitted day onto `lastAttemptCommit` (the
+    latest known full tree from the prior merge or surgical pass). The
+    surgical retry path doesn't need this overlay — `trySurgicalSwap`
+    already returns a full-tree `CommitPlanTreeInput`.
+  - `day: string` from `PlanRegenerationJobData` is cast to `Weekday` at
+    the call sites (route validates via `RegeneratePlanQuerySchema`'s
+    Weekday enum; widening the job-data type is a follow-up that
+    coordinates with B+C's day-overrides cleanup).
+
+Test file changes:
+
+- `apps/api/src/jobs/swap-retry.helper.test.ts` — NEW (10 tests). Replaces
+  the file 9b part 1 deleted. Covers: no-actionable / phantom /
+  agent-throws / incomplete-coverage → null; field-merge preserves
+  portion/texture/spice on allergen-fork swap; non-blocked variations
+  dropped; `main_assignments` overlay by sequence; untouched days pass
+  through (reference equality); slot-level snack recipe_id swap;
+  `uncertainContext` forwarded to the swap agent on compound-flagged
+  rejections.
+- `apps/api/src/jobs/day-scope-merge.helper.test.ts` — NEW (12 tests).
+  Covers: main/snack/extra slot-kind packing; main_assignment_id →
+  sequence resolution; variation attribute round-trip; day-level pause
+  omitted when null + preserved when set; throws on phantom
+  `main_assignment_id`; overlay replaces target day + preserves siblings
+  by reference; `main_assignments` from `fullCommit` (not `dayScopedCommit`);
+  revision/generated_at/prompt_version inherits from `dayScopedCommit`;
+  append-target-day path; throws when target day missing.
+
+Verification:
+
+- API typecheck: 14 errors, unchanged baseline.
+- API tests: 11 files / 32 tests failing — identical to the 9b part 2
+  baseline. The 22 new helper tests pass; the 11 failing files are the
+  same pre-existing set (auth, catalog-seed, children repo, extra-
+  library, memory, audit types, onboarding tools, day-overrides.repository,
+  voice routes, voice service, households routes).
+
+Still pending under 9b's banner (split to 9b part 4 / 9c):
+
+- Items 7 + 8 from the original Phase-9 hand-off: delete the flat surface
+  in `packages/contracts/src/plan.ts` + `packages/types`; delete the flat
+  methods on `PlansRepository` (`PLAN_ITEM_COLUMNS`, `findItemsByPlanId`,
+  `findItemById`, `updateItemIngredients`, `pauseDay`, `pauseItemById`,
+  `unpauseItemById`, `countItemsForDay`, `findAllItemsByPlanId`,
+  `findSwapHistory`, `commit`), `BriefStateComposer` (flat `refresh` +
+  `buildTileSummaries` + `buildClearedAllergies` + `buildScaffoldingDiff`),
+  `DayOverridesService` (flat `setOverride`/`revertOverride`),
+  `DayOverridesRepository` (`OVERRIDE_COLUMNS`, `upsert`, `revert`,
+  `findActiveById`), `VariantProposalService` (`createFromPlanOutput`),
+  `VariantProposalRepository` (`create` + `CreateVariantProposalInput`).
+- Item 5 from the hand-off: day-overrides route param rename
+  `planItemId` → `planSlotId`; rewrites of `swapItem` + `pauseDay` on
+  PlansService against the tree-shape repository surface. Coordinates
+  with the flat-surface delete in items 7+8.
+- Items 1, 11–13 → 9c (migration apply, load-test gate, status flip).
+
 ### 2026-06-02 — Phase 9b part 2 done (test fixture sweep)
 
 Migrated the tests left under `@ts-nocheck` after 9b part 1, plus the

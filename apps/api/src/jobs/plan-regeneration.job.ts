@@ -5,8 +5,13 @@ import type {
   CommitPlanTreeInput,
   GuardrailResult,
   PlanComposeTreeOutput,
+  Weekday,
 } from '@hivekitchen/types';
 import { buildCommitInputTree } from './plan-generation.job.js';
+import {
+  existingTreeToCommitInput,
+  overlayDayScopeOntoFullTree,
+} from './day-scope-merge.helper.js';
 import { ChildAllergensRepository } from '../modules/children/child-allergens.repository.js';
 import { ChildrenRepository } from '../modules/children/children.repository.js';
 import { CulturalPriorRepository } from '../modules/cultural-priors/cultural-prior.repository.js';
@@ -185,15 +190,35 @@ const planRegenerationPlugin: FastifyPluginAsync = async (fastify) => {
         );
       }
 
-      const commitInput = buildCommitInputTree(filteredOutput, request_id);
+      let commitInput = buildCommitInputTree(filteredOutput, request_id);
+
+      // 9b part 3 — day-scope regen overlays the planner-emitted target day
+      // onto the existing plan tree so sibling days + plan-level
+      // main_assignments survive the round-trip. Week-scope regen replaces
+      // the whole tree and skips this branch.
+      if (scope === 'day' && day !== undefined) {
+        const existingTree = await fastify.plansService.getCurrentPlanTree(plan_id, household_id);
+        const existingCommit = existingTreeToCommitInput({
+          existing: existingTree,
+          planId: plan_id,
+          householdId: household_id,
+          weekOf: week_of,
+          revision: current_revision,
+          promptVersion: filteredOutput.prompt_version,
+          generatedAt: commitInput.generated_at,
+          planBuildId: commitInput.plan_build_id,
+        });
+        commitInput = overlayDayScopeOntoFullTree({
+          fullCommit: existingCommit,
+          dayScopedCommit: commitInput,
+          // RegeneratePlanQuerySchema constrains `day` to Weekday at route
+          // validation; PlanRegenerationJobData.day is typed `string` for
+          // historical reasons (predates this helper). Safe to narrow here.
+          targetDay: day as Weekday,
+        });
+      }
       // Increment revision so brief.plan_revision bumps and BriefCanvas polling terminates.
       commitInput.revision = current_revision + 1;
-
-      // Phase 9a transitional — day-scope merge with existing other-day
-      // subtrees is deferred to Phase 9b. For now, day-scope regen commits
-      // only the planner-emitted target day. Production day-scope regen
-      // behavior is degraded until 9b completes the tree-level merge of
-      // existing days[].slots[].variations[] over the new commit input.
 
       // Commit with full-week allergy guardrail. The regenerate callback first
       // tries the Slice E Swap Agent (mini-tier surgical retry) before falling
@@ -270,7 +295,19 @@ const planRegenerationPlugin: FastifyPluginAsync = async (fastify) => {
               ? { ...retryOutput, days: retryOutput.days.filter((d) => d.day === day) }
               : retryOutput;
 
-          const retryCommit = buildCommitInputTree(filteredRetry, request_id);
+          let retryCommit = buildCommitInputTree(filteredRetry, request_id);
+
+          // 9b part 3 — overlay the retry's planner-emitted day onto the
+          // latest known full tree (lastAttemptCommit is the merged commit
+          // from the prior attempt). Week-scope retry uses the planner's
+          // full week directly.
+          if (scope === 'day' && day !== undefined) {
+            retryCommit = overlayDayScopeOntoFullTree({
+              fullCommit: lastAttemptCommit,
+              dayScopedCommit: retryCommit,
+              targetDay: day as Weekday,
+            });
+          }
           retryCommit.revision = current_revision + 1;
 
           lastAttemptCommit = retryCommit;
