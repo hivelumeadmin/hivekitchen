@@ -268,6 +268,23 @@ import {
   PlanComposeTreeInputSchema,
   PlanComposeTreeOutputSchema,
   CommitPlanTreeInputSchema,
+  // Story 3-DM-C1 Phase 9b part 4 — wire-shape migration response + mutation schemas
+  GetPlansResponseTreeSchema,
+  PlanSwapSummaryTreeSchema,
+  PlanHistoryResponseTreeSchema,
+  SwapMainInputSchema,
+  SwapMainResponseSchema,
+  UpdateVariationInputSchema,
+  UpdateVariationResponseSchema,
+  SwapSlotRecipeInputSchema,
+  SwapSlotRecipeResponseSchema,
+  PausePlanDayTreeInputSchema,
+  PauseChildOnDayInputSchema,
+  MainAssignmentParamSchema,
+  VariationParamSchema,
+  PlanSlotParamSchema,
+  DayOverrideSlotParamSchema,
+  DayOverrideSlotRevertParamSchema,
 } from '@hivekitchen/contracts';
 
 // Auth
@@ -644,3 +661,23 @@ export type PlannerMainAssignmentInput = z.infer<typeof PlannerMainAssignmentInp
 export type PlanComposeTreeInput = z.infer<typeof PlanComposeTreeInputSchema>;
 export type PlanComposeTreeOutput = z.infer<typeof PlanComposeTreeOutputSchema>;
 export type CommitPlanTreeInput = z.infer<typeof CommitPlanTreeInputSchema>;
+
+// Story 3-DM-C1 Phase 9b part 4 — wire-shape migration types.
+// READ paths return the four tree arrays directly; MUTATION inputs split
+// into per-operation shapes matching the canonical model's swap surface.
+export type GetPlansResponseTree = z.infer<typeof GetPlansResponseTreeSchema>;
+export type PlanSwapSummaryTree = z.infer<typeof PlanSwapSummaryTreeSchema>;
+export type PlanHistoryResponseTree = z.infer<typeof PlanHistoryResponseTreeSchema>;
+export type SwapMainInput = z.infer<typeof SwapMainInputSchema>;
+export type SwapMainResponse = z.infer<typeof SwapMainResponseSchema>;
+export type UpdateVariationInput = z.infer<typeof UpdateVariationInputSchema>;
+export type UpdateVariationResponse = z.infer<typeof UpdateVariationResponseSchema>;
+export type SwapSlotRecipeInput = z.infer<typeof SwapSlotRecipeInputSchema>;
+export type SwapSlotRecipeResponse = z.infer<typeof SwapSlotRecipeResponseSchema>;
+export type PausePlanDayTreeInput = z.infer<typeof PausePlanDayTreeInputSchema>;
+export type PauseChildOnDayInput = z.infer<typeof PauseChildOnDayInputSchema>;
+export type MainAssignmentParam = z.infer<typeof MainAssignmentParamSchema>;
+export type VariationParam = z.infer<typeof VariationParamSchema>;
+export type PlanSlotParam = z.infer<typeof PlanSlotParamSchema>;
+export type DayOverrideSlotParam = z.infer<typeof DayOverrideSlotParamSchema>;
+export type DayOverrideSlotRevertParam = z.infer<typeof DayOverrideSlotRevertParamSchema>;

@@ -866,3 +866,167 @@ export const CommitPlanTreeInputSchema = z.object({
     .max(MAIN_ASSIGNMENTS_PER_PLAN_MAX),
   days: z.array(PlannerDayInputSchema).min(1).max(DAYS_PER_PLAN_MAX),
 });
+
+// ===========================================================================
+// Story 3-DM-C1 Phase 9b part 4 — wire-shape migration (A-full path).
+//
+// READ-path response shapes flip from flat (plan_items[]) to tree
+// (main_assignments + days + slots + variations). MUTATION inputs decompose
+// from a single SwapPlanItemInput into three operations matching the
+// canonical model: swapMain (M-assignment recipe change), updateVariation
+// (per-child tweak), swapSlotRecipe (snack/extra recipe change).
+//
+// These coexist with the flat counterparts until the delete pass in the
+// same coordinated commit. Routes switch consumers from flat to tree
+// schemas in plans.routes.ts.
+// ===========================================================================
+
+// --- GET /v1/plans — tree-shape response ---
+//
+// plan_items[] retires; the response carries the four tree arrays directly.
+// The client assembles its tile view by walking the arrays. main_assignments
+// is plan-level; days are sorted Mon→Sat by the API; slots fan out main /
+// snack / extra under each day; variations are per-child. Empty arrays are
+// valid (e.g. plan is null on the draft path or the hard-fail path).
+export const GetPlansResponseTreeSchema = z.object({
+  plan: PlanRowCanonicalSchema.nullable(),
+  main_assignments: z.array(PlanMainAssignmentRowSchema).default([]),
+  days: z.array(PlanDayRowSchema).default([]),
+  slots: z.array(PlanSlotRowSchema).default([]),
+  variations: z.array(PlanSlotVariationRowSchema).default([]),
+  is_draft: z.boolean(),
+  week_of: z.string().date(),
+  hard_fail: HardFailStatusSchema.nullable().optional(),
+  // VariantProposalSchema still carries plan_item_id; that field swaps to
+  // plan_slot_variation_id in a sibling slice (see Phase-6 carve-out note).
+  // Until then this response reuses the existing schema verbatim.
+  variant_proposals: z.array(VariantProposalSchema).optional(),
+  flagged_items: z.array(FlaggedCompoundItemSchema).optional(),
+});
+
+// --- GET /v1/plans/:weekId/history — tree-shape response ---
+//
+// swap_history shape is deferred. The canonical model has no archived
+// plan_items table; mid-week swaps/edits become audit_log entries with
+// kind: 'main_swap' | 'variation_edit' | 'slot_recipe_swap'. The first
+// pass returns [] and the route builds the array empty; a follow-up slice
+// designs the audit-driven derivation and populates the schema. Leaving the
+// field present with a stable shape keeps the contract stable from day one.
+export const PlanSwapSummaryTreeSchema = z.object({
+  kind: z.enum(['main_swap', 'variation_edit', 'slot_recipe_swap']),
+  child_id: z.string().uuid().nullable(),
+  day: WeekdaySchema.nullable(),
+  slot_kind: SlotKindSchema.nullable(),
+  at: z.string().datetime({ offset: true }),
+});
+
+export const PlanHistoryResponseTreeSchema = z.object({
+  plan: PlanRowCanonicalSchema,
+  main_assignments: z.array(PlanMainAssignmentRowSchema).default([]),
+  days: z.array(PlanDayRowSchema).default([]),
+  slots: z.array(PlanSlotRowSchema).default([]),
+  variations: z.array(PlanSlotVariationRowSchema).default([]),
+  swap_history: z.array(PlanSwapSummaryTreeSchema).default([]),
+  week_of: z.string().date().nullable(),
+  // Per-child ratings (Layer 1 / FR36). Keyed by child_id UUID; emoji or
+  // qualitative-rating string. Same shape as the flat history response.
+  ratings: z.record(z.string().uuid(), z.string().min(1).nullable()),
+});
+
+// --- PATCH /v1/plans/:planId/main-assignments/:mainAssignmentId/recipe ---
+//
+// Replaces the recipe for one M-assignment. Affects every plan_slot whose
+// main_assignment_id points at this row — i.e. every day that uses this
+// Main. Per the family-first model, this is the dominant swap operation
+// when a parent decides "let's swap the Tuesday-Wednesday Main".
+export const SwapMainInputSchema = z.object({
+  new_recipe_id: z.string().uuid(),
+});
+
+export const SwapMainResponseSchema = z.object({
+  main_assignment: PlanMainAssignmentRowSchema,
+});
+
+// --- PATCH /v1/plans/:planId/variations/:variationId ---
+//
+// Per-child variation patch. Any combination of attribute fields can be
+// supplied; omitted fields are left as-is. nullable for cutting_style /
+// container / notes means: omitted = unchanged, null = clear, string = set.
+// add_ons / removals replace the arrays in full when supplied.
+export const UpdateVariationInputSchema = z.object({
+  portion_size: PortionSizeSchema.optional(),
+  texture: TextureLevelSchema.optional(),
+  spice_level: SpiceLevelSchema.optional(),
+  cutting_style: z.string().max(VARIATION_CUTTING_MAX).nullable().optional(),
+  container: z.string().max(VARIATION_CONTAINER_MAX).nullable().optional(),
+  add_ons: z.array(z.string().min(1).max(VARIATION_ADDON_MAX)).max(20).optional(),
+  removals: z.array(z.string().min(1).max(VARIATION_REMOVAL_MAX)).max(20).optional(),
+  notes: z.string().max(VARIATION_TEXT_MAX).nullable().optional(),
+});
+
+export const UpdateVariationResponseSchema = z.object({
+  variation: PlanSlotVariationRowSchema,
+});
+
+// --- PATCH /v1/plans/:planId/slots/:planSlotId/recipe ---
+//
+// Replaces the recipe on a snack or extra slot. Main slots are not editable
+// via this route — the M-assignment swap above is the correct path. The
+// service rejects slot_kind='main' with a 400.
+export const SwapSlotRecipeInputSchema = z.object({
+  new_recipe_id: z.string().uuid(),
+});
+
+export const SwapSlotRecipeResponseSchema = z.object({
+  slot: PlanSlotRowSchema,
+});
+
+// --- PATCH /v1/plans/:planId/days/:day/pause — tree shape ---
+//
+// reason becomes required (the DB CHECK demands paused_at + paused_reason
+// both be set when either is set). Reason enum widens from the flat
+// 'sick'|'absent'|'holiday' to PauseReasonSchema's six-value set. Existing
+// clients sending 'sick' / 'absent' / 'holiday' must migrate to 'sick_day'
+// / 'other' / 'holiday' respectively — the rename lands with the route swap.
+export const PausePlanDayTreeInputSchema = z.object({
+  reason: PauseReasonSchema,
+  note: z.string().max(PAUSED_NOTE_MAX).optional(),
+});
+
+// --- PATCH /v1/plans/:planId/days/:day/pause-child ---
+//
+// Per-child day-level pause. Sets paused_at on every plan_slot_variation
+// for the (child_id, plan_day_id) pair. Used when one child is sick but
+// the rest of the family eats as planned.
+export const PauseChildOnDayInputSchema = z.object({
+  child_id: z.string().uuid(),
+});
+
+// --- Route param schemas (tree shape) ---
+export const MainAssignmentParamSchema = z.object({
+  planId: z.string().uuid(),
+  mainAssignmentId: z.string().uuid(),
+});
+
+export const VariationParamSchema = z.object({
+  planId: z.string().uuid(),
+  variationId: z.string().uuid(),
+});
+
+export const PlanSlotParamSchema = z.object({
+  planId: z.string().uuid(),
+  planSlotId: z.string().uuid(),
+});
+
+// Day-overrides flip the path param from planItemId → planSlotId. The
+// override is now scoped to a slot (not a per-(child,day,slot) flat item).
+export const DayOverrideSlotParamSchema = z.object({
+  planId: z.string().uuid(),
+  planSlotId: z.string().uuid(),
+});
+
+export const DayOverrideSlotRevertParamSchema = z.object({
+  planId: z.string().uuid(),
+  planSlotId: z.string().uuid(),
+  overrideId: z.string().uuid(),
+});

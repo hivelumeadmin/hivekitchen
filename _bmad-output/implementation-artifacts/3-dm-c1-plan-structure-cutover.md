@@ -4,6 +4,109 @@ Status: in-progress
 
 ## Implementation log
 
+### 2026-06-02 — Phase 9b part 4 step 1 done (contracts checkpoint)
+
+Mid-session pivot: starting "9b part 4" (items 5+7+8 of the original
+Phase-9 hand-off — flat-surface delete + day-overrides route param swap
++ swapItem/pauseDay rewrites), the live read-path coupling surfaced as
+larger than the hand-off described. The flat schemas the hand-off listed
+for deletion (`PlanItemRowSchema`, `PlanItemWriteSchema`, etc.) are still
+embedded in three live response schemas — `GetPlansResponseSchema`,
+`PlanHistoryResponseSchema`, `SwapPlanItemResponseSchema` — which feed
+the three live read routes and four apps/web files (PlanPage,
+PlanHistoryPage, mutations.ts, PlanHistoryPage.test.tsx). So 9b part 4
+expands from "delete the flat surface" to a coordinated wire-shape
+migration to tree shape, then delete. Path A-full chosen.
+
+The swap UX also decomposes: the canonical model has no `plan_items.ingredients`
+column, so the flat `SwapPlanItemInput { ingredients[] }` shape maps to
+nothing. The Phase-3 repo already exposes the three replacement
+operations (`swapMain`, `updateVariation`, `swapSlotRecipe`) — they
+become three separate routes.
+
+Step 1 lands the contracts foundation. Routes / service / web /
+delete-pass follow in subsequent steps.
+
+Web baselines captured (pre-step-1):
+- typecheck: 3 errors (2 in child-bag-composition.tsx leftover from
+  3-dm-b1 cleanup, 1 pre-existing in heart-notes.ts $ZodIssue).
+- test: 1 file / 6 tests failing (DisambiguationPicker.test.tsx copy
+  drift on `/Swap failed/i` regex). 36 files / 365 tests passing.
+- lint: 80 problems (73 errors, 7 warnings) — pre-existing, none touch
+  plan schemas.
+
+Contracts additions (`packages/contracts/src/plan.ts`):
+- `GetPlansResponseTreeSchema` — `plan: PlanRowCanonicalSchema | null`
+  + four arrays (`main_assignments`, `days`, `slots`, `variations`) +
+  `is_draft` + `week_of` + optional `hard_fail` / `variant_proposals`
+  / `flagged_items` (VariantProposalSchema kept verbatim — its
+  `plan_item_id → plan_slot_variation_id` cutover is its own slice).
+- `PlanSwapSummaryTreeSchema` + `PlanHistoryResponseTreeSchema` — same
+  4-array tree shape + `swap_history` field present but designed for
+  audit-derived population (canonical model has no archived
+  `plan_items`; mid-week swaps become audit_log entries with
+  `kind: 'main_swap' | 'variation_edit' | 'slot_recipe_swap'`). First
+  pass returns `[]`; populator lands in a follow-up slice.
+- `SwapMainInputSchema` / `SwapMainResponseSchema` — `{ new_recipe_id }`
+  / `{ main_assignment: PlanMainAssignmentRowSchema }`. Affects every
+  day using that M-assignment per family-first.
+- `UpdateVariationInputSchema` / `UpdateVariationResponseSchema` —
+  optional patch over `portion_size` / `texture` / `spice_level` /
+  `cutting_style` (string-or-null) / `container` (string-or-null) /
+  `add_ons` / `removals` / `notes` (string-or-null). Omitted = unchanged,
+  null = clear, value = set.
+- `SwapSlotRecipeInputSchema` / `SwapSlotRecipeResponseSchema` —
+  snack/extra recipe swap. Main slots rejected at service layer (use
+  swap-main route).
+- `PausePlanDayTreeInputSchema` — `reason: PauseReasonSchema` (required;
+  matches the DB CHECK that both `paused_at` + `paused_reason` are set
+  together) + optional `note`. Enum widens from
+  `'sick'|'absent'|'holiday'` to PauseReasonSchema's six-value set
+  (`sick_day` / `holiday` / `snow_day` / `field_trip` / `half_day` /
+  `other`). The route swap renames the input on the wire.
+- `PauseChildOnDayInputSchema` — `{ child_id }` for per-child day-level
+  pause (every variation under (child, plan_day_id)).
+- Route param schemas: `MainAssignmentParamSchema`,
+  `VariationParamSchema`, `PlanSlotParamSchema`,
+  `DayOverrideSlotParamSchema`, `DayOverrideSlotRevertParamSchema`.
+
+`packages/types/src/index.ts` — 14 inferred-type exports added under a
+Phase-9b-part-4 banner; existing flat types untouched.
+
+Verification:
+- contracts typecheck: 1 error, unchanged baseline (heart-notes.ts
+  `$ZodIssue` index signature). Zero new errors from this step.
+- types typecheck: same — only the pre-existing heart-notes baseline.
+- contracts tests not re-run; pre-existing 3 failed test files are
+  unrelated to plan.ts.
+
+What step 1 did NOT do (queued for subsequent steps):
+- **Step 2** (PlansService) — `getPlanForWeekTree`, `getPlanHistoryTree`,
+  `swapMain`, `updateVariation`, `swapSlotRecipe`, `pauseDayTree`,
+  `pauseChildOnDayTree`. Critical sub-question: the per-variation
+  guardrail evaluation needs `recipes.ingredients` − `variation.removals`
+  + `variation.add_ons` walked per (child, day, slot). RecipeService
+  fetch + guardrail integration is the design moment that defines
+  swap safety in the canonical model.
+- **Step 3** (routes) — wire GET/history to tree; replace
+  `PATCH /v1/plans/:planId/items/:itemId` with three new routes
+  (main-assignments/:id/recipe, variations/:id,
+  slots/:planSlotId/recipe); rewrite `PATCH .../days/:day/pause`
+  against the new schema; day-overrides routes swap `planItemId` →
+  `planSlotId`.
+- **Step 4** (web) — `PlanPage` + `PlanHistoryPage` consume tree;
+  `mutations.ts` split into per-operation mutations; `usePauseDayMutation`
+  swaps to new enum; `DisambiguationPicker` redesign for the
+  tripartite swap surface.
+- **Step 5** (delete pass) — items 7+8 of the hand-off: flat schemas in
+  `packages/contracts/src/plan.ts`, flat type exports, flat methods on
+  `PlansRepository` / `BriefStateComposer` / `DayOverridesService` /
+  `DayOverridesRepository` / `VariantProposalService` /
+  `VariantProposalRepository`. Rename `PlanRowCanonicalSchema` →
+  `PlanRowSchema`.
+- **9c** — migration apply + load-test + status flip. Unblocked once
+  steps 2–5 land.
+
 ### 2026-06-02 — Phase 9b part 3 done (tree-shape merges replace 9a stubs)
 
 Lands the two proper tree merges that 9a left as transitional stubs. Surgical
