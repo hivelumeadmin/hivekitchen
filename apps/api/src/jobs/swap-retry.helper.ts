@@ -1,255 +1,53 @@
 import type { FastifyBaseLogger } from 'fastify';
 import type {
-  CommitPlanInput,
-  FlaggedCompoundItem,
+  CommitPlanTreeInput,
   GuardrailResult,
-  PlanComposeOutput,
-  PlanItemWrite,
 } from '@hivekitchen/types';
-import type { BlockedItem, DomainOrchestrator } from '../agents/orchestrator.js';
+import type { DomainOrchestrator } from '../agents/orchestrator.js';
 
 // =============================================================================
-// Slice E — surgical swap-retry helper
+// Slice E — surgical swap-retry helper (tree-shape, Phase 9a degraded form)
 // =============================================================================
 // Wraps DomainOrchestrator.swapBlockedItems with the merge + coverage check
 // the regenerate callbacks need. Used by both plan-generation.job.ts (initial
 // commit retry) and plan-regeneration.job.ts (user-initiated regen retry).
 //
-// Contract:
-//   - Input: the previously-committed CommitPlanInput + the rejections that
-//     just blocked it.
-//   - Returns a merged CommitPlanInput when the swap agent fully covers the
-//     blocked slots (success path → caller passes this to plansService.commit
-//     for re-validation).
-//   - Returns null when the swap can't be done (no blocked verdicts, agent
-//     errored, agent missed slots) → caller falls back to full planWeek.
+// Phase 9a transitional shape: the tree-shape merge (replace specific
+// variations within slots while preserving siblings) is non-trivial — the
+// previous flat merge keyed off (child_id, day, slot) tuples that no longer
+// exist on the input shape. For Phase 9a, this helper returns null on every
+// call so the caller falls back to full planWeek. Implementing the proper
+// tree-shape merge — walking previousCommit.days[].slots[].variations[],
+// replacing only the blocked variation rows, preserving siblings — is a
+// scoped follow-up for Phase 9b along with the full swap-path test sweep.
 //
-// Coverage rules: every (child_id, day, slot) that appeared in `blocked`
-// conflicts must have a corresponding replacement item in the swap output.
-// If even one is missing, we abandon the swap path entirely — partial
-// merges would silently downgrade the safety story. Better to pay for a
-// full planWeek than commit a plan with a blocked slot still in it.
+// Runtime impact: surgical-swap-eligible guardrail blocks pay one extra
+// flagship-tier planWeek call until 9b. Safety is preserved (the full regen
+// still applies the guardrail bag-wide); only cost-per-block is degraded.
 // =============================================================================
-
-type SlotKey = `${string}|${string}|${string}`;
-
-const makeKey = (childId: string, day: string, slot: string): SlotKey =>
-  `${childId}|${day}|${slot}`;
 
 export async function trySurgicalSwap(opts: {
   orchestrator: Pick<DomainOrchestrator, 'swapBlockedItems'>;
-  previousCommit: CommitPlanInput;
+  previousCommit: CommitPlanTreeInput;
   rejections: readonly GuardrailResult[];
   weekOf: string;
   requestId: string;
   logger: FastifyBaseLogger;
-}): Promise<CommitPlanInput | null> {
-  const blockedConflicts = opts.rejections.flatMap((r) =>
-    r.verdict === 'blocked' ? r.conflicts : [],
+}): Promise<CommitPlanTreeInput | null> {
+  const hasActionableRejection = opts.rejections.some(
+    (r) =>
+      r.verdict === 'blocked' ||
+      (r.verdict === 'uncertain' && r.reason === 'compound_ingredient_unverified'),
   );
-
-  // Story 3.24 — compound-uncertain rejections expose (child_id, day, slot,
-  // ingredient) tuples whose allergen provenance the engine can't verify.
-  // These are recoverable via substitution: we feed them to the swap agent
-  // alongside blocked conflicts and ask it to replace each flagged slot with
-  // a single-ingredient item of unambiguous provenance.
-  const compoundFlagged: FlaggedCompoundItem[] = opts.rejections.flatMap((r) =>
-    r.verdict === 'uncertain' && r.reason === 'compound_ingredient_unverified'
-      ? r.flagged_items ?? []
-      : [],
-  );
-
-  if (blockedConflicts.length === 0 && compoundFlagged.length === 0) {
-    // Only infrastructure-uncertain verdicts (or no rejections at all) — swap
-    // can't help. Fall through to caller's full-regen path.
+  if (!hasActionableRejection) {
     return null;
   }
-
-  // Dedup blocked keys — a single item can block on multiple allergens or
-  // be flagged for compound uncertainty.
-  const blockedKeys = new Set<SlotKey>([
-    ...blockedConflicts.map((c) => makeKey(c.child_id, c.day, c.slot)),
-    ...compoundFlagged.map((f) => makeKey(f.child_id, f.day, f.slot)),
-  ]);
-
-  // Synthesize conflict entries for compound-flagged slots so buildBlockedItems
-  // can resolve them against previousCommit.items. allergen='unknown_compound'
-  // is a sentinel — the swap prompt phrasing only signals "compound product;
-  // replace with single-ingredient items," so the allergen field is advisory.
-  const allConflictsForSwap: Array<{
-    child_id: string;
-    day: string;
-    slot: string;
-    allergen: string;
-    ingredient: string;
-  }> = [
-    ...blockedConflicts,
-    ...compoundFlagged.map((f) => ({
-      child_id: f.child_id,
-      day: f.day,
-      slot: f.slot,
-      allergen: 'unknown_compound',
-      ingredient: f.ingredient,
-    })),
-  ];
-
-  const blockedItems = buildBlockedItems(opts.previousCommit, allConflictsForSwap);
-  if (blockedItems.length === 0) {
-    // Rejections referenced (child_id, day, slot) tuples that don't exist
-    // in previousCommit.items — bug in the caller or stale data. Refuse
-    // the swap rather than send the agent garbage context.
-    opts.logger.warn(
-      {
-        rejections: allConflictsForSwap.length,
-        commitItems: opts.previousCommit.items.length,
-      },
-      'trySurgicalSwap: no blocked items matched commitInput — falling back',
-    );
-    return null;
-  }
-
-  // Story 3.24 — assemble an uncertainty-context line for the swap agent
-  // when compound-flagged items are present. Listing the (child|day|slot)
-  // tuples mirrors the "blocked items" framing the swap prompt already
-  // handles, without requiring a separate prompt template.
-  let uncertainContext: string | undefined;
-  if (compoundFlagged.length > 0) {
-    const seen = new Set<string>();
-    const slots = compoundFlagged
-      .map((f) => `${f.child_id}|${f.day}|${f.slot}`)
-      .filter((s) => { const fresh = !seen.has(s); seen.add(s); return fresh; })
-      .join(', ');
-    uncertainContext =
-      `ALLERGEN-UNCERTAIN: Replace the following items — use only single-ingredient ` +
-      `items of unambiguous provenance (no sauces, spice blends, pastes, or compound ` +
-      `products): ${slots}`;
-  }
-
-  let swap: PlanComposeOutput;
-  try {
-    swap = await opts.orchestrator.swapBlockedItems({
-      householdId: opts.previousCommit.household_id,
-      weekOf: opts.weekOf,
-      requestId: opts.requestId,
-      blockedItems,
-      ...(uncertainContext !== undefined ? { uncertainContext } : {}),
-    });
-  } catch (err) {
-    opts.logger.warn(
-      { err, blockedItemCount: blockedItems.length },
-      'trySurgicalSwap: swap agent threw — falling back to full planWeek',
-    );
-    return null;
-  }
-
-  // Flatten swap output into a (key → new item) map, accepting only items
-  // whose tuple matches a blocked slot. Items the agent emitted for
-  // already-passing slots are dropped on purpose — defense against prompt
-  // drift.
-  const replacements = new Map<SlotKey, PlanItemWrite>();
-  for (const swapDay of swap.days) {
-    for (const item of swapDay.items) {
-      const key = makeKey(item.child_id, swapDay.day, item.slot);
-      if (!blockedKeys.has(key)) continue;
-      replacements.set(key, {
-        child_id: item.child_id,
-        day: swapDay.day,
-        slot: item.slot,
-        ingredients: [...item.ingredients],
-        ...(item.recipe_id !== undefined ? { recipe_id: item.recipe_id } : {}),
-        ...(item.item_id !== undefined ? { item_id: item.item_id } : {}),
-      });
-    }
-  }
-
-  // Coverage check: every blocked slot must have a replacement. Partial
-  // coverage falls through to full planWeek — there's no safe way to commit
-  // a plan that still has an unaddressed blocked slot.
-  const uncovered: SlotKey[] = [];
-  for (const key of blockedKeys) {
-    if (!replacements.has(key)) uncovered.push(key);
-  }
-  if (uncovered.length > 0) {
-    opts.logger.warn(
-      {
-        uncovered,
-        blockedCount: blockedKeys.size,
-        proposedCount: replacements.size,
-      },
-      'trySurgicalSwap: incomplete coverage — falling back to full planWeek',
-    );
-    return null;
-  }
-
-  // Merge: replace blocked items by tuple key, leave the rest untouched.
-  const mergedItems: PlanItemWrite[] = opts.previousCommit.items.map((item) => {
-    const key = makeKey(item.child_id, item.day, item.slot);
-    return replacements.get(key) ?? item;
-  });
-
   opts.logger.info(
     {
-      blockedItemCount: blockedItems.length,
-      replacedItemCount: replacements.size,
       planId: opts.previousCommit.plan_id,
+      rejectionCount: opts.rejections.length,
     },
-    'trySurgicalSwap: replacements merged into commit input',
+    'trySurgicalSwap: tree-shape merge deferred to Phase 9b — falling back to full planWeek',
   );
-
-  return { ...opts.previousCommit, items: mergedItems };
-}
-
-// Pulls the original ingredients for each blocked tuple out of the previous
-// commit so the agent sees what to minimally edit. One BlockedItem per unique
-// (child_id, day, slot); allergen + ingredient pairs that triggered the
-// block are aggregated under blocked_by.
-function buildBlockedItems(
-  previousCommit: CommitPlanInput,
-  conflicts: ReadonlyArray<{
-    child_id: string;
-    day: string;
-    slot: string;
-    allergen: string;
-    ingredient: string;
-  }>,
-): BlockedItem[] {
-  const byKey = new Map<
-    SlotKey,
-    {
-      child_id: string;
-      day: string;
-      slot: string;
-      blocked_by: Array<{ allergen: string; ingredient: string }>;
-    }
-  >();
-  for (const c of conflicts) {
-    const key = makeKey(c.child_id, c.day, c.slot);
-    const existing = byKey.get(key);
-    if (existing) {
-      existing.blocked_by.push({ allergen: c.allergen, ingredient: c.ingredient });
-    } else {
-      byKey.set(key, {
-        child_id: c.child_id,
-        day: c.day,
-        slot: c.slot,
-        blocked_by: [{ allergen: c.allergen, ingredient: c.ingredient }],
-      });
-    }
-  }
-
-  const blocked: BlockedItem[] = [];
-  for (const entry of byKey.values()) {
-    const sourceItem = previousCommit.items.find(
-      (i) => i.child_id === entry.child_id && i.day === entry.day && i.slot === entry.slot,
-    );
-    if (sourceItem === undefined) continue; // skip phantom references
-    blocked.push({
-      child_id: entry.child_id,
-      day: entry.day,
-      slot: entry.slot,
-      original_ingredients: sourceItem.ingredients,
-      blocked_by: entry.blocked_by,
-    });
-  }
-  return blocked;
+  return null;
 }

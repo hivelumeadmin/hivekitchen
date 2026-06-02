@@ -2,11 +2,11 @@ import fp from 'fastify-plugin';
 import type { FastifyPluginAsync } from 'fastify';
 import type { Job } from 'bullmq';
 import type {
-  CommitPlanInput,
+  CommitPlanTreeInput,
   GuardrailResult,
-  PlanItemWrite,
+  PlanComposeTreeOutput,
 } from '@hivekitchen/types';
-import { buildCommitInput } from './plan-generation.job.js';
+import { buildCommitInputTree } from './plan-generation.job.js';
 import { ChildAllergensRepository } from '../modules/children/child-allergens.repository.js';
 import { ChildrenRepository } from '../modules/children/children.repository.js';
 import { CulturalPriorRepository } from '../modules/cultural-priors/cultural-prior.repository.js';
@@ -32,7 +32,6 @@ export interface PlanRegenerationJobData {
   plan_id: string;        // The plan row to regenerate (same id reused via commit upsert)
   household_id: string;
   week_of: string;        // ISO date string — needed by orchestrator.planWeek()
-  week_id: string;        // Derived from week_of; stored to avoid recomputing
   current_revision: number; // Plan's revision at enqueue time; worker sets revision = current_revision + 1
   scope: 'week' | 'day';
   day?: string;           // Required when scope='day'
@@ -101,7 +100,7 @@ const planRegenerationPlugin: FastifyPluginAsync = async (fastify) => {
   const regenWorker = fastify.bullmq.getWorker(
     REGEN_QUEUE,
     async (job: Job<PlanRegenerationJobData>) => {
-      const { plan_id, household_id, week_of, week_id, current_revision, scope, day, request_id, slot_scope } = job.data;
+      const { plan_id, household_id, week_of, current_revision, scope, day, request_id, slot_scope } = job.data;
 
       // Story 3.23 — when slot_scope is set, push a high-priority context
       // line into planWeek() so the planner regenerates only the target slot
@@ -186,49 +185,26 @@ const planRegenerationPlugin: FastifyPluginAsync = async (fastify) => {
         );
       }
 
-      const commitInput = buildCommitInput(filteredOutput, week_id, request_id);
+      const commitInput = buildCommitInputTree(filteredOutput, request_id);
       // Increment revision so brief.plan_revision bumps and BriefCanvas polling terminates.
       commitInput.revision = current_revision + 1;
 
-      // Capture existing items once for day-scope so both the initial merge and
-      // the guardrail-retry callback use the same snapshot. Fetching twice creates
-      // a TOCTOU window where a concurrent swap could cause the retry to overwrite
-      // the swap with stale pre-swap ingredients.
-      const existingItems =
-        scope === 'day' && day !== undefined
-          ? await fastify.plansService.getCurrentPlanItems(plan_id, household_id)
-          : [];
+      // Phase 9a transitional — day-scope merge with existing other-day
+      // subtrees is deferred to Phase 9b. For now, day-scope regen commits
+      // only the planner-emitted target day. Production day-scope regen
+      // behavior is degraded until 9b completes the tree-level merge of
+      // existing days[].slots[].variations[] over the new commit input.
 
-      // For day-scope regeneration: merge with existing current items for other
-      // days so commit_plan() keeps the other days' items as-is (archives the
-      // previous set, re-inserts other-day items + new day items as current).
-      if (scope === 'day' && day !== undefined) {
-        const otherDayItems: PlanItemWrite[] = existingItems
-          .filter((item) => item.day !== day)
-          .map((item) => ({
-            child_id: item.child_id,
-            day: item.day,
-            slot: item.slot,
-            ingredients: item.ingredients,
-            ...(item.recipe_id != null ? { recipe_id: item.recipe_id } : {}),
-            ...(item.item_id != null ? { item_id: item.item_id } : {}),
-          }));
-        commitInput.items = [...otherDayItems, ...commitInput.items];
-      }
-
-      // Commit with full-week allergy guardrail. For day-scope, the merged
-      // items set covers all days so the guardrail evaluates the full plan.
-      // The regenerate callback first tries the Slice E Swap Agent (mini-tier
-      // surgical retry over only the blocked slots) before falling back to a
-      // full flagship-tier planWeek regen. lastAttemptCommit carries the
-      // most recent commit input across retries so the swap path has the
-      // exact ingredients to minimally edit.
-      let lastAttemptCommit = commitInput;
-      let lastAttemptComposeOutput = filteredOutput;
+      // Commit with full-week allergy guardrail. The regenerate callback first
+      // tries the Slice E Swap Agent (mini-tier surgical retry) before falling
+      // back to a full flagship-tier planWeek regen. lastAttemptCommit carries
+      // the most recent commit input across retries.
+      let lastAttemptCommit: CommitPlanTreeInput = commitInput;
+      let lastAttemptComposeOutput: PlanComposeTreeOutput = filteredOutput;
       const committedPlanId = await fastify.plansService.commit(
         commitInput,
         request_id,
-        async (rejections: GuardrailResult[]): Promise<CommitPlanInput> => {
+        async (rejections: GuardrailResult[]): Promise<CommitPlanTreeInput> => {
           const surgical = await trySurgicalSwap({
             orchestrator: fastify.orchestrator,
             previousCommit: lastAttemptCommit,
@@ -238,11 +214,6 @@ const planRegenerationPlugin: FastifyPluginAsync = async (fastify) => {
             logger: fastify.log,
           });
           if (surgical !== null) {
-            // Surgical swap covers all blocked slots and the merge already
-            // preserves non-blocked items (including the day-scope other-day
-            // items captured into commitInput above). No extra merge needed.
-            // P5 (review) — clear variant_proposal conservatively since we
-            // have no new PlanComposeOutput for the surgical path.
             if (lastAttemptComposeOutput.variant_proposal !== undefined) {
               lastAttemptComposeOutput = { ...lastAttemptComposeOutput, variant_proposal: undefined };
             }
@@ -254,8 +225,6 @@ const planRegenerationPlugin: FastifyPluginAsync = async (fastify) => {
           const conflictLines = rejections
             .flatMap((r) => (r.verdict === 'blocked' ? r.conflicts : []))
             .map((c) => `allergen: ${c.allergen}, ingredient: ${c.ingredient}`);
-          // Pass undefined rather than "" so planWeek doesn't inject the
-          // "first generation attempt" context line when no blocked verdicts exist.
           const rejectionContext = conflictLines.length > 0 ? conflictLines.join('; ') : undefined;
 
           // Story 3.24 — propagate compound-uncertain flagged items through the
@@ -266,9 +235,6 @@ const planRegenerationPlugin: FastifyPluginAsync = async (fastify) => {
               ? r.flagged_items ?? []
               : [],
           );
-          // Story 3.24 (patch) — slot-scoped regen: only surface compound flags for
-          // the slot being regenerated. Flags in preserved slots cannot be addressed
-          // in this pass and would produce conflicting LLM instructions.
           const addressableCompound = slot_scope !== undefined
             ? compoundFlagged.filter((f) => f.slot === slot_scope)
             : compoundFlagged;
@@ -304,22 +270,8 @@ const planRegenerationPlugin: FastifyPluginAsync = async (fastify) => {
               ? { ...retryOutput, days: retryOutput.days.filter((d) => d.day === day) }
               : retryOutput;
 
-          const retryCommit = buildCommitInput(filteredRetry, week_id, request_id);
+          const retryCommit = buildCommitInputTree(filteredRetry, request_id);
           retryCommit.revision = current_revision + 1;
-
-          if (scope === 'day' && day !== undefined) {
-            const otherDayItems: PlanItemWrite[] = existingItems
-              .filter((item) => item.day !== day)
-              .map((item) => ({
-                child_id: item.child_id,
-                day: item.day,
-                slot: item.slot,
-                ingredients: item.ingredients,
-                ...(item.recipe_id != null ? { recipe_id: item.recipe_id } : {}),
-                ...(item.item_id != null ? { item_id: item.item_id } : {}),
-              }));
-            retryCommit.items = [...otherDayItems, ...retryCommit.items];
-          }
 
           lastAttemptCommit = retryCommit;
           lastAttemptComposeOutput = filteredRetry;
@@ -330,7 +282,7 @@ const planRegenerationPlugin: FastifyPluginAsync = async (fastify) => {
       // P4 (review) — persist any variant proposal the planner emitted during
       // regen. Failure must not surface as a regen failure.
       try {
-        await fastify.variantProposalService.createFromPlanOutput({
+        await fastify.variantProposalService.createFromTreePlanOutput({
           planOutput: lastAttemptComposeOutput,
           planId: committedPlanId,
           householdId: household_id,
@@ -349,7 +301,7 @@ const planRegenerationPlugin: FastifyPluginAsync = async (fastify) => {
           event_type: 'plan.regenerated',
           household_id,
           request_id,
-          metadata: { plan_id, scope, day: day ?? null, week_of, week_id },
+          metadata: { plan_id, scope, day: day ?? null, week_of },
         });
       } catch (auditErr) {
         fastify.log.error(

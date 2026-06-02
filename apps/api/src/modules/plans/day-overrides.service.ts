@@ -125,7 +125,7 @@ export class DayOverridesService {
     // paused state on the tile. Skip the refresh on the no-op path so we do
     // not burn a projection round-trip on idempotent retries.
     if (pausedItem) {
-      await this.briefStateComposer.refresh(
+      await this.briefStateComposer.refreshTree(
         opts.householdId,
         plan.week_id,
         opts.requestId,
@@ -163,7 +163,6 @@ export class DayOverridesService {
           plan_id: opts.planId,
           household_id: opts.householdId,
           week_of: plan.week_of,
-          week_id: plan.week_id,
           current_revision: plan.revision,
           scope: 'day',
           day: item.day,
@@ -304,7 +303,6 @@ export class DayOverridesService {
             plan_id: opts.planId,
             household_id: opts.householdId,
             week_of: plan.week_of,
-            week_id: plan.week_id,  // Phase 7 drops this from the job-data shape
             current_revision: plan.revision,
             scope: 'day',
             day: dayRow.day,
@@ -428,7 +426,7 @@ export class DayOverridesService {
         itemId: opts.planItemId,
         planId: opts.planId,
       });
-      await this.briefStateComposer.refresh(
+      await this.briefStateComposer.refreshTree(
         opts.householdId,
         plan.week_id,
         opts.requestId,

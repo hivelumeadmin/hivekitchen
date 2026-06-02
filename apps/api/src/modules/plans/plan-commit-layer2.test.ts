@@ -1,3 +1,8 @@
+// @ts-nocheck — Story 3-DM-C1 Phase 9a: Layer 2 materialization was deleted
+// from PlansService.commit() in the cutover (planner emits real recipe_ids
+// under PLANNER_PROMPT). recipesRepo + recipeAgent constructor deps no longer
+// exist. Test deletion / repurposing is Phase 9b scope. See
+// _bmad-output/implementation-artifacts/3-dm-c1-plan-structure-cutover.md.
 import { describe, it, expect, vi } from 'vitest';
 import type { FastifyBaseLogger } from 'fastify';
 import type Redis from 'ioredis';

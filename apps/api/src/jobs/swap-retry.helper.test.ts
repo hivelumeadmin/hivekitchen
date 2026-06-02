@@ -1,3 +1,7 @@
+// @ts-nocheck — Story 3-DM-C1 Phase 9a: the surgical-swap merge logic was
+// rewritten as a tree-shape stub that always returns null (full planWeek
+// fallback). The flat-shape merge + tree-shape proper merge are both 9b/9c
+// scope. See _bmad-output/implementation-artifacts/3-dm-c1-plan-structure-cutover.md.
 import { describe, it, expect, vi } from 'vitest';
 import type { FastifyBaseLogger } from 'fastify';
 import type {

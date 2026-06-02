@@ -174,7 +174,7 @@ const lunchLinkRoutesPlugin: FastifyPluginAsync = async (fastify) => {
 
       // Fire-and-forget brief refresh — composer never throws (architecture §1.5).
       // weekId = Monday of the week containing the token's date.
-      void fastify.briefStateComposer.refresh(
+      void fastify.briefStateComposer.refreshTree(
         result.householdId,
         getMondayOfWeek(result.date),
         request.id,

@@ -1,8 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import type { FastifyBaseLogger } from 'fastify';
 import type { Redis } from 'ioredis';
-import { PlanComposeOutputSchema } from '@hivekitchen/contracts';
-import type { PlanComposeOutput } from '@hivekitchen/types';
+import { PlanComposeTreeOutputSchema } from '@hivekitchen/contracts';
+import type { PlanComposeTreeOutput } from '@hivekitchen/types';
 import { ForbiddenToolCallError } from '../common/errors.js';
 import type { AuditService } from '../audit/audit.service.js';
 import type { MemoryService } from '../modules/memory/memory.service.js';
@@ -21,7 +21,7 @@ import {
 } from './tools/recipe.tools.js';
 import type { RecipeAgent } from './recipe-agent.js';
 import { createPantryReadSpec } from './tools/pantry.tools.js';
-import { createPlanComposeSpec, createPlanComposeTreeSpec } from './tools/plan.tools.js';
+import { createPlanComposeSpec } from './tools/plan.tools.js';
 import { createCulturalLookupSpec } from './tools/cultural.tools.js';
 import { PLANNER_PROMPT } from './prompts/planner.prompt.js';
 import { SWAP_PROMPT } from './prompts/swap.prompt.js';
@@ -175,10 +175,6 @@ export class DomainOrchestrator {
     TOOL_MANIFEST.set('recipe.fetch', createRecipeFetchSpec(services.recipe, redis));
     TOOL_MANIFEST.set('pantry.read', createPantryReadSpec(services.pantry, redis));
     TOOL_MANIFEST.set('plan.compose', createPlanComposeSpec(services.plan, redis));
-    // Story 3-DM-C1 Phase 5 — tree-shape variant. Registered alongside the
-    // flat one so PLANNER_PROMPT_TREE consumers see it. The active prompt
-    // (PLANNER_PROMPT) still references plan.compose; Phase 9 swaps that.
-    TOOL_MANIFEST.set('plan.compose.tree', createPlanComposeTreeSpec(services.plan, redis));
     TOOL_MANIFEST.set('cultural.lookup', createCulturalLookupSpec(services.culturalPrior, redis));
 
     this.breaker = new CircuitBreaker({
@@ -271,15 +267,15 @@ export class DomainOrchestrator {
   }
 
   // Agentic planner loop. Runs the PLANNER_PROMPT agent until it calls
-  // plan.compose, then returns the composed PlanComposeOutput. The BullMQ
-  // worker is responsible for converting the result into CommitPlanInput and
-  // calling plansService.commit() — this method does NOT commit.
+  // plan.compose, then returns the composed tree. The BullMQ worker converts
+  // the result into CommitPlanTreeInput and calls plansService.commit() —
+  // this method does NOT commit.
   //
   // - MAX_PLAN_ITERATIONS guards against runaway tool-calling loops.
   // - rejectionContext: passes guardrail blocks from a previous attempt so the
   //   planner can avoid the same unsafe ingredients on retry (Story 3.7
   //   regenerate path).
-  async planWeek(opts: PlanWeekOptions): Promise<PlanComposeOutput> {
+  async planWeek(opts: PlanWeekOptions): Promise<PlanComposeTreeOutput> {
     const {
       householdId,
       weekOf,
@@ -336,7 +332,7 @@ export class DomainOrchestrator {
       ...variantEligibilityLines,
       ...sovereigntyLines,
       dayScope !== undefined
-        ? `Regeneration scope: DAY ONLY. Only generate a new plan for ${dayScope.toUpperCase()}. Keep all other days exactly as previously composed. Only call plan.compose with items for ${dayScope} — do not include other days.`
+        ? `Regeneration scope: DAY ONLY. Only generate a new plan for ${dayScope.toUpperCase()}. Keep all other days exactly as previously composed. Only call plan.compose with a days[] entry for ${dayScope} — do not include other days. main_assignments stay the same across the regeneration; declare the existing M-group as you received it.`
         : undefined,
       rejectionContext !== undefined && rejectionContext.length > 0
         ? `Previous attempt was blocked by the allergy guardrail. Blocked ingredients/reasons:\n${rejectionContext}\nCompose a revised plan that avoids these.`
@@ -363,7 +359,7 @@ export class DomainOrchestrator {
       { role: 'user', content: contextLines.join('\n') },
     ];
 
-    let planComposeResult: PlanComposeOutput | null = null;
+    let planComposeResult: PlanComposeTreeOutput | null = null;
 
     for (let i = 0; i < MAX_PLAN_ITERATIONS; i++) {
       const response = await this.completeWithMessages(
@@ -431,7 +427,7 @@ export class DomainOrchestrator {
         }
 
         if (tc.name === 'plan.compose') {
-          planComposeResult = PlanComposeOutputSchema.parse(result);
+          planComposeResult = PlanComposeTreeOutputSchema.parse(result);
         }
 
         messages.push({
@@ -488,7 +484,7 @@ export class DomainOrchestrator {
     // those slots, but compound-uncertain items demand single-ingredient
     // replacements regardless of any allergen reasoning.
     uncertainContext?: string;
-  }): Promise<PlanComposeOutput> {
+  }): Promise<PlanComposeTreeOutput> {
     const MAX_SWAP_ITERATIONS = 5;
     const tools = Array.from(TOOL_MANIFEST.values());
 
@@ -513,7 +509,7 @@ export class DomainOrchestrator {
       `Request ID: ${opts.requestId}`,
       `Blocked items to swap (${String(opts.blockedItems.length)}):`,
       ...blockedLines,
-      'Call plan.compose with ONLY these slots replaced. Other days/slots are already cleared and must not appear in your output.',
+      'Call plan.compose with ONLY these slots replaced. Other days/slots/variations are already cleared and must not appear in your output.',
     ];
 
     // Story 3.24 — compound-uncertain instruction ranks above all other lines
@@ -528,7 +524,7 @@ export class DomainOrchestrator {
       { role: 'user', content: contextLines.join('\n') },
     ];
 
-    let swapResult: PlanComposeOutput | null = null;
+    let swapResult: PlanComposeTreeOutput | null = null;
 
     for (let i = 0; i < MAX_SWAP_ITERATIONS; i++) {
       const response = await this.completeWithMessages(
@@ -594,7 +590,7 @@ export class DomainOrchestrator {
         }
 
         if (tc.name === 'plan.compose') {
-          swapResult = PlanComposeOutputSchema.parse(result);
+          swapResult = PlanComposeTreeOutputSchema.parse(result);
         }
 
         messages.push({
@@ -826,7 +822,7 @@ export function buildBagCompositionLines(
     lines.push(`- ${c.child_name} (${c.child_id}): Snack ${snack}, Extra ${extra}`);
   }
   lines.push(
-    'Generate plan_items only for active slots. Do not produce a Snack item when Snack is OFF, and do not produce an Extra item when Extra is OFF.',
+    'Emit slot rows only for active slots. Do not produce a Snack slot when Snack is OFF, and do not produce an Extra slot when Extra is OFF.',
   );
   return lines;
 }

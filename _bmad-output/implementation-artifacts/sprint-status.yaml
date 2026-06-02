@@ -52,7 +52,7 @@
 # Walls (decision moments) are flagged with `# WALL:` markers.
 
 generated: 2026-04-23
-last_updated: 2026-06-01 (3-dm-c1 → in-progress 8/9; Phase 8 done — test factory tree-shape additions. Phase 9 attempted same session, reverted at +13 typecheck errors — cascade depth required >1 session. Hand-off note revised: realistic budget is 3 dedicated sessions (9a live-path swap, 9b test sweep + flat-surface delete, 9c apply+verify+flip). All ship as one PR per atomic-cutover principle.)
+last_updated: 2026-06-01 (3-dm-c1 → in-progress; Phase 9a done — production swap to typecheck-green. items 2,3,4,6,10 landed: orchestrator+prompt+plan.compose tool renamed (no more tree suffix), PlansService.commit rewritten to CommitPlanTreeInput, materialize methods + recipeAgent dep deleted, getCurrentPlanItems→getCurrentPlanTree, BriefStateComposer.refresh→refreshTree at all 6 sites, PlanRegenerationJobData.week_id dropped, buildCommitInput deleted from plan-generation.job, variantProposalService.createFromTreePlanOutput wired, swap-retry.helper transitional stub. 5 test files have @ts-nocheck breadcrumbs pointing 9b at the test sweep. API typecheck = 14 errors, all pre-existing baseline (6 hidden by @ts-nocheck), zero new. 9b = test sweep + flat-surface delete; 9c = migrate apply + load-test + status flip.)
 project: hivekitchen
 project_key: NOKEY
 tracking_system: file-system

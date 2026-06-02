@@ -3,12 +3,9 @@ import fp from 'fastify-plugin';
 import type { FastifyPluginAsync } from 'fastify';
 import type { Job } from 'bullmq';
 import type {
-  CommitPlanInput,
   CommitPlanTreeInput,
   GuardrailResult,
-  PlanComposeOutput,
   PlanComposeTreeOutput,
-  PlanItemWrite,
 } from '@hivekitchen/types';
 import { GuardrailRejectionError } from '../common/errors.js';
 import { HouseholdsRepository } from '../modules/households/households.repository.js';
@@ -88,62 +85,11 @@ export function getLocalSixPmUtcMs(timezone: string, referenceDate: Date): numbe
   return targetMs < referenceDate.getTime() ? targetMs + 86_400_000 : targetMs;
 }
 
-// Converts the planner agent's PlanComposeOutput to the CommitPlanInput shape
-// expected by PlansService.commit(). Flattens per-day/per-child items into a
-// flat PlanItemWrite[] and attaches the deterministic week_id.
-export function buildCommitInput(
-  output: PlanComposeOutput,
-  weekId: string,
-  requestId: string,
-): CommitPlanInput {
-  const items: PlanItemWrite[] = output.days.flatMap((d) =>
-    d.items.map((item) => ({
-      child_id: item.child_id,
-      day: d.day,
-      slot: item.slot,
-      ingredients: item.ingredients,
-      ...(item.recipe_id !== undefined ? { recipe_id: item.recipe_id } : {}),
-      // Story 3-31: pass through the planner-emitted discover candidate id
-      // so commit can resolve it against Redis and insert a real recipes row.
-      ...(item.recipe_candidate_id !== undefined ? { recipe_candidate_id: item.recipe_candidate_id } : {}),
-      ...(item.item_id !== undefined ? { item_id: item.item_id } : {}),
-    })),
-  );
-
-  return {
-    plan_id: output.plan_id,
-    household_id: output.household_id,
-    week_id: weekId,
-    week_of: output.week_of,   // Story 3.13 — PlanComposeOutput.week_of is already available
-    revision: 1,
-    generated_at: new Date().toISOString(),
-    prompt_version: output.prompt_version,
-    // Story 3-31: requestId IS the plan_build_id used by recipe.discover's
-    // Redis cache. Threading it through to commit lets the candidate
-    // resolver read those cached extractions under the same namespace.
-    plan_build_id: requestId,
-    items,
-  };
-}
-
-// Story 3-DM-C1 Phase 7 — tree-shape mirror. Converts PlanComposeTreeOutput
-// (what plan.compose.tree returns) into CommitPlanTreeInput (what the new
-// commit_plan() RPC accepts).
-//
-// Simpler than the flat path because the tree shape is already canonical:
-// main_assignments and days[].slots[].variations pass through 1:1. The new
-// RPC resolves slot.main_assignment_sequence against just-inserted
-// plan_main_assignments rows on the DB side.
-//
-// week_id is intentionally absent — the migration drops plans.week_id;
-// week_of is the sole plan identifier in the tree path. The job's data
-// payload reshape (drop PlanRegenerationJobData.week_id) is Phase 9 scope
-// because every job-data consumer in the regen path swaps together.
-//
-// Phase 9 wires this through PlansService.commitTree() (the analogue of
-// commit() with guardrail loop + brief refresh + variant_proposal handoff).
-// Until then this function is callable but the production commit path still
-// uses buildCommitInput() + commit().
+// Converts PlanComposeTreeOutput (what plan.compose returns) into
+// CommitPlanTreeInput (what commit_plan() RPC accepts). main_assignments and
+// days[].slots[].variations pass through 1:1; the RPC resolves
+// slot.main_assignment_sequence against just-inserted plan_main_assignments
+// rows DB-side.
 export function buildCommitInputTree(
   output: PlanComposeTreeOutput,
   requestId: string,
@@ -390,7 +336,7 @@ const planGenerationPlugin: FastifyPluginAsync = async (fastify) => {
         variantEligibleChildren,
         sovereigntyMode,
       });
-      const commitInput = buildCommitInput(composeOutput, weekId, request_id);
+      const commitInput = buildCommitInputTree(composeOutput, request_id);
 
       // Allergy guardrail + brief_state refresh are wired inside
       // PlansService.commit(). The regenerate callback first tries the
@@ -398,17 +344,17 @@ const planGenerationPlugin: FastifyPluginAsync = async (fastify) => {
       // falls back to a full flagship-tier planWeek regen when the swap
       // can't be done (no blocked verdicts) or can't cover every blocked
       // slot. Captures the previous attempt's commitInput in closure so the
-      // swap path has the original ingredients to minimally edit.
-      let lastAttemptCommit = commitInput;
+      // swap path has the original tree to minimally edit.
+      let lastAttemptCommit: CommitPlanTreeInput = commitInput;
       // Story 3.27 — track the most recent planner output so the post-commit
       // variant-proposal persistence reflects the final accepted plan rather
       // than the first attempt that may have been rewritten on guardrail
       // retry.
-      let lastAttemptComposeOutput: PlanComposeOutput = composeOutput;
+      let lastAttemptComposeOutput: PlanComposeTreeOutput = composeOutput;
       const committedPlanId = await fastify.plansService.commit(
         commitInput,
         request_id,
-        async (rejections: GuardrailResult[]) => {
+        async (rejections: GuardrailResult[]): Promise<CommitPlanTreeInput> => {
           const surgical = await trySurgicalSwap({
             orchestrator: fastify.orchestrator,
             previousCommit: lastAttemptCommit,
@@ -418,9 +364,6 @@ const planGenerationPlugin: FastifyPluginAsync = async (fastify) => {
             logger: fastify.log,
           });
           if (surgical !== null) {
-            // P5 (review) — surgical swap may have replaced the variant-proposal
-            // slot. Since we have no new PlanComposeOutput here, clear the
-            // proposal conservatively. It will surface on the next generation.
             if (lastAttemptComposeOutput.variant_proposal !== undefined) {
               lastAttemptComposeOutput = { ...lastAttemptComposeOutput, variant_proposal: undefined };
             }
@@ -467,7 +410,7 @@ const planGenerationPlugin: FastifyPluginAsync = async (fastify) => {
             variantEligibleChildren,
             sovereigntyMode,
           });
-          const retryCommit = buildCommitInput(retryOutput, weekId, request_id);
+          const retryCommit = buildCommitInputTree(retryOutput, request_id);
           lastAttemptCommit = retryCommit;
           lastAttemptComposeOutput = retryOutput;
           return retryCommit;
@@ -479,7 +422,7 @@ const planGenerationPlugin: FastifyPluginAsync = async (fastify) => {
       // here must not surface as a planning failure — the proposal is a
       // forward-looking learning signal, not a safety constraint.
       try {
-        await fastify.variantProposalService.createFromPlanOutput({
+        await fastify.variantProposalService.createFromTreePlanOutput({
           planOutput: lastAttemptComposeOutput,
           planId: committedPlanId,
           householdId: household_id,

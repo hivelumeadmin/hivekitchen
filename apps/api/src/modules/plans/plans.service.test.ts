@@ -1,3 +1,8 @@
+// @ts-nocheck — Story 3-DM-C1 Phase 9a: tests construct flat CommitPlanInput
+// fixtures + drive PlansService.commit() through them; the production signature
+// is now CommitPlanTreeInput. Migrating these ~22 call sites to buildPlanTree
+// fixtures is part of the 9b test sweep. See
+// _bmad-output/implementation-artifacts/3-dm-c1-plan-structure-cutover.md.
 import { describe, it, expect, vi } from 'vitest';
 import type { FastifyBaseLogger } from 'fastify';
 import type Redis from 'ioredis';

@@ -45,19 +45,28 @@ You will receive:
   ingredients, and the specific allergen + ingredient that triggered the block.
 
 What to do:
-1. For each blocked item, propose a new ingredients list that avoids the named
-   allergen while keeping the meal coherent and recognizable. Substitute, don't
-   rebuild — if peanut butter is blocked, swap to sunflower seed butter; if
-   milk is blocked, swap to oat milk; if wheat bread is blocked, swap to rice
-   crackers. Keep the meal's other ingredients intact.
-2. You MAY call recipe.search to find safe alternatives the household has used
+1. For each blocked item, propose a minimal-edit replacement that avoids the
+   named allergen while keeping the meal coherent. The canonical shape for an
+   edit is a per-child variation: same slot, same Main, but the child's
+   variation REMOVES the allergen-bearing component and ADDS a safe
+   substitute via the variation's removals + add_ons fields. Use this
+   pattern wherever possible — if peanut butter blocks one child, the rest
+   of the family keeps the Main; the blocked child's variation removes
+   "peanut butter" and adds "sunflower seed butter".
+2. When a substitute can't be expressed as a variation tweak (e.g., the whole
+   recipe is incompatible), propose a different recipe for the snack/extra
+   slot — pass recipe_id (or recipe_candidate_id from recipe.discover) directly
+   on the slot.
+3. You MAY call recipe.search to find safe alternatives the household has used
    before. Prefer these — they're already validated as family-acceptable.
-3. You MAY call allergy.check to self-verify a proposed swap before committing.
+4. You MAY call allergy.check to self-verify a proposed swap before committing.
    This is cheap insurance against another retry.
-4. You MUST call plan.compose to emit your replacements. The plan.compose
-   payload's \`days\` array must contain ONLY the changed days, and each day's
-   \`items\` array must contain ONLY the changed slots. Do not include passing
-   items — they will be ignored at merge time.
+5. You MUST call plan.compose to emit your replacements. plan.compose accepts
+   a tree-shape payload (main_assignments + days[].slots[].variations).
+   Include ONLY the changed days, and within each day include ONLY the changed
+   slots and changed per-child variations. Passing slots and passing children
+   on the same slot must NOT appear — they will be merged from the prior plan
+   at the job layer.
 
 What NOT to do:
 - Do not rewrite slots that weren't blocked. The other days and other children
@@ -68,9 +77,9 @@ What NOT to do:
   background job, not a conversation.
 
 If you cannot find a safe replacement for a blocked slot, return plan.compose
-WITHOUT that slot's item. The job layer will detect the missing coverage and
-fall back to a full plan regeneration for that slot — better that than emitting
-a guess that fails the guardrail a second time.`;
+WITHOUT that slot's variation for the blocked child. The job layer will detect
+the missing coverage and fall back to a full plan regeneration for that slot —
+better that than emitting a guess that fails the guardrail a second time.`;
 
 export const SWAP_PROMPT: SwapPromptSpec = {
   version: 'v1.0.0',

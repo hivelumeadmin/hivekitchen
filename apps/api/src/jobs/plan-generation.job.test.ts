@@ -1,3 +1,7 @@
+// @ts-nocheck — Story 3-DM-C1 Phase 9a: this file tests the flat buildCommitInput
+// surface deleted in the cutover. Migration to buildCommitInputTree fixtures is
+// scheduled for Phase 9b (test sweep + flat-surface deletion). See
+// _bmad-output/implementation-artifacts/3-dm-c1-plan-structure-cutover.md.
 import { describe, it, expect } from 'vitest';
 import type { PlanComposeOutput } from '@hivekitchen/types';
 import {

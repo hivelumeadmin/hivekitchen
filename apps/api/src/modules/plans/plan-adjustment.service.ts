@@ -74,7 +74,6 @@ export class PlanAdjustmentService {
         plan_id: plan.id,
         household_id: trigger.householdId,
         week_of: plan.week_of,
-        week_id: plan.week_id,
         current_revision: plan.revision,
         scope,
         request_id: trigger.requestId,

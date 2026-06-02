@@ -16,7 +16,6 @@ import { ExtraRemovalSignalService } from './extra-removal-signal.service.js';
 import { RecipeService } from '../recipe/recipe.service.js';
 import { RecipesRepository } from '../recipe/recipes.repository.js';
 import { LunchLinkSessionRepository } from './lunch-link-session.repository.js';
-import { RecipeAgent } from '../../agents/recipe-agent.js';
 import { VariantProposalRepository } from './variant-proposal.repository.js';
 import { VariantProposalService } from './variant-proposal.service.js';
 
@@ -103,17 +102,6 @@ const plansHookPlugin: FastifyPluginAsync = async (fastify) => {
   const recipesRepository = new RecipesRepository(fastify.supabase);
   const recipeService = new RecipeService(recipesRepository, fastify.log);
 
-  // Slice 2.6-s3 — Layer 2 materialization stack. RecipeAgent is stateless;
-  // PlansService uses it directly at plan-commit time when a catalog_seeded
-  // recipe row needs its ingredients populated. Mirrors the construction
-  // pattern in orchestrator.hook (single shared instance, no per-call setup).
-  const recipeAgent = new RecipeAgent({
-    tavily: fastify.tavily,
-    openai: fastify.openai,
-    vocabulary: fastify.vocabularyService,
-    logger: fastify.log,
-  });
-
   // Story 3.27 — variant proposal active learning. The repository, service,
   // and Fastify decorator are wired here so the plan-generation worker can
   // call createFromPlanOutput after commit, and the confirm route can resolve
@@ -136,9 +124,7 @@ const plansHookPlugin: FastifyPluginAsync = async (fastify) => {
     redis: fastify.redis,                              // Story 3.13
     regenQueue: fastify.bullmq.getQueue(REGEN_QUEUE),  // Story 3.13
     extraRemovalSignalService,                         // Story 3.22
-    recipeService,                                     // Slice D
-    recipesRepo: recipesRepository,                    // Slice 2.6-s3
-    recipeAgent,                                        // Slice 2.6-s3
+    recipeService,                                     // post-Phase-9: recordUse() only
     variantProposalService,                            // Story 3.27
   });
   if (fastify.hasDecorator('planAdjustmentService')) {

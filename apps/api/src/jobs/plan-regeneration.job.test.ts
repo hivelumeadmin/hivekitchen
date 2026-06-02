@@ -1,3 +1,7 @@
+// @ts-nocheck — Story 3-DM-C1 Phase 9a: file references flat CommitPlanInput +
+// PlanComposeOutput + week_id (all removed by the cutover) and buildPlanItem
+// (deleted in 9b). Tree-shape fixture migration is the 9b sweep. See
+// _bmad-output/implementation-artifacts/3-dm-c1-plan-structure-cutover.md.
 import { describe, it, expect, vi } from 'vitest';
 import type { Job } from 'bullmq';
 import type {

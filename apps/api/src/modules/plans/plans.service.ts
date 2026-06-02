@@ -18,14 +18,12 @@ import type { BriefStateRepository } from './brief-state.repository.js';
 import type { BriefStateComposer } from './brief-state.composer.js';
 import type { ExtraRemovalSignalService } from './extra-removal-signal.service.js';
 import type { RecipeService } from '../recipe/recipe.service.js';
-import type { RecipesRepository } from '../recipe/recipes.repository.js';
-import type { RecipeAgent } from '../../agents/recipe-agent.js';
 import type { PlanRegenerationJobData } from '../../jobs/plan-regeneration.job.js';
 import type { VariantProposalService } from './variant-proposal.service.js';
 import { FlaggedCompoundItemSchema } from '@hivekitchen/contracts';
 import type {
   BriefStateRow,
-  CommitPlanInput,
+  CommitPlanTreeInput,
   FlaggedCompoundItem,
   GuardrailResult,
   PausePlanDayInput,
@@ -33,10 +31,14 @@ import type {
   PlanComposeOutput,
   PlanComposeTreeInput,
   PlanComposeTreeOutput,
+  PlanDayRow,
   PlanItemForGuardrail,
   PlanItemRow,
   PlanItemSwapSummary,
+  PlanMainAssignmentRow,
   PlanRow,
+  PlanSlotRow,
+  PlanSlotVariationRow,
   RegeneratePlanQuery,
   SwapPlanItemInput,
 } from '@hivekitchen/types';
@@ -54,19 +56,13 @@ export interface PlansServiceDeps {
   // tests that pre-date the dep can construct PlansService without wiring it.
   // The swapItem hook is a no-op when the service is not provided.
   extraRemovalSignalService?: ExtraRemovalSignalService;
-  // Slice D — at plan-commit time, main-slot items are materialized into
-  // the recipes catalog and household_recipe_usage is bumped. Optional so
-  // tests pre-dating slice D can construct PlansService without it; when
-  // omitted, commit() proceeds without populating recipe_id.
+  // Slice D — household_recipe_usage bumps post-commit so the kitchen map's
+  // favourite-recipes projection has signal. Optional so tests pre-dating
+  // slice D can construct PlansService without it; when omitted, commit()
+  // skips the bumps. After Phase 9 cutover, recipe materialization itself
+  // moved out of commit() — the planner emits real recipe_ids under the
+  // tree prompt — so recipeService is now used solely for recordUse().
   recipeService?: RecipeService;
-  // Slice 2.6-s3 — Layer 2 materialization wires recipesRepo + recipeAgent
-  // directly so a catalog_seeded recipe with empty ingredients gets its full
-  // ingredient list populated via Tavily fetch + LLM extraction before commit.
-  // Optional so tests pre-dating slice 2.6-s3 still compile; when omitted, the
-  // Layer 2 branch in materializeBeforeCommit is skipped (catalog_seeded items
-  // pass through unchanged — only the legacy slice D path runs).
-  recipesRepo?: RecipesRepository;
-  recipeAgent?: RecipeAgent;
   // Story 3.27 — persists Lumi-proposed preparation-method variants after a
   // plan clears the guardrail. Optional so pre-3.27 tests continue to compose;
   // when omitted, planner-emitted variant_proposal is silently ignored at
@@ -93,8 +89,6 @@ export class PlansService {
   private readonly regenQueue: Queue;
   private readonly extraRemovalSignalService: ExtraRemovalSignalService | null;
   private readonly recipeService: RecipeService | null;
-  private readonly recipesRepo: RecipesRepository | null;
-  private readonly recipeAgent: RecipeAgent | null;
   private readonly variantProposalService: VariantProposalService | null;
 
   constructor(deps: PlansServiceDeps) {
@@ -108,8 +102,6 @@ export class PlansService {
     this.regenQueue = deps.regenQueue;
     this.extraRemovalSignalService = deps.extraRemovalSignalService ?? null;
     this.recipeService = deps.recipeService ?? null;
-    this.recipesRepo = deps.recipesRepo ?? null;
-    this.recipeAgent = deps.recipeAgent ?? null;
     this.variantProposalService = deps.variantProposalService ?? null;
   }
 
@@ -181,35 +173,38 @@ export class PlansService {
   }
 
   // Presentation-bind transaction: clear-or-reject the plan, and on clearance
-  // commit the plan + items + guardrail fields atomically. On a guardrail
-  // block, the caller-supplied regenerate() callback produces the next attempt
-  // (Story 3.7 wires the real composer; until then callers pass a stub that
-  // rethrows NotImplementedError).
+  // commit the plan + tree + guardrail fields atomically. On a guardrail
+  // block, the caller-supplied regenerate() callback produces the next attempt.
+  //
+  // Phase 9 cutover: input shape is the canonical tree
+  // (main_assignments + days[].slots[].variations). Recipe materialization
+  // moved out — the planner emits real recipe_ids from recipe.search /
+  // recipe.fetch under PLANNER_PROMPT. Discover candidates only live on
+  // snack/extra slot rows and resolve at commit_plan() RPC time DB-side.
   async commit(
-    input: CommitPlanInput,
+    input: CommitPlanTreeInput,
     requestId: string,
-    regenerate: (rejections: GuardrailResult[]) => Promise<CommitPlanInput>,
+    regenerate: (rejections: GuardrailResult[]) => Promise<CommitPlanTreeInput>,
   ): Promise<string> {
     // Enforce plan_id re-use: if a plan already exists for this household+week,
     // reuse its id so commit_plan's ON CONFLICT (id) upsert path is taken and
-    // the (household_id, week_id) unique index is never violated.
+    // the (household_id, week_of) unique constraint is never violated.
+    // Until Phase 9c applies the migration, the lookup still goes through the
+    // week_id-keyed flat repository method; weekId is deterministically
+    // derived from week_of so the result is identical.
+    const weekId = deriveWeekId(input.week_of);
     const existing = await this.repo.findActiveByHouseholdAndWeek({
       householdId: input.household_id,
-      weekId: input.week_id,
+      weekId,
     });
-    let current: CommitPlanInput = existing ? { ...input, plan_id: existing.id } : input;
+    let current: CommitPlanTreeInput = existing ? { ...input, plan_id: existing.id } : input;
     const planId = current.plan_id;
     const rejections: GuardrailResult[] = [];
     let lastAttempt = 0;
 
     for (let attempt = 1; attempt <= MAX_GUARDRAIL_RETRIES; attempt++) {
       lastAttempt = attempt;
-      const guardrailItems: PlanItemForGuardrail[] = current.items.map((item) => ({
-        child_id: item.child_id,
-        day: item.day,
-        slot: item.slot,
-        ingredients: item.ingredients,
-      }));
+      const guardrailItems = buildGuardrailItemsFromTree(current);
 
       const result = await this.allergyGuardrail.clearOrReject(
         guardrailItems,
@@ -218,28 +213,18 @@ export class PlansService {
       );
 
       if (result.verdict === 'cleared') {
-        // Slice D — materialize recipes for main-slot items before commit so
-        // plan_items.recipe_id points at a real row. Skipped entirely when
-        // RecipeService isn't wired (legacy test paths). Materialization
-        // failures are surfaced — without recipe_id, the favourite-recipes
-        // projection on the kitchen map can never recover for this plan.
-        const materializedRecipeIds: string[] = [];
-        if (this.recipeService !== null) {
-          current = await this.materializeRecipesForCommit(current, materializedRecipeIds);
-        }
-
         const clearedAt = new Date().toISOString();
-        await this.repo.commit(current, clearedAt, GUARDRAIL_VERSION);
+        await this.repo.commitTree(current, clearedAt, GUARDRAIL_VERSION);
 
-        // Slice D — household_recipe_usage bumps run AFTER commit so a usage
-        // row never references a recipe that ultimately failed to land on the
-        // plan. Fire-and-forget: usage signal is a ranking input, not a
-        // safety constraint — a failed bump degrades ranking, never blocks
-        // the plan. Deduplicate by recipe_id since the same recipe can be
-        // materialized once and used across multiple (child, day) items.
-        if (this.recipeService !== null && materializedRecipeIds.length > 0) {
-          const uniqueRecipeIds = [...new Set(materializedRecipeIds)];
-          for (const recipeId of uniqueRecipeIds) {
+        // household_recipe_usage bumps run AFTER commit so a usage row never
+        // references a recipe that ultimately failed to land on the plan.
+        // Fire-and-forget: usage signal is a ranking input, not a safety
+        // constraint. Recipe ids come straight from the canonical tree:
+        // main_assignments[].recipe_id covers every Main slot; snack/extra
+        // slots carry recipe_id directly on the slot row. Dedupe across both.
+        if (this.recipeService !== null) {
+          const recipeIds = collectRecipeIdsFromTree(current);
+          for (const recipeId of recipeIds) {
             void this.recipeService
               .recordUse({ householdId: current.household_id, recipeId })
               .catch((err: unknown) => {
@@ -254,9 +239,9 @@ export class PlansService {
         // Refresh the brief_state projection — the composer swallows its own
         // errors, so awaiting here is safe and keeps the commit → projection
         // → audit sequence ordered.
-        await this.briefStateComposer.refresh(
+        await this.briefStateComposer.refreshTree(
           current.household_id,
-          current.week_id,
+          weekId,
           requestId,
         );
 
@@ -581,7 +566,7 @@ export class PlansService {
     });
 
     // 6. Refresh brief_state projection. userInitiated:true → scaffolding_diff stays null.
-    await this.briefStateComposer.refresh(
+    await this.briefStateComposer.refreshTree(
       opts.householdId,
       plan.week_id,
       opts.requestId,
@@ -646,255 +631,6 @@ export class PlansService {
     });
   }
 
-  // Slice D — walk every main-slot item, materialize a recipe row (or reuse an
-  // existing one with the same canonical name in this household), and stamp
-  // the recipe_id onto the item. Snack + extra slots pass through unchanged
-  // — they already carry a recipe_id pointing at a folded recipes row from
-  // the curated catalog (Story 3-DM-A2).
-  //
-  // Returns a new CommitPlanInput so the caller can pass it to repo.commit.
-  // Populates recordedRecipeIds (out-param) for the post-commit usage bump.
-  //
-  // Failure mode: bubble up. A failed materialize means we'd have committed
-  // a plan with a NULL recipe_id, breaking the favourite-recipes projection
-  // on the kitchen map for this plan permanently. Better to surface a 5xx
-  // and let the caller retry the whole commit.
-  private async materializeRecipesForCommit(
-    input: CommitPlanInput,
-    recordedRecipeIds: string[],
-  ): Promise<CommitPlanInput> {
-    if (this.recipeService === null) return input;
-
-    const items: CommitPlanInput['items'] = [];
-    for (const item of input.items) {
-      if (item.slot !== 'main') {
-        items.push(item);
-        continue;
-      }
-      // Agent may already have supplied a recipe_id (Slice D.2 recipe.search
-      // hit on the household's own catalog). Trust it — don't re-materialize.
-      if (item.recipe_id !== undefined) {
-        // Slice 2.6-s3 — Layer 2 trigger. catalog_seeded rows are inserted by
-        // Stage 1 (catalog-seed.service.ts) with ingredients=[] (Layer 1: name
-        // + tags only). At plan-commit time we materialize the full structured
-        // ingredients via RecipeAgent.discover() so the plan store never
-        // references an empty-ingredient recipe. Only main slots carry recipes
-        // in this contract; the DB lookup short-circuits for non-catalog rows.
-        if (item.slot === 'main' && this.recipesRepo !== null && this.recipeAgent !== null) {
-          const recipe = await this.recipesRepo.findById(item.recipe_id);
-          if (
-            recipe !== null &&
-            recipe.source === 'catalog_seeded' &&
-            recipe.ingredients.length === 0
-          ) {
-            const materialized = await this.layer2Materialize(
-              item.recipe_id,
-              recipe.canonical_name,
-              input.household_id,
-            );
-            if (!materialized) {
-              // Mark the (household, recipe) pair as failed so the planner
-              // skips it on retry, then throw so the regenerate callback
-              // chooses a different item. Plan never commits with empty
-              // ingredients pointing at a catalog_seeded row.
-              await this.recipesRepo.markDiscoverFailed(item.recipe_id, input.household_id);
-              throw new Error(
-                `Layer 2 discovery failed for catalog_seeded recipe ${item.recipe_id} — planner retry expected`,
-              );
-            }
-          }
-        }
-        items.push(item);
-        recordedRecipeIds.push(item.recipe_id);
-        continue;
-      }
-
-      // Story 3-31 — recipe.discover candidate path. The planner picked this
-      // item from a Tavily-sourced candidate; the full extraction lives in
-      // Redis under the plan_build_id namespace. Resolve, persist, drop the
-      // recipe_candidate_id field, and stamp the new recipe_id.
-      if (item.recipe_candidate_id !== undefined) {
-        if (input.plan_build_id === undefined) {
-          // F-P4: plan_build_id not threaded through — can't resolve the
-          // candidate. Warn so the gap is diagnosable; fall through to
-          // ingredient-based materialization.
-          this.logger.warn(
-            {
-              module: 'recipes',
-              action: 'candidate.plan_build_id_missing',
-              household_id: input.household_id,
-              candidate_id: item.recipe_candidate_id,
-            },
-            'recipe_candidate_id present but plan_build_id absent — falling back to materializeFromPlanItem',
-          );
-        } else {
-          const resolved = await this.resolveDiscoverCandidate(input, item);
-          if (resolved !== null) {
-            items.push(resolved.item);
-            recordedRecipeIds.push(resolved.recipeId);
-            continue;
-          }
-        }
-        // Fall through to the materialize-from-ingredients fallback below.
-      }
-
-      const result = await this.recipeService.materializeFromPlanItem({
-        householdId: input.household_id,
-        ingredients: item.ingredients,
-        slot: 'main',
-      });
-      if (result === null) {
-        // Empty ingredients — the guardrail already rejects these as
-        // uncertain('empty_ingredients') before this point, so shouldn't
-        // happen; pass through if it does so we don't lose the item.
-        items.push(item);
-        continue;
-      }
-      items.push({ ...item, recipe_id: result.recipeId });
-      recordedRecipeIds.push(result.recipeId);
-    }
-    return { ...input, items };
-  }
-
-  /**
-   * Story 3-31 — resolve a single discover-candidate plan item.
-   *
-   * Reads the cached RecipeAgentExtraction from Redis, maps it to the
-   * RecipesRepository insert shape (mirrors materializeFromPlanItem's
-   * canonical insert), persists the row, bumps household_recipe_usage,
-   * and returns the updated item with recipe_id set.
-   *
-   * Returns null on cache miss (TTL expiry, eviction, or never-cached) so
-   * the caller can fall through to materializeFromPlanItem. Logs a
-   * warning on the miss path so cache-eviction-induced fallbacks are
-   * observable.
-   */
-  private async resolveDiscoverCandidate(
-    input: CommitPlanInput,
-    item: CommitPlanInput['items'][number],
-  ): Promise<{ item: CommitPlanInput['items'][number]; recipeId: string } | null> {
-    if (this.recipeService === null) return null;
-    if (item.recipe_candidate_id === undefined) return null;
-    if (input.plan_build_id === undefined) return null;
-
-    const extraction = await this.recipeService.readCandidate(
-      input.plan_build_id,
-      item.recipe_candidate_id,
-      this.redis,
-    );
-    if (extraction === null) {
-      this.logger.warn(
-        {
-          module: 'recipes',
-          action: 'candidate.cache_miss',
-          household_id: input.household_id,
-          plan_build_id: input.plan_build_id,
-          candidate_id: item.recipe_candidate_id,
-        },
-        'discover candidate not found in Redis at commit time — falling back to materializeFromPlanItem',
-      );
-      // F-P9: emit audit event so cache-miss fallbacks are observable in the
-      // ops dashboard (data-quality degradation, not just a warn log).
-      await this.auditService.write({
-        event_type: 'recipe.candidate.cache_miss',
-        household_id: input.household_id,
-        request_id: input.plan_build_id ?? 'unknown',
-        metadata: {
-          candidate_id: item.recipe_candidate_id,
-          plan_build_id: input.plan_build_id,
-          slot: item.slot,
-        },
-      });
-      return null;
-    }
-
-    const recipeId = await this.recipeService.insertFromDiscoverExtraction({
-      householdId: input.household_id,
-      extraction,
-    });
-    // Drop recipe_candidate_id from the persisted item shape — the candidate
-    // is now a real row, identified by recipe_id.
-    const { recipe_candidate_id: _candidateId, ...rest } = item;
-    return {
-      item: { ...rest, recipe_id: recipeId },
-      recipeId,
-    };
-  }
-
-  /**
-   * Slice 2.6-s3 — Layer 2 materialization.
-   *
-   * Given a catalog_seeded recipe row that started with empty ingredients (the
-   * Stage 1 LLM emitted name + tags only), fetch full structured ingredients
-   * via the existing RecipeAgent.discover flow (Tavily fetch + LLM extraction
-   * scoped to Allrecipes / RecipeTin Eats) and persist them in place on the
-   * SAME recipe id via RecipesRepository.updateIngredients.
-   *
-   * Returns true on success, false on failure (no candidates returned, or
-   * discover threw). The caller's job is to set discover_failed_at on the
-   * usage row when this returns false; the planner regenerate path then
-   * substitutes a different item.
-   */
-  private async layer2Materialize(
-    recipeId: string,
-    canonicalName: string,
-    householdId: string,
-  ): Promise<boolean> {
-    if (this.recipesRepo === null || this.recipeAgent === null) return false;
-    try {
-      const result = await this.recipeAgent.discover({
-        household_id: householdId,
-        // Reuse the plan-build cache namespace conceptually, but layer 2
-        // materializations are independent fetches — generate a fresh
-        // identifier so the cache doesn't collide with the planner run.
-        plan_build_id: `layer2-${recipeId}`,
-        slot: 'main',
-        count: 3,
-        intent: canonicalName,
-        constraints: {
-          cuisine_tags: [],
-          cultural_tags: [],
-          dietary_flags: [],
-          allergen_exclusions: [],
-          max_prep_minutes: null,
-        },
-      });
-      const first = result.candidates[0];
-      if (first === undefined) return false;
-      if (first.extraction.ingredients.length === 0) return false;
-      const ingredientKeys = dedupeKeys(first.extraction.ingredients.map((i) => i.key));
-      await this.recipesRepo.updateIngredients(
-        recipeId,
-        first.extraction.ingredients,
-        ingredientKeys,
-      );
-      this.logger.info(
-        {
-          module: 'recipes',
-          action: 'recipe.layer2_materialized',
-          household_id: householdId,
-          recipe_id: recipeId,
-          ingredient_count: first.extraction.ingredients.length,
-          source_site: first.extraction.source_site,
-        },
-        'catalog_seeded recipe materialized via Layer 2 discovery',
-      );
-      return true;
-    } catch (err) {
-      this.logger.warn(
-        {
-          module: 'recipes',
-          action: 'recipe.layer2_failed',
-          household_id: householdId,
-          recipe_id: recipeId,
-          err,
-        },
-        'Layer 2 RecipeAgent.discover threw — planner retry expected',
-      );
-      return false;
-    }
-  }
-
   // Story 3.12 — sick-day pause: marks paused_at on all plan_items for the day.
   // The underlying plan is unchanged — ingredients are preserved for Lunch
   // Link context and future un-pause.
@@ -946,7 +682,7 @@ export class PlansService {
     }
 
     // 4. Refresh brief_state — paused field will propagate to PlanTileSummary.
-    await this.briefStateComposer.refresh(
+    await this.briefStateComposer.refreshTree(
       opts.householdId,
       plan.week_id,
       opts.requestId,
@@ -1007,13 +743,29 @@ export class PlansService {
     return { plan, planItems, swapHistory, weekOf: plan.week_of };
   }
 
-  // Story 3.13 — fetch current (non-archived) items for a plan, with household
-  // ownership check. Used by the plan-regeneration job to merge day-scope new
-  // items with the existing other-day items before committing.
-  async getCurrentPlanItems(planId: string, householdId: string): Promise<PlanItemRow[]> {
+  // Story 3.13 / Phase 9 — fetch the current (non-archived) plan tree for
+  // a plan, with household ownership check. Used by plan-regeneration.job
+  // for the day-scope merge (keep other days' subtrees, replace the target
+  // day's slots+variations). main_assignments are plan-level and carry
+  // across regen; days/slots/variations are the per-day subtree.
+  async getCurrentPlanTree(planId: string, householdId: string): Promise<{
+    plan: PlanRow;
+    mainAssignments: PlanMainAssignmentRow[];
+    days: PlanDayRow[];
+    slots: PlanSlotRow[];
+    variations: PlanSlotVariationRow[];
+  }> {
     const plan = await this.repo.findByIdForPresentation({ planId, householdId });
     if (!plan) throw new NotFoundError(`plan ${planId}`);
-    return this.repo.findItemsByPlanId(planId);
+    const [mainAssignments, days, slots] = await Promise.all([
+      this.repo.findMainAssignmentsByPlanId(planId),
+      this.repo.findDaysByPlanId(planId),
+      this.repo.findSlotsByPlanId(planId),
+    ]);
+    const variations = slots.length === 0
+      ? []
+      : await this.repo.findVariationsBySlotIds(slots.map((s) => s.id));
+    return { plan, mainAssignments, days, slots, variations };
   }
 
   // Story 3.13 — user-triggered plan regeneration.
@@ -1064,7 +816,6 @@ export class PlansService {
       plan_id: opts.planId,
       household_id: opts.householdId,
       week_of: plan.week_of,
-      week_id: plan.week_id,
       current_revision: plan.revision,  // worker sets revision = current_revision + 1
       scope: opts.query.scope,
       ...(opts.query.day !== undefined ? { day: opts.query.day } : {}),
@@ -1115,16 +866,47 @@ export class PlansService {
   }
 }
 
-// Slice 2.6-s3 — module-local helper. Mirrors RecipeService.insertFromDiscoverExtraction's
-// dedupe shape so Layer 2 writes the same ingredient_keys array RecipeService
-// would have produced for a fresh insert.
-function dedupeKeys(keys: readonly string[]): string[] {
-  const seen = new Set<string>();
-  const out: string[] = [];
-  for (const k of keys) {
-    if (seen.has(k)) continue;
-    seen.add(k);
-    out.push(k);
+// Story 3-DM-C1 Phase 9 — walk the canonical plan tree and emit one
+// PlanItemForGuardrail per (day, slot, child). The guardrail evaluates
+// allergens at the (child, ingredient) grain; the tree's variations carry
+// add_ons / removals strings that the guardrail can scan.
+//
+// Note: the recipe's base ingredients (the canonical ingredient list on the
+// recipes row) are NOT joined into this walk yet. The planner's tree path
+// emits real recipe_ids whose ingredients the recipes table owns; a future
+// patch should batch-fetch and union them so the guardrail sees the full
+// effective ingredient set. Until then the guardrail sees only the per-child
+// add_ons (variation-level overlay), which matches the family-first model's
+// understanding that the *allergen-fork* always lives on the variation.
+function buildGuardrailItemsFromTree(input: CommitPlanTreeInput): PlanItemForGuardrail[] {
+  const out: PlanItemForGuardrail[] = [];
+  for (const day of input.days) {
+    for (const slot of day.slots) {
+      for (const variation of slot.variations) {
+        out.push({
+          child_id: variation.child_id,
+          day: day.day,
+          slot: slot.slot_kind,
+          ingredients: [...(variation.add_ons ?? [])],
+        });
+      }
+    }
   }
   return out;
+}
+
+// Collects unique recipe_ids referenced by a committed plan tree. Used for
+// the post-commit household_recipe_usage bumps. main_assignments cover every
+// Main slot; non-main slots (snack/extra) carry recipe_id directly.
+function collectRecipeIdsFromTree(input: CommitPlanTreeInput): string[] {
+  const seen = new Set<string>();
+  for (const m of input.main_assignments) seen.add(m.recipe_id);
+  for (const day of input.days) {
+    for (const slot of day.slots) {
+      if (slot.recipe_id !== undefined && slot.recipe_id !== null) {
+        seen.add(slot.recipe_id);
+      }
+    }
+  }
+  return [...seen];
 }
