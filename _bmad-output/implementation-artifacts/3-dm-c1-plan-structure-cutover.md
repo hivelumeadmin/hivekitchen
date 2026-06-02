@@ -365,12 +365,35 @@ TBD shape.
 
 ### Hand-off — Phase 9 (cutover commit, 1 of 9 remaining)
 
-**Updated 2026-06-01.** Phases 1–8 landed additive across 8 commits
-(`34bd395` → `6958791`). The migration is staged, every tree-shape
-counterpart is in place next to its flat predecessor, every layer has
-its own green test coverage. The flat surface is still the live path
-because the cutover must be atomic — Phase 9 swaps every consumer and
-deletes the flat surface in one coordinated commit.
+**Updated 2026-06-01 (post-attempt).** Phases 1–8 landed additive across 8
+commits (`34bd395` → `6958791`). The migration is staged, every tree-shape
+counterpart is in place next to its flat predecessor, every layer has its
+own green test coverage. The flat surface is still the live path because
+the cutover must be atomic — Phase 9 swaps every consumer and deletes the
+flat surface in one coordinated commit.
+
+**One Phase 9 attempt was made and reverted within the same session
+(2026-06-01).** Surprises discovered during the attempt are encoded into
+the per-step notes below so the next attempt budgets correctly. Net
+typecheck delta after the partial attempt: +13 errors (20 baseline → 33).
+Reverted because the remaining cascade depth would not fit the session
+budget, and committing a broken-state cutover to `main` is worse than
+not starting.
+
+**Realistic session budget (revised):** the previous estimate of "1
+long focused session OR 2 split sessions" was optimistic. Realistic is
+**2–3 dedicated focused sessions** in the shape below:
+
+- **Session 9a** (production swap to typecheck-green): items 2–6 + 9
+  below. End with API typecheck green, tests broken, no commit until
+  green. ~4–6 hours of focused work.
+- **Session 9b** (test sweep): items 7–10 below. ~3–5 hours.
+- **Session 9c** (deploy + verify + status flip): items 1, 11–13.
+  ~1–2 hours.
+
+Each session ends with a green commit. The atomic-cutover principle is
+preserved because all three sessions ship as one PR (or each session is
+its own atomic commit landing in close succession).
 
 #### What Phase 9 must land (all together, single commit)
 
@@ -385,15 +408,31 @@ deletes the flat surface in one coordinated commit.
    `apps/api/src/agents/tools/plan.tools.ts`:
    `plan.compose.tree` → `plan.compose` (drop the dual registration);
    `apps/api/src/agents/orchestrator.ts`: single registration.
-3. **Swap PlansService.commit() path** — rewrite `commit()` to call
-   `repo.commitTree()` against a tree-shape input built by
-   `buildCommitInputTree()`. Remove the recipe-materialization step
-   (`materializeRecipesForCommit`) — the planner emits real `recipe_id`s
-   under `PLANNER_PROMPT_TREE`, so discover candidates only land on
-   snack/extra slots and are resolved during commit_plan() directly.
-   Preserve: guardrail clearance loop with retries, `household_recipe_usage`
-   bumps post-commit, brief refresh (now `refreshTree()`),
-   `variant_proposal` handoff (now `createFromTreePlanOutput()`).
+3. **Swap PlansService.commit() path** — rewrite `commit()` to take
+   `CommitPlanTreeInput` and call `repo.commitTree()`. **This is the
+   heaviest single change in Phase 9.** Concrete surgery required:
+   - Drop `materializeRecipesForCommit()` and the surrounding
+     `recipeService` materialization wiring entirely — the planner
+     emits real `recipe_id`s under the tree prompt; discover
+     candidates only land on snack/extra slots and resolve at
+     `commit_plan()` directly.
+   - Rewrite the guardrail clearance loop's `guardrailItems` mapping
+     — it currently does `current.items.map(...)` (flat); needs a tree
+     walk producing `PlanItemForGuardrail[]` from
+     `days[].slots[].variations[]`.
+   - Swap `findActiveByHouseholdAndWeek({ householdId, weekId })` →
+     a tree variant that takes `weekOf` instead (plans.week_id is
+     dropped).
+   - Swap `repo.commit(current, ...)` → `repo.commitTree(current, ...)`.
+   - Swap `briefStateComposer.refresh(...)` → `refreshTree(...)`.
+   - Swap `variantProposalService.createFromPlanOutput(...)` →
+     `createFromTreePlanOutput(...)`.
+   - Preserve: `household_recipe_usage` bumps post-commit (recipe ids
+     now come straight from `commitInput.main_assignments[].recipe_id`
+     + `days[].slots[].recipe_id`, no materialization needed).
+   - Also rewrite `getCurrentPlanItems()` → `getCurrentPlanTree()`
+     returning `{ mainAssignments, days, slots, variations }` — used
+     by `plan-regeneration.job.ts` for the day-scope merge.
 4. **Swap BriefStateComposer call sites** — 7 call sites identified in
    the Phase 4 log: `lunch-link.routes`, `day-overrides.service` ×2,
    `plans.service` ×4. Each one switches `refresh()` → `refreshTree()`.
@@ -404,6 +443,17 @@ deletes the flat surface in one coordinated commit.
 6. **Drop `PlanRegenerationJobData.week_id`** — cascades through
    `plans.routes`, the regen worker, `plan-adjustment.service`,
    `day-overrides.service`. Single coordinated rename.
+
+   **Also**: `plan-regeneration.job.ts` day-scope merge needs a tree-
+   shape rewrite. Today it does:
+   `commitInput.items = [...otherDayItems, ...commitInput.items]` —
+   a flat-array merge of "other days' items keep, target day's items
+   replace". In tree mode this becomes a day-merge: replace the target
+   day's tree (its slots + variations) while keeping the other days'
+   subtrees intact. `main_assignments` stay the same across the regen
+   (the M-group is plan-level, not day-level). `swap-retry.helper.ts`'s
+   `trySurgicalSwap()` returns a `CommitPlanInput` today — needs tree
+   variant returning `CommitPlanTreeInput`.
 7. **Delete the flat surface across `packages/contracts/src/plan.ts`** —
    `PlanComposeInputSchema`, `PlanComposeOutputSchema`,
    `PlanComposeItemSchema`, `PlanComposeDaySchema`, `PlanItemRowSchema`,
@@ -457,18 +507,41 @@ deletes the flat surface in one coordinated commit.
   instead of the flat (child, day, slot) tuple. Use the typescript
   compiler errors as the work-list.
 
-#### Realistic session count for Phase 9
+#### Realistic session count for Phase 9 (revised post-attempt)
 
-1 long focused session, OR 2 shorter sessions split as:
+**3 dedicated sessions** with the split below. Each session ends with a
+green commit. The single-session form was attempted on 2026-06-01 and
+reverted — even minimal Phase-9.2 scope (orchestrator + prompt rename)
+cascades into 5+ production files immediately, and the
+PlansService.commit() rewrite is genuinely a 30-60 minute focused
+operation on its own.
 
-- **Session 9a** (live-path cutover): items 1–8 + 10. End with API + web
-  builds compiling but tests broken because fixtures haven't moved.
-- **Session 9b** (test sweep): item 9 + 11–13. End with all tests green
-  + load-test gate passed + status: done.
+- **Session 9a — production swap to typecheck-green** (~4–6 hours):
+  items 2–6 + 10 + (no migration yet). Rewrite the orchestrator return
+  type, the planner prompt + tool, plan-generation + plan-regeneration
+  jobs (including the tree-shape day-scope merge), swap-retry.helper,
+  PlansService.commit() (the big one — guardrail loop, brief refresh,
+  variant proposal handoff, recipe materialization removal,
+  getCurrentPlanItems → getCurrentPlanTree). Composer call-site swaps.
+  Day-overrides + variant-proposal route param changes.
+  PlanRegenerationJobData.week_id drop. End state: API typecheck green,
+  tests mostly red. **Commit when typecheck is green** — broken-state
+  tests are tolerated for this commit because the test sweep is its own
+  dedicated session.
 
-The split is safer; each session ends with a committable state. The
-single-session form requires that the test sweep ride alongside the
-production swap.
+- **Session 9b — test sweep + flat-surface deletion** (~3–5 hours):
+  items 7–9. Delete the flat contracts schemas + types. Delete the flat
+  PlansRepository + composer + service methods + flat repositories' flat
+  columns + flat builders in test factories. Migrate the ~60-80 plan
+  test call sites. End state: typecheck green + all tests green.
+
+- **Session 9c — apply + verify + flip** (~1–2 hours): items 1, 11–13.
+  Apply the migration locally + against staging. Author and run the
+  load-test gate (100 concurrent commit_plan() calls, p99 < 250ms).
+  Status flip to `done`. Final sprint-status update.
+
+All three sessions ship as one PR — the atomic-cutover principle is
+preserved by the PR-level atomicity, not the commit-level atomicity.
 
 #### Rollback
 

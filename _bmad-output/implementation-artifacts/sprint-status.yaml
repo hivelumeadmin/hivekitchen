@@ -52,7 +52,7 @@
 # Walls (decision moments) are flagged with `# WALL:` markers.
 
 generated: 2026-04-23
-last_updated: 2026-06-01 (3-dm-c1 → in-progress 8/9; Phase 8 done — test factory tree-shape additions: buildPlanMainAssignment/buildPlanDay/buildPlanSlot/buildPlanSlotVariation + buildPlanTree composer; 9/9 new tests green. buildPlanItem retained; 60-80 plan test call-site migration deferred to Phase 9 cutover commit.)
+last_updated: 2026-06-01 (3-dm-c1 → in-progress 8/9; Phase 8 done — test factory tree-shape additions. Phase 9 attempted same session, reverted at +13 typecheck errors — cascade depth required >1 session. Hand-off note revised: realistic budget is 3 dedicated sessions (9a live-path swap, 9b test sweep + flat-surface delete, 9c apply+verify+flip). All ship as one PR per atomic-cutover principle.)
 project: hivekitchen
 project_key: NOKEY
 tracking_system: file-system
