@@ -9,6 +9,13 @@ export const AUDIT_EVENT_TYPES = [
   'plan.cultural_degraded',
   'plan.generation.failed',
   'plan.item_swapped',
+  // Story 3-DM-C1 Phase 9b part 4 step 2 — tree-shape swap events. The flat
+  // 'plan.item_swapped' stays alive until the swap-route rewrite (step 3)
+  // retires it; the three below cover the canonical-model decomposition.
+  'plan.main_swapped',
+  'plan.slot_recipe_swapped',
+  'plan.variation_updated',
+  'plan.child_paused_on_day',
   'plan.day_paused',
   'plan.day_override_set',
   'plan.day_override_reverted',

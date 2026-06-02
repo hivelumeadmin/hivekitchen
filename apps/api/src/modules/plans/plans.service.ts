@@ -18,6 +18,7 @@ import type { BriefStateRepository } from './brief-state.repository.js';
 import type { BriefStateComposer } from './brief-state.composer.js';
 import type { ExtraRemovalSignalService } from './extra-removal-signal.service.js';
 import type { RecipeService } from '../recipe/recipe.service.js';
+import type { RecipesRepository } from '../recipe/recipes.repository.js';
 import type { PlanRegenerationJobData } from '../../jobs/plan-regeneration.job.js';
 import type { VariantProposalService } from './variant-proposal.service.js';
 import { FlaggedCompoundItemSchema } from '@hivekitchen/contracts';
@@ -26,7 +27,9 @@ import type {
   CommitPlanTreeInput,
   FlaggedCompoundItem,
   GuardrailResult,
+  PauseChildOnDayInput,
   PausePlanDayInput,
+  PausePlanDayTreeInput,
   PlanComposeInput,
   PlanComposeOutput,
   PlanComposeTreeInput,
@@ -37,10 +40,15 @@ import type {
   PlanItemSwapSummary,
   PlanMainAssignmentRow,
   PlanRow,
+  PlanRowCanonical,
   PlanSlotRow,
   PlanSlotVariationRow,
   RegeneratePlanQuery,
+  SwapMainInput,
   SwapPlanItemInput,
+  SwapSlotRecipeInput,
+  UpdateVariationInput,
+  Weekday,
 } from '@hivekitchen/types';
 
 export interface PlansServiceDeps {
@@ -63,6 +71,14 @@ export interface PlansServiceDeps {
   // moved out of commit() — the planner emits real recipe_ids under the
   // tree prompt — so recipeService is now used solely for recordUse().
   recipeService?: RecipeService;
+  // Story 3-DM-C1 Phase 9b part 4 step 2 — recipe.ingredients lookup for the
+  // swap operations. swapMain and swapSlotRecipe both need to evaluate the
+  // new recipe's ingredient set against household allergy rules before
+  // persisting; the lookup goes through RecipesRepository.findById. Optional
+  // so existing tests that pre-date the swap tree-shape rewrite can compose
+  // without wiring it — swap methods that require it throw a clear domain
+  // error when omitted.
+  recipesRepository?: RecipesRepository;
   // Story 3.27 — persists Lumi-proposed preparation-method variants after a
   // plan clears the guardrail. Optional so pre-3.27 tests continue to compose;
   // when omitted, planner-emitted variant_proposal is silently ignored at
@@ -89,6 +105,7 @@ export class PlansService {
   private readonly regenQueue: Queue;
   private readonly extraRemovalSignalService: ExtraRemovalSignalService | null;
   private readonly recipeService: RecipeService | null;
+  private readonly recipesRepo: RecipesRepository | null;
   private readonly variantProposalService: VariantProposalService | null;
 
   constructor(deps: PlansServiceDeps) {
@@ -102,6 +119,7 @@ export class PlansService {
     this.regenQueue = deps.regenQueue;
     this.extraRemovalSignalService = deps.extraRemovalSignalService ?? null;
     this.recipeService = deps.recipeService ?? null;
+    this.recipesRepo = deps.recipesRepository ?? null;
     this.variantProposalService = deps.variantProposalService ?? null;
   }
 
@@ -864,6 +882,671 @@ export class PlansService {
 
     return { jobId: job.id ?? jobIdKey, rateLimitRemaining };
   }
+
+  // ==========================================================================
+  // Story 3-DM-C1 Phase 9b part 4 step 2 — tree-shape READS + MUTATIONS.
+  //
+  // READS: getPlanForWeekTree + getPlanHistoryTree return the four arrays
+  // directly (main_assignments + days + slots + variations) so the routes
+  // can hand them straight to the wire-shape response schemas. Plan-row
+  // shape upgrades from PlanRow (with week_id) to PlanRowCanonical (drops
+  // week_id, adds nullable state fields). state/state_set_at/state_message
+  // default to null until the migration applies — pre-migration plans rows
+  // don't carry those columns.
+  //
+  // MUTATIONS: replace the flat swapItem with three operations matching the
+  // canonical model. Every recipe-changing operation re-runs the guardrail
+  // against the new effective ingredient set per (child, day, slot). The
+  // guardrail integration here is the design moment that was deferred from
+  // commit-time (buildGuardrailItemsFromTree's recipe-base-ingredient gap):
+  // swap-time HAS access to the affected recipe and MUST evaluate it.
+  // ==========================================================================
+
+  // Story 3-DM-C1 — tree-shape READ for GET /v1/plans.
+  // Returns the four tree arrays plus the canonical plan row. Empty arrays
+  // when the plan doesn't exist (draft / not-yet-generated path).
+  async getPlanForWeekTree(opts: {
+    householdId: string;
+    week: 'current' | 'next';
+  }): Promise<{
+    plan: PlanRowCanonical | null;
+    mainAssignments: PlanMainAssignmentRow[];
+    days: PlanDayRow[];
+    slots: PlanSlotRow[];
+    variations: PlanSlotVariationRow[];
+    isDraft: boolean;
+    weekOf: string;
+  }> {
+    const weekOf =
+      opts.week === 'next' ? getNextWeekMonday() : getCurrentWeekMonday();
+    const weekId = deriveWeekId(weekOf);
+    const isDraft = opts.week === 'next';
+
+    const plan = await this.repo.findByHouseholdAndWeek({
+      householdId: opts.householdId,
+      weekId,
+    });
+    if (!plan) {
+      return {
+        plan: null,
+        mainAssignments: [],
+        days: [],
+        slots: [],
+        variations: [],
+        isDraft,
+        weekOf,
+      };
+    }
+
+    const [mainAssignments, days, slots] = await Promise.all([
+      this.repo.findMainAssignmentsByPlanId(plan.id),
+      this.repo.findDaysByPlanId(plan.id),
+      this.repo.findSlotsByPlanId(plan.id),
+    ]);
+    const variations =
+      slots.length === 0
+        ? []
+        : await this.repo.findVariationsBySlotIds(slots.map((s) => s.id));
+
+    return {
+      plan: toCanonicalPlanRow(plan, weekOf),
+      mainAssignments,
+      days,
+      slots,
+      variations,
+      isDraft,
+      weekOf,
+    };
+  }
+
+  // Story 3-DM-C1 — tree-shape READ for GET /v1/plans/:weekId/history.
+  // Same tree shape; swap_history is empty for now (canonical model has no
+  // archived plan_items; audit-derived population is a follow-up slice).
+  async getPlanHistoryTree(opts: {
+    householdId: string;
+    weekId: string;
+  }): Promise<{
+    plan: PlanRowCanonical;
+    mainAssignments: PlanMainAssignmentRow[];
+    days: PlanDayRow[];
+    slots: PlanSlotRow[];
+    variations: PlanSlotVariationRow[];
+    swapHistory: never[];
+    weekOf: string | null;
+  }> {
+    const plan = await this.repo.findByHouseholdAndWeek({
+      householdId: opts.householdId,
+      weekId: opts.weekId,
+    });
+    if (!plan) {
+      throw new NotFoundError(`plan for week ${opts.weekId}`);
+    }
+    const [mainAssignments, days, slots] = await Promise.all([
+      this.repo.findMainAssignmentsByPlanId(plan.id),
+      this.repo.findDaysByPlanId(plan.id),
+      this.repo.findSlotsByPlanId(plan.id),
+    ]);
+    const variations =
+      slots.length === 0
+        ? []
+        : await this.repo.findVariationsBySlotIds(slots.map((s) => s.id));
+
+    return {
+      plan: toCanonicalPlanRow(plan, plan.week_of ?? null),
+      mainAssignments,
+      days,
+      slots,
+      variations,
+      swapHistory: [],
+      weekOf: plan.week_of,
+    };
+  }
+
+  // Story 3-DM-C1 — swap an M-assignment's recipe. Affects every plan_day
+  // whose main slot points at this M-assignment (per the 3-Main weekly
+  // pattern, that's typically 2 days). Per-child variations carry their
+  // own removals/add_ons that survive the swap untouched — the parent
+  // explicitly swaps the SHARED Main, not per-kid forks. The guardrail
+  // re-evaluates each (day, child) pair on the new recipe.
+  async swapMain(opts: {
+    planId: string;
+    mainAssignmentId: string;
+    householdId: string;
+    requestId: string;
+    input: SwapMainInput;
+  }): Promise<PlanMainAssignmentRow> {
+    const tree = await this.getCurrentPlanTree(opts.planId, opts.householdId);
+    const assignment = tree.mainAssignments.find(
+      (m) => m.id === opts.mainAssignmentId,
+    );
+    if (!assignment) {
+      throw new NotFoundError(`main_assignment ${opts.mainAssignmentId}`);
+    }
+
+    const recipeIngredients = await this.fetchRecipeDisplayIngredients(
+      opts.input.new_recipe_id,
+    );
+
+    // Affected slots: every main slot pointing at this M-assignment.
+    const affectedSlotIds = new Set(
+      tree.slots
+        .filter((s) => s.main_assignment_id === opts.mainAssignmentId)
+        .map((s) => s.id),
+    );
+    if (affectedSlotIds.size === 0) {
+      // No slots reference this M-assignment — defensive, shouldn't happen
+      // because main_assignment_id FK is the only way slots reach a Main.
+      // No-op swap: skip the guardrail eval, persist, return.
+      const updated = await this.repo.swapMain({
+        mainAssignmentId: opts.mainAssignmentId,
+        newRecipeId: opts.input.new_recipe_id,
+      });
+      await this.briefStateComposer.refreshTree(
+        opts.householdId,
+        tree.plan.week_id,
+        opts.requestId,
+        { userInitiated: true },
+      );
+      return updated;
+    }
+
+    const slotsById = new Map(tree.slots.map((s) => [s.id, s]));
+    const daysById = new Map(tree.days.map((d) => [d.id, d]));
+    const guardrailItems: PlanItemForGuardrail[] = [];
+    for (const variation of tree.variations) {
+      if (!affectedSlotIds.has(variation.plan_slot_id)) continue;
+      const slot = slotsById.get(variation.plan_slot_id);
+      const day = slot ? daysById.get(slot.plan_day_id) : undefined;
+      if (!slot || !day) continue;
+      guardrailItems.push(
+        buildVariationGuardrailItem(
+          recipeIngredients,
+          variation,
+          day.day,
+          slot.slot_kind,
+        ),
+      );
+    }
+
+    if (guardrailItems.length > 0) {
+      const verdict = await this.allergyGuardrail.evaluate(
+        guardrailItems,
+        opts.householdId,
+      );
+      if (verdict.verdict === 'blocked' || verdict.verdict === 'uncertain') {
+        const allergens =
+          verdict.verdict === 'blocked'
+            ? verdict.conflicts.map((c) => c.allergen)
+            : [];
+        await this.tryAuditSwapRejection({
+          householdId: opts.householdId,
+          requestId: opts.requestId,
+          planId: opts.planId,
+          source: 'user_swap_main',
+          subjectId: opts.mainAssignmentId,
+          verdict,
+        });
+        throw new SwapGuardrailBlockedError(opts.mainAssignmentId, allergens);
+      }
+    }
+
+    const updated = await this.repo.swapMain({
+      mainAssignmentId: opts.mainAssignmentId,
+      newRecipeId: opts.input.new_recipe_id,
+    });
+
+    await this.briefStateComposer.refreshTree(
+      opts.householdId,
+      tree.plan.week_id,
+      opts.requestId,
+      { userInitiated: true },
+    );
+
+    try {
+      await this.auditService.write({
+        event_type: 'plan.main_swapped',
+        household_id: opts.householdId,
+        request_id: opts.requestId,
+        metadata: {
+          plan_id: opts.planId,
+          main_assignment_id: opts.mainAssignmentId,
+          new_recipe_id: opts.input.new_recipe_id,
+          guardrail_version: GUARDRAIL_VERSION,
+        },
+      });
+    } catch (err) {
+      this.logger.error(
+        { err, plan_id: opts.planId },
+        'audit write failed after main swap — swap committed',
+      );
+    }
+
+    return updated;
+  }
+
+  // Story 3-DM-C1 — swap a snack/extra slot's recipe. Main slots reject
+  // with ValidationError (the swapMain route is the correct path). Each
+  // variation under the slot is re-evaluated against the new recipe.
+  async swapSlotRecipe(opts: {
+    planId: string;
+    planSlotId: string;
+    householdId: string;
+    requestId: string;
+    input: SwapSlotRecipeInput;
+  }): Promise<PlanSlotRow> {
+    const tree = await this.getCurrentPlanTree(opts.planId, opts.householdId);
+    const slot = tree.slots.find((s) => s.id === opts.planSlotId);
+    if (!slot) {
+      throw new NotFoundError(`plan_slot ${opts.planSlotId}`);
+    }
+    if (slot.slot_kind === 'main') {
+      throw new ValidationError(
+        'main slots cannot be swapped here — use PATCH /v1/plans/:planId/main-assignments/:mainAssignmentId/recipe',
+      );
+    }
+
+    const recipeIngredients = await this.fetchRecipeDisplayIngredients(
+      opts.input.new_recipe_id,
+    );
+
+    const daysById = new Map(tree.days.map((d) => [d.id, d]));
+    const day = daysById.get(slot.plan_day_id);
+    if (!day) {
+      throw new NotFoundError(`plan_day for slot ${opts.planSlotId}`);
+    }
+
+    const guardrailItems: PlanItemForGuardrail[] = [];
+    for (const variation of tree.variations) {
+      if (variation.plan_slot_id !== opts.planSlotId) continue;
+      guardrailItems.push(
+        buildVariationGuardrailItem(
+          recipeIngredients,
+          variation,
+          day.day,
+          slot.slot_kind,
+        ),
+      );
+    }
+
+    if (guardrailItems.length > 0) {
+      const verdict = await this.allergyGuardrail.evaluate(
+        guardrailItems,
+        opts.householdId,
+      );
+      if (verdict.verdict === 'blocked' || verdict.verdict === 'uncertain') {
+        const allergens =
+          verdict.verdict === 'blocked'
+            ? verdict.conflicts.map((c) => c.allergen)
+            : [];
+        await this.tryAuditSwapRejection({
+          householdId: opts.householdId,
+          requestId: opts.requestId,
+          planId: opts.planId,
+          source: 'user_swap_slot_recipe',
+          subjectId: opts.planSlotId,
+          verdict,
+        });
+        throw new SwapGuardrailBlockedError(opts.planSlotId, allergens);
+      }
+    }
+
+    const updated = await this.repo.updateSlotRecipe({
+      slotId: opts.planSlotId,
+      newRecipeId: opts.input.new_recipe_id,
+    });
+
+    await this.briefStateComposer.refreshTree(
+      opts.householdId,
+      tree.plan.week_id,
+      opts.requestId,
+      { userInitiated: true },
+    );
+
+    try {
+      await this.auditService.write({
+        event_type: 'plan.slot_recipe_swapped',
+        household_id: opts.householdId,
+        request_id: opts.requestId,
+        metadata: {
+          plan_id: opts.planId,
+          plan_slot_id: opts.planSlotId,
+          slot_kind: slot.slot_kind,
+          new_recipe_id: opts.input.new_recipe_id,
+          guardrail_version: GUARDRAIL_VERSION,
+        },
+      });
+    } catch (err) {
+      this.logger.error(
+        { err, plan_id: opts.planId },
+        'audit write failed after slot recipe swap — swap committed',
+      );
+    }
+
+    return updated;
+  }
+
+  // Story 3-DM-C1 — patch a per-child variation. Recipe is unchanged; the
+  // guardrail re-evaluates against the NEW effective ingredient set
+  // (recipe.ingredients - new.removals + new.add_ons). Pause-toggling via
+  // this method is rejected — pause_at flows go through the dedicated
+  // pauseChildOnDayTree / unpause routes.
+  async updateVariation(opts: {
+    planId: string;
+    variationId: string;
+    householdId: string;
+    requestId: string;
+    input: UpdateVariationInput;
+  }): Promise<PlanSlotVariationRow> {
+    const tree = await this.getCurrentPlanTree(opts.planId, opts.householdId);
+    const variation = tree.variations.find((v) => v.id === opts.variationId);
+    if (!variation) {
+      throw new NotFoundError(`plan_slot_variation ${opts.variationId}`);
+    }
+    const slot = tree.slots.find((s) => s.id === variation.plan_slot_id);
+    if (!slot) {
+      throw new NotFoundError(
+        `plan_slot for variation ${opts.variationId}`,
+      );
+    }
+    const day = tree.days.find((d) => d.id === slot.plan_day_id);
+    if (!day) {
+      throw new NotFoundError(`plan_day for variation ${opts.variationId}`);
+    }
+
+    // Determine the effective recipe for this variation.
+    let recipeId: string | null;
+    if (slot.slot_kind === 'main') {
+      const m = tree.mainAssignments.find(
+        (a) => a.id === slot.main_assignment_id,
+      );
+      recipeId = m?.recipe_id ?? null;
+    } else {
+      recipeId = slot.recipe_id;
+    }
+    if (recipeId === null) {
+      throw new ValidationError(
+        `slot ${slot.id} has no resolvable recipe — cannot evaluate guardrail`,
+      );
+    }
+    const recipeIngredients =
+      await this.fetchRecipeDisplayIngredients(recipeId);
+
+    // Build the post-patch variation state for guardrail evaluation.
+    const nextRemovals = opts.input.removals ?? variation.removals;
+    const nextAddOns = opts.input.add_ons ?? variation.add_ons;
+
+    const guardrailItem = buildVariationGuardrailItem(
+      recipeIngredients,
+      {
+        ...variation,
+        removals: nextRemovals,
+        add_ons: nextAddOns,
+      },
+      day.day,
+      slot.slot_kind,
+    );
+
+    const verdict = await this.allergyGuardrail.evaluate(
+      [guardrailItem],
+      opts.householdId,
+    );
+    if (verdict.verdict === 'blocked' || verdict.verdict === 'uncertain') {
+      const allergens =
+        verdict.verdict === 'blocked'
+          ? verdict.conflicts.map((c) => c.allergen)
+          : [];
+      await this.tryAuditSwapRejection({
+        householdId: opts.householdId,
+        requestId: opts.requestId,
+        planId: opts.planId,
+        source: 'user_update_variation',
+        subjectId: opts.variationId,
+        verdict,
+      });
+      throw new SwapGuardrailBlockedError(opts.variationId, allergens);
+    }
+
+    // Build the repo patch shape. Only carry through fields the user supplied
+    // — the repo writes exactly what's in the patch. nullable string fields
+    // (cutting_style / container / notes) preserve null vs undefined semantics
+    // because the contract schema declared them as nullable+optional.
+    const repoPatch: Parameters<PlansRepository['updateVariation']>[0]['patch'] = {};
+    if (opts.input.portion_size !== undefined) repoPatch.portion_size = opts.input.portion_size;
+    if (opts.input.texture !== undefined) repoPatch.texture = opts.input.texture;
+    if (opts.input.spice_level !== undefined) repoPatch.spice_level = opts.input.spice_level;
+    if (opts.input.cutting_style !== undefined) repoPatch.cutting_style = opts.input.cutting_style;
+    if (opts.input.container !== undefined) repoPatch.container = opts.input.container;
+    if (opts.input.add_ons !== undefined) repoPatch.add_ons = opts.input.add_ons;
+    if (opts.input.removals !== undefined) repoPatch.removals = opts.input.removals;
+    if (opts.input.notes !== undefined) repoPatch.notes = opts.input.notes;
+
+    const updated = await this.repo.updateVariation({
+      variationId: opts.variationId,
+      patch: repoPatch,
+    });
+
+    await this.briefStateComposer.refreshTree(
+      opts.householdId,
+      tree.plan.week_id,
+      opts.requestId,
+      { userInitiated: true },
+    );
+
+    try {
+      await this.auditService.write({
+        event_type: 'plan.variation_updated',
+        household_id: opts.householdId,
+        request_id: opts.requestId,
+        metadata: {
+          plan_id: opts.planId,
+          variation_id: opts.variationId,
+          changed_fields: Object.keys(repoPatch),
+          guardrail_version: GUARDRAIL_VERSION,
+        },
+      });
+    } catch (err) {
+      this.logger.error(
+        { err, plan_id: opts.planId },
+        'audit write failed after variation update — update committed',
+      );
+    }
+
+    return updated;
+  }
+
+  // Story 3-DM-C1 — pause a full plan_day. Single UPDATE on the
+  // plan_days row; the DB CHECK demands paused_at + paused_reason both be
+  // set together, hence reason is required at the contract layer. Already-
+  // paused days re-stamp their paused_at (idempotent), so the brief refresh
+  // still runs to ensure any reason-text update propagates.
+  async pauseDayTree(opts: {
+    planId: string;
+    day: Weekday;
+    householdId: string;
+    requestId: string;
+    input: PausePlanDayTreeInput;
+  }): Promise<PlanDayRow> {
+    const tree = await this.getCurrentPlanTree(opts.planId, opts.householdId);
+    const day = tree.days.find((d) => d.day === opts.day);
+    if (!day) {
+      throw new ValidationError(
+        `plan ${opts.planId} has no day '${opts.day}'`,
+      );
+    }
+
+    const pausedAt = new Date().toISOString();
+    const updated = await this.repo.pauseDayById({
+      dayId: day.id,
+      pausedAt,
+      reason: opts.input.reason,
+      note: opts.input.note ?? null,
+    });
+
+    await this.briefStateComposer.refreshTree(
+      opts.householdId,
+      tree.plan.week_id,
+      opts.requestId,
+      { userInitiated: true },
+    );
+
+    try {
+      await this.auditService.write({
+        event_type: 'plan.day_paused',
+        household_id: opts.householdId,
+        request_id: opts.requestId,
+        metadata: {
+          plan_id: opts.planId,
+          plan_day_id: day.id,
+          day: opts.day,
+          paused_at: pausedAt,
+          reason: opts.input.reason,
+          ...(opts.input.note !== undefined && { note: opts.input.note }),
+        },
+      });
+    } catch (err) {
+      this.logger.error(
+        { err, plan_id: opts.planId },
+        'audit write failed after day pause — pause committed',
+      );
+    }
+
+    return updated;
+  }
+
+  // Story 3-DM-C1 — pause one child across every slot on a given day.
+  // Calls the pause_child_on_day RPC which flips paused_at on every
+  // variation matching (child_id, plan_day_id). Idempotent: the RPC
+  // returns 0 when every matching variation was already paused.
+  async pauseChildOnDayTree(opts: {
+    planId: string;
+    day: Weekday;
+    householdId: string;
+    requestId: string;
+    input: PauseChildOnDayInput;
+  }): Promise<{ pausedCount: number }> {
+    const tree = await this.getCurrentPlanTree(opts.planId, opts.householdId);
+    const day = tree.days.find((d) => d.day === opts.day);
+    if (!day) {
+      throw new ValidationError(
+        `plan ${opts.planId} has no day '${opts.day}'`,
+      );
+    }
+
+    const pausedAt = new Date().toISOString();
+    const pausedCount = await this.repo.pauseChildOnDay({
+      childId: opts.input.child_id,
+      planDayId: day.id,
+      pausedAt,
+    });
+
+    if (pausedCount > 0) {
+      await this.briefStateComposer.refreshTree(
+        opts.householdId,
+        tree.plan.week_id,
+        opts.requestId,
+        { userInitiated: true },
+      );
+    }
+
+    try {
+      await this.auditService.write({
+        event_type: 'plan.child_paused_on_day',
+        household_id: opts.householdId,
+        request_id: opts.requestId,
+        metadata: {
+          plan_id: opts.planId,
+          plan_day_id: day.id,
+          day: opts.day,
+          child_id: opts.input.child_id,
+          paused_at: pausedAt,
+          paused_count: pausedCount,
+        },
+      });
+    } catch (err) {
+      this.logger.error(
+        { err, plan_id: opts.planId },
+        'audit write failed after child-day pause — pause committed',
+      );
+    }
+
+    return { pausedCount };
+  }
+
+  // ==========================================================================
+  // Tree-shape private helpers
+  // ==========================================================================
+
+  // Fetches a recipe's ingredient list via RecipesRepository and projects to
+  // the display-name string array the guardrail evaluates against. Throws
+  // ValidationError when recipesRepo isn't wired (tests pre-dating the dep)
+  // or when the recipe id doesn't resolve.
+  private async fetchRecipeDisplayIngredients(
+    recipeId: string,
+  ): Promise<string[]> {
+    if (this.recipesRepo === null) {
+      throw new ValidationError(
+        'recipesRepository not configured — swap operations require recipe lookup',
+      );
+    }
+    const recipe = await this.recipesRepo.findById(recipeId);
+    if (recipe === null) {
+      throw new NotFoundError(`recipe ${recipeId}`);
+    }
+    // recipes.ingredients is JSONB; the canonical shape is the object form
+    // (key/modifier/display/quantity/unit/optional/substitutes). Catalog-
+    // seeded or legacy rows MAY hold plain strings. Accept both — emit
+    // strings as-is, project objects to their `display`. Anything else is
+    // skipped silently rather than throwing; an empty result is handled
+    // by the caller building zero guardrail items.
+    const out: string[] = [];
+    for (const raw of recipe.ingredients) {
+      if (typeof raw === 'string') {
+        out.push(raw);
+      } else if (raw !== null && typeof raw === 'object' && 'display' in raw) {
+        const display = (raw as { display?: unknown }).display;
+        if (typeof display === 'string' && display.length > 0) {
+          out.push(display);
+        }
+      }
+    }
+    return out;
+  }
+
+  private async tryAuditSwapRejection(opts: {
+    householdId: string;
+    requestId: string;
+    planId: string;
+    source: string;
+    subjectId: string;
+    verdict: GuardrailResult;
+  }): Promise<void> {
+    const allergens =
+      opts.verdict.verdict === 'blocked'
+        ? opts.verdict.conflicts.map((c) => c.allergen)
+        : [];
+    try {
+      await this.auditService.write({
+        event_type: 'allergy.guardrail_rejection',
+        household_id: opts.householdId,
+        request_id: opts.requestId,
+        metadata: {
+          plan_id: opts.planId,
+          subject_id: opts.subjectId,
+          source: opts.source,
+          verdict: opts.verdict.verdict,
+          allergens,
+          ...(opts.verdict.verdict === 'uncertain' && {
+            reason: opts.verdict.reason,
+          }),
+        },
+      });
+    } catch (auditErr) {
+      this.logger.error(
+        { auditErr, plan_id: opts.planId },
+        'audit write failed for swap guardrail rejection',
+      );
+    }
+  }
 }
 
 // Story 3-DM-C1 Phase 9 — walk the canonical plan tree and emit one
@@ -893,6 +1576,58 @@ function buildGuardrailItemsFromTree(input: CommitPlanTreeInput): PlanItemForGua
     }
   }
   return out;
+}
+
+// Story 3-DM-C1 Phase 9b part 4 step 2 — project the pre-migration PlanRow
+// shape (carries week_id + nullable week_of) into PlanRowCanonical (drops
+// week_id, requires week_of, adds null state fields). state/state_set_at/
+// state_message default to null until the migration applies — pre-migration
+// `plans` rows don't carry those columns. The fallback week_of arg lets
+// getPlanForWeekTree pass the resolved week Monday when plan.week_of is null
+// on a pre-3.13 row.
+function toCanonicalPlanRow(plan: PlanRow, fallbackWeekOf: string | null): PlanRowCanonical {
+  return {
+    id: plan.id,
+    household_id: plan.household_id,
+    week_of: plan.week_of ?? fallbackWeekOf ?? '',
+    revision: plan.revision,
+    generated_at: plan.generated_at,
+    guardrail_cleared_at: plan.guardrail_cleared_at,
+    guardrail_version: plan.guardrail_version,
+    prompt_version: plan.prompt_version,
+    state: null,
+    state_set_at: null,
+    state_message: null,
+    created_at: plan.created_at,
+    updated_at: plan.updated_at,
+  };
+}
+
+// Story 3-DM-C1 Phase 9b part 4 step 2 — build one PlanItemForGuardrail
+// for a single (variation, day, slot) tuple. The effective ingredient set
+// is recipe.ingredients (display names) − variation.removals + variation.add_ons,
+// with simple substring-equality dedupe of removals. This is the swap-time
+// guardrail unit; the commit-time path's buildGuardrailItemsFromTree still
+// uses only variation.add_ons because the recipe-batch-fetch hasn't landed
+// at commit yet (its own follow-up slice).
+function buildVariationGuardrailItem(
+  recipeIngredients: ReadonlyArray<string>,
+  variation: { child_id: string; add_ons: readonly string[]; removals: readonly string[] },
+  day: Weekday,
+  slotKind: 'main' | 'snack' | 'extra',
+): PlanItemForGuardrail {
+  const removed = new Set(variation.removals.map((r) => r.toLowerCase().trim()));
+  const effective: string[] = [];
+  for (const ing of recipeIngredients) {
+    if (!removed.has(ing.toLowerCase().trim())) effective.push(ing);
+  }
+  for (const add of variation.add_ons) effective.push(add);
+  return {
+    child_id: variation.child_id,
+    day,
+    slot: slotKind,
+    ingredients: effective,
+  };
 }
 
 // Collects unique recipe_ids referenced by a committed plan tree. Used for

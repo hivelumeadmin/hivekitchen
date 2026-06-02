@@ -125,6 +125,7 @@ const plansHookPlugin: FastifyPluginAsync = async (fastify) => {
     regenQueue: fastify.bullmq.getQueue(REGEN_QUEUE),  // Story 3.13
     extraRemovalSignalService,                         // Story 3.22
     recipeService,                                     // post-Phase-9: recordUse() only
+    recipesRepository,                                 // 3-DM-C1 9b/4 step 2: swap recipe-ingredient lookup
     variantProposalService,                            // Story 3.27
   });
   if (fastify.hasDecorator('planAdjustmentService')) {

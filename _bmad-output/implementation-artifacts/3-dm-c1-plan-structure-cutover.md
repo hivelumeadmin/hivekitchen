@@ -4,6 +4,124 @@ Status: in-progress
 
 ## Implementation log
 
+### 2026-06-02 — Phase 9b part 4 step 2 done (PlansService tree-shape methods)
+
+Authored the tree-shape read methods + the three-way decomposed swap surface
++ the tree-shape pause methods. Additive: every new method coexists with its
+flat predecessor (the flat `getPlanForWeek` / `getPlanHistory` / `swapItem` /
+`pauseDay` stay alive until step 5's delete pass). Routes still call the
+flat methods — step 3 rewires them.
+
+The swap-time guardrail integration that the commit-time path's
+`buildGuardrailItemsFromTree` defers (the "recipe-base-ingredient join is
+NOT joined into this walk yet" gap) lands at swap-time here. Each recipe-
+changing operation loads the new recipe's ingredients via
+`RecipesRepository.findById`, then evaluates
+`recipe.ingredients − variation.removals + variation.add_ons` per (child,
+day, slot) on the guardrail. The commit-time gap stays open (its own
+follow-up slice) — swap is where the join was actually reachable in this
+slice's scope.
+
+Production code changes:
+
+- `apps/api/src/modules/plans/plans.service.ts` — seven new methods on
+  `PlansService`:
+  - `getPlanForWeekTree({householdId, week}) → { plan: PlanRowCanonical |
+    null, mainAssignments, days, slots, variations, isDraft, weekOf }`.
+    Reads via `findByHouseholdAndWeek` + `findMainAssignmentsByPlanId` +
+    `findDaysByPlanId` + `findSlotsByPlanId` + `findVariationsBySlotIds`
+    in parallel-then-fan-out. Empty arrays when the plan doesn't exist
+    (draft / not-generated path). PlanRowCanonical projection via the new
+    `toCanonicalPlanRow` helper.
+  - `getPlanHistoryTree({householdId, weekId}) → { plan: PlanRowCanonical,
+    ...four arrays, swapHistory: [], weekOf }`. `swapHistory` is empty —
+    the canonical model has no archived `plan_items`; audit-derived
+    population is a follow-up slice (the wire schema already carries the
+    `PlanSwapSummaryTreeSchema` shape so populating it later is non-breaking).
+  - `swapMain({planId, mainAssignmentId, householdId, requestId, input})` —
+    fetches the new recipe's ingredients, walks every variation under
+    every slot pointing at the M-assignment, builds one
+    `PlanItemForGuardrail` per affected variation, evaluates. On
+    blocked/uncertain → audits + throws `SwapGuardrailBlockedError`. On
+    cleared → `repo.swapMain` + `briefStateComposer.refreshTree` +
+    `audit('plan.main_swapped')`. Returns the updated
+    `PlanMainAssignmentRow`.
+  - `swapSlotRecipe({planId, planSlotId, householdId, requestId, input})` —
+    rejects `slot_kind='main'` with `ValidationError` pointing at the
+    swap-main route; otherwise fetches new recipe, walks variations under
+    the slot, evaluates. Same audit + refresh pattern.
+  - `updateVariation({planId, variationId, householdId, requestId, input})` —
+    resolves the variation's effective recipe (main slot →
+    `slot.main_assignment_id → main_assignment.recipe_id`; snack/extra →
+    `slot.recipe_id`), builds the post-patch state (current + patch),
+    computes the new effective ingredient set, single-item guardrail
+    eval. Calls `repo.updateVariation` only with fields the user supplied
+    (preserves null vs undefined semantics from the optional+nullable
+    contract fields).
+  - `pauseDayTree({planId, day, householdId, requestId, input})` —
+    `repo.pauseDayById` with reason + optional note (no guardrail —
+    pause doesn't change ingredients). The reason field becomes required
+    at the contract layer matching the DB CHECK that
+    `paused_at + paused_reason` are set together.
+  - `pauseChildOnDayTree({planId, day, householdId, requestId, input})` —
+    `repo.pauseChildOnDay`. Skips `refreshTree` when paused count is 0
+    (idempotent already-paused-child path); audit always fires for the
+    decision trace.
+  - Private helpers: `fetchRecipeDisplayIngredients(recipeId)` — projects
+    both object-shaped (`{key/modifier/display/...}`) and string-shaped
+    ingredient rows to the display-name string array the guardrail
+    consumes; throws `ValidationError` when `recipesRepository` isn't
+    wired. `tryAuditSwapRejection(...)` — common audit-on-block path
+    shared by all three swap methods.
+  - Module-level helpers: `toCanonicalPlanRow(plan, fallbackWeekOf)` —
+    PlanRow → PlanRowCanonical projection; state / state_set_at /
+    state_message default to null until the migration applies the new
+    columns. `buildVariationGuardrailItem(recipeIngredients, variation,
+    day, slotKind)` — the effective-ingredient computation (case-
+    insensitive removals dedupe before add_ons union).
+
+- `apps/api/src/modules/plans/plans.repository.ts` — one new method:
+  - `updateSlotRecipe({slotId, newRecipeId}) → PlanSlotRow` — single-row
+    UPDATE on `plan_slots.recipe_id`. The slot-kind validation lives at
+    the service layer; the DB CHECK that main slots can't carry
+    `recipe_id` is the backstop.
+
+- `apps/api/src/modules/plans/plans.hook.ts` — `recipesRepository`
+  re-added to the `PlansService` deps wiring (already constructed for
+  `RecipeService` since Phase 9a; just plumbed through).
+
+- `apps/api/src/audit/audit.types.ts` — four new event types added to
+  the union: `'plan.main_swapped'`, `'plan.slot_recipe_swapped'`,
+  `'plan.variation_updated'`, `'plan.child_paused_on_day'`. The flat
+  `'plan.item_swapped'` and `'plan.day_paused'` stay alive until step 5.
+
+Verification:
+- API typecheck: 14 errors, unchanged baseline. **Zero new errors
+  introduced by step 2.**
+- API tests: 11 files / 32 tests failing — identical to the post-9b-part-3
+  baseline. Zero regressions.
+- No unit tests authored for the new service methods; route-level
+  fastify.inject() integration tests in step 3 cover the happy paths +
+  guardrail-block paths through the wire.
+
+What step 2 did NOT do (queued for steps 3–5):
+- **Step 3** (routes) — GET /v1/plans → tree response via
+  `getPlanForWeekTree`; GET /v1/plans/:weekId/history → tree via
+  `getPlanHistoryTree`; replace PATCH /v1/plans/:planId/items/:itemId
+  with three new routes (main-assignments/:id/recipe → swapMain,
+  variations/:id → updateVariation, slots/:planSlotId/recipe →
+  swapSlotRecipe); PATCH .../days/:day/pause → pauseDayTree;
+  POST/DELETE day-overrides → planSlotId path param.
+- **Step 4** (web) — PlanPage / PlanHistoryPage consume tree;
+  mutations.ts split into per-operation hooks; DisambiguationPicker
+  redesign for the tripartite swap surface.
+- **Step 5** (delete pass) — items 7+8 of the hand-off: flat schemas in
+  `packages/contracts/src/plan.ts`, flat type exports, flat methods on
+  `PlansRepository` / `BriefStateComposer` / `DayOverridesService` /
+  `DayOverridesRepository` / `VariantProposalService` /
+  `VariantProposalRepository`. Rename `PlanRowCanonicalSchema` →
+  `PlanRowSchema`.
+
 ### 2026-06-02 — Phase 9b part 4 step 1 done (contracts checkpoint)
 
 Mid-session pivot: starting "9b part 4" (items 5+7+8 of the original

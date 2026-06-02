@@ -577,6 +577,29 @@ export class PlansRepository extends BaseRepository {
     return data as PlanMainAssignmentRow;
   }
 
+  // Tree-shape snack/extra recipe swap. Single-row UPDATE on plan_slots —
+  // the slot owns the recipe_id directly for snack/extra slots (main slots
+  // route through swapMain above). The DB CHECK guarantees slot_kind=main
+  // slots can't have a recipe_id, so a misrouted call against a main slot
+  // fails at the DB layer; the service layer should reject up front with a
+  // domain-level error before the DB call.
+  async updateSlotRecipe(opts: {
+    slotId: string;
+    newRecipeId: string;
+  }): Promise<PlanSlotRow> {
+    const { data, error } = await this.client
+      .from('plan_slots')
+      .update({
+        recipe_id: opts.newRecipeId,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', opts.slotId)
+      .select(PLAN_SLOT_COLUMNS)
+      .single();
+    if (error) throw error;
+    return data as PlanSlotRow;
+  }
+
   // Tree-shape atomic commit. Maps to the new commit_plan() RPC signature
   // (10 args: p_plan_id, p_household_id, p_week_of, p_revision, p_generated_at,
   // p_guardrail_cleared_at, p_guardrail_version, p_prompt_version,
