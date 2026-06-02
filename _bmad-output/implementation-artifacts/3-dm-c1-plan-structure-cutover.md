@@ -4,6 +4,65 @@ Status: in-progress
 
 ## Implementation log
 
+### 2026-06-01 — Phase 6 done (adjacent services tree-shape, additive)
+
+Two repositories + two services gain tree-shape mirror methods. Plan-adjustment
+service has no surface change in Phase 6 — its inputs are plan-level
+(week_of / week_id are the only C1-impacted fields, and `week_id` propagates
+through `PlanRegenerationJobData` which Phase 7 reshapes).
+
+Files touched:
+
+- `apps/api/src/modules/plans/variant-proposal.repository.ts` — new
+  `VARIANT_PROPOSAL_TREE_COLUMNS` + `CreateVariantProposalTreeInput` +
+  `createTree()` method writing `plan_slot_variation_id` instead of
+  `plan_item_id`.
+- `apps/api/src/modules/plans/variant-proposal.service.ts` — new
+  `createFromTreePlanOutput(opts)` consuming `PlanComposeTreeOutput`.
+  Resolves (child_id, day, slot_kind) → `plan_slot_variation_id` by
+  walking the tree in memory. Caller-supplied `recipeNameById` lookup
+  drives `base_recipe_name` (the canonical model drops per-item free-text
+  ingredients, so the tree path doesn't infer names from ingredients).
+  Falls back to "Unknown dish" when the lookup misses.
+- `apps/api/src/modules/plans/day-overrides.repository.ts` — new
+  `OVERRIDE_TREE_COLUMNS` + `UpsertDayOverrideTreeInput` +
+  `upsertTree()` / `revertTree()` / `findActiveByIdTree()` methods, all
+  scoped by `plan_slot_id` instead of `plan_item_id`.
+- `apps/api/src/modules/plans/day-overrides.service.ts` — new
+  `setOverrideTree()` and `revertOverrideTree()` methods. **Pause-overlapping
+  types narrowed**: `bag_suspended` and `sick_day` are REJECTED on the tree
+  path (`ConflictError` surfaces "use plansRepo.pauseChildOnDay() instead").
+  Composition-changing types (field_trip / half_day / post_dentist /
+  sport_practice / test_day) still enqueue day-scope regen; the regen
+  payload reshape is Phase 7's job.
+
+Tests:
+- `variant-proposal.service.tree.test.ts` — 8 tests (no-op on absent
+  proposal, skip on base==variant, skip on existing proposal, skip on
+  missing variation id, write with plan_slot_variation_id, skip on
+  unresolvable (child, day, slot), recipe-name lookup hit + miss).
+- `day-overrides.service.tree.test.ts` — 7 tests (bag_suspended and
+  sick_day rejected with ConflictError, upsertTree writes plan_slot_id,
+  regen-day-override enqueued with correct day, audit metadata carries
+  plan_slot_id, revertOverrideTree NotFound + audit happy paths).
+
+Type-cast carve-outs documented inline: the legacy `DayOverride` and
+`VariantProposal` type definitions still carry `plan_item_id` because
+they live in `@hivekitchen/types` and the schema cutover is deferred to
+Phase 9. Tree-shape methods use `as unknown as DayOverride` /
+`as unknown as VariantProposal` to acknowledge the deliberate
+plan_slot_id / plan_slot_variation_id divergence without forcing a
+contract-package change ahead of time.
+
+Verification:
+- 15/15 new Phase 6 tests pass.
+- Full API sweep: 12 files / 33 tests fail — same baseline. Total
+  passing tests up by 15 (1332 → 1347).
+- Typecheck: 20 errors — same baseline (the 3 transient errors I
+  introduced via incorrect direct casts were fixed before commit).
+
+Phase 7 (plan-generation.job — buildCommitInput tree shape) is next.
+
 ### 2026-06-01 — Phase 5 done (orchestrator + planner prompt tree-shape, additive)
 
 Authored:

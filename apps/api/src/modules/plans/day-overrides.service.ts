@@ -202,6 +202,199 @@ export class DayOverridesService {
     return { override, regenTriggered };
   }
 
+  // ==========================================================================
+  // Story 3-DM-C1 Phase 6 — tree-shape variants.
+  //
+  // Override type narrowing (canonical model):
+  //   - Composition-changing (kept): field_trip, half_day, post_dentist,
+  //                                   sport_practice, test_day
+  //   - Pause-overlapping (DROPPED): bag_suspended, sick_day. The canonical
+  //     pause grain lives on plan_days.paused_at + paused_reason (full-day)
+  //     and plan_slot_variations.paused_at (per-child). DayOverrideType
+  //     enum narrows in Phase 9 alongside the contract cutover.
+  //   - early_release stays event-only (no composition / pause effect).
+  //
+  // Callers in tree mode pass planSlotId + planDayId — both are derivable
+  // from the tree once the plan is committed. planDayId enables a
+  // pauseChildOnDay() call if the caller wants whole-day pause semantics
+  // through the canonical path rather than a day_override row.
+  // ==========================================================================
+
+  async setOverrideTree(opts: {
+    planId: string;
+    planSlotId: string;
+    planDayId: string;
+    householdId: string;
+    input: SetDayOverrideInput;
+    requestId: string;
+  }): Promise<{ override: DayOverride; regenTriggered: boolean }> {
+    const plan = await this.plansRepo.findByIdForOps({
+      planId: opts.planId,
+      householdId: opts.householdId,
+    });
+    if (!plan) throw new NotFoundError(`plan ${opts.planId}`);
+
+    // Pause-overlapping types are not accepted on the tree path — they go
+    // through plansRepo.pauseChildOnDay() or plansRepo.pauseDayById() in the
+    // canonical model. Surfaces a conflict so a stale flat-path caller
+    // adapts rather than silently writing a soon-to-be-dropped row.
+    if (
+      opts.input.override_type === 'bag_suspended' ||
+      opts.input.override_type === 'sick_day'
+    ) {
+      throw new ConflictError(
+        `override_type=${opts.input.override_type} retired by canonical model — use plansRepo.pauseChildOnDay() instead.`,
+      );
+    }
+
+    // DN5 mirror: block composition overrides while a day-level pause is
+    // active. Tree-shape: a plan_day.paused_at on the same day already
+    // signals suspension. The caller passes planDayId; we trust it (PlansRepository
+    // tree reads validate the row exists).
+    //
+    // Note: the original DN5 check via findActivePausingForChildOnDate looks
+    // up by child + date across plan_items; in tree mode that grain shifts
+    // to plan_slot_variations.paused_at — defer the cross-child-pause check
+    // to Phase 9 when the full set of consumer call sites swap. For now the
+    // composition override writes; a parent-visible inconsistency is caught
+    // by the brief refresh that follows.
+
+    const override = await this.repo.upsertTree({
+      planSlotId: opts.planSlotId,
+      childId: opts.input.child_id,
+      householdId: opts.householdId,
+      overrideDate: opts.input.override_date,
+      overrideType: opts.input.override_type,
+      isLumiProposed: opts.input.is_lumi_proposed,
+    });
+
+    try {
+      await this.auditService.write({
+        event_type: 'plan.day_override_set',
+        household_id: opts.householdId,
+        request_id: opts.requestId,
+        metadata: {
+          plan_id: opts.planId,
+          plan_slot_id: opts.planSlotId,
+          child_id: opts.input.child_id,
+          override_id: override.id,
+          override_type: opts.input.override_type,
+          override_date: opts.input.override_date,
+          is_lumi_proposed: opts.input.is_lumi_proposed,
+        },
+      });
+    } catch (err) {
+      this.logger.error(
+        { err, plan_id: opts.planId, plan_slot_id: opts.planSlotId },
+        'audit write failed for plan.day_override_set (tree) — continuing',
+      );
+    }
+
+    // Composition-changing → day-scope regen, same as flat path. The regen
+    // job-data shape change lives in Phase 7; for now we read the day enum
+    // from the slot's day row. The caller passes planDayId; we look up the
+    // matching plan_day row to derive `day` for the job payload.
+    let regenTriggered = false;
+    if (COMPOSITION_CHANGING_OVERRIDES.has(opts.input.override_type)) {
+      if (plan.week_of !== null) {
+        const days = await this.plansRepo.findDaysByPlanId(opts.planId);
+        const dayRow = days.find((d) => d.id === opts.planDayId);
+        if (dayRow !== undefined) {
+          const jobData: PlanRegenerationJobData = {
+            plan_id: opts.planId,
+            household_id: opts.householdId,
+            week_of: plan.week_of,
+            week_id: plan.week_id,  // Phase 7 drops this from the job-data shape
+            current_revision: plan.revision,
+            scope: 'day',
+            day: dayRow.day,
+            request_id: opts.requestId,
+          };
+          const jobId = `day-override-${opts.planSlotId}-${opts.input.override_date}-${opts.input.override_type}`;
+          try {
+            await this.regenQueue.add('regen-day-override', jobData, {
+              attempts: 2,
+              backoff: { type: 'exponential', delay: 30_000 },
+              removeOnComplete: { count: 100 },
+              removeOnFail: { count: 50 },
+              jobId,
+            });
+            regenTriggered = true;
+          } catch (err) {
+            this.logger.error(
+              { err, plan_id: opts.planId, plan_slot_id: opts.planSlotId },
+              'failed to enqueue day regen for override (tree) — continuing',
+            );
+          }
+        } else {
+          this.logger.warn(
+            { plan_id: opts.planId, plan_day_id: opts.planDayId },
+            'planDayId not found on plan — skipping regen enqueue (tree)',
+          );
+        }
+      } else {
+        this.logger.warn(
+          { plan_id: opts.planId },
+          'plan lacks week_of — skipping day-override regen enqueue (tree)',
+        );
+      }
+    }
+
+    return { override, regenTriggered };
+  }
+
+  async revertOverrideTree(opts: {
+    planId: string;
+    planSlotId: string;
+    overrideId: string;
+    householdId: string;
+    requestId: string;
+  }): Promise<void> {
+    const plan = await this.plansRepo.findByIdForOps({
+      planId: opts.planId,
+      householdId: opts.householdId,
+    });
+    if (!plan) throw new NotFoundError(`plan ${opts.planId}`);
+
+    const existing = await this.repo.findActiveByIdTree(
+      opts.overrideId,
+      opts.householdId,
+      opts.planSlotId,
+    );
+    if (!existing) {
+      throw new NotFoundError(`day_override ${opts.overrideId}`);
+    }
+
+    const reverted = await this.repo.revertTree(
+      opts.overrideId,
+      opts.householdId,
+      opts.planSlotId,
+    );
+    if (!reverted) {
+      throw new NotFoundError(`day_override ${opts.overrideId}`);
+    }
+
+    try {
+      await this.auditService.write({
+        event_type: 'plan.day_override_reverted',
+        household_id: opts.householdId,
+        request_id: opts.requestId,
+        metadata: {
+          plan_id: opts.planId,
+          plan_slot_id: opts.planSlotId,
+          override_id: opts.overrideId,
+          override_type: reverted.override_type,
+          override_date: reverted.override_date,
+        },
+      });
+    } catch (err) {
+      this.logger.error(
+        { err, plan_id: opts.planId, override_id: opts.overrideId },
+        'audit write failed for plan.day_override_reverted (tree) — continuing',
+      );
+    }
+  }
+
   async revertOverride(opts: {
     planId: string;
     planItemId: string;
