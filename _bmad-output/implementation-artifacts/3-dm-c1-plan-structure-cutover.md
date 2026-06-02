@@ -4,6 +4,56 @@ Status: in-progress
 
 ## Implementation log
 
+### 2026-06-01 — Phase 4 done (BriefStateComposer additive tree-shape)
+
+Authored: `apps/api/src/modules/plans/brief-state.composer.ts` (+
+`refreshTree()` + 3 tree-walk helpers + the pure `composePlanTree()`
+helper exported for testing) and
+`apps/api/src/modules/plans/brief-state.composer.tree.test.ts` (11 tests,
+all green). The flat `refresh()` + `buildTileSummaries` + `buildClearedAllergies`
++ `buildScaffoldingDiff` path remains in place — Phase 9 swaps the seven
+call sites (lunch-link.routes, day-overrides.service ×2, plans.service ×4)
+and removes the flat methods.
+
+Implementation per canonical §9.1:
+
+- `refreshTree(householdId, weekId, requestId, opts)` — 6-way parallel
+  read (previousBrief + main_assignments + plan_days + children +
+  suppression + ratings via `Promise.all`), then a 2-way batched fan-out
+  for slots-by-day-ids + variations-by-slot-ids (depends on days).
+- `composePlanTree({ days, mainAssignments, slots, variations })` —
+  pure function. Builds a typed tree:
+    `PlanTree { days: PlanTreeDay[], mainAssignmentsBySequence, mainAssignmentsById }`
+  Days sorted Mon→Sat (DB returns alphabetic — 'friday' before 'monday').
+  Slots inside each day sorted main→snack→extra. Main slots resolve their
+  `mainAssignment` reference by id; snack/extra carry `recipe_id` directly.
+- `buildTileSummariesTree(tree, suppression, ratings)` — same output
+  shape as the flat path (`PlanTileSummary[]`). `paused` flips when EITHER
+  the day-level `paused_at` is set OR every variation on the day is paused
+  (consolidates §3.5/§3.6/§3.7 pause grains). `recipe_id` on each tile
+  item derives from main_assignment for main slots, slot.recipe_id for
+  snack/extra. **Intentional shape difference**: per-tile `ingredients` is
+  `[]` because the canonical model owns ingredients on the recipe row, not
+  the tile — this is the seam where D1's BriefStatePayloadSchema cleanup
+  picks up.
+- `buildClearedAllergiesTree(tree, children)` — same semantics as flat
+  path: emits one entry per `(child, allergen)` for children who appear at
+  least once in the plan's variations and have a non-empty
+  `declared_allergens`.
+- `buildScaffoldingDiffTree(prevSummaries, tree, userInitiated)` —
+  same QuietDiff phrasing as flat path. Ingredient comparison in tree
+  mode uses `recipe_id` swap as the trigger (since tile ingredients are
+  `[]`); per-string diff retires when D1 lands.
+
+Verification:
+- 11/11 tree-shape composer tests pass (parallelism, composition shape,
+  pause aggregation, audit-on-failure, lunch-link suppression overlay).
+- Full API sweep: 12 files / 33 tests fail — same baseline. Total
+  passing tests up by 11 (1313 → 1324).
+- Typecheck: 20 errors — same baseline.
+
+Phase 5 (orchestrator `plan.compose` tool + planner prompt rewrite) is next.
+
 ### 2026-06-01 — Phase 3 done (PlansRepository additive tree-shape methods)
 
 Authored: `apps/api/src/modules/plans/plans.repository.ts` (+ tree-shape

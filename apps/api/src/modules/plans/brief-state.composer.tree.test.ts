@@ -1,0 +1,376 @@
+import { describe, it, expect, vi } from 'vitest';
+import type { FastifyBaseLogger } from 'fastify';
+import {
+  BriefStateComposer,
+  composePlanTree,
+} from './brief-state.composer.js';
+import type { PlansRepository } from './plans.repository.js';
+import type { BriefStateRepository } from './brief-state.repository.js';
+import type { LunchLinkSessionRepository } from './lunch-link-session.repository.js';
+import type {
+  ChildrenRepository,
+  DecryptedChildRow,
+} from '../children/children.repository.js';
+import type { AuditService } from '../../audit/audit.service.js';
+import type {
+  PlanDayRow,
+  PlanMainAssignmentRow,
+  PlanRow,
+  PlanSlotRow,
+  PlanSlotVariationRow,
+} from '@hivekitchen/types';
+import { buildPlan, buildChild } from '../../../test/factories/index.js';
+
+// Story 3-DM-C1 Phase 4 — verifies composePlanTree() shape + refreshTree's
+// 8-read parallelism and tree-walk composition.
+
+const HOUSEHOLD_ID = '11111111-1111-4111-8111-111111111111';
+const PLAN_ID = '22222222-2222-4222-8222-222222222222';
+const WEEK_ID = '33333333-3333-4333-8333-333333333333';
+const CHILD_A = '44444444-4444-4444-8444-444444444444';
+const CHILD_B = '55555555-5555-4555-8555-555555555555';
+const REQUEST_ID = '66666666-6666-4666-8666-666666666666';
+const MAIN_ASSIGN_1 = '77777777-7777-4777-8777-777777777777';
+const RECIPE_1 = '88888888-8888-4888-8888-888888888888';
+const RECIPE_SNACK = '99999999-9999-4999-8999-999999999999';
+const DAY_MON = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+const DAY_TUE = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+const SLOT_MON_MAIN = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
+const SLOT_MON_SNACK = 'dddddddd-dddd-4ddd-8ddd-dddddddddddd';
+const VAR_MON_MAIN_A = 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee';
+const VAR_MON_MAIN_B = 'ffffffff-ffff-4fff-8fff-ffffffffffff';
+const NOW = '2026-06-01T12:00:00.000Z';
+
+function buildLogger(): FastifyBaseLogger {
+  const noop = vi.fn();
+  return {
+    info: noop, warn: noop, error: noop, debug: noop, trace: noop, fatal: noop,
+    child: vi.fn().mockReturnThis(), level: 'info', silent: vi.fn(),
+  } as unknown as FastifyBaseLogger;
+}
+
+function mainAssign(overrides: Partial<PlanMainAssignmentRow> = {}): PlanMainAssignmentRow {
+  return {
+    id: MAIN_ASSIGN_1,
+    plan_id: PLAN_ID,
+    sequence: 1,
+    recipe_id: RECIPE_1,
+    created_at: NOW,
+    ...overrides,
+  };
+}
+
+function dayRow(overrides: Partial<PlanDayRow> = {}): PlanDayRow {
+  return {
+    id: DAY_MON,
+    plan_id: PLAN_ID,
+    day: 'monday',
+    paused_at: null,
+    paused_reason: null,
+    paused_note: null,
+    created_at: NOW,
+    updated_at: NOW,
+    ...overrides,
+  };
+}
+
+function slotRow(overrides: Partial<PlanSlotRow> = {}): PlanSlotRow {
+  return {
+    id: SLOT_MON_MAIN,
+    plan_day_id: DAY_MON,
+    slot_kind: 'main',
+    main_assignment_id: MAIN_ASSIGN_1,
+    recipe_id: null,
+    extra_kind: null,
+    paused_at: null,
+    created_at: NOW,
+    updated_at: NOW,
+    ...overrides,
+  };
+}
+
+function variationRow(overrides: Partial<PlanSlotVariationRow> = {}): PlanSlotVariationRow {
+  return {
+    id: VAR_MON_MAIN_A,
+    plan_slot_id: SLOT_MON_MAIN,
+    child_id: CHILD_A,
+    portion_size: 'regular',
+    texture: 'normal',
+    spice_level: 'mild',
+    cutting_style: null,
+    container: null,
+    add_ons: [],
+    removals: [],
+    notes: null,
+    paused_at: null,
+    created_at: NOW,
+    updated_at: NOW,
+    ...overrides,
+  };
+}
+
+describe('composePlanTree (pure helper)', () => {
+  it('joins main assignments to main slots by id', () => {
+    const tree = composePlanTree({
+      days: [dayRow()],
+      mainAssignments: [mainAssign()],
+      slots: [slotRow()],
+      variations: [variationRow()],
+    });
+    expect(tree.days).toHaveLength(1);
+    const day = tree.days[0]!;
+    expect(day.slots[0]?.mainAssignment?.id).toBe(MAIN_ASSIGN_1);
+    expect(day.slots[0]?.variations).toHaveLength(1);
+  });
+
+  it('sorts days Mon→Sat regardless of input order', () => {
+    const tree = composePlanTree({
+      days: [
+        dayRow({ id: 'd-fri', day: 'friday' }),
+        dayRow({ id: 'd-mon', day: 'monday' }),
+        dayRow({ id: 'd-sat', day: 'saturday' }),
+      ],
+      mainAssignments: [],
+      slots: [],
+      variations: [],
+    });
+    expect(tree.days.map((d) => d.day)).toEqual(['monday', 'friday', 'saturday']);
+  });
+
+  it('sorts slots main→snack→extra within each day', () => {
+    const tree = composePlanTree({
+      days: [dayRow()],
+      mainAssignments: [mainAssign()],
+      slots: [
+        slotRow({ id: 's-snack', slot_kind: 'snack', main_assignment_id: null, recipe_id: RECIPE_SNACK }),
+        slotRow({ id: 's-extra', slot_kind: 'extra', main_assignment_id: null, recipe_id: RECIPE_SNACK, extra_kind: 'sweet' }),
+        slotRow({ id: 's-main', slot_kind: 'main' }),
+      ],
+      variations: [],
+    });
+    const day = tree.days[0]!;
+    expect(day.slots.map((s) => s.slot.slot_kind)).toEqual(['main', 'snack', 'extra']);
+  });
+
+  it('groups variations by slot id', () => {
+    const tree = composePlanTree({
+      days: [dayRow()],
+      mainAssignments: [mainAssign()],
+      slots: [slotRow()],
+      variations: [
+        variationRow({ id: 'v-a', child_id: CHILD_A }),
+        variationRow({ id: 'v-b', child_id: CHILD_B }),
+      ],
+    });
+    const slot = tree.days[0]!.slots[0]!;
+    expect(slot.variations.map((v) => v.child_id).sort()).toEqual([CHILD_A, CHILD_B]);
+  });
+
+  it('builds main-assignment lookup maps by sequence and id', () => {
+    const tree = composePlanTree({
+      days: [],
+      mainAssignments: [
+        mainAssign({ id: 'm1', sequence: 1 }),
+        mainAssign({ id: 'm2', sequence: 2, recipe_id: RECIPE_SNACK }),
+      ],
+      slots: [],
+      variations: [],
+    });
+    expect(tree.mainAssignmentsBySequence.get(1)?.id).toBe('m1');
+    expect(tree.mainAssignmentsBySequence.get(2)?.id).toBe('m2');
+    expect(tree.mainAssignmentsById.get('m1')?.sequence).toBe(1);
+  });
+});
+
+describe('BriefStateComposer.refreshTree — 8-read parallelism + composition', () => {
+  function buildDeps(opts: {
+    plan?: PlanRow | null;
+    mainAssignments?: PlanMainAssignmentRow[];
+    days?: PlanDayRow[];
+    slots?: PlanSlotRow[];
+    variations?: PlanSlotVariationRow[];
+    children?: DecryptedChildRow[];
+    previousBrief?: { plan_tile_summaries: [] } | null;
+  }) {
+    const findCurrentByHousehold = vi.fn().mockResolvedValue(opts.plan ?? null);
+    const findMainAssignmentsByPlanId = vi.fn().mockResolvedValue(opts.mainAssignments ?? []);
+    const findDaysByPlanId = vi.fn().mockResolvedValue(opts.days ?? []);
+    const findSlotsByDayIds = vi.fn().mockResolvedValue(opts.slots ?? []);
+    const findVariationsBySlotIds = vi.fn().mockResolvedValue(opts.variations ?? []);
+    const findByHousehold = vi.fn().mockResolvedValue(opts.previousBrief ?? null);
+    const findByHouseholdId = vi.fn().mockResolvedValue(opts.children ?? []);
+    const upsert = vi.fn().mockResolvedValue(undefined);
+    const write = vi.fn().mockResolvedValue(undefined);
+
+    const plansRepo = {
+      findCurrentByHousehold,
+      findMainAssignmentsByPlanId,
+      findDaysByPlanId,
+      findSlotsByDayIds,
+      findVariationsBySlotIds,
+    } as unknown as PlansRepository;
+
+    const briefRepo = { upsert, findByHousehold } as unknown as BriefStateRepository;
+    const childrenRepo = { findByHouseholdId } as unknown as ChildrenRepository;
+    const audit = { write } as unknown as AuditService;
+    const composer = new BriefStateComposer({
+      plansRepository: plansRepo,
+      briefStateRepository: briefRepo,
+      childrenRepository: childrenRepo,
+      auditService: audit,
+      logger: buildLogger(),
+    });
+    return {
+      composer,
+      mocks: {
+        findCurrentByHousehold,
+        findMainAssignmentsByPlanId,
+        findDaysByPlanId,
+        findSlotsByDayIds,
+        findVariationsBySlotIds,
+        findByHousehold,
+        findByHouseholdId,
+        upsert,
+        write,
+      },
+    };
+  }
+
+  it('no-ops gracefully when no cleared plan exists', async () => {
+    const { composer, mocks } = buildDeps({ plan: null });
+    await composer.refreshTree(HOUSEHOLD_ID, WEEK_ID, REQUEST_ID);
+    expect(mocks.upsert).not.toHaveBeenCalled();
+    expect(mocks.findMainAssignmentsByPlanId).not.toHaveBeenCalled();
+  });
+
+  it('fires the 4 tree reads in parallel and upserts when a cleared plan exists', async () => {
+    const plan = buildPlan({ id: PLAN_ID, household_id: HOUSEHOLD_ID });
+    const days = [dayRow({ id: DAY_MON, day: 'monday' })];
+    const slots = [slotRow({ id: SLOT_MON_MAIN, plan_day_id: DAY_MON })];
+    const variations = [variationRow({ plan_slot_id: SLOT_MON_MAIN, child_id: CHILD_A })];
+    const mainAssignments = [mainAssign({ id: MAIN_ASSIGN_1, plan_id: PLAN_ID })];
+    const children = [buildChild({ id: CHILD_A, household_id: HOUSEHOLD_ID, declared_allergens: ['peanut'] })];
+
+    const { composer, mocks } = buildDeps({ plan, mainAssignments, days, slots, variations, children });
+
+    await composer.refreshTree(HOUSEHOLD_ID, WEEK_ID, REQUEST_ID);
+
+    expect(mocks.findMainAssignmentsByPlanId).toHaveBeenCalledWith(PLAN_ID);
+    expect(mocks.findDaysByPlanId).toHaveBeenCalledWith(PLAN_ID);
+    expect(mocks.findSlotsByDayIds).toHaveBeenCalledWith([DAY_MON]);
+    expect(mocks.findVariationsBySlotIds).toHaveBeenCalledWith([SLOT_MON_MAIN]);
+    expect(mocks.upsert).toHaveBeenCalledTimes(1);
+
+    const upsertCall = mocks.upsert.mock.calls[0]![0] as {
+      plan_tile_summaries: Array<{ day: string; items: Array<{ child_id: string; slot: string; recipe_id?: string }> }>;
+      cleared_allergies: Array<{ child_id: string; allergen: string }>;
+    };
+
+    expect(upsertCall.plan_tile_summaries).toHaveLength(1);
+    expect(upsertCall.plan_tile_summaries[0]?.day).toBe('monday');
+    expect(upsertCall.plan_tile_summaries[0]?.items[0]?.child_id).toBe(CHILD_A);
+    expect(upsertCall.plan_tile_summaries[0]?.items[0]?.slot).toBe('main');
+    expect(upsertCall.plan_tile_summaries[0]?.items[0]?.recipe_id).toBe(RECIPE_1);
+    expect(upsertCall.cleared_allergies).toEqual([
+      { child_id: CHILD_A, child_name: expect.any(String), allergen: 'peanut' },
+    ]);
+  });
+
+  it('marks a day paused when every variation on it is paused', async () => {
+    const plan = buildPlan({ id: PLAN_ID, household_id: HOUSEHOLD_ID });
+    const days = [dayRow({ id: DAY_MON, day: 'monday' })];
+    const slots = [slotRow({ id: SLOT_MON_MAIN, plan_day_id: DAY_MON })];
+    const variations = [
+      variationRow({ id: VAR_MON_MAIN_A, plan_slot_id: SLOT_MON_MAIN, child_id: CHILD_A, paused_at: NOW }),
+      variationRow({ id: VAR_MON_MAIN_B, plan_slot_id: SLOT_MON_MAIN, child_id: CHILD_B, paused_at: NOW }),
+    ];
+    const mainAssignments = [mainAssign({ id: MAIN_ASSIGN_1, plan_id: PLAN_ID })];
+
+    const { composer, mocks } = buildDeps({ plan, mainAssignments, days, slots, variations, children: [] });
+
+    await composer.refreshTree(HOUSEHOLD_ID, WEEK_ID, REQUEST_ID);
+
+    const upsertCall = mocks.upsert.mock.calls[0]![0] as {
+      plan_tile_summaries: Array<{ day: string; paused: boolean }>;
+    };
+    expect(upsertCall.plan_tile_summaries[0]?.paused).toBe(true);
+  });
+
+  it('marks a day paused via day-level paused_at even if variations aren’t', async () => {
+    const plan = buildPlan({ id: PLAN_ID, household_id: HOUSEHOLD_ID });
+    const days = [dayRow({ id: DAY_MON, day: 'monday', paused_at: NOW, paused_reason: 'snow_day' })];
+    const slots = [slotRow({ id: SLOT_MON_MAIN, plan_day_id: DAY_MON })];
+    const variations = [variationRow({ plan_slot_id: SLOT_MON_MAIN, child_id: CHILD_A })];
+    const mainAssignments = [mainAssign({ id: MAIN_ASSIGN_1, plan_id: PLAN_ID })];
+
+    const { composer, mocks } = buildDeps({ plan, mainAssignments, days, slots, variations, children: [] });
+
+    await composer.refreshTree(HOUSEHOLD_ID, WEEK_ID, REQUEST_ID);
+
+    const upsertCall = mocks.upsert.mock.calls[0]![0] as {
+      plan_tile_summaries: Array<{ day: string; paused: boolean }>;
+    };
+    expect(upsertCall.plan_tile_summaries[0]?.paused).toBe(true);
+  });
+
+  it('writes an audit failure event when a parallel read throws', async () => {
+    const plan = buildPlan({ id: PLAN_ID, household_id: HOUSEHOLD_ID });
+    const { composer, mocks } = buildDeps({ plan });
+    mocks.findMainAssignmentsByPlanId.mockRejectedValueOnce(new Error('db-down'));
+    mocks.findDaysByPlanId.mockResolvedValue([dayRow({ id: DAY_MON })]);
+
+    await composer.refreshTree(HOUSEHOLD_ID, WEEK_ID, REQUEST_ID);
+
+    expect(mocks.upsert).not.toHaveBeenCalled();
+    expect(mocks.write).toHaveBeenCalledWith(
+      expect.objectContaining({
+        event_type: 'brief.projection.failure',
+        household_id: HOUSEHOLD_ID,
+        request_id: REQUEST_ID,
+        metadata: expect.objectContaining({ path: 'refreshTree', error: 'db-down' }),
+      }),
+    );
+  });
+
+  it('Lunch Link suppression overlays per day when repository is wired', async () => {
+    const plan = buildPlan({ id: PLAN_ID, household_id: HOUSEHOLD_ID, week_of: '2026-06-01' });
+    const days = [dayRow({ id: DAY_MON, day: 'monday' })];
+    const slots = [slotRow({ id: SLOT_MON_MAIN, plan_day_id: DAY_MON })];
+    const variations = [variationRow({ plan_slot_id: SLOT_MON_MAIN, child_id: CHILD_A })];
+    const mainAssignments = [mainAssign({ id: MAIN_ASSIGN_1, plan_id: PLAN_ID })];
+
+    const { composer, mocks } = buildDeps({ plan, mainAssignments, days, slots, variations, children: [] });
+    const findSuppressedChildrenInRange = vi.fn().mockResolvedValue(
+      new Map([['2026-06-01', [CHILD_A]]]),
+    );
+    const findRatingsInRange = vi.fn().mockResolvedValue(new Map());
+    const lunchLink = {
+      findSuppressedChildrenInRange,
+      findRatingsInRange,
+    } as unknown as LunchLinkSessionRepository;
+
+    const composerWithLink = new BriefStateComposer({
+      plansRepository: {
+        findCurrentByHousehold: mocks.findCurrentByHousehold,
+        findMainAssignmentsByPlanId: mocks.findMainAssignmentsByPlanId,
+        findDaysByPlanId: mocks.findDaysByPlanId,
+        findSlotsByDayIds: mocks.findSlotsByDayIds,
+        findVariationsBySlotIds: mocks.findVariationsBySlotIds,
+      } as unknown as PlansRepository,
+      briefStateRepository: { upsert: mocks.upsert, findByHousehold: mocks.findByHousehold } as unknown as BriefStateRepository,
+      childrenRepository: { findByHouseholdId: mocks.findByHouseholdId } as unknown as ChildrenRepository,
+      lunchLinkSessionRepository: lunchLink,
+      auditService: { write: mocks.write } as unknown as AuditService,
+      logger: buildLogger(),
+    });
+    // Use composerWithLink to access lunch-link path; composer above doesn't.
+    void composer; // referenced to keep eslint happy when composer is unused.
+
+    await composerWithLink.refreshTree(HOUSEHOLD_ID, WEEK_ID, REQUEST_ID);
+
+    const upsertCall = mocks.upsert.mock.calls[0]![0] as {
+      plan_tile_summaries: Array<{ day: string; lunch_link_suppressed_children: string[] }>;
+    };
+    expect(upsertCall.plan_tile_summaries[0]?.lunch_link_suppressed_children).toEqual([CHILD_A]);
+  });
+});

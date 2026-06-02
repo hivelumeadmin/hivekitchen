@@ -12,10 +12,15 @@ import type { AuditService } from '../../audit/audit.service.js';
 import type { LunchLinkSessionRepository } from './lunch-link-session.repository.js';
 import type {
   ClearedAllergyEntry,
+  PlanDayRow,
   PlanItemRow,
+  PlanMainAssignmentRow,
   PlanRow,
+  PlanSlotRow,
+  PlanSlotVariationRow,
   PlanTileSummary,
   ScaffoldingDiff,
+  Weekday,
 } from '@hivekitchen/types';
 
 export interface BriefStateComposerDeps {
@@ -422,4 +427,414 @@ export class BriefStateComposer {
     }
     return entries;
   }
+
+  // ==========================================================================
+  // Story 3-DM-C1 — Tree-shape composition (Phase 4).
+  //
+  // refreshTree() implements canonical §9.1's 8-read pattern: plan +
+  // main_assignments + plan_days + plan_slots + plan_slot_variations +
+  // children + suppression + ratings. Composes an in-memory tree, walks it
+  // to produce the same brief_state output shape as the flat refresh(),
+  // upserts in one call.
+  //
+  // Coexists with the flat refresh() during the cutover window. Phase 9
+  // swaps the seven call sites (lunch-link.routes, day-overrides.service x2,
+  // plans.service x4) from refresh() → refreshTree() and deletes the flat
+  // path.
+  //
+  // Output-shape note: the per-tile `ingredients` field is emitted as an
+  // empty array in the tree path. The canonical tile owns no ingredients —
+  // they live on the recipe (via main_assignment → recipes, or slot.recipe_id
+  // directly). Frontend lookup of recipe ingredients is a separate read in
+  // the canonical model. This intentional shape difference is the seam where
+  // D1's BriefStatePayloadSchema cleanup picks up.
+  // ==========================================================================
+
+  async refreshTree(
+    householdId: string,
+    weekId: string,
+    requestId: string,
+    opts: { userInitiated?: boolean } = {},
+  ): Promise<void> {
+    try {
+      const plan = await this.plansRepo.findCurrentByHousehold({
+        householdId,
+        weekId,
+      });
+      if (!plan) {
+        this.logger.debug(
+          { household_id: householdId, week_id: weekId },
+          'brief_state refreshTree skipped — no cleared plan found for this week',
+        );
+        return;
+      }
+
+      // §9.1 step 2 — 7-way parallel read. The previous-brief read joins as an
+      // 8th parallel leg so scaffolding-diff has its baseline ready by the
+      // time the tree is composed.
+      const [
+        previousBrief,
+        mainAssignments,
+        days,
+        children,
+        suppressionByDay,
+        ratingsMap,
+      ] = await Promise.all([
+        this.briefStateRepo.findByHousehold(householdId),
+        this.plansRepo.findMainAssignmentsByPlanId(plan.id),
+        this.plansRepo.findDaysByPlanId(plan.id),
+        this.childrenRepo.findByHouseholdId(householdId),
+        this.buildSuppressionMap(plan),
+        this.buildRatingsMap(plan),
+      ]);
+
+      // slots + variations depend on day ids — fan out after days resolves.
+      // Two reads, parallelized.
+      const dayIds = days.map((d) => d.id);
+      const slots = await this.plansRepo.findSlotsByDayIds(dayIds);
+      const slotIds = slots.map((s) => s.id);
+      const variations = await this.plansRepo.findVariationsBySlotIds(slotIds);
+
+      const tree = composePlanTree({ days, mainAssignments, slots, variations });
+      const previousTileSummaries = previousBrief?.plan_tile_summaries ?? null;
+
+      const upsertInput: BriefStateUpsertInput = {
+        household_id: householdId,
+        plan_id: plan.id,
+        moment_headline: '',
+        lumi_note: '',
+        memory_prose: '',
+        plan_tile_summaries: this.buildTileSummariesTree(
+          tree,
+          suppressionByDay,
+          ratingsMap,
+        ),
+        cleared_allergies: this.buildClearedAllergiesTree(tree, children),
+        scaffolding_diff: this.buildScaffoldingDiffTree(
+          previousTileSummaries,
+          tree,
+          opts.userInitiated ?? false,
+        ),
+        generated_at: new Date().toISOString(),
+        plan_revision: plan.revision,
+      };
+
+      await this.briefStateRepo.upsert(upsertInput);
+
+      this.logger.info(
+        { household_id: householdId, plan_id: plan.id, revision: plan.revision },
+        'brief_state projection refreshed via tree-shape composer',
+      );
+    } catch (err) {
+      this.logger.error(
+        { household_id: householdId, week_id: weekId, err },
+        'brief_state tree projection refresh failed',
+      );
+      try {
+        await this.auditService.write({
+          event_type: 'brief.projection.failure',
+          household_id: householdId,
+          request_id: requestId,
+          metadata: {
+            week_id: weekId,
+            error: err instanceof Error ? err.message : String(err),
+            path: 'refreshTree',
+          },
+        });
+      } catch (auditErr) {
+        this.logger.error(
+          { household_id: householdId, auditErr },
+          'audit write failed for brief.projection.failure (refreshTree)',
+        );
+      }
+    }
+  }
+
+  // Walks the composed tree and emits the same PlanTileSummary[] shape as the
+  // flat buildTileSummaries. The per-tile `ingredients` field is intentionally
+  // an empty array in tree mode (see class-level note above). Per-tile
+  // `paused` reflects either the day-level pause OR every variation paused.
+  private buildTileSummariesTree(
+    tree: PlanTree,
+    suppressionByDay: Map<string, string[]>,
+    ratingsMap: Map<string, Map<string, 'loved' | 'ok' | 'not-really'>>,
+  ): PlanTileSummary[] {
+    const out: PlanTileSummary[] = [];
+    for (const dayNode of tree.days) {
+      if (!SCHOOL_DAYS.includes(dayNode.day as SchoolDay)) continue;
+
+      type TileItem = PlanTileSummary['items'][number];
+      const tileItems: TileItem[] = [];
+      let pausedCount = 0;
+      let totalCount = 0;
+
+      for (const slotNode of dayNode.slots) {
+        // Resolve recipe FK for the tile: main slots dereference via M-grouping.
+        const tileRecipeId =
+          slotNode.slot.slot_kind === 'main'
+            ? slotNode.mainAssignment?.recipe_id ?? null
+            : slotNode.slot.recipe_id;
+
+        if (slotNode.variations.length === 0) {
+          // Slot has no variations — emit a single tile item with no
+          // child_id placeholder. This branch is defensive; legal tree
+          // composition produces at least one variation per slot.
+          continue;
+        }
+        for (const variation of slotNode.variations) {
+          const item: TileItem = {
+            plan_item_id: variation.id,
+            child_id: variation.child_id,
+            slot: slotNode.slot.slot_kind,
+            ingredients: [],
+            ...(tileRecipeId != null ? { recipe_id: tileRecipeId } : {}),
+          };
+          tileItems.push(item);
+          totalCount++;
+          if (
+            dayNode.day_row.paused_at != null ||
+            slotNode.slot.paused_at != null ||
+            variation.paused_at != null
+          ) {
+            pausedCount++;
+          }
+        }
+      }
+
+      if (tileItems.length === 0) continue;
+
+      out.push({
+        day: dayNode.day as SchoolDay,
+        items: tileItems,
+        paused: totalCount > 0 && pausedCount === totalCount,
+        lunch_link_suppressed_children:
+          suppressionByDay.get(dayNode.day) ?? [],
+        child_ratings: Object.fromEntries(ratingsMap.get(dayNode.day) ?? new Map()),
+      });
+    }
+    return SCHOOL_DAYS.filter((d) => out.find((t) => t.day === d)).map(
+      (d) => out.find((t) => t.day === d)!,
+    );
+  }
+
+  // Same semantics as buildClearedAllergies: per-(child, allergen) entries
+  // for children who appear at least once in the plan's variations and have
+  // at least one declared allergen.
+  private buildClearedAllergiesTree(
+    tree: PlanTree,
+    children: DecryptedChildRow[],
+  ): ClearedAllergyEntry[] {
+    const planChildIds = new Set<string>();
+    for (const dayNode of tree.days) {
+      for (const slotNode of dayNode.slots) {
+        for (const variation of slotNode.variations) {
+          planChildIds.add(variation.child_id);
+        }
+      }
+    }
+    const entries: ClearedAllergyEntry[] = [];
+    for (const child of children) {
+      if (!planChildIds.has(child.id)) continue;
+      if (child.declared_allergens.length === 0) continue;
+      for (const allergen of child.declared_allergens) {
+        entries.push({
+          child_id: child.id,
+          child_name: child.name,
+          allergen,
+        });
+      }
+    }
+    return entries;
+  }
+
+  // Tree-mode scaffolding diff. Reuses the same (day, child, slot) pair
+  // index as the flat path so the QuietDiff phrases stay consistent.
+  // Ingredient comparison in tree mode uses recipe_id swaps as the trigger
+  // (because per-tile ingredients are empty in tree mode); the flat path's
+  // per-string diff retires when D1's BriefStatePayloadSchema lands.
+  private buildScaffoldingDiffTree(
+    previousTileSummaries: PlanTileSummary[] | null,
+    tree: PlanTree,
+    userInitiated: boolean,
+  ): ScaffoldingDiff | null {
+    if (userInitiated) return null;
+    if (!previousTileSummaries || previousTileSummaries.length === 0) return null;
+
+    // Reuse the tree-builder with empty suppression / ratings to produce
+    // the current shape. Then index both sides by (day, child, slot).
+    const currentSummaries = this.buildTileSummariesTree(
+      tree,
+      new Map<string, string[]>(),
+      new Map<string, Map<string, 'loved' | 'ok' | 'not-really'>>(),
+    );
+
+    type Key = string;
+    type SlotEntry = { day: SchoolDay; slot: string; recipe_id: string | undefined };
+    const indexBy = (summaries: PlanTileSummary[]): Map<Key, SlotEntry> => {
+      const out = new Map<Key, SlotEntry>();
+      for (const s of summaries) {
+        for (const it of s.items) {
+          out.set(`${s.day}|${it.child_id}|${it.slot}`, {
+            day: s.day,
+            slot: it.slot,
+            recipe_id: it.recipe_id,
+          });
+        }
+      }
+      return out;
+    };
+    const prevIndex = indexBy(previousTileSummaries);
+    const currIndex = indexBy(currentSummaries);
+
+    const updatedPairs = new Set<string>();
+    const addedPairs = new Set<string>();
+    const removedPairs = new Set<string>();
+    const phraseBy = new Map<string, string>();
+
+    const allKeys = new Set<Key>([...prevIndex.keys(), ...currIndex.keys()]);
+    for (const key of allKeys) {
+      const prev = prevIndex.get(key);
+      const curr = currIndex.get(key);
+      const entry = prev ?? curr!;
+      const day = entry.day.charAt(0).toUpperCase() + entry.day.slice(1);
+      const pairKey = `${entry.day}|${entry.slot}`;
+      if (prev && curr) {
+        if (prev.recipe_id !== curr.recipe_id) {
+          updatedPairs.add(pairKey);
+          phraseBy.set(pairKey, `${day}'s ${entry.slot} updated`);
+        }
+      } else if (curr && !prev) {
+        addedPairs.add(pairKey);
+        phraseBy.set(pairKey, `${day}'s ${entry.slot} added`);
+      } else if (prev && !curr) {
+        removedPairs.add(pairKey);
+        phraseBy.set(pairKey, `${day}'s ${entry.slot} removed`);
+      }
+    }
+
+    const changedPairs = new Set<string>([
+      ...updatedPairs,
+      ...addedPairs,
+      ...removedPairs,
+    ]);
+    if (changedPairs.size === 0) return null;
+
+    const phrases = [...changedPairs].map((p) => phraseBy.get(p)!);
+    const clamp = (raw: string, max: number): string =>
+      raw.length > max ? raw.slice(0, max - 1) + '…' : raw;
+
+    const summary =
+      changedPairs.size === 1
+        ? clamp(phrases[0]!, 200)
+        : clamp(`${String(changedPairs.size)} changes this week`, 200);
+
+    const explanation =
+      changedPairs.size > 1 ? clamp(phrases.join('; '), 500) : undefined;
+
+    return { summary, explanation };
+  }
+}
+
+// ===========================================================================
+// Story 3-DM-C1 Phase 4 — pure tree-composition helper. Exported for testing.
+//
+// Given the four parallel reads from §9.1, build an in-memory tree:
+//   PlanTree
+//     ├── days[]: PlanTreeDay
+//     │     ├── day_row: PlanDayRow
+//     │     └── slots[]: PlanTreeSlot
+//     │           ├── slot: PlanSlotRow
+//     │           ├── mainAssignment?: PlanMainAssignmentRow   (only when slot_kind=main)
+//     │           └── variations[]: PlanSlotVariationRow
+//     └── mainAssignmentsBySequence: Map<sequence, PlanMainAssignmentRow>
+//
+// Days are sorted Mon→Sat (DB order is alphabetic which puts 'friday' before
+// 'monday'). Slots inside each day are sorted main → snack → extra for
+// stable iteration.
+// ===========================================================================
+
+export interface PlanTreeSlot {
+  slot: PlanSlotRow;
+  mainAssignment: PlanMainAssignmentRow | undefined;
+  variations: PlanSlotVariationRow[];
+}
+
+export interface PlanTreeDay {
+  day: Weekday;
+  day_row: PlanDayRow;
+  slots: PlanTreeSlot[];
+}
+
+export interface PlanTree {
+  days: PlanTreeDay[];
+  mainAssignmentsBySequence: Map<number, PlanMainAssignmentRow>;
+  mainAssignmentsById: Map<string, PlanMainAssignmentRow>;
+}
+
+const WEEKDAY_ORDER: Record<Weekday, number> = {
+  monday: 1,
+  tuesday: 2,
+  wednesday: 3,
+  thursday: 4,
+  friday: 5,
+  saturday: 6,
+};
+
+const SLOT_KIND_ORDER: Record<string, number> = {
+  main: 1,
+  snack: 2,
+  extra: 3,
+};
+
+export function composePlanTree(input: {
+  days: PlanDayRow[];
+  mainAssignments: PlanMainAssignmentRow[];
+  slots: PlanSlotRow[];
+  variations: PlanSlotVariationRow[];
+}): PlanTree {
+  const mainAssignmentsBySequence = new Map<number, PlanMainAssignmentRow>();
+  const mainAssignmentsById = new Map<string, PlanMainAssignmentRow>();
+  for (const ma of input.mainAssignments) {
+    mainAssignmentsBySequence.set(ma.sequence, ma);
+    mainAssignmentsById.set(ma.id, ma);
+  }
+
+  const slotsByDay = new Map<string, PlanSlotRow[]>();
+  for (const slot of input.slots) {
+    const arr = slotsByDay.get(slot.plan_day_id) ?? [];
+    arr.push(slot);
+    slotsByDay.set(slot.plan_day_id, arr);
+  }
+
+  const variationsBySlot = new Map<string, PlanSlotVariationRow[]>();
+  for (const variation of input.variations) {
+    const arr = variationsBySlot.get(variation.plan_slot_id) ?? [];
+    arr.push(variation);
+    variationsBySlot.set(variation.plan_slot_id, arr);
+  }
+
+  const days: PlanTreeDay[] = input.days
+    .slice()
+    .sort((a, b) => WEEKDAY_ORDER[a.day] - WEEKDAY_ORDER[b.day])
+    .map((dayRow) => {
+      const daySlots = slotsByDay.get(dayRow.id) ?? [];
+      const sortedSlots = daySlots
+        .slice()
+        .sort(
+          (a, b) =>
+            (SLOT_KIND_ORDER[a.slot_kind] ?? 99) -
+            (SLOT_KIND_ORDER[b.slot_kind] ?? 99),
+        );
+      const slots: PlanTreeSlot[] = sortedSlots.map((slot) => ({
+        slot,
+        mainAssignment:
+          slot.main_assignment_id !== null
+            ? mainAssignmentsById.get(slot.main_assignment_id)
+            : undefined,
+        variations: variationsBySlot.get(slot.id) ?? [],
+      }));
+      return { day: dayRow.day, day_row: dayRow, slots };
+    });
+
+  return { days, mainAssignmentsBySequence, mainAssignmentsById };
 }
