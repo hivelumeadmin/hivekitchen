@@ -29,6 +29,7 @@ import {
 } from '../../common/errors.js';
 import { GUARDRAIL_VERSION } from '../allergy-guardrail/allergy-rules.engine.js';
 import type { PlanItemRow, PlanRow } from '@hivekitchen/types';
+import { buildPlan, buildPlanItem } from '../../../test/factories/index.js';
 
 const PLAN_ID = '11111111-1111-4111-8111-111111111111';
 const HOUSEHOLD_ID = '22222222-2222-4222-8222-222222222222';
@@ -1131,39 +1132,28 @@ describe('PlansService.commit — discover candidate resolution (Story 3-31, AC7
 
 const ITEM_ID = '00000000-0000-4000-8000-000000000010';
 
+// Story 3-DM-A3: thin wrappers around the shared factories so this file's
+// PLAN_ID / HOUSEHOLD_ID / CHILD_ID constants + 3.12-era dates stay pinned at
+// the wrapper, while the row SHAPE (subject to Phase C1's tree-shape cutover)
+// lives once in apps/api/test/factories.
 function makePlanRow(overrides: Partial<PlanRow> = {}): PlanRow {
-  return {
+  return buildPlan({
     id: PLAN_ID,
     household_id: HOUSEHOLD_ID,
     week_id: WEEK_ID,
-    week_of: '2026-05-04',
-    revision: 1,
-    generated_at: '2026-05-02T11:00:00.000Z',
-    guardrail_cleared_at: '2026-05-02T11:00:01.000Z',
     guardrail_version: '1.1.0',
-    prompt_version: 'v1.0.0',
-    created_at: '2026-05-02T11:00:00.000Z',
-    updated_at: '2026-05-02T11:00:01.000Z',
     ...overrides,
-  };
+  });
 }
 
 function makeItemRow(overrides: Partial<PlanItemRow> = {}): PlanItemRow {
-  return {
+  return buildPlanItem({
     id: ITEM_ID,
     plan_id: PLAN_ID,
     child_id: CHILD_ID,
-    day: 'monday',
-    slot: 'main',
-    recipe_id: null,
-    item_id: null,
     ingredients: ['rice'],
-    paused_at: null,
-    replaced_by_plan_id: null,
-    created_at: '2026-05-02T11:00:00.000Z',
-    updated_at: '2026-05-02T11:00:00.000Z',
     ...overrides,
-  };
+  });
 }
 
 function buildSwapRepo(opts: {
@@ -1756,38 +1746,19 @@ describe('PlansService.getPlanForWeek (Story 3.14)', () => {
     };
   }
 
+  // Story 3-DM-A3: thin wrappers — see top-of-file makePlanRow note.
   function makePlanRow(overrides: Partial<PlanRow> = {}): PlanRow {
-    return {
+    return buildPlan({
       id: PLAN_ID,
       household_id: HOUSEHOLD_ID,
       week_id: WEEK_ID,
-      week_of: '2026-05-04',
-      revision: 1,
-      generated_at: '2026-05-02T11:00:00.000Z',
-      guardrail_cleared_at: '2026-05-02T11:00:01.000Z',
       guardrail_version: 'v1.0.0',
-      prompt_version: 'v1.0.0',
-      created_at: '2026-05-02T11:00:00.000Z',
-      updated_at: '2026-05-02T11:00:01.000Z',
       ...overrides,
-    };
+    });
   }
 
   function makeItem(day: PlanItemRow['day']): PlanItemRow {
-    return {
-      id: '00000000-0000-4000-8000-000000000010',
-      plan_id: PLAN_ID,
-      child_id: CHILD_ID,
-      day,
-      slot: 'main',
-      recipe_id: null,
-      item_id: null,
-        ingredients: ['rice'],
-      paused_at: null,
-      replaced_by_plan_id: null,
-      created_at: '2026-05-02T11:00:00.000Z',
-      updated_at: '2026-05-02T11:00:00.000Z',
-    };
+    return buildPlanItem({ plan_id: PLAN_ID, child_id: CHILD_ID, day, ingredients: ['rice'] });
   }
 
   function buildService(
@@ -1920,39 +1891,32 @@ describe('week-monday helpers (Story 3.14)', () => {
 });
 
 describe('PlansService.getPlanHistory (Story 3.15)', () => {
+  // Story 3-DM-A3: thin wrappers — pins this describe's 3.15 history-era dates
+  // (week_of 2026-04-21) while inheriting shape from buildPlan/buildPlanItem.
   function makePlanRow(overrides: Partial<PlanRow> = {}): PlanRow {
-    return {
+    return buildPlan({
       id: PLAN_ID,
       household_id: HOUSEHOLD_ID,
       week_id: WEEK_ID,
       week_of: '2026-04-21',
-      revision: 1,
       generated_at: '2026-04-19T11:00:00.000Z',
       guardrail_cleared_at: '2026-04-19T11:00:01.000Z',
       guardrail_version: 'v1.0.0',
-      prompt_version: 'v1.0.0',
       created_at: '2026-04-19T11:00:00.000Z',
       updated_at: '2026-04-19T11:00:01.000Z',
       ...overrides,
-    };
+    });
   }
 
   function makeItem(overrides: Partial<PlanItemRow> = {}): PlanItemRow {
-    return {
-      id: '00000000-0000-4000-8000-000000000010',
+    return buildPlanItem({
       plan_id: PLAN_ID,
       child_id: CHILD_ID,
-      day: 'monday',
-      slot: 'main',
-      recipe_id: null,
-      item_id: null,
-        ingredients: ['rice'],
-      paused_at: null,
-      replaced_by_plan_id: null,
+      ingredients: ['rice'],
       created_at: '2026-04-19T11:00:00.000Z',
       updated_at: '2026-04-19T11:00:00.000Z',
       ...overrides,
-    };
+    });
   }
 
   function buildHistoryRepo(opts: {

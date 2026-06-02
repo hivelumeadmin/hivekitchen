@@ -10,7 +10,7 @@ import type {
 } from '../children/children.repository.js';
 import type { AuditService } from '../../audit/audit.service.js';
 import type { PlanItemRow, PlanRow } from '@hivekitchen/types';
-import { buildPlan, buildPlanItem } from '../../../test/factories/index.js';
+import { buildPlan, buildPlanItem, buildChild } from '../../../test/factories/index.js';
 
 // Story 3-DM-A3: aligned with shared factory convention
 // (household=1's, plan=2's) to keep buildPlan / buildPlanItem defaults compatible.
@@ -98,23 +98,11 @@ function buildAudit(opts: { writeThrows?: Error } = {}): AuditService & {
   return { write } as unknown as AuditService & { write: ReturnType<typeof vi.fn> };
 }
 
+// Story 3-DM-A3: wraps the shared buildChild factory with this file's
+// 'Asha'/'Rohan' default-name convention. Call sites assert against those
+// names; pinning them here keeps the migration to factories diff-free.
 function makeChild(overrides: Partial<DecryptedChildRow> = {}): DecryptedChildRow {
-  return {
-    id: CHILD_A,
-    household_id: HOUSEHOLD_ID,
-    name: 'Asha',
-    age_band: 'child',
-    school_policy_notes: null,
-    declared_allergens: [],
-    cultural_identifiers: [],
-    dietary_preferences: [],
-    appetite_level: 'normal',
-    texture_needs: 'normal',
-    spice_tolerance: 'mild',
-    bag_composition_pattern: 'main_plus_snack_plus_extra',
-    created_at: '2026-05-02T11:00:00.000Z',
-    ...overrides,
-  };
+  return buildChild({ id: CHILD_A, household_id: HOUSEHOLD_ID, name: 'Asha', ...overrides });
 }
 
 function buildChildrenRepo(opts: {

@@ -6,6 +6,7 @@ import type {
   PlanItemRow,
 } from '@hivekitchen/types';
 import type { PlanRegenerationJobData } from './plan-regeneration.job.js';
+import { buildPlanItem } from '../../test/factories/index.js';
 
 // The job worker is registered via a Fastify plugin; testing the registered
 // worker requires a full Fastify mock. To keep the test focused, we replicate
@@ -30,21 +31,10 @@ function makeComposeOutput(
   };
 }
 
+// Story 3-DM-A3: thin wrapper around buildPlanItem to pin this file's
+// PLAN_ID / CHILD_ID constants (which differ from the factory defaults).
 function makeExistingItem(day: PlanItemRow['day']): PlanItemRow {
-  return {
-    id: '00000000-0000-4000-8000-000000000010',
-    plan_id: PLAN_ID,
-    child_id: CHILD_ID,
-    day,
-    slot: 'main',
-    recipe_id: null,
-    item_id: null,
-    ingredients: ['rice', 'lentils'],
-    paused_at: null,
-    replaced_by_plan_id: null,
-    created_at: '2026-05-02T11:00:00.000Z',
-    updated_at: '2026-05-02T11:00:00.000Z',
-  };
+  return buildPlanItem({ plan_id: PLAN_ID, child_id: CHILD_ID, day });
 }
 
 // Minimal harness mirroring the worker logic — the production worker is

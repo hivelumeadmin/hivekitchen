@@ -1,6 +1,6 @@
 # Story 3-DM-A3: Shared test factories + Saturday-support audit
 
-Status: planned
+Status: done
 
 ## Story
 
