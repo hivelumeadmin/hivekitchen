@@ -24,6 +24,7 @@ import {
   useRequestRegenerationMutation,
   useUpdateSovereigntyModeMutation,
 } from './mutations.js';
+import { adaptPlansResponse, type DayTreeView } from './tree-adapter.js';
 
 const CHILD_COLORS: readonly ChildDotColor[] = ['foliage', 'lumi-terracotta'];
 
@@ -66,6 +67,20 @@ export function BriefCanvas() {
   // Gated on householdId so the query doesn't fire pre-auth.
   const { data: planData, isLoading: isPlanLoading } = usePlanQuery('current', { enabled: householdId !== null });
   const flaggedItemsRaw = planData?.flagged_items ?? [];
+  // Story 3-DM-C1 Phase 9b part 4 step 4 — DisambiguationPicker now takes a
+  // DayTreeView (the canonical tree slice for the active day). The brief
+  // surface continues to render tiles from brief_state.plan_tile_summaries
+  // (composer-fed; carries recipe display data), but the picker dispatches
+  // against the raw tree so it can resolve plan_slot_id / variation_id /
+  // main_assignment_id correctly. dayViewsByDay maps weekday → DayTreeView.
+  const dayViewsByDay = useMemo(() => {
+    const out = new Map<DayTreeView['day'], DayTreeView>();
+    if (planData === undefined) return out;
+    for (const view of adaptPlansResponse(planData).dayViews) {
+      out.set(view.day, view);
+    }
+    return out;
+  }, [planData]);
   const [showAddChild, setShowAddChild] = useState(false);
   const [addedChild, setAddedChild] = useState<ChildResponse | null>(null);
   const [savedChildren, setSavedChildren] = useState<ChildResponse[]>([]);
@@ -111,7 +126,7 @@ export function BriefCanvas() {
     for (const entry of clearedAllergies) {
       if (!nameById.has(entry.child_id)) nameById.set(entry.child_id, entry.child_name);
     }
-    return flaggedItemsRaw.map((item) => ({
+    return flaggedItemsRaw.map((item: typeof flaggedItemsRaw[number]) => ({
       childId: item.child_id,
       childName: nameById.get(item.child_id) ?? 'your child',
       ingredient: item.ingredient,
@@ -411,22 +426,27 @@ export function BriefCanvas() {
           </div>
 
           {activeSwapDay !== null && planId !== null && (() => {
-            const activeSummary = brief.plan_tile_summaries.find(
-              (s) => s.day === activeSwapDay,
-            );
-            if (!activeSummary) return null;
+            const activeDayView = dayViewsByDay.get(activeSwapDay);
+            if (activeDayView === undefined) return null;
+            const childNames: Record<string, string> = {};
+            for (const entry of clearedAllergies) {
+              if (!(entry.child_id in childNames)) {
+                childNames[entry.child_id] = entry.child_name;
+              }
+            }
             return (
               <DisambiguationPicker
                 planId={planId}
                 day={activeSwapDay}
-                items={activeSummary.items}
+                dayView={activeDayView}
                 clearedAllergens={clearedAllergies.map((e) => ({
                   child_id: e.child_id,
                   allergen: e.allergen,
                 }))}
+                childNames={childNames}
                 onDismiss={dismissPicker}
-                onSwapStarted={(itemId) => {
-                  setSwappingItemId(itemId);
+                onSwapStarted={(variationId) => {
+                  setSwappingItemId(variationId);
                   swapTriggerRef.current = null;
                   setActiveSwapDay(null);
                 }}

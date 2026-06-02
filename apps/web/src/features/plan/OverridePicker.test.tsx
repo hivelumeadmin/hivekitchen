@@ -13,7 +13,10 @@ vi.mock('@/lib/fetch.js', async () => {
 });
 
 const PLAN_ID = '99999999-9999-4999-8999-999999999999';
-const ITEM_ID = '00000000-0000-4000-8000-000000000010';
+// Story 3-DM-C1 Phase 9b part 4 step 4 — overrides are scoped to a slot
+// (not a per-(child, day, slot) flat item) in the tree model. Param rename
+// flows through useSetDayOverrideMutation: planItemId → planSlotId.
+const SLOT_ID = '00000000-0000-4000-8000-000000000010';
 const CHILD_ID = '11111111-1111-4111-8111-111111111111';
 const OVERRIDE_DATE = '2026-05-06';
 
@@ -29,7 +32,7 @@ function renderPicker(overrides: { onConfirm?: () => void; onCancel?: () => void
   const utils = render(
     <OverridePicker
       planId={PLAN_ID}
-      planItemId={ITEM_ID}
+      planSlotId={SLOT_ID}
       childId={CHILD_ID}
       overrideDate={OVERRIDE_DATE}
       onConfirm={onConfirm}
@@ -66,7 +69,7 @@ describe('OverridePicker', () => {
     vi.mocked(hkFetch).mockResolvedValueOnce({
       override: {
         id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
-        plan_item_id: ITEM_ID,
+        plan_item_id: SLOT_ID,
         child_id: CHILD_ID,
         household_id: '22222222-2222-4222-8222-222222222222',
         override_date: OVERRIDE_DATE,
@@ -88,7 +91,7 @@ describe('OverridePicker', () => {
     });
 
     expect(vi.mocked(hkFetch)).toHaveBeenCalledWith(
-      `/v1/plans/${PLAN_ID}/items/${ITEM_ID}/override`,
+      `/v1/plans/${PLAN_ID}/slots/${SLOT_ID}/override`,
       expect.objectContaining({
         method: 'POST',
         body: expect.objectContaining({

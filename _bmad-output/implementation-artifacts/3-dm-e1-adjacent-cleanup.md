@@ -18,8 +18,9 @@ So that the canonical model is fully consistent and the table names match their 
    - Any rows with these values were either migrated to `plan_days.paused_at` + `paused_reason` (during C1) or deleted as stale
 4. `override_type` column renamed to `context_type` (better matches the table's new name).
 5. If `recipes.instructions` column still exists (unlikely — should be dropped by A1), drop it now.
-6. Any other small cleanup discovered during phases A-D batched here (TBD per phase outcomes).
-7. Repository + service files renamed: `day-overrides.repository.ts` → `plan-day-context.repository.ts`; same for service.
+6. **`plan_slots.main_assignment_id` FK gains `ON DELETE SET NULL` (or `CASCADE`)** — surfaced during C1 Phase 9c apply. The original migration created `main_assignment_id uuid REFERENCES plan_main_assignments(id)` with no `ON DELETE` action, so cascading a `DELETE FROM plans` hits a FK constraint when Postgres tries to delete `plan_main_assignments` while `plan_slots` still references them. Cleanup scripts work around this by deleting `plan_days → plan_main_assignments → plans` in explicit order. Adding the cascade action closes the gap; `SET NULL` is the right semantic because the slot row can outlive its M-assignment in degenerate states (e.g. an in-flight swap that nulls the assignment but keeps the slot row).
+7. Any other small cleanup discovered during phases A-D batched here (TBD per phase outcomes).
+8. Repository + service files renamed: `day-overrides.repository.ts` → `plan-day-context.repository.ts`; same for service.
 
 ## Dependencies & Context
 
@@ -78,6 +79,26 @@ So that the canonical model is fully consistent and the table names match their 
   ```sql
   ALTER TABLE recipes DROP COLUMN IF EXISTS instructions;
   ```
+
+### Task 3b — plan_slots.main_assignment_id cascade fix (surfaced by C1 9c)
+
+- [ ] Add ON DELETE SET NULL to the existing FK:
+  ```sql
+  ALTER TABLE plan_slots
+    DROP CONSTRAINT plan_slots_main_assignment_id_fkey,
+    ADD CONSTRAINT plan_slots_main_assignment_id_fkey
+      FOREIGN KEY (main_assignment_id)
+      REFERENCES plan_main_assignments(id)
+      ON DELETE SET NULL;
+  ```
+- [ ] Verify the plan_slots CHECK constraint still permits `main_assignment_id = NULL` only for non-main slots; the migration as-written requires it NOT NULL when `slot_kind = 'main'`. Decision moment:
+  - Option A: keep the CHECK strict and use ON DELETE CASCADE instead (the slot dies with its M-assignment — usually desired)
+  - Option B: relax the CHECK to allow `main` slots with NULL main_assignment_id transiently (matches SET NULL semantics; messier rendering invariant for the UI)
+  Pick CASCADE unless a specific use case for SET NULL emerges.
+- [ ] Delete `scripts/clear-load-test-plans.ts`'s manual dependency-order
+  cleanup (it works around this gap); replace with the simpler
+  `DELETE FROM plans WHERE household_id = '...'` once cascade lands.
+- [ ] Re-test the load-test cleanup path after the migration applies.
 
 ### Task 4 — File renames
 

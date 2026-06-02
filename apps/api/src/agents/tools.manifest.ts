@@ -23,8 +23,8 @@ import {
   MemoryRecallOutputSchema,
   PantryReadInputSchema,
   PantryReadOutputSchema,
-  PlanComposeInputSchema,
-  PlanComposeOutputSchema,
+  PlanComposeTreeInputSchema,
+  PlanComposeTreeOutputSchema,
   RecipeDiscoverInputSchema,
   RecipeDiscoverOutputSchema,
   RecipeFetchInputSchema,
@@ -138,8 +138,8 @@ const pantryReadStubSpec = stubSpec(
 const planComposeStubSpec = stubSpec(
   'plan.compose',
   "Assemble the final weekly plan structure from the planner's day-level meal decisions. Returns a validated WeeklyPlan ready for guardrail evaluation.",
-  PlanComposeInputSchema,
-  PlanComposeOutputSchema,
+  PlanComposeTreeInputSchema,
+  PlanComposeTreeOutputSchema,
   2000,
   'plan.compose not wired — DomainOrchestrator constructor must inject createPlanComposeSpec(planService, redis)',
 );

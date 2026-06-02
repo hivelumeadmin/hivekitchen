@@ -60,54 +60,11 @@ const SLOT_MAX = 64;
 const PLAN_ITEMS_MAX = 50;
 const INGREDIENTS_MAX = 20;
 
-// --- Story 3.7 — plan.compose tool I/O schemas ---
-// Per-child, per-slot item within a single day's plan.
-// recipe_id / item_id are optional at compose time; resolver fills them in
-// later stories. Schemas are tool-internal — only the inferred types are
-// re-exported for consumers (planner agent + BullMQ worker).
-// Story 3-DM-A2: snack_skus folded into recipes; recipe_id is now the single
-// catalog FK across main / snack / extra slots. The slot ↔ FK XOR refine
-// retired with the snack_skus table.
-const PlanComposeItemSchema = z.object({
-  child_id: z.string().uuid(),
-  slot: z.string().min(1).max(SLOT_MAX),
-  ingredients: z.array(z.string().min(1).max(INGREDIENT_MAX)).min(1),
-  recipe_id: z.string().uuid().optional(),
-  // Story 3-31: when the planner picked this main-slot item via
-  // recipe.discover, the synthetic candidate id is carried through to
-  // plan commit, where it's resolved against Redis to insert a real
-  // recipes row. Mutually exclusive with recipe_id (an item references
-  // EITHER a catalog row OR a yet-to-materialize candidate, never both).
-  recipe_candidate_id: z.string().uuid().optional(),
-  item_id: z.string().uuid().optional(),
-}).superRefine((val, ctx) => {
-  // discover is a main-slot pathway today — snack/extra resolve through the
-  // curated recipes catalog directly, never via discover candidates.
-  if ((val.slot === 'snack' || val.slot === 'extra') && val.recipe_candidate_id !== undefined) {
-    ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'recipe_candidate_id is not valid for snack/extra slots', path: ['recipe_candidate_id'] });
-  }
-  if (val.recipe_id !== undefined && val.recipe_candidate_id !== undefined) {
-    ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'recipe_id and recipe_candidate_id are mutually exclusive', path: ['recipe_candidate_id'] });
-  }
-});
-export type PlanComposeItem = z.infer<typeof PlanComposeItemSchema>;
-
-// Story 3-DM-A3: enum extended to include 'saturday' so the planner can emit
-// 6-day weeks consistent with PlanItemRowSchema and brief_state's SCHOOL_DAYS
-// constant. Households whose school week ends on Friday simply emit no
-// saturday items — the contract allows the day, not requires it.
-const PlanComposeDaySchema = z.object({
-  day: z.enum(['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday']),
-  items: z.array(PlanComposeItemSchema).min(1),
-});
-export type PlanComposeDay = z.infer<typeof PlanComposeDaySchema>;
-
-export const PlanComposeInputSchema = z.object({
-  household_id: z.string().uuid(),
-  week_of: z.string().date(),
-  days: z.array(PlanComposeDaySchema).min(1),
-  prompt_version: z.string().min(1),
-});
+// Story 3-DM-C1 Phase 9b part 4 step 5 — flat plan.compose schemas
+// (PlanComposeItemSchema / PlanComposeDaySchema / PlanComposeInputSchema /
+// PlanComposeOutputSchema) retired with the plan_items array. The canonical
+// tree-shape replacements live further down: PlanComposeTreeInputSchema /
+// PlanComposeTreeOutputSchema (main_assignments + days[].slots[].variations).
 
 // Story 3.27 — Lumi-proposed preparation-method variant. The planner may
 // include ONE proposal per plan output when at least one child has
@@ -124,23 +81,9 @@ export const PlanVariantProposalOutputSchema = z.object({
   variant_description: z.string().min(1),
 });
 
-// plan.compose output — carries plan_id so the BullMQ worker can build CommitPlanInput.
-export const PlanComposeOutputSchema = z.object({
-  plan_id: z.string().uuid(),
-  household_id: z.string().uuid(),
-  week_of: z.string().date(),
-  days: z.array(PlanComposeDaySchema).min(1),
-  prompt_version: z.string().min(1),
-  // Story 3.27 — present only when the planner identified a preparation-method
-  // variant for a variant-eligible child. At most one per plan.
-  variant_proposal: PlanVariantProposalOutputSchema.optional(),
-  // Story 3.29 — soft cultural-degradation signal. The planner sets this when
-  // honoring ALL household cultural rules simultaneously yields a near-empty
-  // intersection (e.g. Kosher + Halal + Hindu-vegetarian with no shared
-  // protein). The plan IS still committed; PlansService.handleDegradedPlan
-  // updates brief_state so the parent can opt into alternating sovereignty.
-  degraded_reason: z.enum(['CULTURAL_INTERSECTION_EMPTY']).nullable().optional(),
-});
+// Story 3-DM-C1 Phase 9b part 4 step 5 — flat PlanComposeOutputSchema
+// retired with the plan_items array. The canonical replacement is
+// PlanComposeTreeOutputSchema further down.
 
 // Story 3.27 — DB row + confirm endpoint shapes.
 export const VariantProposalSchema = z.object({
@@ -213,94 +156,16 @@ export const AllergyCheckInputSchema = z.object({
 
 export const AllergyCheckOutputSchema = GuardrailResultSchema;
 
-// --- Story 3.5 — plan repository write/read shapes ---
-// The presentation-bind contract requires an atomic write of plan + items +
-// guardrail_cleared_at + guardrail_version. CommitPlanInput is the caller's
-// payload to PlansRepository.commit(); the repository augments it with the
-// guardrailClearedAt timestamp + guardrailVersion string at write time.
-//
-// PlanItemWriteSchema is intentionally a write-only superset of
-// PlanItemForGuardrailSchema (adds recipe_id / item_id). Mapping happens in
-// PlansService.commit() before passing items to the guardrail. ingredients
-// enforces min(1) because the guardrail returns uncertain('empty_ingredients')
-// for zero-ingredient items, which would exhaust all retries without fixing.
+// Story 3-DM-C1 Phase 9b part 4 step 5 — flat plan repository schemas
+// (PlanItemWriteSchema / CommitPlanInputSchema / flat PlanRowSchema /
+// PlanItemRowSchema) retired with the plan_items table. The canonical
+// PlanRowSchema (no week_id, +state fields) takes over via the rename of
+// PlanRowSchema further down; CommitPlanTreeInputSchema is the
+// commit payload; the row reads land via PlanMainAssignmentRowSchema /
+// PlanDayRowSchema / PlanSlotRowSchema / PlanSlotVariationRowSchema.
 
 const PROMPT_VERSION_MAX = 32;
 const GUARDRAIL_VERSION_MAX = 32;
-
-export const PlanItemWriteSchema = z.object({
-  child_id: z.string().uuid(),
-  day: z.string().min(1).max(SLOT_MAX),
-  slot: z.string().min(1).max(SLOT_MAX),
-  recipe_id: z.string().uuid().optional(),
-  // Story 3-31: discover-sourced main items carry the synthetic candidate id
-  // through to plan commit, where it's resolved against the Redis-cached
-  // RecipeAgentExtraction and inserted as a real recipes row. Mutually
-  // exclusive with recipe_id (an item references either a catalog row or a
-  // candidate awaiting materialization, never both).
-  recipe_candidate_id: z.string().uuid().optional(),
-  item_id: z.string().uuid().optional(),
-  ingredients: z.array(z.string().min(1).max(INGREDIENT_MAX)).min(1),
-}).superRefine((val, ctx) => {
-  // Story 3-DM-A2: discover is a main-slot pathway. Snack / extra slots
-  // resolve through the curated recipes catalog (folded from snack_skus),
-  // never via discover candidates.
-  if ((val.slot === 'snack' || val.slot === 'extra') && val.recipe_candidate_id !== undefined) {
-    ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'recipe_candidate_id is not valid for snack/extra slots', path: ['recipe_candidate_id'] });
-  }
-  if (val.recipe_id !== undefined && val.recipe_candidate_id !== undefined) {
-    ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'recipe_id and recipe_candidate_id are mutually exclusive', path: ['recipe_candidate_id'] });
-  }
-});
-
-export const CommitPlanInputSchema = z.object({
-  plan_id: z.string().uuid(),
-  household_id: z.string().uuid(),
-  week_id: z.string().uuid(),
-  week_of: z.string().date(),  // Story 3.13 — ISO 8601 date string ('2026-04-28')
-  revision: z.number().int().min(1),
-  generated_at: z.string().datetime({ offset: true }),
-  prompt_version: z.string().min(1).max(PROMPT_VERSION_MAX),
-  // Story 3-31: planner-run identifier. When set, the commit path looks up
-  // any plan items carrying recipe_candidate_id in Redis under this build
-  // namespace to materialize their cached RecipeAgentExtraction. Optional
-  // for backwards compatibility with paths that don't go through discover.
-  plan_build_id: z.string().min(1).max(128).optional(),
-  items: z.array(PlanItemWriteSchema).min(1),
-});
-
-export const PlanRowSchema = z.object({
-  id: z.string().uuid(),
-  household_id: z.string().uuid(),
-  week_id: z.string().uuid(),
-  week_of: z.string().date().nullable().default(null),  // Story 3.13 — null for pre-migration rows
-  revision: z.number().int().min(1),
-  generated_at: z.string().datetime({ offset: true }),
-  guardrail_cleared_at: z.string().datetime({ offset: true }).nullable(),
-  guardrail_version: z.string().max(GUARDRAIL_VERSION_MAX).nullable(),
-  prompt_version: z.string().min(1).max(PROMPT_VERSION_MAX),
-  created_at: z.string().datetime({ offset: true }),
-  updated_at: z.string().datetime({ offset: true }),
-});
-
-// --- Story 3.6 — brief_state projection schemas ---
-// PlanItemRow is the read shape returned by PlansRepository.findItemsByPlanId().
-// It differs from PlanItemWriteSchema: recipe_id / item_id are nullable here
-// because the DB returns null (not undefined) for unset uuid columns.
-export const PlanItemRowSchema = z.object({
-  id: z.string().uuid(),
-  plan_id: z.string().uuid(),
-  child_id: z.string().uuid(),
-  day: z.enum(['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday']),
-  slot: z.string().min(1).max(SLOT_MAX),
-  recipe_id: z.string().uuid().nullable(),
-  item_id: z.string().uuid().nullable(),
-  ingredients: z.array(z.string().min(1)),
-  paused_at: z.string().datetime({ offset: true }).nullable().default(null),  // Story 3.12
-  replaced_by_plan_id: z.string().uuid().nullable().default(null),  // Story 3.13 — null = current
-  created_at: z.string().datetime({ offset: true }),
-  updated_at: z.string().datetime({ offset: true }),
-});
 
 // Story 3.13 — POST /v1/plans/:planId/regenerate?scope=week|day&day=monday query params.
 // day is required when scope='day' and must be absent when scope='week'.
@@ -323,27 +188,12 @@ export const RegeneratePlanResponseSchema = z.object({
   rate_limit_remaining: z.number().int().min(0),
 });
 
-// PATCH /v1/plans/:planId/items/:itemId body.
-// ingredients replaces the existing set in full — client owns the complete replacement list.
-// recipe_id / item_id are optional until recipe resolution lands in a future story.
-export const SwapPlanItemInputSchema = z.object({
-  ingredients: z
-    .array(z.string().min(1).max(INGREDIENT_MAX))
-    .min(1)
-    .max(INGREDIENTS_MAX),
-  recipe_id: z.string().uuid().optional(),
-  item_id: z.string().uuid().optional(),
-});
-
-export const SwapPlanItemResponseSchema = z.object({
-  item: PlanItemRowSchema,
-});
-
-// PATCH /v1/plans/:planId/days/:day/pause body.
-// reason is informational for audit; Lunch Link delivery (Epic 4) reads paused_at, not reason.
-export const PausePlanDayInputSchema = z.object({
-  reason: z.enum(['sick', 'absent', 'holiday']).optional(),
-});
+// Story 3-DM-C1 Phase 9b part 4 step 5 — the flat swap + pause schemas
+// (SwapPlanItemInputSchema / SwapPlanItemResponseSchema /
+// PausePlanDayInputSchema) retired with PATCH /items/:itemId. The canonical
+// replacements are SwapMainInputSchema / UpdateVariationInputSchema /
+// SwapSlotRecipeInputSchema / PausePlanDayTreeInputSchema, defined
+// further down.
 
 // PlanTileItemSchema is the per-child-slot entry within a day's tile.
 // plan_item_id is the plan_items.id from the DB — Story 3.12 exposes it so the
@@ -431,60 +281,16 @@ export const HardFailStatusSchema = z.object({
   failed_at: z.string().datetime(),
 });
 
-// is_draft mirrors the (week === 'next') decision so the frontend doesn't
-// recompute date math; week_of is always the ISO Monday for the resolved week.
-// Story 3.25 — hard_fail is optional + nullable; the route handler omits the
-// key entirely on the non-hard-fail path so existing clients see no change.
-// Story 3.27 — variant_proposals carries the household's active (unconfirmed,
-// unrejected) variant proposals for this plan. Optional + nullable so pre-3.27
-// fixtures and route paths that omit the key remain valid; consumers should
-// `?? []` it at the read site.
-// Story pre-4-s3 — flagged_items present only when hard_fail's audit stages
-// include compound_ingredient_unverified rejections; surfaces AllergyUncertaintyBanner.
-export const GetPlansResponseSchema = z.object({
-  plan: PlanRowSchema.nullable(),
-  plan_items: z.array(PlanItemRowSchema),
-  is_draft: z.boolean(),
-  week_of: z.string().date(),
-  hard_fail: HardFailStatusSchema.nullable().optional(),
-  variant_proposals: z.array(VariantProposalSchema).optional(),
-  flagged_items: z.array(FlaggedCompoundItemSchema).optional(),
-});
-
-// --- Story 3.15 — historical plans + outcomes view (FR25) ---
-// Each archived plan_item row (replaced_by_plan_id IS NOT NULL) is one swap
-// event from a slot-swap (Story 3.12) or a day/week regeneration (Story 3.13).
-// previous_ingredients are the ingredients that existed BEFORE the swap;
-// the route handler derives this directly from the archived row's columns.
-// child_id is preserved so multi-child households can attribute each swap.
-export const PlanItemSwapSummarySchema = z.object({
-  child_id: z.string().uuid(),
-  day: z.enum(['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday']),
-  slot: z.string().min(1),
-  previous_ingredients: z.array(z.string()),
-  replaced_at: z.string().datetime({ offset: true }),
-});
+// Story 3-DM-C1 Phase 9b part 4 step 5 — flat GetPlansResponseSchema /
+// PlanItemSwapSummarySchema / PlanHistoryResponseSchema retired with
+// plan_items. The canonical replacements live further down:
+// GetPlansResponseSchema, PlanHistoryResponseSchema (carrying
+// main_assignments + days + slots + variations). PlanWeekIdParamSchema
+// stays — it's just a route param schema, shape-neutral.
 
 // Story 3.15 — route param schema for GET /v1/plans/:weekId/history.
 export const PlanWeekIdParamSchema = z.object({
   weekId: z.string().uuid(),
-});
-
-// Story 3.15 — response shape for GET /v1/plans/:weekId/history.
-//   Missing weekId → 404 (service throws NotFoundError); this 200 shape always
-//   carries a non-null plan. week_of may be null for pre-3.13 rows that have no
-//   stored Monday date.
-//   plan_items is the FINAL (current, non-archived) item set — what actually shipped.
-//   swap_history is the per-slot audit derived from archived rows.
-//   ratings is keyed by child_id → emoji string (Layer 1 from FR36). It is always {}
-//   until Epic 4 Story 4.14 populates it from lunch_link_sessions.rating; the field
-//   is typed up front so the contract stays stable when Epic 4 ships.
-export const PlanHistoryResponseSchema = z.object({
-  plan: PlanRowSchema,
-  plan_items: z.array(PlanItemRowSchema),
-  swap_history: z.array(PlanItemSwapSummarySchema),
-  week_of: z.string().date().nullable(),
-  ratings: z.record(z.string().uuid(), z.string().min(1).nullable()),
 });
 
 // ===========================================================================
@@ -655,7 +461,7 @@ export const PlanSlotVariationRowSchema = z.object({
 // place until Phase 9 — that one still includes week_id (current DB shape)
 // and a nullable week_of. This canonical shape drops week_id and requires
 // week_of; absorbs state / state_set_at / state_message from brief_state.
-export const PlanRowCanonicalSchema = z.object({
+export const PlanRowSchema = z.object({
   id: z.string().uuid(),
   household_id: z.string().uuid(),
   week_of: z.string().date(),
@@ -888,8 +694,8 @@ export const CommitPlanTreeInputSchema = z.object({
 // is plan-level; days are sorted Mon→Sat by the API; slots fan out main /
 // snack / extra under each day; variations are per-child. Empty arrays are
 // valid (e.g. plan is null on the draft path or the hard-fail path).
-export const GetPlansResponseTreeSchema = z.object({
-  plan: PlanRowCanonicalSchema.nullable(),
+export const GetPlansResponseSchema = z.object({
+  plan: PlanRowSchema.nullable(),
   main_assignments: z.array(PlanMainAssignmentRowSchema).default([]),
   days: z.array(PlanDayRowSchema).default([]),
   slots: z.array(PlanSlotRowSchema).default([]),
@@ -920,8 +726,8 @@ export const PlanSwapSummaryTreeSchema = z.object({
   at: z.string().datetime({ offset: true }),
 });
 
-export const PlanHistoryResponseTreeSchema = z.object({
-  plan: PlanRowCanonicalSchema,
+export const PlanHistoryResponseSchema = z.object({
+  plan: PlanRowSchema,
   main_assignments: z.array(PlanMainAssignmentRowSchema).default([]),
   days: z.array(PlanDayRowSchema).default([]),
   slots: z.array(PlanSlotRowSchema).default([]),

@@ -2,29 +2,41 @@ import fp from 'fastify-plugin';
 import { z } from 'zod';
 import type { FastifyPluginAsync } from 'fastify';
 import {
-  PausePlanDayInputSchema,
-  SwapPlanItemInputSchema,
-  SwapPlanItemResponseSchema,
-  RegeneratePlanQuerySchema,
-  RegeneratePlanResponseSchema,
   GetPlansQuerySchema,
   GetPlansResponseSchema,
   PlanWeekIdParamSchema,
   PlanHistoryResponseSchema,
+  SwapMainInputSchema,
+  SwapMainResponseSchema,
+  UpdateVariationInputSchema,
+  UpdateVariationResponseSchema,
+  SwapSlotRecipeInputSchema,
+  SwapSlotRecipeResponseSchema,
+  PausePlanDayTreeInputSchema,
+  PauseChildOnDayInputSchema,
+  MainAssignmentParamSchema,
+  VariationParamSchema,
+  PlanSlotParamSchema,
+  DayOverrideSlotParamSchema,
+  DayOverrideSlotRevertParamSchema,
+  WeekdaySchema,
+  RegeneratePlanQuerySchema,
+  RegeneratePlanResponseSchema,
   SetDayOverrideInputSchema,
   SetDayOverrideResponseSchema,
-  DayOverridePlanItemParamSchema,
-  DayOverrideRevertParamSchema,
   ConfirmVariantProposalInputSchema,
 } from '@hivekitchen/contracts';
 import type {
-  PausePlanDayInput,
-  PlanItemRow,
-  SwapPlanItemInput,
-  RegeneratePlanQuery,
   GetPlansQuery,
+  SwapMainInput,
+  UpdateVariationInput,
+  SwapSlotRecipeInput,
+  PausePlanDayTreeInput,
+  PauseChildOnDayInput,
+  RegeneratePlanQuery,
   SetDayOverrideInput,
   ConfirmVariantProposalInput,
+  Weekday,
   VariantProposal,
   FlaggedCompoundItem,
 } from '@hivekitchen/types';
@@ -54,10 +66,12 @@ const plansRoutesPlugin: FastifyPluginAsync = async (fastify) => {
   const requireMember = authorize(['primary_parent', 'secondary_caregiver']);
 
   // GET /v1/plans?week=current|next
-  // Story 3.14 — drives the upcoming-week tab on the brief surface (FR21).
-  // Returns { plan: null, plan_items: [], is_draft: true, week_of: <ISO> } when
-  // the week's plan has not yet been generated; the client renders the
-  // "Lumi is drafting next week" loading state.
+  //
+  // Story 3-DM-C1 Phase 9b part 4 step 3 — tree-shape response. The wire now
+  // carries the four canonical arrays (main_assignments, days, slots,
+  // variations) instead of the flat plan_items[]. Draft and hard-fail paths
+  // still return `plan: null` + empty arrays so the client renders the
+  // "Lumi is drafting next week" loading state and the AllergyUncertaintyBanner.
   fastify.get(
     '/v1/plans',
     {
@@ -70,7 +84,15 @@ const plansRoutesPlugin: FastifyPluginAsync = async (fastify) => {
     async (request, reply) => {
       const { week } = request.query as GetPlansQuery;
       const householdId = request.user.household_id;
-      const { plan, planItems, isDraft, weekOf } = await fastify.plansService.getPlanForWeek({
+      const {
+        plan,
+        mainAssignments,
+        days,
+        slots,
+        variations,
+        isDraft,
+        weekOf,
+      } = await fastify.plansService.getPlanForWeekTree({
         householdId,
         week,
       });
@@ -78,8 +100,6 @@ const plansRoutesPlugin: FastifyPluginAsync = async (fastify) => {
       // Story 3.25/3.26 — hard-fail surface. Only check when plan===null &&
       // !isDraft (the slow path that hits the reworking UX). Drafts never
       // hard-fail since they haven't gone through the guardrail loop yet.
-      // Story 3.26 — payload now includes failed_at so the client can render
-      // a real estimated recovery time (failed_at + 1h).
       // Story pre-4-s3 — getHardFailStatus also returns compound-uncertain
       // flagged_items extracted from the audit's stages; surface those so the
       // frontend's AllergyUncertaintyBanner can show the specific ingredients.
@@ -87,31 +107,49 @@ const plansRoutesPlugin: FastifyPluginAsync = async (fastify) => {
       let flaggedItems: FlaggedCompoundItem[] = [];
       if (plan === null && !isDraft) {
         try {
-          const failStatus = await fastify.plansService.getHardFailStatus(householdId, weekOf);
+          const failStatus = await fastify.plansService.getHardFailStatus(
+            householdId,
+            weekOf,
+          );
           if (failStatus !== null) {
-            hardFail = { week_of: failStatus.week_of, failed_at: failStatus.failed_at };
+            hardFail = {
+              week_of: failStatus.week_of,
+              failed_at: failStatus.failed_at,
+            };
             flaggedItems = failStatus.flagged_items;
           }
         } catch (err) {
-          request.log.error({ err, householdId, weekOf }, 'getHardFailStatus failed — omitting hard_fail and flagged_items from response');
+          request.log.error(
+            { err, householdId, weekOf },
+            'getHardFailStatus failed — omitting hard_fail and flagged_items from response',
+          );
         }
       }
 
-      // Story 3.27 — active variant proposals for the resolved plan so the
-      // PlanTile can render pending-input pills. Failure to load is non-fatal:
-      // the proposal is a learning signal, not safety state.
+      // Story 3.27 — active variant proposals for the resolved plan. Failure
+      // to load is non-fatal: the proposal is a learning signal, not safety
+      // state. VariantProposalSchema still carries plan_item_id; the field
+      // swaps to plan_slot_variation_id in a sibling slice.
       let variantProposals: VariantProposal[] = [];
       if (plan !== null) {
         try {
-          variantProposals = await fastify.variantProposalService.findActiveByPlan(plan.id);
+          variantProposals = await fastify.variantProposalService.findActiveByPlan(
+            plan.id,
+          );
         } catch (err) {
-          request.log.error({ err, householdId, planId: plan.id }, 'findActiveByPlan failed — omitting variant_proposals');
+          request.log.error(
+            { err, householdId, planId: plan.id },
+            'findActiveByPlan failed — omitting variant_proposals',
+          );
         }
       }
 
       return reply.status(200).send({
-        plan: plan ?? null,
-        plan_items: planItems,
+        plan,
+        main_assignments: mainAssignments,
+        days,
+        slots,
+        variations,
         is_draft: isDraft,
         week_of: weekOf,
         ...(hardFail !== null ? { hard_fail: hardFail } : {}),
@@ -122,6 +160,7 @@ const plansRoutesPlugin: FastifyPluginAsync = async (fastify) => {
   );
 
   // POST /v1/plans/:planId/variant-proposals/:proposalId/confirm
+  //
   // Story 3.27 — parent confirms or rejects a Lumi-proposed preparation
   // variant. 204 on success. The proposal becomes inactive (no longer surfaced
   // in GET /v1/plans) regardless of choice, so the next pill the parent sees
@@ -142,7 +181,10 @@ const plansRoutesPlugin: FastifyPluginAsync = async (fastify) => {
       const requestId = requireIdempotencyKey(
         request.headers['idempotency-key'],
       );
-      const { proposalId } = request.params as { planId: string; proposalId: string };
+      const { proposalId } = request.params as {
+        planId: string;
+        proposalId: string;
+      };
       const body = request.body as ConfirmVariantProposalInput;
 
       await fastify.variantProposalService.confirmProposal({
@@ -157,11 +199,12 @@ const plansRoutesPlugin: FastifyPluginAsync = async (fastify) => {
   );
 
   // GET /v1/plans/:weekId/history
-  // Story 3.15 — historical plan + outcomes view (FR25).
-  // Returns the FINAL plan committed for a week + a per-slot swap audit
-  // derived from archived plan_items. ratings is keyed by child_id; it is
-  // always {} until Epic 4 lunch_link_sessions ships and Story 4.14 wires
-  // the rating projection in here.
+  //
+  // Story 3-DM-C1 Phase 9b part 4 step 3 — tree-shape history response.
+  // swap_history is `[]` for now (the canonical model has no archived
+  // plan_items; audit-derived population lands in a follow-up slice).
+  // ratings is keyed by child_id; it stays `{}` until Story 4.14 wires the
+  // lunch_link_session projection here.
   fastify.get(
     '/v1/plans/:weekId/history',
     {
@@ -173,14 +216,24 @@ const plansRoutesPlugin: FastifyPluginAsync = async (fastify) => {
     },
     async (request, reply) => {
       const { weekId } = request.params as { weekId: string };
-      const { plan, planItems, swapHistory, weekOf } =
-        await fastify.plansService.getPlanHistory({
-          householdId: request.user.household_id,
-          weekId,
-        });
+      const {
+        plan,
+        mainAssignments,
+        days,
+        slots,
+        variations,
+        swapHistory,
+        weekOf,
+      } = await fastify.plansService.getPlanHistoryTree({
+        householdId: request.user.household_id,
+        weekId,
+      });
       return reply.status(200).send({
         plan,
-        plan_items: planItems,
+        main_assignments: mainAssignments,
+        days,
+        slots,
+        variations,
         swap_history: swapHistory,
         week_of: weekOf,
         ratings: {},
@@ -188,47 +241,127 @@ const plansRoutesPlugin: FastifyPluginAsync = async (fastify) => {
     },
   );
 
-  // PATCH /v1/plans/:planId/items/:itemId
-  // Per-slot ingredient swap. Runs allergyGuardrail.evaluate on the new item only.
-  // Returns 200 { item } on success; 422 if guardrail blocks; 404 if plan/item not found.
+  // PATCH /v1/plans/:planId/main-assignments/:mainAssignmentId/recipe
+  //
+  // Story 3-DM-C1 — swap a shared Main. Affects every day whose main slot
+  // points at this M-assignment (the dominant operation under the 3-Main
+  // weekly pattern). Per-child variations carry their own removals / add_ons
+  // that survive the swap untouched. The service re-evaluates the guardrail
+  // against the new recipe per affected (child, day) pair.
   fastify.patch(
-    '/v1/plans/:planId/items/:itemId',
+    '/v1/plans/:planId/main-assignments/:mainAssignmentId/recipe',
     {
       preHandler: requireMember,
       schema: {
-        params: z.object({
-          planId: z.string().uuid(),
-          itemId: z.string().uuid(),
-        }),
-        body: SwapPlanItemInputSchema,
-        response: { 200: SwapPlanItemResponseSchema },
+        params: MainAssignmentParamSchema,
+        body: SwapMainInputSchema,
+        response: { 200: SwapMainResponseSchema },
       },
     },
     async (request, reply) => {
       const requestId = requireIdempotencyKey(
         request.headers['idempotency-key'],
       );
-      const { planId, itemId } = request.params as {
+      const { planId, mainAssignmentId } = request.params as {
         planId: string;
-        itemId: string;
+        mainAssignmentId: string;
       };
-      const body = request.body as SwapPlanItemInput;
+      const body = request.body as SwapMainInput;
 
-      const updatedItem = await fastify.plansService.swapItem({
+      const updated = await fastify.plansService.swapMain({
         planId,
-        itemId,
+        mainAssignmentId,
         householdId: request.user.household_id,
-        input: body,
         requestId,
+        input: body,
       });
 
-      return reply.status(200).send({ item: updatedItem });
+      return reply.status(200).send({ main_assignment: updated });
+    },
+  );
+
+  // PATCH /v1/plans/:planId/variations/:variationId
+  //
+  // Story 3-DM-C1 — patch a per-child variation. Recipe stays the same; the
+  // guardrail re-evaluates against the NEW effective ingredient set
+  // (recipe.ingredients − new.removals + new.add_ons). Pause-toggling is
+  // not exposed here — pause flows live on /pause and /pause-child.
+  fastify.patch(
+    '/v1/plans/:planId/variations/:variationId',
+    {
+      preHandler: requireMember,
+      schema: {
+        params: VariationParamSchema,
+        body: UpdateVariationInputSchema,
+        response: { 200: UpdateVariationResponseSchema },
+      },
+    },
+    async (request, reply) => {
+      const requestId = requireIdempotencyKey(
+        request.headers['idempotency-key'],
+      );
+      const { planId, variationId } = request.params as {
+        planId: string;
+        variationId: string;
+      };
+      const body = request.body as UpdateVariationInput;
+
+      const updated = await fastify.plansService.updateVariation({
+        planId,
+        variationId,
+        householdId: request.user.household_id,
+        requestId,
+        input: body,
+      });
+
+      return reply.status(200).send({ variation: updated });
+    },
+  );
+
+  // PATCH /v1/plans/:planId/slots/:planSlotId/recipe
+  //
+  // Story 3-DM-C1 — swap the recipe on a snack or extra slot. Main slots
+  // reject with 400 (use the main-assignments route). Each variation under
+  // the slot is re-evaluated against the new recipe.
+  fastify.patch(
+    '/v1/plans/:planId/slots/:planSlotId/recipe',
+    {
+      preHandler: requireMember,
+      schema: {
+        params: PlanSlotParamSchema,
+        body: SwapSlotRecipeInputSchema,
+        response: { 200: SwapSlotRecipeResponseSchema },
+      },
+    },
+    async (request, reply) => {
+      const requestId = requireIdempotencyKey(
+        request.headers['idempotency-key'],
+      );
+      const { planId, planSlotId } = request.params as {
+        planId: string;
+        planSlotId: string;
+      };
+      const body = request.body as SwapSlotRecipeInput;
+
+      const updated = await fastify.plansService.swapSlotRecipe({
+        planId,
+        planSlotId,
+        householdId: request.user.household_id,
+        requestId,
+        input: body,
+      });
+
+      return reply.status(200).send({ slot: updated });
     },
   );
 
   // PATCH /v1/plans/:planId/days/:day/pause
-  // Sick-day pause. Sets paused_at on all plan_items for the day.
-  // Returns 204. Idempotent at DB level (re-pausing already-paused day is a no-op).
+  //
+  // Story 3-DM-C1 — full-day pause via plan_days.paused_at. reason is now
+  // required (DB CHECK enforces paused_at + paused_reason set together). The
+  // enum widens from 'sick' / 'absent' / 'holiday' to PauseReasonSchema's
+  // six-value set ('sick_day' / 'holiday' / 'snow_day' / 'field_trip' /
+  // 'half_day' / 'other').
   fastify.patch(
     '/v1/plans/:planId/days/:day/pause',
     {
@@ -236,16 +369,9 @@ const plansRoutesPlugin: FastifyPluginAsync = async (fastify) => {
       schema: {
         params: z.object({
           planId: z.string().uuid(),
-          day: z.enum([
-            'monday',
-            'tuesday',
-            'wednesday',
-            'thursday',
-            'friday',
-            'saturday',
-          ]),
+          day: WeekdaySchema,
         }),
-        body: PausePlanDayInputSchema,
+        body: PausePlanDayTreeInputSchema,
       },
     },
     async (request, reply) => {
@@ -254,16 +380,56 @@ const plansRoutesPlugin: FastifyPluginAsync = async (fastify) => {
       );
       const { planId, day } = request.params as {
         planId: string;
-        day: PlanItemRow['day'];
+        day: Weekday;
       };
-      const body = request.body as PausePlanDayInput;
+      const body = request.body as PausePlanDayTreeInput;
 
-      await fastify.plansService.pauseDay({
+      await fastify.plansService.pauseDayTree({
         planId,
         day,
         householdId: request.user.household_id,
         requestId,
-        reason: body.reason,
+        input: body,
+      });
+
+      return reply.status(204).send();
+    },
+  );
+
+  // PATCH /v1/plans/:planId/days/:day/pause-child
+  //
+  // Story 3-DM-C1 — per-child day-level pause via plan_slot_variations.paused_at
+  // for every (child_id, plan_day_id) pair. Used when ONE child is sick but
+  // the rest of the family eats as planned. Idempotent: the RPC returns
+  // pausedCount = 0 when all matching variations were already paused.
+  fastify.patch(
+    '/v1/plans/:planId/days/:day/pause-child',
+    {
+      preHandler: requireMember,
+      schema: {
+        params: z.object({
+          planId: z.string().uuid(),
+          day: WeekdaySchema,
+        }),
+        body: PauseChildOnDayInputSchema,
+      },
+    },
+    async (request, reply) => {
+      const requestId = requireIdempotencyKey(
+        request.headers['idempotency-key'],
+      );
+      const { planId, day } = request.params as {
+        planId: string;
+        day: Weekday;
+      };
+      const body = request.body as PauseChildOnDayInput;
+
+      await fastify.plansService.pauseChildOnDayTree({
+        planId,
+        day,
+        householdId: request.user.household_id,
+        requestId,
+        input: body,
       });
 
       return reply.status(204).send();
@@ -271,6 +437,7 @@ const plansRoutesPlugin: FastifyPluginAsync = async (fastify) => {
   );
 
   // POST /v1/plans/:planId/regenerate?scope=week|day&day=monday
+  //
   // Story 3.13 — enqueues a plan-regeneration BullMQ job. Rate-limited to
   // 5/week/household. Returns 202 Accepted with { job_id, rate_limit_remaining }.
   // SSE plan.updated is deferred to Story 5.2; client polls via TanStack Query.
@@ -291,12 +458,13 @@ const plansRoutesPlugin: FastifyPluginAsync = async (fastify) => {
       const { planId } = request.params as { planId: string };
       const query = request.query as RegeneratePlanQuery;
 
-      const { jobId, rateLimitRemaining } = await fastify.plansService.requestRegeneration({
-        planId,
-        householdId: request.user.household_id,
-        query,
-        requestId,
-      });
+      const { jobId, rateLimitRemaining } =
+        await fastify.plansService.requestRegeneration({
+          planId,
+          householdId: request.user.household_id,
+          query,
+          requestId,
+        });
 
       return reply
         .status(202)
@@ -304,16 +472,20 @@ const plansRoutesPlugin: FastifyPluginAsync = async (fastify) => {
     },
   );
 
-  // POST /v1/plans/:planId/items/:itemId/override
-  // Story 3.19 — day-level context override (FR118, FR119). Composition-changing
-  // overrides enqueue a day-scope regen via REGEN_QUEUE; pausing overrides
-  // (bag_suspended, sick_day) flip the slot's paused_at and refresh the brief.
+  // POST /v1/plans/:planId/slots/:planSlotId/override
+  //
+  // Story 3-DM-C1 — day-level context override scoped to a plan_slot.
+  // Composition-changing overrides (field_trip / half_day / post_dentist /
+  // sport_practice / test_day) enqueue a day-scope regen. Pause-overlapping
+  // overrides (bag_suspended / sick_day) are rejected at the service layer —
+  // the canonical pause grain lives on plan_days.paused_at /
+  // plan_slot_variations.paused_at.
   fastify.post(
-    '/v1/plans/:planId/items/:itemId/override',
+    '/v1/plans/:planId/slots/:planSlotId/override',
     {
       preHandler: requireMember,
       schema: {
-        params: DayOverridePlanItemParamSchema,
+        params: DayOverrideSlotParamSchema,
         body: SetDayOverrideInputSchema,
         response: { 201: SetDayOverrideResponseSchema },
       },
@@ -322,16 +494,16 @@ const plansRoutesPlugin: FastifyPluginAsync = async (fastify) => {
       const requestId = requireIdempotencyKey(
         request.headers['idempotency-key'],
       );
-      const { planId, itemId } = request.params as {
+      const { planId, planSlotId } = request.params as {
         planId: string;
-        itemId: string;
+        planSlotId: string;
       };
       const body = request.body as SetDayOverrideInput;
 
       const { override, regenTriggered } =
-        await fastify.dayOverridesService.setOverride({
+        await fastify.dayOverridesService.setOverrideTree({
           planId,
-          planItemId: itemId,
+          planSlotId,
           householdId: request.user.household_id,
           input: body,
           requestId,
@@ -343,30 +515,31 @@ const plansRoutesPlugin: FastifyPluginAsync = async (fastify) => {
     },
   );
 
-  // DELETE /v1/plans/:planId/items/:itemId/override/:overrideId
-  // Story 3.19 — soft revert. Returns 204 on success; 404 if the override
-  // does not belong to this household or has already been reverted.
+  // DELETE /v1/plans/:planId/slots/:planSlotId/override/:overrideId
+  //
+  // Story 3-DM-C1 — soft revert. 204 on success; 404 if the override does
+  // not belong to this household or has already been reverted.
   fastify.delete(
-    '/v1/plans/:planId/items/:itemId/override/:overrideId',
+    '/v1/plans/:planId/slots/:planSlotId/override/:overrideId',
     {
       preHandler: requireMember,
       schema: {
-        params: DayOverrideRevertParamSchema,
+        params: DayOverrideSlotRevertParamSchema,
       },
     },
     async (request, reply) => {
       const requestId = requireIdempotencyKey(
         request.headers['idempotency-key'],
       );
-      const { planId, itemId, overrideId } = request.params as {
+      const { planId, planSlotId, overrideId } = request.params as {
         planId: string;
-        itemId: string;
+        planSlotId: string;
         overrideId: string;
       };
 
-      await fastify.dayOverridesService.revertOverride({
+      await fastify.dayOverridesService.revertOverrideTree({
         planId,
-        planItemId: itemId,
+        planSlotId,
         overrideId,
         householdId: request.user.household_id,
         requestId,

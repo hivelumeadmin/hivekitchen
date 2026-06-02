@@ -20,7 +20,8 @@
     "supabase:status": "supabase projects list",
     "seed:dev": "tsx test/helpers/seed-dev.ts",
     "seed:reset": "tsx test/helpers/seed-dev.ts --reset",
-    "db:reset": "tsx --env-file=apps/api/.env.local scripts/dev-db-reset.ts --confirm"
+    "db:reset": "tsx --env-file=apps/api/.env.local scripts/dev-db-reset.ts --confirm",
+    "db:plan-commit-load-test": "tsx --env-file=apps/api/.env.local scripts/plan-commit-load-test.ts"
   },
   "devDependencies": {
     "@lhci/cli": "^0.15.1",
@@ -32,7 +33,8 @@
     "eslint-plugin-react-hooks": "^5.0.0",
     "tsx": "^4.19.0",
     "turbo": "^2.4.0",
-    "typescript-eslint": "^8.0.0"
+    "typescript-eslint": "^8.0.0",
+    "undici": "^8.3.0"
   },
   "pnpm": {
     "peerDependencyRules": {

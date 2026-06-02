@@ -22,7 +22,105 @@ const HOUSEHOLD_ID = '11111111-1111-4111-8111-111111111111';
 const USER_ID = '22222222-2222-4222-8222-222222222222';
 const CHILD_ID = '33333333-3333-4333-8333-333333333333';
 const PLAN_ID = '99999999-9999-4999-8999-999999999999';
-const ITEM_ID = '00000000-0000-4000-8000-000000000010';
+const PLAN_DAY_ID = '00000000-0000-4000-8000-000000000080';
+const SLOT_ID = '00000000-0000-4000-8000-000000000010';
+const MAIN_ASSIGNMENT_ID = '00000000-0000-4000-8000-000000000020';
+const VARIATION_ID = '00000000-0000-4000-8000-000000000030';
+
+const TS = '2026-05-02T11:00:00.000Z';
+
+// Story 3-DM-C1 Phase 9b part 4 step 4 — fixture helpers for the tree-shape
+// PlanPage. The page now consumes GetPlansResponse (plan + four arrays)
+// instead of the flat plan_items[] shape.
+function emptyTreeResponse(weekOf: string, opts: { is_draft?: boolean; plan?: GetPlansResponse['plan'] } = {}): GetPlansResponse {
+  return {
+    plan: opts.plan ?? null,
+    main_assignments: [],
+    days: [],
+    slots: [],
+    variations: [],
+    is_draft: opts.is_draft ?? false,
+    week_of: weekOf,
+  };
+}
+
+function planRow(weekOf: string): NonNullable<GetPlansResponse['plan']> {
+  return {
+    id: PLAN_ID,
+    household_id: HOUSEHOLD_ID,
+    week_of: weekOf,
+    revision: 1,
+    generated_at: TS,
+    guardrail_cleared_at: TS,
+    guardrail_version: 'v1.0.0',
+    prompt_version: 'v1.0.0',
+    state: null,
+    state_set_at: null,
+    state_message: null,
+    created_at: TS,
+    updated_at: TS,
+  };
+}
+
+function singleMainTreeResponse(weekOf: string, opts: { is_draft?: boolean } = {}): GetPlansResponse {
+  return {
+    plan: planRow(weekOf),
+    main_assignments: [
+      {
+        id: MAIN_ASSIGNMENT_ID,
+        plan_id: PLAN_ID,
+        sequence: 1,
+        recipe_id: '00000000-0000-4000-8000-0000000000aa',
+        created_at: TS,
+      },
+    ],
+    days: [
+      {
+        id: PLAN_DAY_ID,
+        plan_id: PLAN_ID,
+        day: 'monday',
+        paused_at: null,
+        paused_reason: null,
+        paused_note: null,
+        created_at: TS,
+        updated_at: TS,
+      },
+    ],
+    slots: [
+      {
+        id: SLOT_ID,
+        plan_day_id: PLAN_DAY_ID,
+        slot_kind: 'main',
+        main_assignment_id: MAIN_ASSIGNMENT_ID,
+        recipe_id: null,
+        extra_kind: null,
+        paused_at: null,
+        created_at: TS,
+        updated_at: TS,
+      },
+    ],
+    variations: [
+      {
+        id: VARIATION_ID,
+        plan_slot_id: SLOT_ID,
+        child_id: CHILD_ID,
+        portion_size: 'regular',
+        texture: 'normal',
+        spice_level: 'mild',
+        cutting_style: null,
+        container: null,
+        add_ons: ['rice', 'beans'],
+        removals: [],
+        notes: null,
+        paused_at: null,
+        created_at: TS,
+        updated_at: TS,
+      },
+    ],
+    is_draft: opts.is_draft ?? false,
+    week_of: weekOf,
+  };
+}
 
 function setUser() {
   useAuthStore.getState().setSession('token-123', {
@@ -42,7 +140,7 @@ function renderWithClient(ui: ReactNode) {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false, gcTime: 0 } },
   });
-  // Story 3.15 — PlanPage now renders a <Link> to last week's history view,
+  // Story 3.15 — PlanPage renders a <Link> to last week's history view,
   // which requires a Router context. MemoryRouter keeps existing tests stable.
   return render(
     <QueryClientProvider client={client}>
@@ -67,7 +165,6 @@ afterEach(() => {
 
 describe('isNextWeekDraftAvailable (Story 3.14)', () => {
   it('returns true on Saturday', () => {
-    // 2026-05-02 is a Saturday (UTC).
     expect(isNextWeekDraftAvailable(new Date('2026-05-02T00:00:00Z'))).toBe(true);
   });
 
@@ -84,20 +181,14 @@ describe('isNextWeekDraftAvailable (Story 3.14)', () => {
   });
 
   it('returns false on Wednesday', () => {
-    // 2026-05-06 is a Wednesday.
     expect(isNextWeekDraftAvailable(new Date('2026-05-06T20:00:00Z'))).toBe(false);
   });
 });
 
-describe('PlanPage — week tabs (Story 3.14)', () => {
+describe('PlanPage — week tabs (Story 3.14, tree shape)', () => {
   it('renders both week tabs with the current-week selected by default', async () => {
     const { hkFetch } = await import('@/lib/fetch.js');
-    vi.mocked(hkFetch).mockResolvedValue({
-      plan: null,
-      plan_items: [],
-      is_draft: false,
-      week_of: '2026-05-04',
-    } satisfies GetPlansResponse);
+    vi.mocked(hkFetch).mockResolvedValue(emptyTreeResponse('2026-05-04'));
 
     renderWithClient(<PlanPage />);
 
@@ -108,17 +199,11 @@ describe('PlanPage — week tabs (Story 3.14)', () => {
   });
 
   it('disables the Next-week tab on a Wednesday', async () => {
-    // Fake only Date so TanStack Query's internal timers keep running.
     vi.useFakeTimers({ toFake: ['Date'] });
     vi.setSystemTime(new Date('2026-05-06T12:00:00Z')); // Wednesday
 
     const { hkFetch } = await import('@/lib/fetch.js');
-    vi.mocked(hkFetch).mockResolvedValue({
-      plan: null,
-      plan_items: [],
-      is_draft: false,
-      week_of: '2026-05-04',
-    } satisfies GetPlansResponse);
+    vi.mocked(hkFetch).mockResolvedValue(emptyTreeResponse('2026-05-04'));
 
     renderWithClient(<PlanPage />);
 
@@ -131,12 +216,7 @@ describe('PlanPage — week tabs (Story 3.14)', () => {
     vi.setSystemTime(new Date('2026-05-02T12:00:00Z')); // Saturday
 
     const { hkFetch } = await import('@/lib/fetch.js');
-    const fetchMock = vi.mocked(hkFetch).mockResolvedValue({
-      plan: null,
-      plan_items: [],
-      is_draft: false,
-      week_of: '2026-05-04',
-    } satisfies GetPlansResponse);
+    const fetchMock = vi.mocked(hkFetch).mockResolvedValue(emptyTreeResponse('2026-05-04'));
 
     renderWithClient(<PlanPage />);
 
@@ -148,7 +228,6 @@ describe('PlanPage — week tabs (Story 3.14)', () => {
     await waitFor(() => {
       expect(nextWeek.getAttribute('aria-selected')).toBe('true');
     });
-    // The query refetches with the new week selector.
     await waitFor(() => {
       expect(fetchMock).toHaveBeenCalledWith(
         '/v1/plans?week=next',
@@ -158,8 +237,6 @@ describe('PlanPage — week tabs (Story 3.14)', () => {
   });
 
   it('resets to the current-week tab when the next-week window closes (Monday transition)', async () => {
-    // Capture the interval callback without faking all timers (which would
-    // interfere with TanStack Query's internal setTimeout-based retry logic).
     let intervalTick: (() => void) | null = null;
     const realSetInterval = window.setInterval.bind(window);
     const setIntervalSpy = vi
@@ -170,29 +247,27 @@ describe('PlanPage — week tabs (Story 3.14)', () => {
       });
 
     vi.useFakeTimers({ toFake: ['Date'] });
-    vi.setSystemTime(new Date('2026-05-02T12:00:00Z')); // Saturday — next tab enabled
+    vi.setSystemTime(new Date('2026-05-02T12:00:00Z')); // Saturday
 
     const { hkFetch } = await import('@/lib/fetch.js');
-    vi.mocked(hkFetch).mockResolvedValue({
-      plan: null,
-      plan_items: [],
-      is_draft: true,
-      week_of: '2026-05-11',
-    } satisfies GetPlansResponse);
+    vi.mocked(hkFetch).mockResolvedValue(emptyTreeResponse('2026-05-11', { is_draft: true }));
 
     renderWithClient(<PlanPage />);
 
     fireEvent.click(screen.getByRole('tab', { name: 'Next week' }));
     await waitFor(() => {
-      expect(screen.getByRole('tab', { name: 'Next week' }).getAttribute('aria-selected')).toBe('true');
+      expect(
+        screen.getByRole('tab', { name: 'Next week' }).getAttribute('aria-selected'),
+      ).toBe('true');
     });
 
-    // Advance to Monday — next-week window closes — then fire the captured tick.
     vi.setSystemTime(new Date('2026-05-04T00:01:00Z'));
     await act(async () => { intervalTick!(); });
 
     await waitFor(() => {
-      expect(screen.getByRole('tab', { name: 'This week' }).getAttribute('aria-selected')).toBe('true');
+      expect(
+        screen.getByRole('tab', { name: 'This week' }).getAttribute('aria-selected'),
+      ).toBe('true');
     });
     expect((screen.getByRole('tab', { name: 'Next week' }) as HTMLButtonElement).disabled).toBe(true);
 
@@ -200,18 +275,13 @@ describe('PlanPage — week tabs (Story 3.14)', () => {
   });
 });
 
-describe('PlanPage — content states (Story 3.14)', () => {
+describe('PlanPage — content states (Story 3.14, tree shape)', () => {
   it('renders the "Lumi is drafting next week" copy when next-week plan is null', async () => {
     vi.useFakeTimers({ toFake: ['Date'] });
-    vi.setSystemTime(new Date('2026-05-02T12:00:00Z')); // Saturday — next tab enabled
+    vi.setSystemTime(new Date('2026-05-02T12:00:00Z'));
 
     const { hkFetch } = await import('@/lib/fetch.js');
-    vi.mocked(hkFetch).mockResolvedValue({
-      plan: null,
-      plan_items: [],
-      is_draft: true,
-      week_of: '2026-05-04',
-    } satisfies GetPlansResponse);
+    vi.mocked(hkFetch).mockResolvedValue(emptyTreeResponse('2026-05-04', { is_draft: true }));
 
     renderWithClient(<PlanPage />);
 
@@ -224,41 +294,9 @@ describe('PlanPage — content states (Story 3.14)', () => {
     });
   });
 
-  it('renders the weekday tiles when a plan is returned', async () => {
+  it('renders the weekday tiles when a tree-shape plan is returned', async () => {
     const { hkFetch } = await import('@/lib/fetch.js');
-    vi.mocked(hkFetch).mockResolvedValue({
-      plan: {
-        id: PLAN_ID,
-        household_id: HOUSEHOLD_ID,
-        week_id: '00000000-0000-4000-8000-000000000099',
-        week_of: '2026-05-04',
-        revision: 1,
-        generated_at: '2026-05-02T11:00:00.000Z',
-        guardrail_cleared_at: '2026-05-02T11:00:01.000Z',
-        guardrail_version: 'v1.0.0',
-        prompt_version: 'v1.0.0',
-        created_at: '2026-05-02T11:00:00.000Z',
-        updated_at: '2026-05-02T11:00:01.000Z',
-      },
-      plan_items: [
-        {
-          id: ITEM_ID,
-          plan_id: PLAN_ID,
-          child_id: CHILD_ID,
-          day: 'monday',
-          slot: 'main',
-          recipe_id: null,
-          item_id: null,
-          ingredients: ['rice', 'beans'],
-          paused_at: null,
-          replaced_by_plan_id: null,
-          created_at: '2026-05-02T11:00:00.000Z',
-          updated_at: '2026-05-02T11:00:00.000Z',
-        },
-      ],
-      is_draft: false,
-      week_of: '2026-05-04',
-    } satisfies GetPlansResponse);
+    vi.mocked(hkFetch).mockResolvedValue(singleMainTreeResponse('2026-05-04'));
 
     renderWithClient(<PlanPage />);
 
@@ -269,44 +307,12 @@ describe('PlanPage — content states (Story 3.14)', () => {
     expect(screen.getByLabelText('Friday')).toBeDefined();
   });
 
-  it('shows the draft-disclaimer copy when is_draft is true and the plan has items', async () => {
+  it('shows the draft-disclaimer copy when is_draft is true and the plan has data', async () => {
     vi.useFakeTimers({ toFake: ['Date'] });
     vi.setSystemTime(new Date('2026-05-02T12:00:00Z'));
 
     const { hkFetch } = await import('@/lib/fetch.js');
-    vi.mocked(hkFetch).mockResolvedValue({
-      plan: {
-        id: PLAN_ID,
-        household_id: HOUSEHOLD_ID,
-        week_id: '00000000-0000-4000-8000-000000000099',
-        week_of: '2026-05-11',
-        revision: 1,
-        generated_at: '2026-05-08T20:00:00.000Z',
-        guardrail_cleared_at: '2026-05-08T20:00:01.000Z',
-        guardrail_version: 'v1.0.0',
-        prompt_version: 'v1.0.0',
-        created_at: '2026-05-08T20:00:00.000Z',
-        updated_at: '2026-05-08T20:00:01.000Z',
-      },
-      plan_items: [
-        {
-          id: ITEM_ID,
-          plan_id: PLAN_ID,
-          child_id: CHILD_ID,
-          day: 'monday',
-          slot: 'main',
-          recipe_id: null,
-          item_id: null,
-          ingredients: ['noodles'],
-          paused_at: null,
-          replaced_by_plan_id: null,
-          created_at: '2026-05-08T20:00:00.000Z',
-          updated_at: '2026-05-08T20:00:00.000Z',
-        },
-      ],
-      is_draft: true,
-      week_of: '2026-05-11',
-    } satisfies GetPlansResponse);
+    vi.mocked(hkFetch).mockResolvedValue(singleMainTreeResponse('2026-05-11', { is_draft: true }));
 
     renderWithClient(<PlanPage />);
 

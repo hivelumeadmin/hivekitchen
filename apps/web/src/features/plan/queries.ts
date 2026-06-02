@@ -1,11 +1,15 @@
 import { useQuery } from '@tanstack/react-query';
-import type { GetPlansResponse, PlanHistoryResponse } from '@hivekitchen/types';
+import type {
+  GetPlansResponse,
+  PlanHistoryResponse,
+} from '@hivekitchen/types';
 import { hkFetch } from '@/lib/fetch.js';
 import { QueryKeys } from '@/lib/realtime/query-keys.js';
 
-// Story 3.14 — Following-week draft view (FR21).
-// Returns the cleared plan + items for the requested week. Pre-clearance/
-// pre-generation drafts surface as { plan: null, is_draft: true }; the page
+// Story 3.14 / 3-DM-C1 Phase 9b part 4 — tree-shape response.
+// GET /v1/plans returns the canonical four-array tree shape (plan +
+// main_assignments + days + slots + variations). Pre-clearance / pre-
+// generation drafts surface as { plan: null, is_draft: true }; the page
 // renders the "Lumi is drafting next week" loading state in that case.
 //
 // staleTime 30s keeps the tab snappy when the user toggles back and forth
@@ -23,7 +27,7 @@ export function usePlanQuery(week: 'current' | 'next', options?: { enabled?: boo
   });
 }
 
-// Story 3.15 — historical plan + outcomes view (FR25).
+// Story 3.15 / 3-DM-C1 Phase 9b part 4 — historical plan tree-shape response.
 // Past plans are immutable, so the cache stays warm for 5 minutes — no SSE
 // subscription needed (history pages don't react to plan.updated events).
 const HISTORY_DISABLED_KEY = '__disabled__';

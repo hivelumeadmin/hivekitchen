@@ -14,7 +14,6 @@
 import type {
   BriefStateRow,
   PlanDayRow,
-  PlanItemRow,
   PlanMainAssignmentRow,
   PlanRow,
   PlanSlotRow,
@@ -55,40 +54,25 @@ export function buildPlan(overrides: Partial<PlanRow> = {}): PlanRow {
   return {
     id: TEST_IDS.plan,
     household_id: TEST_IDS.household,
-    week_id: TEST_IDS.weekId,
     week_of: '2026-05-04',
     revision: 1,
     generated_at: NOW_ISO,
     guardrail_cleared_at: '2026-05-02T11:00:01.000Z',
     guardrail_version: '1.1.0',
     prompt_version: 'v1.0.0',
+    state: null,
+    state_set_at: null,
+    state_message: null,
     created_at: NOW_ISO,
     updated_at: '2026-05-02T11:00:01.000Z',
     ...overrides,
   };
 }
 
-// ===========================================================================
-// PlanItemRow (pre-C1 shape — flat per-(child,day,slot) rows)
-// ===========================================================================
-
-export function buildPlanItem(overrides: Partial<PlanItemRow> = {}): PlanItemRow {
-  return {
-    id: TEST_IDS.planItem,
-    plan_id: TEST_IDS.plan,
-    child_id: TEST_IDS.childA,
-    day: 'monday',
-    slot: 'main',
-    recipe_id: null,
-    item_id: null,
-    ingredients: ['rice', 'lentils'],
-    paused_at: null,
-    replaced_by_plan_id: null,
-    created_at: NOW_ISO,
-    updated_at: NOW_ISO,
-    ...overrides,
-  };
-}
+// Story 3-DM-C1 Phase 9b part 4 step 5 — buildPlanItem retired with the
+// PlanItemRow type and the plan_items table. Tree-shape builders below
+// (buildPlanMainAssignment, buildPlanDay, buildPlanSlot,
+// buildPlanSlotVariation, buildPlanTree) are the canonical replacements.
 
 // ===========================================================================
 // BriefStateRow

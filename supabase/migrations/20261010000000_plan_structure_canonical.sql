@@ -66,6 +66,12 @@ UPDATE plans SET week_of = '1970-01-01' WHERE week_of IS NULL;
 -- block. Replaced by UNIQUE(household_id, week_of) after the type promotion.
 DROP INDEX IF EXISTS plans_household_week_unique;
 
+-- Drop the column default before the type change — Postgres can't
+-- automatically cast a varchar default (e.g. '' / '1970-01-01') to date.
+-- No new default is set: every caller supplies week_of explicitly.
+ALTER TABLE plans
+  ALTER COLUMN week_of DROP DEFAULT;
+
 ALTER TABLE plans
   ALTER COLUMN week_of TYPE date USING week_of::date,
   ALTER COLUMN week_of SET NOT NULL;

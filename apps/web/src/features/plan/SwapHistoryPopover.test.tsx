@@ -1,6 +1,6 @@
 import { describe, it, expect, afterEach } from 'vitest';
 import { render, screen, cleanup, fireEvent } from '@testing-library/react';
-import type { PlanItemSwapSummary } from '@hivekitchen/types';
+import type { PlanSwapSummaryTree } from '@hivekitchen/types';
 import { SwapHistoryPopover } from './SwapHistoryPopover.js';
 
 afterEach(() => {
@@ -10,18 +10,23 @@ afterEach(() => {
 const CHILD_A = '00000000-0000-4000-8000-0000000000a1';
 const CHILD_B = '00000000-0000-4000-8000-0000000000b2';
 
-function makeSwap(overrides: Partial<PlanItemSwapSummary> = {}): PlanItemSwapSummary {
+// Story 3-DM-C1 Phase 9b part 4 step 4 — fixtures migrated from the flat
+// PlanItemSwapSummary (slot + previous_ingredients) to the canonical tree
+// PlanSwapSummaryTree (kind + slot_kind + at) — the canonical model has no
+// archived plan_items, so audit-derived population is what the popover
+// renders going forward.
+function makeSwap(overrides: Partial<PlanSwapSummaryTree> = {}): PlanSwapSummaryTree {
   return {
+    kind: 'main_swap',
     child_id: CHILD_A,
     day: 'monday',
-    slot: 'main',
-    previous_ingredients: ['rice', 'beans'],
-    replaced_at: '2026-04-22T10:00:00.000Z',
+    slot_kind: 'main',
+    at: '2026-04-22T10:00:00.000Z',
     ...overrides,
   };
 }
 
-describe('SwapHistoryPopover (Story 3.15)', () => {
+describe('SwapHistoryPopover (Story 3.15 — tree shape)', () => {
   it('renders a trigger labeled with the swap count (singular)', () => {
     render(<SwapHistoryPopover swaps={[makeSwap()]} />);
     const trigger = screen.getByRole('button', { name: 'View 1 swap for this day' });
@@ -32,7 +37,10 @@ describe('SwapHistoryPopover (Story 3.15)', () => {
   it('renders a trigger labeled with the swap count (plural)', () => {
     render(
       <SwapHistoryPopover
-        swaps={[makeSwap(), makeSwap({ slot: 'extra', replaced_at: '2026-04-23T10:00:00.000Z' })]}
+        swaps={[
+          makeSwap(),
+          makeSwap({ kind: 'slot_recipe_swap', slot_kind: 'extra', at: '2026-04-23T10:00:00.000Z' }),
+        ]}
       />,
     );
     const trigger = screen.getByRole('button', { name: 'View 2 swaps for this day' });
@@ -40,7 +48,11 @@ describe('SwapHistoryPopover (Story 3.15)', () => {
   });
 
   it('clicking the trigger opens the region with the swap list', () => {
-    render(<SwapHistoryPopover swaps={[makeSwap({ slot: 'extra', previous_ingredients: ['hummus'] })]} />);
+    render(
+      <SwapHistoryPopover
+        swaps={[makeSwap({ kind: 'slot_recipe_swap', slot_kind: 'extra' })]}
+      />,
+    );
     const trigger = screen.getByRole('button');
 
     fireEvent.click(trigger);
@@ -49,8 +61,8 @@ describe('SwapHistoryPopover (Story 3.15)', () => {
     const region = screen.getByRole('region');
     expect(region).toBeDefined();
     expect(screen.getByText('Swap history')).toBeDefined();
-    expect(screen.getByText('extra')).toBeDefined();
-    expect(screen.getByText('Was: hummus')).toBeDefined();
+    expect(screen.getByText('Slot recipe swap')).toBeDefined();
+    expect(screen.getByText(/extra ·/)).toBeDefined();
   });
 
   it('Escape closes the region and restores focus to the trigger', () => {
@@ -75,18 +87,23 @@ describe('SwapHistoryPopover (Story 3.15)', () => {
     expect(parentClicks).toBe(0);
   });
 
-  it('renders "(none recorded)" when previous_ingredients is empty', () => {
-    render(<SwapHistoryPopover swaps={[makeSwap({ previous_ingredients: [] })]} />);
+  it('renders the kind label cleanly when slot_kind is null (plan-level main_swap)', () => {
+    render(<SwapHistoryPopover swaps={[makeSwap({ slot_kind: null })]} />);
     fireEvent.click(screen.getByRole('button'));
-    expect(screen.getByText('Was: (none recorded)')).toBeDefined();
+    expect(screen.getByText('Main swap')).toBeDefined();
   });
 
   it('groups swaps by child_id with fallback labels when no childLabels prop is supplied', () => {
     render(
       <SwapHistoryPopover
         swaps={[
-          makeSwap({ child_id: CHILD_A, slot: 'main' }),
-          makeSwap({ child_id: CHILD_B, slot: 'extra', replaced_at: '2026-04-23T10:00:00.000Z' }),
+          makeSwap({ child_id: CHILD_A, slot_kind: 'main' }),
+          makeSwap({
+            kind: 'slot_recipe_swap',
+            child_id: CHILD_B,
+            slot_kind: 'extra',
+            at: '2026-04-23T10:00:00.000Z',
+          }),
         ]}
       />,
     );
@@ -100,7 +117,12 @@ describe('SwapHistoryPopover (Story 3.15)', () => {
       <SwapHistoryPopover
         swaps={[
           makeSwap({ child_id: CHILD_A }),
-          makeSwap({ child_id: CHILD_B, slot: 'extra', replaced_at: '2026-04-23T10:00:00.000Z' }),
+          makeSwap({
+            kind: 'slot_recipe_swap',
+            child_id: CHILD_B,
+            slot_kind: 'extra',
+            at: '2026-04-23T10:00:00.000Z',
+          }),
         ]}
         childLabels={{ [CHILD_A]: 'Maya', [CHILD_B]: 'Liam' }}
       />,
@@ -113,10 +135,37 @@ describe('SwapHistoryPopover (Story 3.15)', () => {
   it('omits child headings when there is only one child in the swap list', () => {
     render(
       <SwapHistoryPopover
-        swaps={[makeSwap({ child_id: CHILD_A }), makeSwap({ child_id: CHILD_A, slot: 'extra', replaced_at: '2026-04-23T10:00:00.000Z' })]}
+        swaps={[
+          makeSwap({ child_id: CHILD_A }),
+          makeSwap({
+            kind: 'slot_recipe_swap',
+            child_id: CHILD_A,
+            slot_kind: 'extra',
+            at: '2026-04-23T10:00:00.000Z',
+          }),
+        ]}
       />,
     );
     fireEvent.click(screen.getByRole('button'));
     expect(screen.queryByText('Child A')).toBeNull();
+  });
+
+  it('collapses plan-level (null child_id) swaps under a "Family" heading when mixed with per-child swaps', () => {
+    render(
+      <SwapHistoryPopover
+        swaps={[
+          makeSwap({ child_id: null, slot_kind: null }),
+          makeSwap({
+            kind: 'variation_edit',
+            child_id: CHILD_A,
+            slot_kind: 'snack',
+            at: '2026-04-23T10:00:00.000Z',
+          }),
+        ]}
+      />,
+    );
+    fireEvent.click(screen.getByRole('button'));
+    expect(screen.getByText('Family')).toBeDefined();
+    expect(screen.getByText('Child B')).toBeDefined();
   });
 });

@@ -47,18 +47,24 @@ CREATE TABLE household_allergens (
   )),
   reason text CHECK (reason IS NULL OR char_length(reason) <= 200),
   created_at timestamptz NOT NULL DEFAULT now(),
-  updated_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+  -- COALESCE-sentinel uniqueness moved to a CREATE UNIQUE INDEX below.
+  -- Postgres table-level UNIQUE constraints only accept column references,
+  -- not expressions like COALESCE — the expression form requires a UNIQUE
+  -- INDEX, which is the pattern dietary_preferences / food_preferences also
+  -- use for the same NULL-child-id-distinct semantic.
+);
 
-  -- COALESCE-sentinel UNIQUE: treats NULL child_id as a distinct value so a
-  -- household-wide row and a per-kid row for the same allergen don't violate
-  -- uniqueness. Mirrors the existing dietary_preferences / food_preferences
-  -- pattern.
-  CONSTRAINT household_allergens_scope_hash_uniq UNIQUE (
+-- COALESCE-sentinel UNIQUE: treats NULL child_id as a distinct value so a
+-- household-wide row and a per-kid row for the same allergen don't violate
+-- uniqueness. Mirrors the existing dietary_preferences / food_preferences
+-- pattern (see 20260903000200 / 20260903000300).
+CREATE UNIQUE INDEX household_allergens_scope_hash_uniq
+  ON household_allergens (
     household_id,
     COALESCE(child_id, '00000000-0000-0000-0000-000000000000'::uuid),
     allergen_hash
-  )
-);
+  );
 
 CREATE INDEX household_allergens_household_idx ON household_allergens (household_id);
 

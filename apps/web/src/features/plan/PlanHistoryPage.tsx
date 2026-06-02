@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link, Navigate, useParams } from 'react-router-dom';
 import { useScope } from '@hivekitchen/ui';
-import type { PlanItemRow, PlanTileSummary } from '@hivekitchen/types';
 import { useLumiContext } from '@/hooks/useLumiContext.js';
 import { HkApiError } from '@/lib/fetch.js';
 import { deriveWeekId, getCurrentWeekMonday } from '@/lib/derive-week-id.js';
@@ -10,37 +9,7 @@ import { FreshnessState } from './FreshnessState.js';
 import { PlanTile } from './PlanTile.js';
 import { SwapHistoryPopover } from './SwapHistoryPopover.js';
 import { usePlanHistoryQuery } from './queries.js';
-
-// Saturday is intentionally excluded: the history grid is 5 weekday tiles only.
-// Any Saturday entries in swap_history are silently ignored here because no
-// summary.day ever equals 'saturday'. See deferred-work.md (3-15) for context.
-const WEEKDAYS = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday'] as const;
-
-// Story 3.15 — Adapter mirrors PlanPage's groupings, but we render the FINAL
-// item set per day (replaced_by_plan_id IS NULL items only — the API already
-// filters those). Days with no items still produce a tile so the week reads
-// as a uniform grid.
-function toPlanTileSummaries(items: ReadonlyArray<PlanItemRow>): PlanTileSummary[] {
-  return WEEKDAYS.map((day) => {
-    const dayItems = items.filter((it) => it.day === day);
-    return {
-      day,
-      paused: dayItems.length > 0 && dayItems.every((it) => it.paused_at !== null),
-      lunch_link_suppressed_children: [],
-      // Story 4-S4: history surface doesn't render per-tile ratings (Layer 1
-      // ratings exposed via PlanHistoryResponse.ratings instead).
-      child_ratings: {},
-      items: dayItems.map((it) => ({
-        plan_item_id: it.id,
-        child_id: it.child_id,
-        slot: it.slot,
-        ingredients: it.ingredients,
-        ...(it.recipe_id !== null ? { recipe_id: it.recipe_id } : {}),
-        ...(it.item_id !== null ? { item_id: it.item_id } : {}),
-      })),
-    };
-  });
-}
+import { adaptHistoryResponse } from './tree-adapter.js';
 
 function formatWeekOf(weekOf: string): string {
   // weekOf is an ISO date (e.g. '2026-04-21'); render as 'Week of April 21, 2026'.
@@ -80,10 +49,14 @@ export function PlanHistoryPage() {
     };
   }, [weekId]);
 
-  const summaries = useMemo(
-    () => (data?.plan_items ? toPlanTileSummaries(data.plan_items) : []),
-    [data?.plan_items],
-  );
+  const { summaries, hasAnyItems } = useMemo(() => {
+    if (data === undefined) return { summaries: [], hasAnyItems: false };
+    const { summaries: sums } = adaptHistoryResponse(data);
+    return {
+      summaries: sums,
+      hasAnyItems: data.slots.length > 0 || data.variations.length > 0,
+    };
+  }, [data]);
 
   if (shouldRedirectToCurrent) {
     return <Navigate to="/app/plan" replace />;
@@ -92,7 +65,7 @@ export function PlanHistoryPage() {
   const isNotFound = isError && error instanceof HkApiError && error.status === 404;
 
   const weekOfLabel =
-    !isLoading && !isError && data?.plan !== null && data?.week_of !== null && data?.week_of !== undefined
+    !isLoading && !isError && data?.week_of !== null && data?.week_of !== undefined
       ? `Week of ${formatWeekOf(data.week_of)}`
       : null;
 
@@ -124,9 +97,9 @@ export function PlanHistoryPage() {
       )}
       {isError && !isNotFound && <FreshnessState variant="failed" />}
 
-      {!isLoading && !isError && data !== undefined && data.plan !== null && (
+      {!isLoading && !isError && data !== undefined && (
         <>
-          {data.plan_items.length === 0 ? (
+          {!hasAnyItems ? (
             <p
               className="font-sans text-[15px] text-fg-muted text-center"
               role="status"
@@ -139,7 +112,13 @@ export function PlanHistoryPage() {
               aria-label="Historical weekly plan"
             >
               {summaries.map((summary) => {
-                const daySwaps = data.swap_history.filter((s) => s.day === summary.day);
+                // swap_history is empty by design in this slice — audit-derived
+                // population lands as a follow-up (canonical model has no
+                // archived plan_items; mid-week edits become audit_log entries).
+                // The popover is rendered for parity but receives [] until then.
+                const daySwaps = data.swap_history.filter(
+                  (s: typeof data.swap_history[number]) => s.day === summary.day,
+                );
                 return (
                   <div key={summary.day} className="relative">
                     <PlanTile summary={summary} forceVariant="past" />

@@ -1,11 +1,19 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { hkFetch } from '@/lib/fetch.js';
 import type {
-  SwapPlanItemInput,
-  PlanItemRow,
+  PlanMainAssignmentRow,
+  PlanSlotRow,
+  PlanSlotVariationRow,
+  PauseReason,
   RegeneratePlanResponse,
   SetDayOverrideInput,
   SetDayOverrideResponse,
+  SwapMainInput,
+  SwapMainResponse,
+  SwapSlotRecipeInput,
+  SwapSlotRecipeResponse,
+  UpdateVariationInput,
+  UpdateVariationResponse,
   ConfirmVariantProposalInput,
   UpdateSovereigntyModeInput,
   UpdateSovereigntyModeResponse,
@@ -31,54 +39,134 @@ function safeRandomUuid(): string {
   return `${hex.slice(0, 4).join('')}-${hex.slice(4, 6).join('')}-${hex.slice(6, 8).join('')}-${hex.slice(8, 10).join('')}-${hex.slice(10, 16).join('')}`;
 }
 
-// PATCH /v1/plans/:planId/items/:itemId with Idempotency-Key.
-// A new Idempotency-Key is generated per mutation invocation — retrying a failed
-// mutation re-generates the key (no replay-cache on server in this story; safe to retry).
-// On success: invalidates ['brief'] wildcard so BriefCanvas re-fetches updated brief_state.
-export function useSwapPlanItemMutation() {
+// Story 3-DM-C1 Phase 9b part 4 — the flat single PATCH /items/:itemId surface
+// decomposes into three canonical operations. swapMain replaces the recipe on
+// one M-assignment (cascades to every day using that Main). updateVariation
+// patches one per-child variation row (portion / texture / spice / add_ons /
+// removals / notes etc.). swapSlotRecipe replaces the recipe on a snack/extra
+// slot (main slots reject with 400). All three invalidate ['brief'] so the
+// brief surface re-fetches its cleared-allergies + tile summaries.
+
+// PATCH /v1/plans/:planId/main-assignments/:mainAssignmentId/recipe.
+export function useSwapMainMutation() {
   const queryClient = useQueryClient();
   return useMutation<
-    { item: PlanItemRow },
+    SwapMainResponse,
     Error,
-    { planId: string; itemId: string; input: SwapPlanItemInput }
+    { planId: string; mainAssignmentId: string; input: SwapMainInput }
   >({
-    mutationFn: ({ planId, itemId, input }) =>
-      hkFetch(`/v1/plans/${planId}/items/${itemId}`, {
-        method: 'PATCH',
-        body: input,
-        headers: { 'Idempotency-Key': safeRandomUuid() },
-      }),
+    mutationFn: ({ planId, mainAssignmentId, input }) =>
+      hkFetch<SwapMainResponse>(
+        `/v1/plans/${planId}/main-assignments/${mainAssignmentId}/recipe`,
+        {
+          method: 'PATCH',
+          body: input,
+          headers: { 'Idempotency-Key': safeRandomUuid() },
+        },
+      ),
     onSuccess: () => {
-      // ['brief'] wildcard matches every ['brief', householdId] key.
-      // At most one is hot per session — one current_household_id.
       void queryClient.invalidateQueries({ queryKey: ['brief'] });
+      void queryClient.invalidateQueries({ queryKey: ['plan'] });
     },
   });
 }
 
-// PATCH /v1/plans/:planId/days/:day/pause with Idempotency-Key.
-// On success: invalidates ['brief'] so tile paused state reflects immediately.
+// PATCH /v1/plans/:planId/variations/:variationId.
+export function useUpdateVariationMutation() {
+  const queryClient = useQueryClient();
+  return useMutation<
+    UpdateVariationResponse,
+    Error,
+    { planId: string; variationId: string; input: UpdateVariationInput }
+  >({
+    mutationFn: ({ planId, variationId, input }) =>
+      hkFetch<UpdateVariationResponse>(
+        `/v1/plans/${planId}/variations/${variationId}`,
+        {
+          method: 'PATCH',
+          body: input,
+          headers: { 'Idempotency-Key': safeRandomUuid() },
+        },
+      ),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['brief'] });
+      void queryClient.invalidateQueries({ queryKey: ['plan'] });
+    },
+  });
+}
+
+// PATCH /v1/plans/:planId/slots/:planSlotId/recipe.
+export function useSwapSlotRecipeMutation() {
+  const queryClient = useQueryClient();
+  return useMutation<
+    SwapSlotRecipeResponse,
+    Error,
+    { planId: string; planSlotId: string; input: SwapSlotRecipeInput }
+  >({
+    mutationFn: ({ planId, planSlotId, input }) =>
+      hkFetch<SwapSlotRecipeResponse>(
+        `/v1/plans/${planId}/slots/${planSlotId}/recipe`,
+        {
+          method: 'PATCH',
+          body: input,
+          headers: { 'Idempotency-Key': safeRandomUuid() },
+        },
+      ),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['brief'] });
+      void queryClient.invalidateQueries({ queryKey: ['plan'] });
+    },
+  });
+}
+
+// PATCH /v1/plans/:planId/days/:day/pause — tree-shape body.
+// reason is REQUIRED (DB CHECK demands paused_at + paused_reason both set);
+// enum widens from flat 'sick'|'absent'|'holiday' to PauseReason's six-value set.
 export function usePauseDayMutation() {
   const queryClient = useQueryClient();
   return useMutation<
     void,
     Error,
-    { planId: string; day: string; reason?: 'sick' | 'absent' | 'holiday' }
+    { planId: string; day: string; reason: PauseReason; note?: string }
   >({
-    mutationFn: ({ planId, day, reason }) =>
+    mutationFn: ({ planId, day, reason, note }) =>
       hkFetch(`/v1/plans/${planId}/days/${day}/pause`, {
         method: 'PATCH',
-        body: reason !== undefined ? { reason } : {},
+        body: note !== undefined ? { reason, note } : { reason },
         headers: { 'Idempotency-Key': safeRandomUuid() },
       }),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ['brief'] });
+      void queryClient.invalidateQueries({ queryKey: ['plan'] });
     },
   });
 }
 
-// POST /v1/plans/:planId/items/:itemId/override with Idempotency-Key.
-// Story 3.19 — day-level context override (FR118, FR119). On success: invalidates
+// PATCH /v1/plans/:planId/days/:day/pause-child — per-child whole-day pause.
+// Sets paused_at on every plan_slot_variation under (child_id, plan_day_id).
+export function usePauseChildOnDayMutation() {
+  const queryClient = useQueryClient();
+  return useMutation<
+    void,
+    Error,
+    { planId: string; day: string; childId: string }
+  >({
+    mutationFn: ({ planId, day, childId }) =>
+      hkFetch(`/v1/plans/${planId}/days/${day}/pause-child`, {
+        method: 'PATCH',
+        body: { child_id: childId },
+        headers: { 'Idempotency-Key': safeRandomUuid() },
+      }),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['brief'] });
+      void queryClient.invalidateQueries({ queryKey: ['plan'] });
+    },
+  });
+}
+
+// POST /v1/plans/:planId/slots/:planSlotId/override with Idempotency-Key.
+// Story 3.19 — day-level context override (FR118, FR119). Path param swaps
+// from planItemId → planSlotId in the tree model. On success: invalidates
 // ['brief'] so paused-state and any tile copy reflects immediately. The async
 // regen, when triggered, lands later via plan_revision bump.
 export function useSetDayOverrideMutation() {
@@ -86,11 +174,11 @@ export function useSetDayOverrideMutation() {
   return useMutation<
     SetDayOverrideResponse,
     Error,
-    { planId: string; itemId: string; input: SetDayOverrideInput }
+    { planId: string; planSlotId: string; input: SetDayOverrideInput }
   >({
-    mutationFn: ({ planId, itemId, input }) =>
+    mutationFn: ({ planId, planSlotId, input }) =>
       hkFetch<SetDayOverrideResponse>(
-        `/v1/plans/${planId}/items/${itemId}/override`,
+        `/v1/plans/${planId}/slots/${planSlotId}/override`,
         {
           method: 'POST',
           body: input,
@@ -103,7 +191,7 @@ export function useSetDayOverrideMutation() {
   });
 }
 
-// DELETE /v1/plans/:planId/items/:itemId/override/:overrideId with Idempotency-Key.
+// DELETE /v1/plans/:planId/slots/:planSlotId/override/:overrideId with Idempotency-Key.
 // Story 3.19 — soft revert. Brief is invalidated so the tile clears any
 // override copy / paused state on the next render.
 export function useRevertDayOverrideMutation() {
@@ -111,11 +199,11 @@ export function useRevertDayOverrideMutation() {
   return useMutation<
     void,
     Error,
-    { planId: string; itemId: string; overrideId: string }
+    { planId: string; planSlotId: string; overrideId: string }
   >({
-    mutationFn: ({ planId, itemId, overrideId }) =>
+    mutationFn: ({ planId, planSlotId, overrideId }) =>
       hkFetch(
-        `/v1/plans/${planId}/items/${itemId}/override/${overrideId}`,
+        `/v1/plans/${planId}/slots/${planSlotId}/override/${overrideId}`,
         {
           method: 'DELETE',
           headers: { 'Idempotency-Key': safeRandomUuid() },
@@ -198,3 +286,8 @@ export function useRequestRegenerationMutation() {
     },
   });
 }
+
+// Re-export the row shapes the parent component consumes so callers don't need
+// to thread @hivekitchen/types imports through every layer that handles a
+// mutation result.
+export type { PlanMainAssignmentRow, PlanSlotRow, PlanSlotVariationRow };

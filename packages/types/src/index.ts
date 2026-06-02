@@ -103,8 +103,6 @@ import {
   DayOverrideSchema,
   SetDayOverrideInputSchema,
   SetDayOverrideResponseSchema,
-  DayOverridePlanItemParamSchema,
-  DayOverrideRevertParamSchema,
   CulturalKeySchema,
   TierSchema,
   TemplateStateSchema,
@@ -177,28 +175,19 @@ import {
   PantryReadInputSchema,
   PantryReadOutputSchema,
   PantryItemSchema,
-  PlanComposeInputSchema,
-  PlanComposeOutputSchema,
   CulturalLookupInputSchema,
   CulturalLookupOutputSchema,
-  PlanItemWriteSchema,
-  CommitPlanInputSchema,
   PlanRowSchema,
-  PlanItemRowSchema,
   PlanTileSummarySchema,
   ClearedAllergyEntrySchema,
   ScaffoldingDiffSchema,
   BriefStateRowSchema,
   BriefResponseSchema,
-  SwapPlanItemInputSchema,
-  SwapPlanItemResponseSchema,
-  PausePlanDayInputSchema,
   RegeneratePlanQuerySchema,
   RegeneratePlanResponseSchema,
   GetPlansQuerySchema,
   GetPlansResponseSchema,
   HardFailStatusSchema,
-  PlanItemSwapSummarySchema,
   PlanWeekIdParamSchema,
   PlanHistoryResponseSchema,
   ExtraRulesSchema,
@@ -260,7 +249,6 @@ import {
   PlanDayRowSchema,
   PlanSlotRowSchema,
   PlanSlotVariationRowSchema,
-  PlanRowCanonicalSchema,
   PlannerVariationInputSchema,
   PlannerSlotInputSchema,
   PlannerDayInputSchema,
@@ -269,9 +257,7 @@ import {
   PlanComposeTreeOutputSchema,
   CommitPlanTreeInputSchema,
   // Story 3-DM-C1 Phase 9b part 4 — wire-shape migration response + mutation schemas
-  GetPlansResponseTreeSchema,
   PlanSwapSummaryTreeSchema,
-  PlanHistoryResponseTreeSchema,
   SwapMainInputSchema,
   SwapMainResponseSchema,
   UpdateVariationInputSchema,
@@ -439,8 +425,6 @@ export type DayOverrideType = z.infer<typeof DayOverrideTypeSchema>;
 export type DayOverride = z.infer<typeof DayOverrideSchema>;
 export type SetDayOverrideInput = z.infer<typeof SetDayOverrideInputSchema>;
 export type SetDayOverrideResponse = z.infer<typeof SetDayOverrideResponseSchema>;
-export type DayOverridePlanItemParam = z.infer<typeof DayOverridePlanItemParamSchema>;
-export type DayOverrideRevertParam = z.infer<typeof DayOverrideRevertParamSchema>;
 
 // Cultural priors (Story 2.11)
 export type CulturalKey = z.infer<typeof CulturalKeySchema>;
@@ -532,21 +516,14 @@ export type PantryReadInput = z.infer<typeof PantryReadInputSchema>;
 export type PantryReadOutput = z.infer<typeof PantryReadOutputSchema>;
 export type PantryItem = z.infer<typeof PantryItemSchema>;
 
-export type PlanComposeInput = z.infer<typeof PlanComposeInputSchema>;
-export type PlanComposeOutput = z.infer<typeof PlanComposeOutputSchema>;
-export type { PlanComposeItem, PlanComposeDay } from '@hivekitchen/contracts';
-
 export type CulturalLookupInput = z.infer<typeof CulturalLookupInputSchema>;
 export type CulturalLookupOutput = z.infer<typeof CulturalLookupOutputSchema>;
 
-// Plan repository write / read shapes (Story 3.5)
-export type PlanItemWrite = z.infer<typeof PlanItemWriteSchema>;
-export type CommitPlanInput = z.infer<typeof CommitPlanInputSchema>;
+// Plan canonical row (Story 3-DM-C1 Phase 9b part 4 step 5 — formerly
+// PlanRowCanonical; the flat PlanRow with week_id retired with plan_items).
 export type PlanRow = z.infer<typeof PlanRowSchema>;
 
 // brief_state projection (Story 3.6)
-export type PlanItemRow = z.infer<typeof PlanItemRowSchema>;
-
 export type PlanTileSummary = z.infer<typeof PlanTileSummarySchema>;
 export type BriefStateRow = z.infer<typeof BriefStateRowSchema>;
 export type BriefResponse = z.infer<typeof BriefResponseSchema>;
@@ -557,24 +534,18 @@ export type ClearedAllergyEntry = z.infer<typeof ClearedAllergyEntrySchema>;
 // Scaffolding diff (Story 3.11 — QuietDiff rear-view)
 export type ScaffoldingDiff = z.infer<typeof ScaffoldingDiffSchema>;
 
-// Story 3.12 — plan swap + pause mutation types
-export type SwapPlanItemInput = z.infer<typeof SwapPlanItemInputSchema>;
-export type SwapPlanItemResponse = z.infer<typeof SwapPlanItemResponseSchema>;
-export type PausePlanDayInput = z.infer<typeof PausePlanDayInputSchema>;
-
 // Story 3.13 — plan regeneration types
 export type RegeneratePlanQuery = z.infer<typeof RegeneratePlanQuerySchema>;
 export type RegeneratePlanResponse = z.infer<typeof RegeneratePlanResponseSchema>;
 
-// Story 3.14 — following-week draft view types
+// Story 3.14 — following-week draft view types (canonical tree shape)
 export type GetPlansQuery = z.infer<typeof GetPlansQuerySchema>;
 export type GetPlansResponse = z.infer<typeof GetPlansResponseSchema>;
 
 // Story 3.25 — hard-fail escalation status payload
 export type HardFailStatus = z.infer<typeof HardFailStatusSchema>;
 
-// Story 3.15 — historical plans + outcomes view types
-export type PlanItemSwapSummary = z.infer<typeof PlanItemSwapSummarySchema>;
+// Story 3.15 — historical plans + outcomes view types (canonical tree shape)
 export type PlanWeekIdParam = z.infer<typeof PlanWeekIdParamSchema>;
 export type PlanHistoryResponse = z.infer<typeof PlanHistoryResponseSchema>;
 
@@ -638,10 +609,10 @@ export type VariantProposal = z.infer<typeof VariantProposalSchema>;
 export type ConfirmVariantProposalInput = z.infer<typeof ConfirmVariantProposalInputSchema>;
 
 // Story 3-DM-C1 — Plan structure canonical (tree shape).
-// Phase 2 additive: types coexist with the legacy flat ones (PlanItemRow,
-// PlanComposeOutput, CommitPlanInput) until Phase 9 removes the flat shapes
-// + applies the migration. See packages/contracts/src/plan.ts §3-DM-C1 for
-// the deprecation timeline.
+// Step 5 cutover complete: the flat PlanItemRow / PlanItemWrite /
+// CommitPlanInput / SwapPlanItemInput / PlanComposeInput|Output / flat
+// PlanRow / flat GetPlansResponse / flat PlanHistoryResponse types retired
+// with plan_items. Canonical names take their slots.
 export type Weekday = z.infer<typeof WeekdaySchema>;
 export type SlotKind = z.infer<typeof SlotKindSchema>;
 export type ExtraKind = z.infer<typeof ExtraKindSchema>;
@@ -653,7 +624,6 @@ export type PlanMainAssignmentRow = z.infer<typeof PlanMainAssignmentRowSchema>;
 export type PlanDayRow = z.infer<typeof PlanDayRowSchema>;
 export type PlanSlotRow = z.infer<typeof PlanSlotRowSchema>;
 export type PlanSlotVariationRow = z.infer<typeof PlanSlotVariationRowSchema>;
-export type PlanRowCanonical = z.infer<typeof PlanRowCanonicalSchema>;
 export type PlannerVariationInput = z.infer<typeof PlannerVariationInputSchema>;
 export type PlannerSlotInput = z.infer<typeof PlannerSlotInputSchema>;
 export type PlannerDayInput = z.infer<typeof PlannerDayInputSchema>;
@@ -662,12 +632,8 @@ export type PlanComposeTreeInput = z.infer<typeof PlanComposeTreeInputSchema>;
 export type PlanComposeTreeOutput = z.infer<typeof PlanComposeTreeOutputSchema>;
 export type CommitPlanTreeInput = z.infer<typeof CommitPlanTreeInputSchema>;
 
-// Story 3-DM-C1 Phase 9b part 4 — wire-shape migration types.
-// READ paths return the four tree arrays directly; MUTATION inputs split
-// into per-operation shapes matching the canonical model's swap surface.
-export type GetPlansResponseTree = z.infer<typeof GetPlansResponseTreeSchema>;
+// Story 3-DM-C1 Phase 9b part 4 — wire-shape mutation + history-summary types.
 export type PlanSwapSummaryTree = z.infer<typeof PlanSwapSummaryTreeSchema>;
-export type PlanHistoryResponseTree = z.infer<typeof PlanHistoryResponseTreeSchema>;
 export type SwapMainInput = z.infer<typeof SwapMainInputSchema>;
 export type SwapMainResponse = z.infer<typeof SwapMainResponseSchema>;
 export type UpdateVariationInput = z.infer<typeof UpdateVariationInputSchema>;

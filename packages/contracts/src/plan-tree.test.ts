@@ -6,7 +6,7 @@ import {
   PlanDayRowSchema,
   PlanSlotRowSchema,
   PlanSlotVariationRowSchema,
-  PlanRowCanonicalSchema,
+  PlanRowSchema,
   PlannerSlotInputSchema,
 } from './plan.js';
 
@@ -44,10 +44,10 @@ function validVariationRow() {
   };
 }
 
-describe('PlanRowCanonicalSchema', () => {
+describe('PlanRowSchema', () => {
   it('accepts a row with absorbed state fields nulled', () => {
     expect(
-      PlanRowCanonicalSchema.safeParse({
+      PlanRowSchema.safeParse({
         id: PLAN,
         household_id: HOUSEHOLD,
         week_of: '2026-06-01',
@@ -64,7 +64,7 @@ describe('PlanRowCanonicalSchema', () => {
 
   it('rejects nullable week_of (post-cutover requires non-null date)', () => {
     expect(
-      PlanRowCanonicalSchema.safeParse({
+      PlanRowSchema.safeParse({
         id: PLAN,
         household_id: HOUSEHOLD,
         week_of: null,

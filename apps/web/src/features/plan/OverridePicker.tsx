@@ -4,7 +4,10 @@ import { useSetDayOverrideMutation, useRevertDayOverrideMutation } from './mutat
 
 interface OverridePickerProps {
   planId: string;
-  planItemId: string;
+  // Story 3-DM-C1 Phase 9b part 4 step 4 — overrides are now scoped to a slot
+  // (not a per-(child, day, slot) flat plan_item). The route param flipped
+  // from planItemId → planSlotId at the API; this prop name follows.
+  planSlotId: string;
   childId: string;
   overrideDate: string;
   onConfirm: () => void;
@@ -36,7 +39,7 @@ const OVERRIDE_OPTIONS: ReadonlyArray<{
 // that is not yet wired — this component always sends is_lumi_proposed=false.
 export function OverridePicker({
   planId,
-  planItemId,
+  planSlotId,
   childId,
   overrideDate,
   onConfirm,
@@ -58,7 +61,7 @@ export function OverridePicker({
     try {
       await setOverride.mutateAsync({
         planId,
-        itemId: planItemId,
+        planSlotId,
         input: {
           override_type: type,
           override_date: overrideDate,
@@ -78,7 +81,7 @@ export function OverridePicker({
     try {
       await revertOverride.mutateAsync({
         planId,
-        itemId: planItemId,
+        planSlotId,
         overrideId: activeOverride.id,
       });
       onConfirm();

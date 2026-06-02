@@ -5,8 +5,6 @@ import type {
   BriefStateRow,
   ClearedAllergyEntry,
   GetPlansResponse,
-  PlanItemRow,
-  PlanTileSummary,
 } from '@hivekitchen/types';
 import { useLumiContext } from '@/hooks/useLumiContext.js';
 import { deriveWeekId, getMondayWeeksAgo } from '@/lib/derive-week-id.js';
@@ -19,6 +17,7 @@ import { PlanPageFooter } from './PlanPageFooter.js';
 import { usePlanQuery } from './queries.js';
 import { useBriefStateQuery } from './useBriefStateQuery.js';
 import { useConfirmVariantProposalMutation } from './mutations.js';
+import { adaptPlansResponse } from './tree-adapter.js';
 
 // Story 3.14 — FR21 enables the next-week tab on Friday afternoon. UTC for
 // MVP (per Dev Notes); per-timezone enforcement is a future server-side move
@@ -33,55 +32,22 @@ export function isNextWeekDraftAvailable(now: Date = new Date()): boolean {
   return false;
 }
 
-const WEEKDAYS = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday'] as const;
-type Weekday = (typeof WEEKDAYS)[number];
-
-// Adapter: PlanItemRow[] (wire) → PlanTileSummary[] (PlanTile prop). Groups
-// items by day, projects fields, derives `paused` from the items' paused_at.
-// Days with no items still produce a tile so the week grid stays five-wide.
-function toPlanTileSummaries(items: PlanItemRow[]): PlanTileSummary[] {
-  return WEEKDAYS.map((day) => {
-    const dayItems = items.filter((it) => it.day === day);
-    return {
-      day,
-      paused: dayItems.length > 0 && dayItems.every((it) => it.paused_at !== null),
-      lunch_link_suppressed_children: [],
-      // Story 4-S4: PlanPage uses GetPlansResponse (plan + items) which has no
-      // brief_state ratings overlay; PlanTile shows ratings only when fed via
-      // BriefCanvas → summary.child_ratings.
-      child_ratings: {},
-      items: dayItems.map((it) => ({
-        plan_item_id: it.id,
-        child_id: it.child_id,
-        slot: it.slot,
-        ingredients: it.ingredients,
-        ...(it.recipe_id !== null ? { recipe_id: it.recipe_id } : {}),
-        ...(it.item_id !== null ? { item_id: it.item_id } : {}),
-      })),
-    };
-  });
-}
-
 // Build a stable child → color map. Child order is determined by first
-// appearance in planItems; child names are resolved from clearedAllergies
+// appearance in plan variations; child names are resolved from clearedAllergies
 // (the only source that carries child_name alongside child_id).
 const CHILD_COLORS: readonly ChildDotColor[] = ['foliage', 'lumi-terracotta'];
 
 function buildChildColorMap(
-  planItems: PlanItemRow[],
+  childIdOrder: readonly string[],
   clearedAllergies: ClearedAllergyEntry[],
 ): ReadonlyMap<string, ChildInfo> {
   const map = new Map<string, ChildInfo>();
-  const order: string[] = [];
-  for (const item of planItems) {
-    if (!map.has(item.child_id)) {
-      order.push(item.child_id);
-      map.set(item.child_id, {
-        name: '',
-        color: CHILD_COLORS[Math.min(order.length - 1, CHILD_COLORS.length - 1)]!,
-      });
-    }
-  }
+  childIdOrder.forEach((childId, idx) => {
+    map.set(childId, {
+      name: '',
+      color: CHILD_COLORS[Math.min(idx, CHILD_COLORS.length - 1)]!,
+    });
+  });
   for (const entry of clearedAllergies) {
     const existing = map.get(entry.child_id);
     if (existing !== undefined) {
@@ -113,20 +79,26 @@ function PlanWeekContent({
   data: GetPlansResponse;
   childColorMap: ReadonlyMap<string, ChildInfo>;
 }) {
-  const summaries = useMemo(() => toPlanTileSummaries(data.plan_items), [data.plan_items]);
+  const { summaries } = useMemo(() => adaptPlansResponse(data), [data]);
   const confirmVariant = useConfirmVariantProposalMutation();
 
   // Story 3.27 — index active proposals by plan_item_id so each tile finds its
-  // own proposal without a second pass per render.
+  // own proposal without a second pass per render. VariantProposalSchema still
+  // carries plan_item_id today; the tile summaries reuse the variation row id
+  // as the per-(child, slot) item id (see tree-adapter.dayViewToPlanTileSummary)
+  // so the lookup still resolves until the variant_proposal carve-out lands.
   const proposalsByItem = useMemo(() => {
-    const out = new Map<string, NonNullable<GetPlansResponse['variant_proposals']>[number]>();
+    const out = new Map<
+      string,
+      NonNullable<GetPlansResponse['variant_proposals']>[number]
+    >();
     for (const p of data.variant_proposals ?? []) {
       out.set(p.plan_item_id, p);
     }
     return out;
   }, [data.variant_proposals]);
 
-  function findProposalForDay(summary: PlanTileSummary) {
+  function findProposalForDay(summary: (typeof summaries)[number]) {
     for (const item of summary.items) {
       if (item.plan_item_id === null) continue;
       const p = proposalsByItem.get(item.plan_item_id);
@@ -197,14 +169,14 @@ export function PlanPage() {
   const { data: briefData } = useBriefStateQuery(householdId);
   const brief: BriefStateRow | null = briefData?.brief ?? null;
 
-  // Build child color map once we have both plan items and allergy data.
+  // Build child color map once we have both plan tree data and allergy data.
+  const childIdOrder = useMemo(
+    () => (data ? adaptPlansResponse(data).childIdOrder : []),
+    [data],
+  );
   const childColorMap = useMemo(
-    () =>
-      buildChildColorMap(
-        data?.plan_items ?? [],
-        brief?.cleared_allergies ?? [],
-      ),
-    [data?.plan_items, brief?.cleared_allergies],
+    () => buildChildColorMap(childIdOrder, brief?.cleared_allergies ?? []),
+    [childIdOrder, brief?.cleared_allergies],
   );
 
   // Story 3.15 — derive a deep link to last week's historical plan view.

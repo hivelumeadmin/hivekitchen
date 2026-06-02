@@ -2,9 +2,9 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, cleanup, fireEvent, waitFor } from '@testing-library/react';
 import type { ComponentProps, ReactNode } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import type { PlanTileSummary } from '@hivekitchen/types';
 import { DisambiguationPicker } from './DisambiguationPicker.js';
 import { HkApiError } from '@/lib/fetch.js';
+import type { DaySlotView, DayTreeView } from './tree-adapter.js';
 
 vi.mock('@/lib/fetch.js', async () => {
   const actual = (await vi.importActual('@/lib/fetch.js')) as Record<
@@ -18,37 +18,117 @@ vi.mock('@/lib/fetch.js', async () => {
 });
 
 const PLAN_ID = '99999999-9999-4999-8999-999999999999';
-const ITEM_ID_A = '00000000-0000-4000-8000-000000000010';
-const ITEM_ID_B = '00000000-0000-4000-8000-000000000011';
+const SLOT_MAIN = '00000000-0000-4000-8000-000000000010';
+const SLOT_SNACK = '00000000-0000-4000-8000-000000000011';
+const MAIN_ASSIGNMENT_ID = '00000000-0000-4000-8000-000000000020';
+const VARIATION_A = '00000000-0000-4000-8000-000000000030';
+const VARIATION_B = '00000000-0000-4000-8000-000000000031';
 const CHILD_A = '11111111-1111-4111-8111-111111111111';
 const CHILD_B = '22222222-2222-4222-8222-222222222222';
 
-function singleItem(): PlanTileSummary['items'] {
-  return [
-    {
-      plan_item_id: ITEM_ID_A,
-      child_id: CHILD_A,
-      slot: 'main',
-      ingredients: ['rice'],
-    },
-  ];
+const TS = '2026-05-06T08:00:00.000Z';
+
+// Story 3-DM-C1 Phase 9b part 4 step 4 — fixture helpers for the tree-shape
+// picker. The picker dispatches against DayTreeView (slots + variations); the
+// previous flat items[] prop is retired.
+
+function makeSlot(overrides: Partial<DaySlotView> = {}): DaySlotView {
+  return {
+    slot_kind: 'main',
+    plan_slot_id: SLOT_MAIN,
+    recipe_id: null,
+    main_assignment_id: MAIN_ASSIGNMENT_ID,
+    extra_kind: null,
+    variations: [
+      {
+        id: VARIATION_A,
+        plan_slot_id: SLOT_MAIN,
+        child_id: CHILD_A,
+        portion_size: 'regular',
+        texture: 'normal',
+        spice_level: 'mild',
+        cutting_style: null,
+        container: null,
+        add_ons: [],
+        removals: [],
+        notes: null,
+        paused_at: null,
+        created_at: TS,
+        updated_at: TS,
+      },
+    ],
+    ...overrides,
+  };
 }
 
-function multipleItems(): PlanTileSummary['items'] {
-  return [
-    {
-      plan_item_id: ITEM_ID_A,
-      child_id: CHILD_A,
-      slot: 'main',
-      ingredients: ['rice', 'lentils'],
-    },
-    {
-      plan_item_id: ITEM_ID_B,
-      child_id: CHILD_B,
-      slot: 'snack',
-      ingredients: ['apple'],
-    },
-  ];
+function singleSlotDayView(): DayTreeView {
+  const mainSlot = makeSlot();
+  return {
+    day: 'monday',
+    plan_day_id: '00000000-0000-4000-8000-000000000099',
+    paused: false,
+    slots: [mainSlot],
+    mainSlot,
+    snackSlot: null,
+    extraSlot: null,
+  };
+}
+
+function multiSlotDayView(): DayTreeView {
+  const mainSlot = makeSlot({
+    variations: [
+      {
+        id: VARIATION_A,
+        plan_slot_id: SLOT_MAIN,
+        child_id: CHILD_A,
+        portion_size: 'regular',
+        texture: 'normal',
+        spice_level: 'mild',
+        cutting_style: null,
+        container: null,
+        add_ons: [],
+        removals: [],
+        notes: null,
+        paused_at: null,
+        created_at: TS,
+        updated_at: TS,
+      },
+    ],
+  });
+  const snackSlot: DaySlotView = {
+    slot_kind: 'snack',
+    plan_slot_id: SLOT_SNACK,
+    recipe_id: '00000000-0000-4000-8000-000000000040',
+    main_assignment_id: null,
+    extra_kind: null,
+    variations: [
+      {
+        id: VARIATION_B,
+        plan_slot_id: SLOT_SNACK,
+        child_id: CHILD_B,
+        portion_size: 'small',
+        texture: 'normal',
+        spice_level: 'mild',
+        cutting_style: null,
+        container: null,
+        add_ons: [],
+        removals: [],
+        notes: null,
+        paused_at: null,
+        created_at: TS,
+        updated_at: TS,
+      },
+    ],
+  };
+  return {
+    day: 'monday',
+    plan_day_id: '00000000-0000-4000-8000-000000000099',
+    paused: false,
+    slots: [mainSlot, snackSlot],
+    mainSlot,
+    snackSlot,
+    extraSlot: null,
+  };
 }
 
 function renderPicker(
@@ -67,7 +147,7 @@ function renderPicker(
     <DisambiguationPicker
       planId={PLAN_ID}
       day="monday"
-      items={props.items ?? singleItem()}
+      dayView={props.dayView ?? singleSlotDayView()}
       clearedAllergens={props.clearedAllergens ?? []}
       onDismiss={props.onDismiss ?? onDismiss}
       onSwapStarted={props.onSwapStarted ?? onSwapStarted}
@@ -87,14 +167,14 @@ afterEach(() => {
   cleanup();
 });
 
-describe('DisambiguationPicker — L1', () => {
-  it('renders both Sick day and Change an item buttons', () => {
+describe('DisambiguationPicker — L1 (tree shape)', () => {
+  it('renders Sick day and Change an item buttons', () => {
     renderPicker();
     expect(screen.getByRole('button', { name: /Sick day/i })).toBeDefined();
     expect(screen.getByRole('button', { name: /Change an item/i })).toBeDefined();
   });
 
-  it('clicking Sick day fires the pause mutation, then onSwapSettled and onDismiss', async () => {
+  it('clicking Sick day PATCHes /pause with the new PauseReason enum, then dismisses', async () => {
     const { hkFetch } = await import('@/lib/fetch.js');
     vi.mocked(hkFetch).mockResolvedValueOnce(undefined);
     const { onDismiss, onSwapSettled } = renderPicker();
@@ -109,6 +189,7 @@ describe('DisambiguationPicker — L1', () => {
       `/v1/plans/${PLAN_ID}/days/monday/pause`,
       expect.objectContaining({
         method: 'PATCH',
+        body: expect.objectContaining({ reason: 'sick_day' }),
         headers: expect.objectContaining({ 'Idempotency-Key': expect.any(String) }),
       }),
     );
@@ -136,12 +217,12 @@ describe('DisambiguationPicker — L1 onRegenDay', () => {
     expect(screen.getByRole('button', { name: /Ask Lumi to redo this day/i })).toBeDefined();
   });
 
-  it('does not render "Ask Lumi to redo this day" button when onRegenDay is undefined', () => {
+  it('does not render the redo button when onRegenDay is undefined', () => {
     renderPicker();
     expect(screen.queryByRole('button', { name: /Ask Lumi to redo this day/i })).toBeNull();
   });
 
-  it('clicking the button calls onRegenDay with the current day', () => {
+  it('clicking redo calls onRegenDay with the current day', () => {
     const onRegenDay = vi.fn();
     renderPicker({ onRegenDay });
     fireEvent.click(screen.getByRole('button', { name: /Ask Lumi to redo this day/i }));
@@ -151,62 +232,70 @@ describe('DisambiguationPicker — L1 onRegenDay', () => {
 });
 
 describe('DisambiguationPicker — Change an item flow', () => {
-  it('with multiple items: advances from L1 → L2 (slot select)', () => {
-    renderPicker({ items: multipleItems() });
+  it('with multiple variations: advances from L1 → L2 (variation select)', () => {
+    renderPicker({ dayView: multiSlotDayView() });
     fireEvent.click(screen.getByRole('button', { name: /Change an item/i }));
-    expect(screen.getByText('Which slot?')).toBeDefined();
+    expect(screen.getByText('Which child / slot?')).toBeDefined();
     expect(screen.getByRole('button', { name: /^main/ })).toBeDefined();
     expect(screen.getByRole('button', { name: /^snack/ })).toBeDefined();
   });
 
-  it('with single item: advances directly from L1 → L3 (ingredient input)', () => {
-    renderPicker({ items: singleItem() });
+  it('with single variation: advances directly from L1 → L3 (ingredient input)', () => {
+    renderPicker({ dayView: singleSlotDayView() });
     fireEvent.click(screen.getByRole('button', { name: /Change an item/i }));
     expect(screen.getByLabelText('What should it be instead?')).toBeDefined();
   });
 
-  it('L2: clicking a slot advances to L3 with that slot selected', () => {
-    renderPicker({ items: multipleItems() });
+  it('L2: clicking a variation advances to L3 with that variation selected', () => {
+    renderPicker({ dayView: multiSlotDayView() });
     fireEvent.click(screen.getByRole('button', { name: /Change an item/i }));
     fireEvent.click(screen.getByRole('button', { name: /^main/ }));
     expect(screen.getByLabelText('What should it be instead?')).toBeDefined();
   });
 });
 
-describe('DisambiguationPicker — L3 swap submit', () => {
-  it('shows validation error and does not fire mutation when input is empty', async () => {
+describe('DisambiguationPicker — L3 variation submit', () => {
+  it('shows disabled state when input is empty', async () => {
     const { hkFetch } = await import('@/lib/fetch.js');
-    renderPicker({ items: singleItem() });
+    renderPicker({ dayView: singleSlotDayView() });
     fireEvent.click(screen.getByRole('button', { name: /Change an item/i }));
     const swapBtn = screen.getByRole('button', { name: /Swap|Checking/ });
     expect(swapBtn.hasAttribute('disabled')).toBe(true);
     expect(vi.mocked(hkFetch)).not.toHaveBeenCalled();
   });
 
-  it('non-allergen swap: calls onSwapStarted + onDismiss BEFORE mutation resolves', async () => {
+  it('non-allergen variation edit: calls onSwapStarted + onDismiss BEFORE mutation resolves, then PATCHes /variations/:id with add_ons', async () => {
     const { hkFetch } = await import('@/lib/fetch.js');
     let resolveFetch!: (v: unknown) => void;
     vi.mocked(hkFetch).mockImplementationOnce(
       () => new Promise((res) => { resolveFetch = res; }),
     );
-    const { onDismiss, onSwapStarted } = renderPicker({ items: singleItem() });
+    const { onDismiss, onSwapStarted } = renderPicker({ dayView: singleSlotDayView() });
     fireEvent.click(screen.getByRole('button', { name: /Change an item/i }));
     const input = screen.getByLabelText('What should it be instead?') as HTMLInputElement;
     fireEvent.change(input, { target: { value: 'hummus, crackers' } });
     fireEvent.click(screen.getByRole('button', { name: /Swap|Checking/ }));
 
     await waitFor(() => {
-      expect(onSwapStarted).toHaveBeenCalledWith(ITEM_ID_A);
+      expect(onSwapStarted).toHaveBeenCalledWith(VARIATION_A);
       expect(onDismiss).toHaveBeenCalled();
     });
-    resolveFetch({ item: { id: ITEM_ID_A } });
+    expect(vi.mocked(hkFetch)).toHaveBeenCalledWith(
+      `/v1/plans/${PLAN_ID}/variations/${VARIATION_A}`,
+      expect.objectContaining({
+        method: 'PATCH',
+        body: expect.objectContaining({ add_ons: ['hummus', 'crackers'] }),
+        headers: expect.objectContaining({ 'Idempotency-Key': expect.any(String) }),
+      }),
+    );
+    resolveFetch({ variation: { id: VARIATION_A } });
   });
 
-  it('allergen-affecting swap: never calls onSwapStarted (no optimistic tile)', async () => {
+  it('allergen-affecting edit: never calls onSwapStarted (no optimistic tile)', async () => {
     const { hkFetch } = await import('@/lib/fetch.js');
-    vi.mocked(hkFetch).mockResolvedValueOnce({ item: { id: ITEM_ID_A } });
+    vi.mocked(hkFetch).mockResolvedValueOnce({ variation: { id: VARIATION_A } });
     const { onDismiss, onSwapStarted } = renderPicker({
-      items: singleItem(),
+      dayView: singleSlotDayView(),
       clearedAllergens: [{ child_id: CHILD_A, allergen: 'peanut' }],
     });
     fireEvent.click(screen.getByRole('button', { name: /Change an item/i }));
@@ -217,15 +306,16 @@ describe('DisambiguationPicker — L3 swap submit', () => {
     await waitFor(() => {
       expect(onDismiss).toHaveBeenCalled();
     });
-    // Allergen-affecting path skips the optimistic tile-update marker.
     expect(onSwapStarted).not.toHaveBeenCalled();
   });
 
-  it('422 error from swap shows allergy-conflict copy in picker', async () => {
+  it('422 error from updateVariation shows allergy-conflict copy in picker', async () => {
     const { hkFetch } = await import('@/lib/fetch.js');
-    vi.mocked(hkFetch).mockRejectedValueOnce(new HkApiError(422, { type: '/errors/swap-guardrail-blocked' }));
+    vi.mocked(hkFetch).mockRejectedValueOnce(
+      new HkApiError(422, { type: '/errors/swap-guardrail-blocked' }),
+    );
     renderPicker({
-      items: singleItem(),
+      dayView: singleSlotDayView(),
       clearedAllergens: [{ child_id: CHILD_A, allergen: 'peanut' }],
     });
     fireEvent.click(screen.getByRole('button', { name: /Change an item/i }));
@@ -239,11 +329,11 @@ describe('DisambiguationPicker — L3 swap submit', () => {
     });
   });
 
-  it('non-422 error from swap shows generic retry copy', async () => {
+  it('non-422 error from updateVariation shows generic retry copy', async () => {
     const { hkFetch } = await import('@/lib/fetch.js');
     vi.mocked(hkFetch).mockRejectedValueOnce(new HkApiError(500, null));
     renderPicker({
-      items: singleItem(),
+      dayView: singleSlotDayView(),
       clearedAllergens: [{ child_id: CHILD_A, allergen: 'peanut' }],
     });
     fireEvent.click(screen.getByRole('button', { name: /Change an item/i }));
@@ -255,5 +345,35 @@ describe('DisambiguationPicker — L3 swap submit', () => {
       const alert = screen.getByRole('alert');
       expect(alert.textContent).toMatch(/Swap failed/i);
     });
+  });
+});
+
+describe('DisambiguationPicker — Pause one child flow', () => {
+  it('appears only when the day has more than one distinct child', () => {
+    renderPicker({ dayView: singleSlotDayView() });
+    expect(screen.queryByRole('button', { name: /Pause one child/i })).toBeNull();
+    cleanup();
+    renderPicker({ dayView: multiSlotDayView() });
+    expect(screen.getByRole('button', { name: /Pause one child/i })).toBeDefined();
+  });
+
+  it('selecting a child PATCHes /pause-child with child_id', async () => {
+    const { hkFetch } = await import('@/lib/fetch.js');
+    vi.mocked(hkFetch).mockResolvedValueOnce(undefined);
+    const { onDismiss } = renderPicker({ dayView: multiSlotDayView() });
+    fireEvent.click(screen.getByRole('button', { name: /Pause one child/i }));
+    // Two child variations: pick the first.
+    const firstChildBtn = screen.getAllByRole('button')[0]!;
+    fireEvent.click(firstChildBtn);
+    await waitFor(() => {
+      expect(onDismiss).toHaveBeenCalled();
+    });
+    expect(vi.mocked(hkFetch)).toHaveBeenCalledWith(
+      `/v1/plans/${PLAN_ID}/days/monday/pause-child`,
+      expect.objectContaining({
+        method: 'PATCH',
+        body: expect.objectContaining({ child_id: expect.any(String) }),
+      }),
+    );
   });
 });

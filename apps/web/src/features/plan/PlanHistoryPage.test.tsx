@@ -2,7 +2,14 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { render, screen, cleanup, fireEvent, waitFor } from '@testing-library/react';
 import { MemoryRouter, Routes, Route } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import type { PlanHistoryResponse, PlanItemRow, PlanRow } from '@hivekitchen/types';
+import type {
+  PlanDayRow,
+  PlanHistoryResponse,
+  PlanRow,
+  PlanSlotRow,
+  PlanSlotVariationRow,
+  PlanSwapSummaryTree,
+} from '@hivekitchen/types';
 
 // Hoisted mocks must precede the imports that use them. vi.mock is hoisted
 // automatically so this works for both ESM-only modules.
@@ -42,39 +49,116 @@ const PLAN_ID = '11111111-1111-4111-8111-111111111111';
 const HOUSEHOLD_ID = '22222222-2222-4222-8222-222222222222';
 const WEEK_ID = '33333333-3333-4333-8333-333333333333';
 const CHILD_ID = '44444444-4444-4444-8444-444444444444';
+const PLAN_DAY_MONDAY = '00000000-0000-4000-8000-000000000080';
+const PLAN_DAY_TUESDAY = '00000000-0000-4000-8000-000000000081';
+const PLAN_DAY_WEDNESDAY = '00000000-0000-4000-8000-000000000082';
+const SLOT_MAIN = '00000000-0000-4000-8000-000000000010';
+const MAIN_ASSIGNMENT_ID = '00000000-0000-4000-8000-000000000020';
+const VARIATION_ID = '00000000-0000-4000-8000-000000000030';
+const TS = '2026-04-19T11:00:00.000Z';
+
+// Story 3-DM-C1 Phase 9b part 4 step 4 — fixture helpers migrated from the
+// flat (plan + plan_items[] + swap_history with previous_ingredients) shape
+// to the canonical tree (plan + main_assignments + days + slots + variations
+// + swap_history with kind/at/slot_kind).
 
 function makePlanRow(overrides: Partial<PlanRow> = {}): PlanRow {
   return {
     id: PLAN_ID,
     household_id: HOUSEHOLD_ID,
-    week_id: WEEK_ID,
     week_of: '2026-04-21',
     revision: 1,
-    generated_at: '2026-04-19T11:00:00.000Z',
-    guardrail_cleared_at: '2026-04-19T11:00:01.000Z',
+    generated_at: TS,
+    guardrail_cleared_at: TS,
     guardrail_version: 'v1.0.0',
     prompt_version: 'v1.0.0',
-    created_at: '2026-04-19T11:00:00.000Z',
-    updated_at: '2026-04-19T11:00:01.000Z',
+    state: null,
+    state_set_at: null,
+    state_message: null,
+    created_at: TS,
+    updated_at: TS,
     ...overrides,
   };
 }
 
-function makeItem(overrides: Partial<PlanItemRow> = {}): PlanItemRow {
+function makeDay(day: PlanDayRow['day'], id: string): PlanDayRow {
   return {
-    id: '00000000-0000-4000-8000-000000000010',
+    id,
     plan_id: PLAN_ID,
-    child_id: CHILD_ID,
-    day: 'monday',
-    slot: 'main',
-    recipe_id: null,
-    item_id: null,
-    ingredients: ['rice'],
+    day,
     paused_at: null,
-    replaced_by_plan_id: null,
-    created_at: '2026-04-19T11:00:00.000Z',
-    updated_at: '2026-04-19T11:00:00.000Z',
-    ...overrides,
+    paused_reason: null,
+    paused_note: null,
+    created_at: TS,
+    updated_at: TS,
+  };
+}
+
+function makeMainSlot(planDayId: string, slotId: string = SLOT_MAIN): PlanSlotRow {
+  return {
+    id: slotId,
+    plan_day_id: planDayId,
+    slot_kind: 'main',
+    main_assignment_id: MAIN_ASSIGNMENT_ID,
+    recipe_id: null,
+    extra_kind: null,
+    paused_at: null,
+    created_at: TS,
+    updated_at: TS,
+  };
+}
+
+function makeVariation(planSlotId: string, id: string = VARIATION_ID): PlanSlotVariationRow {
+  return {
+    id,
+    plan_slot_id: planSlotId,
+    child_id: CHILD_ID,
+    portion_size: 'regular',
+    texture: 'normal',
+    spice_level: 'mild',
+    cutting_style: null,
+    container: null,
+    add_ons: [],
+    removals: [],
+    notes: null,
+    paused_at: null,
+    created_at: TS,
+    updated_at: TS,
+  };
+}
+
+function emptyHistoryResponse(): PlanHistoryResponse {
+  return {
+    plan: makePlanRow(),
+    main_assignments: [],
+    days: [],
+    slots: [],
+    variations: [],
+    swap_history: [],
+    week_of: '2026-04-21',
+    ratings: {},
+  };
+}
+
+function singleDayHistory(day: PlanDayRow['day'], planDayId: string): PlanHistoryResponse {
+  const slot = makeMainSlot(planDayId);
+  return {
+    plan: makePlanRow(),
+    main_assignments: [
+      {
+        id: MAIN_ASSIGNMENT_ID,
+        plan_id: PLAN_ID,
+        sequence: 1,
+        recipe_id: '00000000-0000-4000-8000-0000000000aa',
+        created_at: TS,
+      },
+    ],
+    days: [makeDay(day, planDayId)],
+    slots: [slot],
+    variations: [makeVariation(slot.id)],
+    swap_history: [],
+    week_of: '2026-04-21',
+    ratings: {},
   };
 }
 
@@ -101,7 +185,7 @@ afterEach(() => {
   cleanup();
 });
 
-describe('PlanHistoryPage (Story 3.15)', () => {
+describe('PlanHistoryPage (Story 3.15 — tree shape)', () => {
   it('renders a "Back to this week" link as the first navigation affordance', async () => {
     hkFetchMock.mockRejectedValueOnce(new HkApiError(404, { detail: 'plan for week' }));
 
@@ -126,20 +210,13 @@ describe('PlanHistoryPage (Story 3.15)', () => {
 
     renderWithRoute(`/app/plan/${WEEK_ID}`);
 
-    // FreshnessState variant="failed" — query the role/status it exposes.
     await waitFor(() => {
       expect(screen.queryByText('No plan was generated for this week.')).toBeNull();
     });
   });
 
-  it('renders an empty-items message when the plan exists but has no items', async () => {
-    hkFetchMock.mockResolvedValueOnce({
-      plan: makePlanRow(),
-      plan_items: [],
-      swap_history: [],
-      week_of: '2026-04-21',
-      ratings: {},
-    } satisfies PlanHistoryResponse);
+  it('renders an empty-items message when the plan exists but has no slots/variations', async () => {
+    hkFetchMock.mockResolvedValueOnce(emptyHistoryResponse());
 
     renderWithRoute(`/app/plan/${WEEK_ID}`);
 
@@ -149,40 +226,25 @@ describe('PlanHistoryPage (Story 3.15)', () => {
   });
 
   it('renders the week-of header and a tile per weekday for an existing plan', async () => {
-    hkFetchMock.mockResolvedValueOnce({
-      plan: makePlanRow(),
-      plan_items: [makeItem({ day: 'monday', ingredients: ['rice', 'beans'] })],
-      swap_history: [],
-      week_of: '2026-04-21',
-      ratings: {},
-    } satisfies PlanHistoryResponse);
+    hkFetchMock.mockResolvedValueOnce(singleDayHistory('monday', PLAN_DAY_MONDAY));
 
     renderWithRoute(`/app/plan/${WEEK_ID}`);
 
     expect(await screen.findByText(/Week of/)).toBeDefined();
-    // 5 weekday tiles regardless of items distribution.
     const grid = await screen.findByLabelText('Historical weekly plan');
     expect(grid).toBeDefined();
-    // Each weekday rendered as an article (PlanTile).
     expect(screen.getByLabelText('Monday')).toBeDefined();
     expect(screen.getByLabelText('Tuesday')).toBeDefined();
     expect(screen.getByLabelText('Friday')).toBeDefined();
   });
 
   it('renders past-variant tiles (non-interactive: tabIndex=-1) for every day', async () => {
-    hkFetchMock.mockResolvedValueOnce({
-      plan: makePlanRow(),
-      plan_items: [makeItem({ day: 'wednesday' })],
-      swap_history: [],
-      week_of: '2026-04-21',
-      ratings: {},
-    } satisfies PlanHistoryResponse);
+    hkFetchMock.mockResolvedValueOnce(singleDayHistory('wednesday', PLAN_DAY_WEDNESDAY));
 
     renderWithRoute(`/app/plan/${WEEK_ID}`);
 
     const monday = await screen.findByLabelText('Monday');
     const friday = screen.getByLabelText('Friday');
-    // forceVariant="past" must hold for ALL days, not just past-of-week ones.
     expect(monday.tabIndex).toBe(-1);
     expect(friday.tabIndex).toBe(-1);
     expect(monday.className).toContain('opacity-60');
@@ -190,20 +252,18 @@ describe('PlanHistoryPage (Story 3.15)', () => {
   });
 
   it('renders SwapHistoryPopover only for days that have swap entries', async () => {
+    const swaps: PlanSwapSummaryTree[] = [
+      {
+        kind: 'main_swap',
+        child_id: CHILD_ID,
+        day: 'monday',
+        slot_kind: 'main',
+        at: '2026-04-22T10:00:00.000Z',
+      },
+    ];
     hkFetchMock.mockResolvedValueOnce({
-      plan: makePlanRow(),
-      plan_items: [makeItem({ day: 'monday' })],
-      swap_history: [
-        {
-          child_id: CHILD_ID,
-          day: 'monday',
-          slot: 'main',
-          previous_ingredients: ['lentils'],
-          replaced_at: '2026-04-22T10:00:00.000Z',
-        },
-      ],
-      week_of: '2026-04-21',
-      ratings: {},
+      ...singleDayHistory('monday', PLAN_DAY_MONDAY),
+      swap_history: swaps,
     } satisfies PlanHistoryResponse);
 
     renderWithRoute(`/app/plan/${WEEK_ID}`);
@@ -211,25 +271,22 @@ describe('PlanHistoryPage (Story 3.15)', () => {
     expect(
       await screen.findByRole('button', { name: 'View 1 swap for this day' }),
     ).toBeDefined();
-    // Other days have no swap rows, so no popover trigger appears for them.
     expect(screen.queryByRole('button', { name: 'View 0 swaps for this day' })).toBeNull();
   });
 
-  it('opens the swap popover on tap and lists the previous ingredients', async () => {
+  it('opens the swap popover on tap and surfaces the kind label', async () => {
+    const swaps: PlanSwapSummaryTree[] = [
+      {
+        kind: 'slot_recipe_swap',
+        child_id: CHILD_ID,
+        day: 'tuesday',
+        slot_kind: 'extra',
+        at: '2026-04-22T10:00:00.000Z',
+      },
+    ];
     hkFetchMock.mockResolvedValueOnce({
-      plan: makePlanRow(),
-      plan_items: [makeItem({ day: 'tuesday' })],
-      swap_history: [
-        {
-          child_id: CHILD_ID,
-          day: 'tuesday',
-          slot: 'extra',
-          previous_ingredients: ['cheddar'],
-          replaced_at: '2026-04-22T10:00:00.000Z',
-        },
-      ],
-      week_of: '2026-04-21',
-      ratings: {},
+      ...singleDayHistory('tuesday', PLAN_DAY_TUESDAY),
+      swap_history: swaps,
     } satisfies PlanHistoryResponse);
 
     renderWithRoute(`/app/plan/${WEEK_ID}`);
@@ -240,6 +297,6 @@ describe('PlanHistoryPage (Story 3.15)', () => {
       expect(screen.getByRole('region')).toBeDefined();
     });
     expect(screen.getByText('Swap history')).toBeDefined();
-    expect(screen.getByText('Was: cheddar')).toBeDefined();
+    expect(screen.getByText('Slot recipe swap')).toBeDefined();
   });
 });

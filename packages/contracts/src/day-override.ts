@@ -58,15 +58,8 @@ export const SetDayOverrideResponseSchema = z.object({
   regen_triggered: z.boolean(),
 });
 
-// Path params for the override routes — kept as separate schemas so route
-// declarations can reuse them via fastify-type-provider-zod.
-export const DayOverridePlanItemParamSchema = z.object({
-  planId: z.string().uuid(),
-  itemId: z.string().uuid(),
-});
-
-export const DayOverrideRevertParamSchema = z.object({
-  planId: z.string().uuid(),
-  itemId: z.string().uuid(),
-  overrideId: z.string().uuid(),
-});
+// Story 3-DM-C1 Phase 9b part 4 step 5 — flat DayOverridePlanItemParamSchema
+// and DayOverrideRevertParamSchema retired with the planItemId route param.
+// The canonical replacements live in plan.ts under
+// DayOverrideSlotParamSchema and DayOverrideSlotRevertParamSchema
+// (planSlotId-keyed).

@@ -28,24 +28,17 @@ import type {
   FlaggedCompoundItem,
   GuardrailResult,
   PauseChildOnDayInput,
-  PausePlanDayInput,
   PausePlanDayTreeInput,
-  PlanComposeInput,
-  PlanComposeOutput,
   PlanComposeTreeInput,
   PlanComposeTreeOutput,
   PlanDayRow,
   PlanItemForGuardrail,
-  PlanItemRow,
-  PlanItemSwapSummary,
   PlanMainAssignmentRow,
   PlanRow,
-  PlanRowCanonical,
   PlanSlotRow,
   PlanSlotVariationRow,
   RegeneratePlanQuery,
   SwapMainInput,
-  SwapPlanItemInput,
   SwapSlotRecipeInput,
   UpdateVariationInput,
   Weekday,
@@ -130,55 +123,12 @@ export class PlansService {
     return this.briefStateRepo.findByHousehold(householdId);
   }
 
-  // Story 3.14 — Following-week draft view (FR21).
-  // Resolves the requested week's Monday (UTC), derives the deterministic week_id,
-  // and returns the cleared plan + items, or null when the week's plan is not yet
-  // generated. is_draft mirrors (week === 'next') so the client doesn't recompute
-  // date math; week_of is always populated from the resolved Monday.
-  async getPlanForWeek(opts: {
-    householdId: string;
-    week: 'current' | 'next';
-  }): Promise<{
-    plan: PlanRow | null;
-    planItems: PlanItemRow[];
-    isDraft: boolean;
-    weekOf: string;
-  }> {
-    const weekOf =
-      opts.week === 'next' ? getNextWeekMonday() : getCurrentWeekMonday();
-    const weekId = deriveWeekId(weekOf);
-    const isDraft = opts.week === 'next';
-
-    const plan = await this.repo.findByHouseholdAndWeek({
-      householdId: opts.householdId,
-      weekId,
-    });
-    if (!plan) {
-      return { plan: null, planItems: [], isDraft, weekOf };
-    }
-
-    const planItems = await this.repo.findItemsByPlanId(plan.id);
-    return { plan, planItems, isDraft, weekOf };
-  }
-
-  // Pure transform: converts the planner agent's PlanComposeInput into a
-  // PlanComposeOutput by attaching a freshly-generated plan_id. Does NOT
-  // commit — the BullMQ worker drives the commit flow separately so the
-  // agent layer remains stateless.
-  async compose(input: PlanComposeInput): Promise<PlanComposeOutput> {
-    return Promise.resolve({
-      plan_id: randomUUID(),
-      household_id: input.household_id,
-      week_of: input.week_of,
-      days: input.days,
-      prompt_version: input.prompt_version,
-    });
-  }
-
-  // Story 3-DM-C1 Phase 5 — tree-shape planner tool entry. Same shape as
-  // compose() (attach a plan_id, pass through), but operates on the
-  // canonical tree (main_assignments + days[].slots[].variations) instead
-  // of the flat days[].items[] array. Coexists with compose() until Phase 9.
+  // Story 3-DM-C1 Phase 9b part 4 step 5 — tree-shape planner tool entry.
+  // Attaches a freshly-generated plan_id and passes through the canonical
+  // tree (main_assignments + days[].slots[].variations). Does NOT commit —
+  // the BullMQ worker drives the commit flow separately so the agent layer
+  // remains stateless. The legacy flat `compose()` retired with the
+  // plan_items array.
   async composeTree(input: PlanComposeTreeInput): Promise<PlanComposeTreeOutput> {
     return Promise.resolve({
       plan_id: randomUUID(),
@@ -493,273 +443,19 @@ export class PlansService {
     return flagged;
   }
 
-  // Story 3.12 — per-slot ingredient swap with guardrail validation.
-  // Runs allergyGuardrail.evaluate on ONLY the swapped item (the rest of the
-  // plan was cleared at generation time and is unchanged). On guardrail block
-  // → 422. On success → brief_state projection refreshed (userInitiated:true
-  // → scaffolding_diff null).
-  async swapItem(opts: {
-    planId: string;
-    itemId: string;
-    householdId: string;
-    input: SwapPlanItemInput;
-    requestId: string;
-  }): Promise<PlanItemRow> {
-    // 1. Load plan — validates household ownership via findByIdForPresentation.
-    const plan = await this.repo.findByIdForPresentation({
-      planId: opts.planId,
-      householdId: opts.householdId,
-    });
-    if (!plan) throw new NotFoundError(`plan ${opts.planId}`);
-
-    // 2. Load item — validates it belongs to this plan.
-    const existingItem = await this.repo.findItemById({
-      itemId: opts.itemId,
-      planId: opts.planId,
-    });
-    if (!existingItem) throw new NotFoundError(`plan_item ${opts.itemId}`);
-
-    // 3. Guardrail: check only the swapped item's new ingredients.
-    const guardrailItem: PlanItemForGuardrail = {
-      child_id: existingItem.child_id,
-      day: existingItem.day,
-      slot: existingItem.slot,
-      ingredients: opts.input.ingredients,
-    };
-    const result = await this.allergyGuardrail.evaluate(
-      [guardrailItem],
-      opts.householdId,
-    );
-
-    if (result.verdict === 'blocked' || result.verdict === 'uncertain') {
-      const allergens =
-        result.verdict === 'blocked'
-          ? result.conflicts.map((c) => c.allergen)
-          : [];
-      try {
-        await this.auditService.write({
-          event_type: 'allergy.guardrail_rejection',
-          household_id: opts.householdId,
-          request_id: opts.requestId,
-          metadata: {
-            plan_id: opts.planId,
-            item_id: opts.itemId,
-            source: 'user_swap',
-            verdict: result.verdict,
-            allergens,
-            // Surface the guardrail's reason (e.g. 'no_rules_loaded',
-            // 'rules_outdated') so ops can triage why uncertain results occur.
-            ...(result.verdict === 'uncertain' && { reason: result.reason }),
-          },
-        });
-      } catch (auditErr) {
-        this.logger.error(
-          { auditErr },
-          'audit write failed for swap guardrail rejection',
-        );
-      }
-      throw new SwapGuardrailBlockedError(opts.itemId, allergens);
-    }
-
-    // 4. Re-check plan revision before write — guards against a BullMQ
-    // regeneration committing a new revision between findItemById and the
-    // update. Without this check, our swap could write to plan_items rows that
-    // no longer belong to the current plan, and the change would never reach
-    // the projection. NotFoundError signals the client to refetch the brief.
-    const planAfter = await this.repo.findByIdForPresentation({
-      planId: opts.planId,
-      householdId: opts.householdId,
-    });
-    if (!planAfter || planAfter.revision !== plan.revision) {
-      throw new NotFoundError(`plan ${opts.planId}`);
-    }
-
-    // 5. Commit the ingredient update.
-    const updatedItem = await this.repo.updateItemIngredients({
-      itemId: opts.itemId,
-      planId: opts.planId,
-      ingredients: opts.input.ingredients,
-      recipeId: opts.input.recipe_id,
-      itemSlotId: opts.input.item_id,
-    });
-
-    // 6. Refresh brief_state projection. userInitiated:true → scaffolding_diff stays null.
-    await this.briefStateComposer.refreshTree(
-      opts.householdId,
-      plan.week_id,
-      opts.requestId,
-      { userInitiated: true },
-    );
-
-    // 7. Audit the successful swap.
-    try {
-      await this.auditService.write({
-        event_type: 'plan.item_swapped',
-        household_id: opts.householdId,
-        request_id: opts.requestId,
-        metadata: {
-          plan_id: opts.planId,
-          item_id: opts.itemId,
-          day: existingItem.day,
-          slot: existingItem.slot,
-          new_ingredients: opts.input.ingredients,
-          guardrail_version: GUARDRAIL_VERSION,
-        },
-      });
-    } catch (err) {
-      this.logger.error(
-        { err, plan_id: opts.planId, item_id: opts.itemId },
-        'audit write failed after item swap — swap committed',
-      );
-    }
-
-    // Story 3.22 — passive bias from repeated Extra removals (FR116). Fire-and-
-    // forget so a slow/failing signal write never blocks the swap response.
-    if (existingItem.slot === 'extra' && this.extraRemovalSignalService !== null) {
-      void this.recordExtraRemovalSignal(existingItem, opts).catch((err: unknown) => {
-        this.logger.error(
-          { err, plan_id: opts.planId, item_id: opts.itemId },
-          'extra removal signal failed — swap is committed',
-        );
-      });
-    }
-
-    return updatedItem;
-  }
-
-  // Coarse component-type inference for the bias signal. With snack_skus
-  // folded into recipes (Story 3-DM-A2), the SKU.category lookup retired;
-  // we now use the swapped-out item's first ingredient as a best-effort
-  // component label. A precise per-item component_type column is captured
-  // as deferred work.
-  private async recordExtraRemovalSignal(
-    oldItem: PlanItemRow,
-    opts: { householdId: string; requestId: string },
-  ): Promise<void> {
-    if (this.extraRemovalSignalService === null) return;
-    const componentType = oldItem.ingredients[0] ?? null;
-    if (componentType === null) return;
-
-    await this.extraRemovalSignalService.recordRemoval({
-      householdId: opts.householdId,
-      childId: oldItem.child_id,
-      componentType,
-      planItemId: oldItem.id,
-      requestId: opts.requestId,
-    });
-  }
-
-  // Story 3.12 — sick-day pause: marks paused_at on all plan_items for the day.
-  // The underlying plan is unchanged — ingredients are preserved for Lunch
-  // Link context and future un-pause.
-  //
-  // App-level idempotency: pauseDay returns the rows it actually flipped. If
-  // every item for the day is already paused we return 204 without a redundant
-  // audit/refresh, so client retries with the same Idempotency-Key don't burn
-  // audit rows or recompute the projection. If the (plan, day) pair has zero
-  // items we throw ValidationError (422), distinguishing it from the silent-
-  // success case.
-  async pauseDay(opts: {
-    planId: string;
-    day: PlanItemRow['day'];
-    householdId: string;
-    requestId: string;
-    reason?: PausePlanDayInput['reason'];
-  }): Promise<void> {
-    // 1. Validate plan ownership.
-    const plan = await this.repo.findByIdForPresentation({
-      planId: opts.planId,
-      householdId: opts.householdId,
-    });
-    if (!plan) throw new NotFoundError(`plan ${opts.planId}`);
-
-    // 2. Reject pause requests for days that don't exist in the plan (e.g., a
-    //    school holiday the planner skipped). 422 with a domain reason rather
-    //    than a silent 204 success.
-    const itemCount = await this.repo.countItemsForDay({
-      planId: opts.planId,
-      day: opts.day,
-    });
-    if (itemCount === 0) {
-      throw new ValidationError(
-        `plan ${opts.planId} has no items for day '${opts.day}'`,
-      );
-    }
-
-    // 3. Pause all not-yet-paused items for the day. Returns the rows that were
-    //    actually flipped — empty array means every item was already paused.
-    const pausedAt = new Date().toISOString();
-    const pausedRows = await this.repo.pauseDay({
-      planId: opts.planId,
-      day: opts.day,
-      pausedAt,
-    });
-    if (pausedRows.length === 0) {
-      // Already-paused day: idempotent no-op. Skip refresh + audit.
-      return;
-    }
-
-    // 4. Refresh brief_state — paused field will propagate to PlanTileSummary.
-    await this.briefStateComposer.refreshTree(
-      opts.householdId,
-      plan.week_id,
-      opts.requestId,
-      { userInitiated: true },
-    );
-
-    // 5. Audit. `reason` (if provided by the route) is threaded into metadata
-    //    so ops can distinguish parent-declared sick days from other pause
-    //    reasons in the timeline.
-    try {
-      await this.auditService.write({
-        event_type: 'plan.day_paused',
-        household_id: opts.householdId,
-        request_id: opts.requestId,
-        metadata: {
-          plan_id: opts.planId,
-          day: opts.day,
-          paused_at: pausedAt,
-          ...(opts.reason !== undefined && { reason: opts.reason }),
-        },
-      });
-    } catch (err) {
-      this.logger.error(
-        { err, plan_id: opts.planId },
-        'audit write failed after day pause — pause committed',
-      );
-    }
-  }
-
-  // Story 3.15 — Historical plans view (FR25).
-  // Resolves a past week's plan by week_id and returns the final committed
-  // items + a per-slot swap audit derived from archived plan_items.
-  // findItemsByPlanId() and findSwapHistory() touch disjoint row sets
-  // (replaced_by_plan_id IS NULL vs IS NOT NULL), so Promise.all is safe and
-  // halves the round-trip latency relative to a sequential pair of queries.
-  async getPlanHistory(opts: {
-    householdId: string;
-    weekId: string;
-  }): Promise<{
-    plan: PlanRow;
-    planItems: PlanItemRow[];
-    swapHistory: PlanItemSwapSummary[];
-    weekOf: string | null;
-  }> {
-    const plan = await this.repo.findByHouseholdAndWeek({
-      householdId: opts.householdId,
-      weekId: opts.weekId,
-    });
-    if (!plan) {
-      throw new NotFoundError(`plan for week ${opts.weekId}`);
-    }
-
-    const [planItems, swapHistory] = await Promise.all([
-      this.repo.findItemsByPlanId(plan.id),
-      this.repo.findSwapHistory(plan.id),
-    ]);
-
-    return { plan, planItems, swapHistory, weekOf: plan.week_of };
-  }
+  // Story 3-DM-C1 Phase 9b part 4 step 5 — the flat swapItem / pauseDay /
+  // getPlanHistory + the private recordExtraRemovalSignal helper retired
+  // with the plan_items flat surface. The replacements are tree-shape:
+  //   • swapItem       → swapMain / updateVariation / swapSlotRecipe
+  //   • pauseDay       → pauseDayTree
+  //   • getPlanHistory → getPlanHistoryTree
+  //   • getPlanForWeek → getPlanForWeekTree
+  // The Extra-removal passive bias signal (Story 3.22) was attached to the
+  // flat swap path; the canonical model surfaces this signal as a variation
+  // patch (add_ons / removals) and the dedicated signal hook lands as its
+  // own follow-up slice (the legacy implementation depended on item.slot ===
+  // 'extra' which the tree distinguishes via plan_slots.slot_kind + the
+  // variation patch shape).
 
   // Story 3.13 / Phase 9 — fetch the current (non-archived) plan tree for
   // a plan, with household ownership check. Used by plan-regeneration.job
@@ -802,16 +498,13 @@ export class PlansService {
       householdId: opts.householdId,
     });
     if (!plan) throw new NotFoundError(`plan ${opts.planId}`);
-    if (!plan.week_of) {
-      // Pre-3.13 plan row with no week_of — cannot regenerate without the date.
-      throw new ValidationError(
-        `plan ${opts.planId} was created before Story 3.13 and lacks week_of; view the current week's brief to regenerate`,
-      );
-    }
 
-    // 2. Rate limit: per-household per-week_id counter in Redis.
+    // 2. Rate limit: per-household per-week counter in Redis. Story 3-DM-C1
+    // step 5: keyed by week_of (the canonical row no longer carries week_id);
+    // deriveWeekId is the deterministic mapping when a stable UUID is needed.
     // Key expires in REGEN_TTL_SECONDS so old counters don't linger past the plan week.
-    const rateLimitKey = `regen-limit:${opts.householdId}:${plan.week_id}`;
+    const weekIdKey = deriveWeekId(plan.week_of);
+    const rateLimitKey = `regen-limit:${opts.householdId}:${weekIdKey}`;
     const count = await this.redis.incr(rateLimitKey);
     if (count === 1) {
       // First increment: set TTL. Subsequent INCRs inherit the existing TTL.
@@ -826,7 +519,7 @@ export class PlansService {
 
     // 3. Enqueue. jobId includes requestId so duplicate client retries dedupe.
     const jobIdKey =
-      `regen-${opts.householdId}-${plan.week_id}-${opts.query.scope}` +
+      `regen-${opts.householdId}-${weekIdKey}-${opts.query.scope}` +
       (opts.query.scope === 'day' ? `-${opts.query.day ?? ''}` : '') +
       `-${opts.requestId}`;
 
@@ -889,7 +582,7 @@ export class PlansService {
   // READS: getPlanForWeekTree + getPlanHistoryTree return the four arrays
   // directly (main_assignments + days + slots + variations) so the routes
   // can hand them straight to the wire-shape response schemas. Plan-row
-  // shape upgrades from PlanRow (with week_id) to PlanRowCanonical (drops
+  // shape upgrades from PlanRow (with week_id) to PlanRow (drops
   // week_id, adds nullable state fields). state/state_set_at/state_message
   // default to null until the migration applies — pre-migration plans rows
   // don't carry those columns.
@@ -909,7 +602,7 @@ export class PlansService {
     householdId: string;
     week: 'current' | 'next';
   }): Promise<{
-    plan: PlanRowCanonical | null;
+    plan: PlanRow | null;
     mainAssignments: PlanMainAssignmentRow[];
     days: PlanDayRow[];
     slots: PlanSlotRow[];
@@ -949,7 +642,7 @@ export class PlansService {
         : await this.repo.findVariationsBySlotIds(slots.map((s) => s.id));
 
     return {
-      plan: toCanonicalPlanRow(plan, weekOf),
+      plan,
       mainAssignments,
       days,
       slots,
@@ -966,7 +659,7 @@ export class PlansService {
     householdId: string;
     weekId: string;
   }): Promise<{
-    plan: PlanRowCanonical;
+    plan: PlanRow;
     mainAssignments: PlanMainAssignmentRow[];
     days: PlanDayRow[];
     slots: PlanSlotRow[];
@@ -992,7 +685,7 @@ export class PlansService {
         : await this.repo.findVariationsBySlotIds(slots.map((s) => s.id));
 
     return {
-      plan: toCanonicalPlanRow(plan, plan.week_of ?? null),
+      plan,
       mainAssignments,
       days,
       slots,
@@ -1043,7 +736,7 @@ export class PlansService {
       });
       await this.briefStateComposer.refreshTree(
         opts.householdId,
-        tree.plan.week_id,
+        deriveWeekId(tree.plan.week_of),
         opts.requestId,
         { userInitiated: true },
       );
@@ -1097,7 +790,7 @@ export class PlansService {
 
     await this.briefStateComposer.refreshTree(
       opts.householdId,
-      tree.plan.week_id,
+      deriveWeekId(tree.plan.week_of),
       opts.requestId,
       { userInitiated: true },
     );
@@ -1197,7 +890,7 @@ export class PlansService {
 
     await this.briefStateComposer.refreshTree(
       opts.householdId,
-      tree.plan.week_id,
+      deriveWeekId(tree.plan.week_of),
       opts.requestId,
       { userInitiated: true },
     );
@@ -1327,7 +1020,7 @@ export class PlansService {
 
     await this.briefStateComposer.refreshTree(
       opts.householdId,
-      tree.plan.week_id,
+      deriveWeekId(tree.plan.week_of),
       opts.requestId,
       { userInitiated: true },
     );
@@ -1384,7 +1077,7 @@ export class PlansService {
 
     await this.briefStateComposer.refreshTree(
       opts.householdId,
-      tree.plan.week_id,
+      deriveWeekId(tree.plan.week_of),
       opts.requestId,
       { userInitiated: true },
     );
@@ -1442,7 +1135,7 @@ export class PlansService {
     if (pausedCount > 0) {
       await this.briefStateComposer.refreshTree(
         opts.householdId,
-        tree.plan.week_id,
+        deriveWeekId(tree.plan.week_of),
         opts.requestId,
         { userInitiated: true },
       );
@@ -1578,30 +1271,9 @@ function buildGuardrailItemsFromTree(input: CommitPlanTreeInput): PlanItemForGua
   return out;
 }
 
-// Story 3-DM-C1 Phase 9b part 4 step 2 — project the pre-migration PlanRow
-// shape (carries week_id + nullable week_of) into PlanRowCanonical (drops
-// week_id, requires week_of, adds null state fields). state/state_set_at/
-// state_message default to null until the migration applies — pre-migration
-// `plans` rows don't carry those columns. The fallback week_of arg lets
-// getPlanForWeekTree pass the resolved week Monday when plan.week_of is null
-// on a pre-3.13 row.
-function toCanonicalPlanRow(plan: PlanRow, fallbackWeekOf: string | null): PlanRowCanonical {
-  return {
-    id: plan.id,
-    household_id: plan.household_id,
-    week_of: plan.week_of ?? fallbackWeekOf ?? '',
-    revision: plan.revision,
-    generated_at: plan.generated_at,
-    guardrail_cleared_at: plan.guardrail_cleared_at,
-    guardrail_version: plan.guardrail_version,
-    prompt_version: plan.prompt_version,
-    state: null,
-    state_set_at: null,
-    state_message: null,
-    created_at: plan.created_at,
-    updated_at: plan.updated_at,
-  };
-}
+// Story 3-DM-C1 Phase 9b part 4 step 5 — toCanonicalPlanRow retired with
+// the flat PlanRow → PlanRowCanonical projection. The canonical PlanRow IS
+// the only PlanRow now; the rename is the cutover.
 
 // Story 3-DM-C1 Phase 9b part 4 step 2 — build one PlanItemForGuardrail
 // for a single (variation, day, slot) tuple. The effective ingredient set
