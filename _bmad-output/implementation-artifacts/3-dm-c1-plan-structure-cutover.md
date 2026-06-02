@@ -4,6 +4,47 @@ Status: in-progress
 
 ## Implementation log
 
+### 2026-06-01 — Phase 2 done (contracts additive tree-shape schemas)
+
+Authored: `packages/contracts/src/plan.ts` (+ tree-shape schemas additively
+appended), `packages/types/src/index.ts` (+ inferred types), and
+`packages/contracts/src/plan-tree.test.ts` (25 tests, all green). The flat
+schemas (`PlanComposeItemSchema`, `PlanComposeOutputSchema`,
+`PlanItemRowSchema`, `PlanItemWriteSchema`, `CommitPlanInputSchema`) remain
+in place — Phase 9 removes them along with applying the migration.
+
+Schemas added (all suffixed `Tree*` / `Canonical*` / `Planner*Input*` to make
+the deprecation seam visually unambiguous):
+
+- **Enums**: `WeekdaySchema`, `SlotKindSchema`, `ExtraKindSchema`,
+  `PortionSizeSchema`, `TextureLevelSchema`, `SpiceLevelSchema`,
+  `PauseReasonSchema` — mirror migration §3.2.
+- **DB row shapes**: `PlanMainAssignmentRowSchema`, `PlanDayRowSchema`,
+  `PlanSlotRowSchema`, `PlanSlotVariationRowSchema`, `PlanRowCanonicalSchema`.
+  The day + slot row schemas mirror the DB `CHECK` constraints
+  (pause consistency, slot_kind ↔ FK XOR) via `superRefine` — defense-in-depth
+  catches a malformed read before it reaches a render.
+- **Planner tree inputs**: `PlannerMainAssignmentInputSchema`,
+  `PlannerVariationInputSchema`, `PlannerSlotInputSchema`,
+  `PlannerDayInputSchema` with the same XOR + pause-consistency invariants.
+- **Cross-validated wrappers**: `PlanComposeTreeInputSchema` and
+  `PlanComposeTreeOutputSchema` cross-validate every
+  `slot.main_assignment_sequence` against the declared `main_assignments[].sequence`
+  and assert sequence uniqueness — catches a bad planner emission at
+  parse time, before the RPC.
+- **Repository RPC input**: `CommitPlanTreeInputSchema` mirrors the new
+  `commit_plan()` signature in the migration; carries `plan_build_id` for the
+  Story 3-31 discover-candidate materialization path.
+
+Verification:
+- 25/25 new tree-schema tests pass.
+- contracts baseline unchanged (3 pre-existing failed test files —
+  heart-notes `validResponse` missing `delivered_at`/`cancelled_at`).
+- Full API sweep: 12 files / 33 tests fail — identical count to pre-Phase-2
+  via stash-and-rerun. All pre-existing, unrelated.
+
+Phase 3 (PlansRepository rewrite) starts from this surface.
+
 ### 2026-06-01 — Phase 1 staged (schema + RPC only; NOT yet applied)
 
 Authored: `supabase/migrations/20261010000000_plan_structure_canonical.sql`

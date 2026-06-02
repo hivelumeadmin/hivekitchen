@@ -248,6 +248,26 @@ import {
   PlanVariantProposalOutputSchema,
   VariantProposalSchema,
   ConfirmVariantProposalInputSchema,
+  // Story 3-DM-C1 — plan structure canonical (tree shape).
+  WeekdaySchema,
+  SlotKindSchema,
+  ExtraKindSchema,
+  PortionSizeSchema,
+  TextureLevelSchema,
+  SpiceLevelSchema,
+  PauseReasonSchema,
+  PlanMainAssignmentRowSchema,
+  PlanDayRowSchema,
+  PlanSlotRowSchema,
+  PlanSlotVariationRowSchema,
+  PlanRowCanonicalSchema,
+  PlannerVariationInputSchema,
+  PlannerSlotInputSchema,
+  PlannerDayInputSchema,
+  PlannerMainAssignmentInputSchema,
+  PlanComposeTreeInputSchema,
+  PlanComposeTreeOutputSchema,
+  CommitPlanTreeInputSchema,
 } from '@hivekitchen/contracts';
 
 // Auth
@@ -599,3 +619,28 @@ export type LunchLinkPauseResponse = z.infer<typeof LunchLinkPauseResponseSchema
 export type PlanVariantProposalOutput = z.infer<typeof PlanVariantProposalOutputSchema>;
 export type VariantProposal = z.infer<typeof VariantProposalSchema>;
 export type ConfirmVariantProposalInput = z.infer<typeof ConfirmVariantProposalInputSchema>;
+
+// Story 3-DM-C1 — Plan structure canonical (tree shape).
+// Phase 2 additive: types coexist with the legacy flat ones (PlanItemRow,
+// PlanComposeOutput, CommitPlanInput) until Phase 9 removes the flat shapes
+// + applies the migration. See packages/contracts/src/plan.ts §3-DM-C1 for
+// the deprecation timeline.
+export type Weekday = z.infer<typeof WeekdaySchema>;
+export type SlotKind = z.infer<typeof SlotKindSchema>;
+export type ExtraKind = z.infer<typeof ExtraKindSchema>;
+export type PortionSize = z.infer<typeof PortionSizeSchema>;
+export type TextureLevel = z.infer<typeof TextureLevelSchema>;
+export type SpiceLevel = z.infer<typeof SpiceLevelSchema>;
+export type PauseReason = z.infer<typeof PauseReasonSchema>;
+export type PlanMainAssignmentRow = z.infer<typeof PlanMainAssignmentRowSchema>;
+export type PlanDayRow = z.infer<typeof PlanDayRowSchema>;
+export type PlanSlotRow = z.infer<typeof PlanSlotRowSchema>;
+export type PlanSlotVariationRow = z.infer<typeof PlanSlotVariationRowSchema>;
+export type PlanRowCanonical = z.infer<typeof PlanRowCanonicalSchema>;
+export type PlannerVariationInput = z.infer<typeof PlannerVariationInputSchema>;
+export type PlannerSlotInput = z.infer<typeof PlannerSlotInputSchema>;
+export type PlannerDayInput = z.infer<typeof PlannerDayInputSchema>;
+export type PlannerMainAssignmentInput = z.infer<typeof PlannerMainAssignmentInputSchema>;
+export type PlanComposeTreeInput = z.infer<typeof PlanComposeTreeInputSchema>;
+export type PlanComposeTreeOutput = z.infer<typeof PlanComposeTreeOutputSchema>;
+export type CommitPlanTreeInput = z.infer<typeof CommitPlanTreeInputSchema>;

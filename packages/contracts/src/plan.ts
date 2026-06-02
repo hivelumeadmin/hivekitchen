@@ -486,3 +486,383 @@ export const PlanHistoryResponseSchema = z.object({
   week_of: z.string().date().nullable(),
   ratings: z.record(z.string().uuid(), z.string().min(1).nullable()),
 });
+
+// ===========================================================================
+// Story 3-DM-C1 — Plan structure canonical (tree shape).
+//
+// Phase 2 (this file): ADD the tree-shape schemas alongside the flat ones so
+// the codebase keeps compiling during the cutover window. The flat schemas
+// above (PlanComposeItemSchema, PlanComposeOutputSchema, PlanItemRowSchema,
+// PlanItemWriteSchema, CommitPlanInputSchema) stay in place until Phase 9.
+//
+// Phase 3 (PlansRepository) + Phase 4 (BriefStateComposer) swap consumers
+// from the flat schemas to the tree schemas below.
+// Phase 5 (orchestrator + planner prompt) swaps the agent tool to use
+// PlanComposeTreeInputSchema / PlanComposeTreeOutputSchema.
+// Phase 7 (plan-generation.job) swaps the RPC call to CommitPlanTreeInputSchema.
+// Phase 9 deletes the legacy flat schemas + applies the migration.
+//
+// Migration target: supabase/migrations/20261010000000_plan_structure_canonical.sql
+// Canonical reference: _bmad-output/planning-artifacts/canonical-data-model-design.md §3.
+// ===========================================================================
+
+const VARIATION_TEXT_MAX = 280;
+const VARIATION_CUTTING_MAX = 80;
+const VARIATION_CONTAINER_MAX = 60;
+const VARIATION_ADDON_MAX = 64;
+const VARIATION_REMOVAL_MAX = 64;
+const PAUSED_NOTE_MAX = 200;
+const STATE_MESSAGE_MAX = 500;
+const MAIN_ASSIGNMENT_SEQ_MAX = 6;     // Mon-Sat ceiling per Q3.
+const VARIATIONS_PER_SLOT_MAX = 12;    // Soft upper bound; real households have <=5.
+const SLOTS_PER_DAY_MAX = 3;           // main + snack + extra.
+const DAYS_PER_PLAN_MAX = 6;           // Mon-Sat.
+const MAIN_ASSIGNMENTS_PER_PLAN_MAX = 6;
+
+// ---- Enums (mirror the DB enums declared in §3.2 of the migration) -------
+
+export const WeekdaySchema = z.enum([
+  'monday',
+  'tuesday',
+  'wednesday',
+  'thursday',
+  'friday',
+  'saturday',
+]);
+
+export const SlotKindSchema = z.enum(['main', 'snack', 'extra']);
+
+export const ExtraKindSchema = z.enum([
+  'drink',
+  'extra_snack',
+  'protein_boost',
+  'sports_add',
+  'sweet',
+  'toddler_safe',
+  'allergy_substitute',
+  'custom',
+]);
+
+export const PortionSizeSchema = z.enum(['small', 'regular', 'large']);
+
+export const TextureLevelSchema = z.enum(['soft', 'normal', 'diced', 'finger']);
+
+export const SpiceLevelSchema = z.enum(['mild', 'regular', 'spicy']);
+
+export const PauseReasonSchema = z.enum([
+  'sick_day',
+  'holiday',
+  'snow_day',
+  'field_trip',
+  'half_day',
+  'other',
+]);
+
+// ---- DB row shapes (what PlansRepository.find* returns post-cutover) -----
+
+export const PlanMainAssignmentRowSchema = z.object({
+  id: z.string().uuid(),
+  plan_id: z.string().uuid(),
+  sequence: z.number().int().min(1).max(MAIN_ASSIGNMENT_SEQ_MAX),
+  recipe_id: z.string().uuid(),
+  created_at: z.string().datetime({ offset: true }),
+});
+
+export const PlanDayRowSchema = z.object({
+  id: z.string().uuid(),
+  plan_id: z.string().uuid(),
+  day: WeekdaySchema,
+  paused_at: z.string().datetime({ offset: true }).nullable().default(null),
+  paused_reason: PauseReasonSchema.nullable().default(null),
+  paused_note: z.string().max(PAUSED_NOTE_MAX).nullable().default(null),
+  created_at: z.string().datetime({ offset: true }),
+  updated_at: z.string().datetime({ offset: true }),
+}).superRefine((val, ctx) => {
+  // Mirrors plan_days_pause_consistency CHECK constraint at the contract layer
+  // so a malformed read fails loudly rather than silently rendering a half-
+  // paused day. The DB CHECK is the source of truth; this is defense-in-depth.
+  const anyPaused = val.paused_at !== null || val.paused_reason !== null || val.paused_note !== null;
+  const allPauseRequired = val.paused_at !== null && val.paused_reason !== null;
+  if (anyPaused && !allPauseRequired) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'paused_at + paused_reason must both be set when any pause field is set',
+      path: ['paused_at'],
+    });
+  }
+});
+
+export const PlanSlotRowSchema = z.object({
+  id: z.string().uuid(),
+  plan_day_id: z.string().uuid(),
+  slot_kind: SlotKindSchema,
+  main_assignment_id: z.string().uuid().nullable().default(null),
+  recipe_id: z.string().uuid().nullable().default(null),
+  extra_kind: ExtraKindSchema.nullable().default(null),
+  paused_at: z.string().datetime({ offset: true }).nullable().default(null),
+  created_at: z.string().datetime({ offset: true }),
+  updated_at: z.string().datetime({ offset: true }),
+}).superRefine((val, ctx) => {
+  // Mirrors the three plan_slots_* CHECK constraints from the migration.
+  // Catches malformed reads OR malformed in-memory constructions before they
+  // reach the DB.
+  if (val.slot_kind === 'main') {
+    if (val.main_assignment_id === null || val.recipe_id !== null || val.extra_kind !== null) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'slot_kind=main requires main_assignment_id; recipe_id and extra_kind must be null',
+        path: ['slot_kind'],
+      });
+    }
+  } else if (val.slot_kind === 'snack') {
+    if (val.recipe_id === null || val.main_assignment_id !== null || val.extra_kind !== null) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'slot_kind=snack requires recipe_id; main_assignment_id and extra_kind must be null',
+        path: ['slot_kind'],
+      });
+    }
+  } else {
+    // 'extra'
+    if (val.recipe_id === null || val.main_assignment_id !== null || val.extra_kind === null) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'slot_kind=extra requires recipe_id + extra_kind; main_assignment_id must be null',
+        path: ['slot_kind'],
+      });
+    }
+  }
+});
+
+export const PlanSlotVariationRowSchema = z.object({
+  id: z.string().uuid(),
+  plan_slot_id: z.string().uuid(),
+  child_id: z.string().uuid(),
+  portion_size: PortionSizeSchema,
+  texture: TextureLevelSchema,
+  spice_level: SpiceLevelSchema,
+  cutting_style: z.string().max(VARIATION_CUTTING_MAX).nullable().default(null),
+  container: z.string().max(VARIATION_CONTAINER_MAX).nullable().default(null),
+  add_ons: z.array(z.string().min(1).max(VARIATION_ADDON_MAX)).default([]),
+  removals: z.array(z.string().min(1).max(VARIATION_REMOVAL_MAX)).default([]),
+  notes: z.string().max(VARIATION_TEXT_MAX).nullable().default(null),
+  paused_at: z.string().datetime({ offset: true }).nullable().default(null),
+  created_at: z.string().datetime({ offset: true }),
+  updated_at: z.string().datetime({ offset: true }),
+});
+
+// Canonical plans row post-cutover. The legacy PlanRowSchema above stays in
+// place until Phase 9 — that one still includes week_id (current DB shape)
+// and a nullable week_of. This canonical shape drops week_id and requires
+// week_of; absorbs state / state_set_at / state_message from brief_state.
+export const PlanRowCanonicalSchema = z.object({
+  id: z.string().uuid(),
+  household_id: z.string().uuid(),
+  week_of: z.string().date(),
+  revision: z.number().int().min(1),
+  generated_at: z.string().datetime({ offset: true }),
+  guardrail_cleared_at: z.string().datetime({ offset: true }).nullable(),
+  guardrail_version: z.string().max(GUARDRAIL_VERSION_MAX).nullable(),
+  prompt_version: z.string().min(1).max(PROMPT_VERSION_MAX),
+  state: z.enum(['hard_failed', 'degraded']).nullable().default(null),
+  state_set_at: z.string().datetime({ offset: true }).nullable().default(null),
+  state_message: z.string().max(STATE_MESSAGE_MAX).nullable().default(null),
+  created_at: z.string().datetime({ offset: true }),
+  updated_at: z.string().datetime({ offset: true }),
+});
+
+// ---- Planner tree input shapes (what plan.compose tool I/O carries) -------
+
+// One per-child Variation as emitted by the planner. Defaults match the
+// DB column defaults so an omitted field round-trips cleanly through the RPC.
+export const PlannerVariationInputSchema = z.object({
+  child_id: z.string().uuid(),
+  portion_size: PortionSizeSchema.optional(),
+  texture: TextureLevelSchema.optional(),
+  spice_level: SpiceLevelSchema.optional(),
+  cutting_style: z.string().max(VARIATION_CUTTING_MAX).optional(),
+  container: z.string().max(VARIATION_CONTAINER_MAX).optional(),
+  add_ons: z.array(z.string().min(1).max(VARIATION_ADDON_MAX)).max(20).optional(),
+  removals: z.array(z.string().min(1).max(VARIATION_REMOVAL_MAX)).max(20).optional(),
+  notes: z.string().max(VARIATION_TEXT_MAX).optional(),
+  paused_at: z.string().datetime({ offset: true }).optional(),
+});
+
+// One slot as emitted by the planner. main_assignment_sequence is the
+// SYMBOLIC handle the planner uses to point at the right M1/M2/M3 row —
+// the RPC resolves it against the just-inserted plan_main_assignments.
+// XOR enforcement mirrors the DB's plan_slots_* CHECK constraints so bad
+// output is caught at parse time, not at INSERT.
+export const PlannerSlotInputSchema = z.object({
+  slot_kind: SlotKindSchema,
+  main_assignment_sequence: z.number().int().min(1).max(MAIN_ASSIGNMENT_SEQ_MAX).optional(),
+  recipe_id: z.string().uuid().optional(),
+  recipe_candidate_id: z.string().uuid().optional(),
+  extra_kind: ExtraKindSchema.optional(),
+  variations: z.array(PlannerVariationInputSchema).max(VARIATIONS_PER_SLOT_MAX).default([]),
+}).superRefine((val, ctx) => {
+  if (val.slot_kind === 'main') {
+    if (val.main_assignment_sequence === undefined) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'slot_kind=main requires main_assignment_sequence',
+        path: ['main_assignment_sequence'],
+      });
+    }
+    if (val.recipe_id !== undefined || val.extra_kind !== undefined) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'slot_kind=main must not carry recipe_id or extra_kind',
+        path: ['slot_kind'],
+      });
+    }
+  } else if (val.slot_kind === 'snack') {
+    const hasRecipe = val.recipe_id !== undefined || val.recipe_candidate_id !== undefined;
+    if (!hasRecipe) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'slot_kind=snack requires recipe_id or recipe_candidate_id',
+        path: ['recipe_id'],
+      });
+    }
+    if (val.main_assignment_sequence !== undefined || val.extra_kind !== undefined) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'slot_kind=snack must not carry main_assignment_sequence or extra_kind',
+        path: ['slot_kind'],
+      });
+    }
+  } else {
+    // 'extra'
+    const hasRecipe = val.recipe_id !== undefined || val.recipe_candidate_id !== undefined;
+    if (!hasRecipe || val.extra_kind === undefined) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'slot_kind=extra requires both recipe_id (or recipe_candidate_id) and extra_kind',
+        path: ['slot_kind'],
+      });
+    }
+    if (val.main_assignment_sequence !== undefined) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'slot_kind=extra must not carry main_assignment_sequence',
+        path: ['main_assignment_sequence'],
+      });
+    }
+  }
+  if (val.recipe_id !== undefined && val.recipe_candidate_id !== undefined) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'recipe_id and recipe_candidate_id are mutually exclusive',
+      path: ['recipe_candidate_id'],
+    });
+  }
+});
+
+// One day as emitted by the planner. paused_at + paused_reason CHECK
+// consistency mirrors plan_days_pause_consistency. paused_note is optional.
+export const PlannerDayInputSchema = z.object({
+  day: WeekdaySchema,
+  paused_at: z.string().datetime({ offset: true }).optional(),
+  paused_reason: PauseReasonSchema.optional(),
+  paused_note: z.string().max(PAUSED_NOTE_MAX).optional(),
+  slots: z.array(PlannerSlotInputSchema).min(1).max(SLOTS_PER_DAY_MAX),
+}).superRefine((val, ctx) => {
+  const anyPaused = val.paused_at !== undefined || val.paused_reason !== undefined;
+  const bothPaused = val.paused_at !== undefined && val.paused_reason !== undefined;
+  if (anyPaused && !bothPaused) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'paused_at + paused_reason must both be set when either is set',
+      path: ['paused_at'],
+    });
+  }
+});
+
+// One M1/M2/M3 main assignment as emitted by the planner. Sequence is the
+// symbolic handle the slot rows reference via main_assignment_sequence.
+export const PlannerMainAssignmentInputSchema = z.object({
+  sequence: z.number().int().min(1).max(MAIN_ASSIGNMENT_SEQ_MAX),
+  recipe_id: z.string().uuid(),
+});
+
+// Full planner tree input — what the agent emits and the orchestrator passes
+// to the RPC. plan.compose's input schema reshapes from flat to tree here.
+export const PlanComposeTreeInputSchema = z.object({
+  household_id: z.string().uuid(),
+  week_of: z.string().date(),
+  main_assignments: z
+    .array(PlannerMainAssignmentInputSchema)
+    .min(1)
+    .max(MAIN_ASSIGNMENTS_PER_PLAN_MAX),
+  days: z.array(PlannerDayInputSchema).min(1).max(DAYS_PER_PLAN_MAX),
+  prompt_version: z.string().min(1).max(PROMPT_VERSION_MAX),
+}).superRefine((val, ctx) => {
+  // Cross-validate slot.main_assignment_sequence against the assignments
+  // array. This is contract-layer defense; the RPC also fails if the lookup
+  // map misses, but parser-level rejection produces a cleaner error.
+  const declaredSeqs = new Set(val.main_assignments.map((a) => a.sequence));
+  for (const [dayIdx, day] of val.days.entries()) {
+    for (const [slotIdx, slot] of day.slots.entries()) {
+      if (slot.slot_kind === 'main' && slot.main_assignment_sequence !== undefined) {
+        if (!declaredSeqs.has(slot.main_assignment_sequence)) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            message: `slot main_assignment_sequence=${String(slot.main_assignment_sequence)} not declared in main_assignments`,
+            path: ['days', dayIdx, 'slots', slotIdx, 'main_assignment_sequence'],
+          });
+        }
+      }
+    }
+  }
+  // Sequence uniqueness within main_assignments (matches DB UNIQUE).
+  const seenSeqs = new Set<number>();
+  for (const [i, a] of val.main_assignments.entries()) {
+    if (seenSeqs.has(a.sequence)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: `main_assignments.sequence=${String(a.sequence)} appears more than once`,
+        path: ['main_assignments', i, 'sequence'],
+      });
+    }
+    seenSeqs.add(a.sequence);
+  }
+});
+
+// Planner tree output — input plus plan_id and the optional variant_proposal /
+// degraded_reason fields that the existing flat output carries.
+export const PlanComposeTreeOutputSchema = z.object({
+  plan_id: z.string().uuid(),
+  household_id: z.string().uuid(),
+  week_of: z.string().date(),
+  main_assignments: z
+    .array(PlannerMainAssignmentInputSchema)
+    .min(1)
+    .max(MAIN_ASSIGNMENTS_PER_PLAN_MAX),
+  days: z.array(PlannerDayInputSchema).min(1).max(DAYS_PER_PLAN_MAX),
+  prompt_version: z.string().min(1).max(PROMPT_VERSION_MAX),
+  // Story 3.27 carry-through.
+  variant_proposal: PlanVariantProposalOutputSchema.optional(),
+  // Story 3.29 carry-through.
+  degraded_reason: z.enum(['CULTURAL_INTERSECTION_EMPTY']).nullable().optional(),
+});
+
+// ---- Repository commit input (what PlansRepository.commit() passes to RPC) -
+
+// Mirrors the new commit_plan() signature in the migration. Repository wraps
+// this for callers; the inferred type is CommitPlanTreeInput in @hivekitchen/types.
+export const CommitPlanTreeInputSchema = z.object({
+  plan_id: z.string().uuid(),
+  household_id: z.string().uuid(),
+  week_of: z.string().date(),
+  revision: z.number().int().min(1),
+  generated_at: z.string().datetime({ offset: true }),
+  prompt_version: z.string().min(1).max(PROMPT_VERSION_MAX),
+  // Story 3-31 — discover candidate materialization namespace, carried through.
+  plan_build_id: z.string().min(1).max(128).optional(),
+  main_assignments: z
+    .array(PlannerMainAssignmentInputSchema)
+    .min(1)
+    .max(MAIN_ASSIGNMENTS_PER_PLAN_MAX),
+  days: z.array(PlannerDayInputSchema).min(1).max(DAYS_PER_PLAN_MAX),
+});
