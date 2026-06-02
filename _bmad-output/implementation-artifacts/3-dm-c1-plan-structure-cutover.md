@@ -363,27 +363,119 @@ PR. Phase 1's value: the schema target is concrete and reviewable, the RPC
 contract is fixed, and the code-side work is no longer estimating against
 TBD shape.
 
-### Hand-off — phases remaining (8 of 9)
+### Hand-off — Phase 9 (cutover commit, 1 of 9 remaining)
 
-In execution order, each one self-contained enough to land in a single
-follow-up session:
+**Updated 2026-06-01.** Phases 1–8 landed additive across 8 commits
+(`34bd395` → `6958791`). The migration is staged, every tree-shape
+counterpart is in place next to its flat predecessor, every layer has
+its own green test coverage. The flat surface is still the live path
+because the cutover must be atomic — Phase 9 swaps every consumer and
+deletes the flat surface in one coordinated commit.
 
-| Phase | Scope | AC coverage | Realistic session count |
-|---|---|---|---|
-| 2 | Contracts rewrite — `PlanComposeOutputSchema` → tree shape; add `PlanMainAssignmentSchema`, `PlanDaySchema`, `PlanSlotSchema`, `PlanSlotVariationSchema`; remove `PlanItemRowSchema`, `PlanComposeItemSchema`. | AC5 | 1 |
-| 3 | `PlansRepository` rewrite — drop `findItemsByPlanId` / `findItemById`; add `findMainAssignmentsByPlanId` / `findDaysByPlanId` / `findSlotsByPlanId` / `findVariationsBySlotIds` / `swapDays` / `updateVariation` / `pauseDayById` / `pauseChildOnDay` / `swapMain` per §9. | AC4 | 1 |
-| 4 | `BriefStateComposer` rewrite — `refresh()` per §9.1 (parallel reads), `buildTileSummaries()` walks the tree, flat-array methods removed. | AC4 | 1 |
-| 5 | Orchestrator `plan.compose` tool schema → tree shape; planner prompt examples rewritten (shared-Main day + allergen-fork day); synthetic plan_compose test against stubbed LLM. | AC6, AC7 | 1 |
-| 6 | Adjacent services — `plan-adjustment.service.ts` → `plan_slots`/`plan_slot_variations`; `day-overrides.service.ts` → `plan_slot_id` FK + drop pause-overlapping enum values; `variant-proposal.service.ts` → `plan_slot_variation_id` rename. | AC8 | 1 |
-| 7 | `plan-generation.job.ts` — `buildCommitInput()` emits tree shape against new `commit_plan()` signature. | AC8 | 0.5 |
-| 8 | Test factories — `apps/api/test/factories/index.ts` adds `buildPlanMainAssignment` / `buildPlanDay` / `buildPlanSlot` / `buildPlanSlotVariation`; removes `buildPlanItem`. Refactor ~60-80 test call sites. | AC11 | 1-2 |
-| 9 | Pre-cutover gates — synthetic plan_compose Vitest gate (Task 10); load-test gate (100 concurrent `commit_plan()`, p99 < 250ms) is DEFERRED to staging environment validation, not Vitest. Apply migration. Status flip. | AC12 | 0.5 |
+#### What Phase 9 must land (all together, single commit)
 
-**60-file impact surface** (grep `plan_items|PlanItemRow|PlanComposeItem|buildPlanItem|makeItemRow|item_sku_id|commit_plan|findItemsByPlanId|plan_item_id` in `apps/` + `packages/`). The TypeScript compiler is the primary breakage detector — phases 2 → 3 → 4 cascade through the type system; phases 5 → 8 are mostly mechanical.
+1. **Apply the migration** —
+   `supabase/migrations/20261010000000_plan_structure_canonical.sql`
+   against the local + staging databases. The migration is internally
+   atomic (one transaction at apply time). Verify enums + 4 new tables +
+   FK retargets land cleanly; verify `plan_items` is dropped CASCADE.
+2. **Swap orchestrator + prompt** —
+   `apps/api/src/agents/prompts/planner.prompt.ts`:
+   `PLANNER_PROMPT` ← `PLANNER_PROMPT_TREE` (rename the symbols);
+   `apps/api/src/agents/tools/plan.tools.ts`:
+   `plan.compose.tree` → `plan.compose` (drop the dual registration);
+   `apps/api/src/agents/orchestrator.ts`: single registration.
+3. **Swap PlansService.commit() path** — rewrite `commit()` to call
+   `repo.commitTree()` against a tree-shape input built by
+   `buildCommitInputTree()`. Remove the recipe-materialization step
+   (`materializeRecipesForCommit`) — the planner emits real `recipe_id`s
+   under `PLANNER_PROMPT_TREE`, so discover candidates only land on
+   snack/extra slots and are resolved during commit_plan() directly.
+   Preserve: guardrail clearance loop with retries, `household_recipe_usage`
+   bumps post-commit, brief refresh (now `refreshTree()`),
+   `variant_proposal` handoff (now `createFromTreePlanOutput()`).
+4. **Swap BriefStateComposer call sites** — 7 call sites identified in
+   the Phase 4 log: `lunch-link.routes`, `day-overrides.service` ×2,
+   `plans.service` ×4. Each one switches `refresh()` → `refreshTree()`.
+5. **Swap day-overrides + variant-proposal routes** — route handlers
+   call `setOverrideTree()` / `revertOverrideTree()` /
+   `createFromTreePlanOutput()`. Route params change:
+   `planItemId` → `planSlotId` on the day-overrides routes.
+6. **Drop `PlanRegenerationJobData.week_id`** — cascades through
+   `plans.routes`, the regen worker, `plan-adjustment.service`,
+   `day-overrides.service`. Single coordinated rename.
+7. **Delete the flat surface across `packages/contracts/src/plan.ts`** —
+   `PlanComposeInputSchema`, `PlanComposeOutputSchema`,
+   `PlanComposeItemSchema`, `PlanComposeDaySchema`, `PlanItemRowSchema`,
+   `PlanItemWriteSchema`, `CommitPlanInputSchema`, `PlanRowSchema` (the
+   one with `week_id`). Rename `PlanRowCanonicalSchema` → `PlanRowSchema`.
+   Delete the matching type exports in `packages/types/src/index.ts`.
+8. **Delete the flat surface in `apps/api/src/modules/plans/`** —
+   `PlansRepository.findItemsByPlanId`, `findItemById`,
+   `updateItemIngredients`, `pauseDay`, `pauseItemById`,
+   `unpauseItemById`, `countItemsForDay`, `findAllItemsByPlanId`,
+   `findSwapHistory`, `commit()` (the flat one), the
+   `PLAN_ITEM_COLUMNS` constant; the flat compose/buildTileSummaries
+   methods on `BriefStateComposer`; flat setOverride/revertOverride on
+   `DayOverridesService`; `createFromPlanOutput()` on
+   `VariantProposalService`; flat `OVERRIDE_COLUMNS` + `upsert` +
+   `revert` + `findActiveById` on `DayOverridesRepository`; flat `create`
+   + `CreateVariantProposalInput` on `VariantProposalRepository`.
+9. **Migrate ~60-80 plan test call sites** — `grep` for
+   `buildPlanItem|makeItemRow|makePlan|PlanItemRow|PlanItemWrite` and
+   replace with `buildPlanSlot` / `buildPlanSlotVariation` /
+   `buildPlanDay` / `buildPlanMainAssignment` / `buildPlanTree`. The
+   tests' production-paths have switched to tree shape; the test
+   fixtures need to match. Delete `buildPlanItem` after.
+10. **Drop the flat `apps/api/src/jobs/plan-generation.job.ts`
+    helpers** — `buildCommitInput()` and its `PlanItemWrite[]` import.
+    `plan-regeneration.job.ts` swaps to `buildCommitInputTree()`.
+11. **Run the load-test gate** — 100 concurrent `commit_plan()` calls
+    against staging, assert p99 < 250ms per AC12. (Not a Vitest test —
+    needs live Postgres infra. Author the script + run it manually.)
+12. **Status flip** — story header `Status: in-progress` →
+    `Status: done`. Sprint-status YAML updates with final test counts.
+13. **Update the deferred-work entry for composer coalescing**
+    (§10.6) — only if relevant; the post-beta debounce is unrelated to
+    the cutover itself but the canonical model unblocks it.
 
-**Recommended cadence**: phases 2–4 in one session (contracts + repository + composer rewrite + immediate consumer fixes), phases 5–7 in a second session (agents + services + job), phase 8 in a third session (test factory sweep), phase 9 as a small final session including the migration apply + status flip. Each session ends with a committable green state.
+#### Realistic risk profile
 
-**Rollback for the staged migration**: delete `supabase/migrations/20261010000000_plan_structure_canonical.sql` and revert this status flip. Pre-beta hard-cutover means no production-side concerns until the migration is applied.
+- **TypeScript compiler is the primary safety net.** Deleting any flat
+  symbol surfaces every consumer that hadn't switched. Run
+  `pnpm -F @hivekitchen/api typecheck` after each delete to keep the
+  blast radius narrow.
+- **The prompt swap is the highest user-facing risk.** Per §10.7's
+  rollback plan, if the first 24 hours post-cutover show
+  bad-output rate > 5%, restore `PLANNER_PROMPT` text-only to its v1.5.0
+  body while `PLANNER_PROMPT_TREE.toolsAllowed` keeps pointing at the
+  (now-renamed) `plan.compose`. The flat output will be rejected by the
+  new RPC — that's the correct failure mode, not silent shape mixing.
+- **The 60-80 test refactor is mechanical but tedious.** Each call site
+  has a pattern: replace the flat builder call with a tree builder call
+  + restructure assertions to look at the variation/slot/day grain
+  instead of the flat (child, day, slot) tuple. Use the typescript
+  compiler errors as the work-list.
+
+#### Realistic session count for Phase 9
+
+1 long focused session, OR 2 shorter sessions split as:
+
+- **Session 9a** (live-path cutover): items 1–8 + 10. End with API + web
+  builds compiling but tests broken because fixtures haven't moved.
+- **Session 9b** (test sweep): item 9 + 11–13. End with all tests green
+  + load-test gate passed + status: done.
+
+The split is safer; each session ends with a committable state. The
+single-session form requires that the test sweep ride alongside the
+production swap.
+
+#### Rollback
+
+Revert the Phase 9 commit + restore the database from the pre-migration
+backup. Pre-beta hard-cutover means no production users affected. The
+8 additive commits stay in main as the staged scaffolding for a
+re-attempt.
 
 ## Story
 
