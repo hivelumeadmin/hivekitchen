@@ -4,6 +4,50 @@ Status: in-progress
 
 ## Implementation log
 
+### 2026-06-01 — Phase 8 done (test factory tree-shape additions)
+
+Authored:
+
+- `apps/api/test/factories/index.ts` — four new tree-shape row factories
+  + a convenience tree composer:
+  - `buildPlanMainAssignment(overrides)` → `PlanMainAssignmentRow`
+  - `buildPlanDay(overrides)` → `PlanDayRow`
+  - `buildPlanSlot(overrides)` → `PlanSlotRow` (default = main slot;
+    snack/extra callers override `main_assignment_id` → null and supply
+    `recipe_id`)
+  - `buildPlanSlotVariation(overrides)` → `PlanSlotVariationRow`
+  - `buildPlanTree(overrides)` → `PlanTreeFixture { plan, mainAssignments,
+    days, slots, variations }` — 1-of-each-kind minimal fixture, override
+    any layer with full-arrays
+  - `TEST_IDS` extended with `mainAssignment`, `planDay`, `planSlot`,
+    `planSlotVariation` UUIDs.
+- `apps/api/test/factories/tree.test.ts` — 9 tests. Each factory's
+  default output parses against its `Phase 2 contract schema
+  (PlanMainAssignmentRowSchema, PlanDayRowSchema, PlanSlotRowSchema,
+  PlanSlotVariationRowSchema) — so any drift between factory defaults
+  and the migration shape surfaces at test time. Includes XOR violation
+  case (main slot with `recipe_id` rejected by PlanSlotRowSchema), and
+  buildPlanTree composer overrides.
+
+**`buildPlanItem` not removed** — Phase 9 deletes it alongside applying
+the migration. The 60-80 plan test call sites STILL legitimately consume
+the flat factory because the production paths (BriefStateComposer.refresh,
+plansService.commit, day-overrides.service.setOverride, etc.) still use
+the flat shape. Migrating those test sites pre-cutover would require
+parallel tests for both shapes; cleaner to migrate them with the
+production swap in Phase 9.
+
+Verification:
+- 9/9 new factory tests pass.
+- Full API sweep: 12 files / 33 tests fail — same baseline. Total
+  passing tests up by 9 (1356 → 1365).
+- Typecheck: 20 errors — same baseline.
+
+Phase 9 (final cutover commit — migration apply, swap consumers from
+flat→tree, delete the flat surface, status flip to done) is the last
+phase. Realistic scope and risk profile documented at the bottom of this
+file.
+
 ### 2026-06-01 — Phase 7 done (plan-generation.job buildCommitInputTree)
 
 Authored:

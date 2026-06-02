@@ -13,8 +13,12 @@
 
 import type {
   BriefStateRow,
+  PlanDayRow,
   PlanItemRow,
+  PlanMainAssignmentRow,
   PlanRow,
+  PlanSlotRow,
+  PlanSlotVariationRow,
 } from '@hivekitchen/types';
 import type { DecryptedChildRow } from '../../src/modules/children/children.repository.js';
 import type {
@@ -34,6 +38,11 @@ export const TEST_IDS = {
   planItem: '77777777-7777-4777-8777-777777777777',
   recipeStep: '88888888-8888-4888-8888-888888888888',
   request: '99999999-9999-4999-8999-999999999999',
+  // Story 3-DM-C1 Phase 8 — tree-shape row ids.
+  mainAssignment: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+  planDay: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+  planSlot: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc',
+  planSlotVariation: 'dddddddd-dddd-4ddd-8ddd-dddddddddddd',
 } as const;
 
 const NOW_ISO = '2026-05-02T11:00:00.000Z';
@@ -170,5 +179,116 @@ export function buildRecipeStep(overrides: Partial<RecipeStepRow> = {}): RecipeS
     text: 'Soak the lentils for 20 minutes.',
     created_at: NOW_ISO,
     ...overrides,
+  };
+}
+
+// ===========================================================================
+// Story 3-DM-C1 Phase 8 — tree-shape row factories.
+//
+// Additive: the flat buildPlanItem above stays in place for the C1 cutover
+// window. Phase 9 removes buildPlanItem along with the migration apply.
+//
+// Each builder accepts Partial<T> overrides and returns a fully-populated
+// row matching the post-migration shape. UUIDs default to TEST_IDS so call
+// sites can assert against constants without threading them through every
+// builder call.
+// ===========================================================================
+
+export function buildPlanMainAssignment(
+  overrides: Partial<PlanMainAssignmentRow> = {},
+): PlanMainAssignmentRow {
+  return {
+    id: TEST_IDS.mainAssignment,
+    plan_id: TEST_IDS.plan,
+    sequence: 1,
+    recipe_id: TEST_IDS.recipe,
+    created_at: NOW_ISO,
+    ...overrides,
+  };
+}
+
+export function buildPlanDay(overrides: Partial<PlanDayRow> = {}): PlanDayRow {
+  return {
+    id: TEST_IDS.planDay,
+    plan_id: TEST_IDS.plan,
+    day: 'monday',
+    paused_at: null,
+    paused_reason: null,
+    paused_note: null,
+    created_at: NOW_ISO,
+    updated_at: NOW_ISO,
+    ...overrides,
+  };
+}
+
+// Default slot is a main slot referencing the default main_assignment.
+// Snack / extra callers must override main_assignment_id → null, set
+// slot_kind, and supply recipe_id + (extra_kind, for extras). The DB
+// CHECK constraint mirror in PlanSlotRowSchema (Phase 2) catches malformed
+// fixture combinations at parse time.
+export function buildPlanSlot(overrides: Partial<PlanSlotRow> = {}): PlanSlotRow {
+  return {
+    id: TEST_IDS.planSlot,
+    plan_day_id: TEST_IDS.planDay,
+    slot_kind: 'main',
+    main_assignment_id: TEST_IDS.mainAssignment,
+    recipe_id: null,
+    extra_kind: null,
+    paused_at: null,
+    created_at: NOW_ISO,
+    updated_at: NOW_ISO,
+    ...overrides,
+  };
+}
+
+export function buildPlanSlotVariation(
+  overrides: Partial<PlanSlotVariationRow> = {},
+): PlanSlotVariationRow {
+  return {
+    id: TEST_IDS.planSlotVariation,
+    plan_slot_id: TEST_IDS.planSlot,
+    child_id: TEST_IDS.childA,
+    portion_size: 'regular',
+    texture: 'normal',
+    spice_level: 'mild',
+    cutting_style: null,
+    container: null,
+    add_ons: [],
+    removals: [],
+    notes: null,
+    paused_at: null,
+    created_at: NOW_ISO,
+    updated_at: NOW_ISO,
+    ...overrides,
+  };
+}
+
+// Convenience composer — returns a minimal cleared-plan tree with one
+// main_assignment, one day (Monday), one main slot, and one variation for
+// childA. Wrappers in plan/composer tests pass overrides to drive specific
+// scenarios.
+export interface PlanTreeFixture {
+  plan: PlanRow;
+  mainAssignments: PlanMainAssignmentRow[];
+  days: PlanDayRow[];
+  slots: PlanSlotRow[];
+  variations: PlanSlotVariationRow[];
+}
+
+export function buildPlanTree(
+  overrides: {
+    plan?: Partial<PlanRow>;
+    mainAssignments?: PlanMainAssignmentRow[];
+    days?: PlanDayRow[];
+    slots?: PlanSlotRow[];
+    variations?: PlanSlotVariationRow[];
+  } = {},
+): PlanTreeFixture {
+  return {
+    plan: buildPlan(overrides.plan ?? {}),
+    mainAssignments: overrides.mainAssignments ?? [buildPlanMainAssignment()],
+    days: overrides.days ?? [buildPlanDay()],
+    slots: overrides.slots ?? [buildPlanSlot()],
+    variations: overrides.variations ?? [buildPlanSlotVariation()],
   };
 }
