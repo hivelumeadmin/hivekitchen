@@ -52,7 +52,7 @@
 # Walls (decision moments) are flagged with `# WALL:` markers.
 
 generated: 2026-04-23
-last_updated: 2026-05-31 (3-dm-a1 → done; tests added for findStepsByRecipeId + insertRecipe-steps rollback + backfill script; 100/100 A1-scoped tests green)
+last_updated: 2026-06-01 (3-dm-a2 → done; snack_skus folded into recipes; dual-FK item_sku_id retired; 216/216 API + 20/20 frontend plan tests green)
 project: hivekitchen
 project_key: NOKEY
 tracking_system: file-system
@@ -220,7 +220,7 @@ development_status:
   # E is final cleanup. See _bmad-output/planning-artifacts/phase-4-migration-story-breakdown.md
   # ==========================================================================
   3-dm-a1-recipe-canonical: done                                              # 2026-05-31: migrations 20261005000000 / 20261005000100 + backfill script shipped; RecipesRepository.findStepsByRecipeId + insertRecipe(steps) + rollback; RecipeAgent prompt v1.2.0 emits mode-tagged steps + finish_time_minutes; tests added (repo 12/12, service 41/41, agent 26/26, backfill 17/17 → 100/100 A1-scoped green); live migration apply deferred to next supabase local-stack startup (verification gate self-aborts on incomplete backfill)
-  3-dm-a2-snack-sku-fold: in-progress                                         # snack_skus → recipes; migration 20261006000000 staged; snack-skus.repository deleted
+  3-dm-a2-snack-sku-fold: done                                                # 2026-06-01: migration 20261006000000 folds 10 snack_skus → recipes (FALCPA contains_* → allergen_flags; is_vegetarian/is_vegan → dietary_flags; is_halal/is_kosher → cultural_tags); plan_items.item_sku_id repointed to recipe_id then dropped; snack_skus table dropped; commit_plan() rewritten without item_sku_id arg; orchestrator/planner-prompt + repository already clean; stale comments + 3 PlanItemRow test fixtures (PlanPage ×2, PlanHistoryPage ×1) scrubbed; 216/216 plan+recipe+orchestrator API tests green; 20/20 frontend plan tests green
   3-dm-a3-test-factories-saturday-audit: in-progress                          # apps/api/test/factories/ scaffold; saturday-audit-findings.md authored
   3-dm-b1-child-profile-attributes: in-progress                               # appetite_level / texture_needs / spice_tolerance + bag_composition_pattern enum; migration 20261007000000 staged
   3-dm-b2-allergen-consolidation: done                                        # 2026-05-31: code review complete (6 patches applied, 5 deferred, 2 decisions resolved). 96/96 tests green post-review. onConflict→constraint name; insert-first-then-prune; replace semantics for cultural/dietary; verifyCounts exact equality + vocab-skip gate; counter increment guards.

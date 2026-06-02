@@ -436,8 +436,9 @@ export class RecipeService {
    * and return its id. Idempotent by case-insensitive canonical_name.
    *
    * Returns null when materialization is intentionally skipped:
-   *   - slot !== 'main': only main slots carry a recipe_id in the plan
-   *     contract; snack + extra slots reference item_sku_id instead
+   *   - slot !== 'main': only main slots auto-materialize from free-text
+   *     ingredients here; snack + extra slots already carry a recipe_id
+   *     pointing at the curated catalog (folded from snack_skus in 3-DM-A2)
    *   - ingredients array is empty
    *
    * Returns the recipe id (existing or freshly inserted) otherwise. Plan
@@ -458,9 +459,10 @@ export class RecipeService {
   }): Promise<{ recipeId: string; wasExisting: boolean } | null> {
     const repo = this.requireRepository('materializeFromPlanItem');
 
-    // Only main-slot items materialize a recipe. The plan contract refines
-    // plan_items so recipe_id is only valid for slot === 'main'; snack/extra
-    // slots reference snack_skus.item_sku_id instead.
+    // Only main-slot items auto-materialize a recipe from free-text
+    // ingredients. Snack + extra slots resolve through the curated recipes
+    // catalog (folded from snack_skus in Story 3-DM-A2) and already carry a
+    // recipe_id by the time PlansService.commit runs.
     if (input.slot !== 'main') return null;
     if (input.ingredients.length === 0) return null;
 

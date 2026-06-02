@@ -1,6 +1,6 @@
 # Story 3-DM-A2: Snack SKU fold — migrate to recipes, drop snack_skus
 
-Status: planned
+Status: done
 
 ## Story
 
