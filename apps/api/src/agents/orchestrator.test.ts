@@ -558,7 +558,7 @@ describe('DomainOrchestrator', () => {
       expect(lines[0]).toContain('Main is always active');
       expect(lines.some((l) => l.includes('Asha') && l.includes('Snack ON') && l.includes('Extra OFF'))).toBe(true);
       expect(lines.some((l) => l.includes('Kai') && l.includes('Snack OFF') && l.includes('Extra ON'))).toBe(true);
-      expect(lines.at(-1)).toContain('Generate plan_items only for active slots');
+      expect(lines.at(-1)).toContain('Emit slot rows only for active slots');
     });
   });
 
@@ -666,11 +666,18 @@ describe('DomainOrchestrator', () => {
       plan_id: '99999999-9999-4999-8999-999999999999',
       household_id: HOUSEHOLD_ID,
       week_of: '2026-11-02',
-      prompt_version: 'v1.1.0',
+      prompt_version: 'v2.0.0',
+      main_assignments: [{ sequence: 1, recipe_id: '33333333-3333-4333-8333-333333333333' }],
       days: [
         {
           day: 'monday',
-          items: [{ child_id: CHILD_ID, slot: 'main', ingredients: ['rice'] }],
+          slots: [
+            {
+              slot_kind: 'main',
+              main_assignment_sequence: 1,
+              variations: [{ child_id: CHILD_ID }],
+            },
+          ],
         },
       ],
     };
@@ -769,7 +776,7 @@ describe('DomainOrchestrator', () => {
       expect(capturedUserContent).toContain('Snack OFF');
       expect(capturedUserContent).toContain('Extra ON');
       expect(capturedUserContent).toContain(
-        'Generate plan_items only for active slots',
+        'Emit slot rows only for active slots',
       );
     });
 

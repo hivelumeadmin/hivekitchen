@@ -91,12 +91,12 @@ describe('PlanAdjustmentService.triggerAdjustment', () => {
       plan_id: PLAN_A,
       household_id: HOUSEHOLD_ID,
       week_of: '2026-05-04',
-      week_id: 'week-a',
       current_revision: 2,
       scope: 'week',
       request_id: REQUEST_ID,
     });
     expect(jobData).not.toHaveProperty('day');
+    expect(jobData).not.toHaveProperty('week_id');
     // jobId dedupes on (type, household, week, dayScope) — request_id excluded
     // so retries collapse to one job.
     expect(jobOpts).toMatchObject({

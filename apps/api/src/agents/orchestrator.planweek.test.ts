@@ -131,18 +131,27 @@ function buildOrchestrator(provider: LLMProvider) {
   );
 }
 
+const RECIPE_M1 = '33333333-3333-4333-8333-333333333333';
+
 function makeValidPlanComposeOutput() {
   return {
     plan_id: PLAN_ID,
     household_id: HOUSEHOLD_ID,
     week_of: '2026-05-11',
+    prompt_version: 'v2.0.0',
+    main_assignments: [{ sequence: 1, recipe_id: RECIPE_M1 }],
     days: [
       {
         day: 'monday' as const,
-        items: [{ child_id: CHILD_ID, slot: 'main', ingredients: ['rice'] }],
+        slots: [
+          {
+            slot_kind: 'main' as const,
+            main_assignment_sequence: 1,
+            variations: [{ child_id: CHILD_ID }],
+          },
+        ],
       },
     ],
-    prompt_version: 'v1.0.0',
   };
 }
 
@@ -378,19 +387,25 @@ describe('DomainOrchestrator.swapBlockedItems', () => {
       plan_id: PLAN_ID,
       household_id: HOUSEHOLD_ID,
       week_of: '2026-05-18',
+      prompt_version: 'v2.0.0',
+      main_assignments: [{ sequence: 1, recipe_id: RECIPE_M1 }],
       days: [
         {
           day: 'monday' as const,
-          items: [
+          slots: [
             {
-              child_id: CHILD_ID,
-              slot: 'main',
-              ingredients: ['sunflower seed butter', 'bread'],
+              slot_kind: 'main' as const,
+              main_assignment_sequence: 1,
+              variations: [
+                {
+                  child_id: CHILD_ID,
+                  add_ons: ['sunflower seed butter', 'bread'],
+                },
+              ],
             },
           ],
         },
       ],
-      prompt_version: 'v1.0.0',
     };
     wirePlanComposeStub(async () => swapOutput);
 

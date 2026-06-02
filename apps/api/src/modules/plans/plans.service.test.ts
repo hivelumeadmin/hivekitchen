@@ -1,14 +1,3 @@
-// @ts-nocheck — Story 3-DM-C1 Phase 9b part 1: three obsolete describe blocks
-// deleted (PlansService.compose, commit — discover candidate resolution,
-// Slice D recipe materialization — all testing now-deleted code paths).
-// The remaining two commit describes (commit + commit hard_fail) still
-// construct flat CommitPlanInput fixtures + drive PlansService.commit()
-// through them; migration of those ~14 call sites to buildPlanTree fixtures
-// is the next 9b sub-task. The other surviving describes (getHardFailStatus,
-// swapItem, pauseDay, requestRegeneration, getPlanForWeek, getPlanHistory,
-// handleDegradedPlan) typecheck once the banner comes off — they exercise
-// PlansService method shapes the tree cutover did not change. See
-// _bmad-output/implementation-artifacts/3-dm-c1-plan-structure-cutover.md.
 import { describe, it, expect, vi } from 'vitest';
 import type { FastifyBaseLogger } from 'fastify';
 import type Redis from 'ioredis';
@@ -24,12 +13,9 @@ import type { BriefStateRepository } from './brief-state.repository.js';
 import type { BriefStateComposer } from './brief-state.composer.js';
 import type { AllergyGuardrailService } from '../allergy-guardrail/allergy-guardrail.service.js';
 import type { AuditService } from '../../audit/audit.service.js';
-import type { RecipeService } from '../recipe/recipe.service.js';
 import type {
-  CommitPlanInput,
+  CommitPlanTreeInput,
   GuardrailResult,
-  PlanComposeInput,
-  RecipeAgentExtraction,
 } from '@hivekitchen/types';
 import {
   GuardrailRejectionError,
@@ -47,6 +33,7 @@ const HOUSEHOLD_ID = '22222222-2222-4222-8222-222222222222';
 const WEEK_ID = '33333333-3333-4333-8333-333333333333';
 const CHILD_ID = '44444444-4444-4444-8444-444444444444';
 const REQUEST_ID = '55555555-5555-4555-8555-555555555555';
+const RECIPE_M1 = '66666666-6666-4666-8666-666666666666';
 
 function buildLogger(): FastifyBaseLogger {
   const noop = vi.fn();
@@ -63,21 +50,25 @@ function buildLogger(): FastifyBaseLogger {
   } as unknown as FastifyBaseLogger;
 }
 
-function makeInput(overrides: Partial<CommitPlanInput> = {}): CommitPlanInput {
+function makeInput(overrides: Partial<CommitPlanTreeInput> = {}): CommitPlanTreeInput {
   return {
     plan_id: PLAN_ID,
     household_id: HOUSEHOLD_ID,
-    week_id: WEEK_ID,
     week_of: '2026-05-04',
     revision: 1,
     generated_at: '2026-05-02T11:00:00.000Z',
-    prompt_version: 'v1.0.0',
-    items: [
+    prompt_version: 'v2.0.0',
+    main_assignments: [{ sequence: 1, recipe_id: RECIPE_M1 }],
+    days: [
       {
-        child_id: CHILD_ID,
         day: 'monday',
-        slot: 'main',
-        ingredients: ['rice', 'lentils'],
+        slots: [
+          {
+            slot_kind: 'main',
+            main_assignment_sequence: 1,
+            variations: [{ child_id: CHILD_ID }],
+          },
+        ],
       },
     ],
     ...overrides,
@@ -111,13 +102,13 @@ function buildRegenQueue(opts: { jobId?: string } = {}): QueueMock {
 }
 
 function buildRepo(opts: {
-  commitImpl?: (input: CommitPlanInput, clearedAt: string, version: string) => Promise<string>;
+  commitImpl?: (input: CommitPlanTreeInput, clearedAt: string, version: string) => Promise<string>;
   existingPlanId?: string | null;
 } = {}): PlansRepository & {
-  commit: ReturnType<typeof vi.fn>;
+  commitTree: ReturnType<typeof vi.fn>;
   findActiveByHouseholdAndWeek: ReturnType<typeof vi.fn>;
 } {
-  const commit = vi.fn(async (input: CommitPlanInput, clearedAt: string, version: string) => {
+  const commitTree = vi.fn(async (input: CommitPlanTreeInput, clearedAt: string, version: string) => {
     if (opts.commitImpl) return opts.commitImpl(input, clearedAt, version);
     return input.plan_id;
   });
@@ -126,8 +117,8 @@ function buildRepo(opts: {
       ? { id: opts.existingPlanId, household_id: HOUSEHOLD_ID, week_id: WEEK_ID }
       : null;
   const findActiveByHouseholdAndWeek = vi.fn().mockResolvedValue(existingRow);
-  return { commit, findActiveByHouseholdAndWeek } as unknown as PlansRepository & {
-    commit: ReturnType<typeof vi.fn>;
+  return { commitTree, findActiveByHouseholdAndWeek } as unknown as PlansRepository & {
+    commitTree: ReturnType<typeof vi.fn>;
     findActiveByHouseholdAndWeek: ReturnType<typeof vi.fn>;
   };
 }
@@ -160,11 +151,11 @@ function buildBriefStateRepo(): BriefStateRepository {
 }
 
 function buildBriefStateComposer(): BriefStateComposer & {
-  refresh: ReturnType<typeof vi.fn>;
+  refreshTree: ReturnType<typeof vi.fn>;
 } {
   return {
-    refresh: vi.fn().mockResolvedValue(undefined),
-  } as unknown as BriefStateComposer & { refresh: ReturnType<typeof vi.fn> };
+    refreshTree: vi.fn().mockResolvedValue(undefined),
+  } as unknown as BriefStateComposer & { refreshTree: ReturnType<typeof vi.fn> };
 }
 
 describe('PlansService.commit', () => {
@@ -188,8 +179,8 @@ describe('PlansService.commit', () => {
 
     expect(result).toBe(PLAN_ID);
     expect(guardrail.clearOrReject).toHaveBeenCalledTimes(1);
-    expect(repo.commit).toHaveBeenCalledTimes(1);
-    expect(repo.commit.mock.calls[0][2]).toBe(GUARDRAIL_VERSION);
+    expect(repo.commitTree).toHaveBeenCalledTimes(1);
+    expect(repo.commitTree.mock.calls[0][2]).toBe(GUARDRAIL_VERSION);
     expect(regenerate).not.toHaveBeenCalled();
 
     const auditCall = audit.write.mock.calls[0]?.[0];
@@ -197,7 +188,7 @@ describe('PlansService.commit', () => {
       event_type: 'plan.generated',
       household_id: HOUSEHOLD_ID,
       request_id: REQUEST_ID,
-      metadata: expect.objectContaining({ plan_id: PLAN_ID, revision: 1, prompt_version: 'v1.0.0' }),
+      metadata: expect.objectContaining({ plan_id: PLAN_ID, revision: 1, prompt_version: 'v2.0.0' }),
     });
     expect(auditCall.stages).toEqual([
       { stage: 'guardrail_verdict', verdict: 'cleared', guardrail_version: GUARDRAIL_VERSION },
@@ -229,7 +220,7 @@ describe('PlansService.commit', () => {
     await expect(service.commit(makeInput(), REQUEST_ID, regenerate)).rejects.toBeInstanceOf(
       GuardrailRejectionError,
     );
-    expect(repo.commit).not.toHaveBeenCalled();
+    expect(repo.commitTree).not.toHaveBeenCalled();
     // Story 3.25 — audit.write IS now called with plan.hard_fail before the
     // throw; assert no plan.generated audit was emitted on the failure path.
     const generatedCalls = audit.write.mock.calls.filter(
@@ -265,7 +256,7 @@ describe('PlansService.commit', () => {
     expect(result).toBe(PLAN_ID);
     expect(guardrail.clearOrReject).toHaveBeenCalledTimes(3);
     expect(regenerate).toHaveBeenCalledTimes(2);
-    expect(repo.commit).toHaveBeenCalledTimes(1);
+    expect(repo.commitTree).toHaveBeenCalledTimes(1);
 
     const auditCall = audit.write.mock.calls[0]?.[0];
     expect(auditCall.stages).toEqual([
@@ -306,7 +297,7 @@ describe('PlansService.commit', () => {
     expect(regenerate).toHaveBeenCalledTimes(2);
   });
 
-  it('passes only child_id/day/slot/ingredients to the guardrail (drops recipe_id/item_id)', async () => {
+  it('walks the tree and emits one (child, day, slot, ingredients) guardrail item per variation', async () => {
     const repo = buildRepo();
     const guardrail = buildGuardrail([{ verdict: 'cleared', conflicts: [] }]);
     const audit = buildAudit();
@@ -322,14 +313,16 @@ describe('PlansService.commit', () => {
     });
 
     const input = makeInput({
-      items: [
+      days: [
         {
-          child_id: CHILD_ID,
           day: 'monday',
-          slot: 'main',
-          recipe_id: '99999999-9999-4999-8999-999999999999',
-          item_id: '88888888-8888-4888-8888-888888888888',
-          ingredients: ['rice'],
+          slots: [
+            {
+              slot_kind: 'main',
+              main_assignment_sequence: 1,
+              variations: [{ child_id: CHILD_ID, add_ons: ['rice'] }],
+            },
+          ],
         },
       ],
     });
@@ -358,7 +351,7 @@ describe('PlansService.commit', () => {
 
     await service.commit(makeInput(), REQUEST_ID, vi.fn());
 
-    const clearedAt = repo.commit.mock.calls[0][1];
+    const clearedAt = repo.commitTree.mock.calls[0][1];
     expect(clearedAt).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/);
   });
 
@@ -381,7 +374,7 @@ describe('PlansService.commit', () => {
     const result = await service.commit(makeInput(), REQUEST_ID, vi.fn());
 
     expect(result).toBe(EXISTING_PLAN_ID);
-    expect(repo.commit.mock.calls[0][0].plan_id).toBe(EXISTING_PLAN_ID);
+    expect(repo.commitTree.mock.calls[0][0].plan_id).toBe(EXISTING_PLAN_ID);
   });
 
   it('throws GuardrailRejectionError immediately on uncertain verdict (infrastructure failure)', async () => {
@@ -407,7 +400,7 @@ describe('PlansService.commit', () => {
     );
     expect(guardrail.clearOrReject).toHaveBeenCalledTimes(1);
     expect(regenerate).not.toHaveBeenCalled();
-    expect(repo.commit).not.toHaveBeenCalled();
+    expect(repo.commitTree).not.toHaveBeenCalled();
     expect(audit.write).not.toHaveBeenCalledWith(expect.objectContaining({ event_type: 'plan.hard_fail' }));
   });
 
@@ -464,14 +457,25 @@ describe('PlansService.commit', () => {
     });
 
     const cleanInput = makeInput({
-      items: [{ child_id: CHILD_ID, day: 'monday', slot: 'main', ingredients: ['rice', 'broccoli'] }],
+      days: [
+        {
+          day: 'monday',
+          slots: [
+            {
+              slot_kind: 'main',
+              main_assignment_sequence: 1,
+              variations: [{ child_id: CHILD_ID, add_ons: ['rice', 'broccoli'] }],
+            },
+          ],
+        },
+      ],
     });
     const regenerate = vi.fn().mockResolvedValue(cleanInput);
     const result = await service.commit(makeInput(), REQUEST_ID, regenerate);
 
     expect(result).toBe(PLAN_ID);
     expect(regenerate).toHaveBeenCalledTimes(1);
-    expect(repo.commit).toHaveBeenCalledTimes(1);
+    expect(repo.commitTree).toHaveBeenCalledTimes(1);
     // regenerate received the compound-uncertain rejection
     const passedRejections = regenerate.mock.calls[0][0] as GuardrailResult[];
     expect(passedRejections[0].verdict).toBe('uncertain');
@@ -507,7 +511,7 @@ describe('PlansService.commit', () => {
     await expect(service.commit(makeInput(), REQUEST_ID, regenerate)).rejects.toBeInstanceOf(
       GuardrailRejectionError,
     );
-    expect(repo.commit).not.toHaveBeenCalled();
+    expect(repo.commitTree).not.toHaveBeenCalled();
   });
 
   it('throws GuardrailRejectionError when regenerate() throws during retry', async () => {
@@ -535,7 +539,7 @@ describe('PlansService.commit', () => {
     await expect(service.commit(makeInput(), REQUEST_ID, regenerate)).rejects.toBeInstanceOf(
       GuardrailRejectionError,
     );
-    expect(repo.commit).not.toHaveBeenCalled();
+    expect(repo.commitTree).not.toHaveBeenCalled();
     // regenerate() throwing is infra failure (not guardrail exhaustion) — plan.hard_fail must NOT be emitted
     expect(audit.write).not.toHaveBeenCalledWith(expect.objectContaining({ event_type: 'plan.hard_fail' }));
   });
@@ -561,7 +565,7 @@ describe('PlansService.commit', () => {
     const result = await service.commit(makeInput(), REQUEST_ID, vi.fn());
 
     expect(result).toBe(PLAN_ID);
-    expect(repo.commit).toHaveBeenCalledTimes(1);
+    expect(repo.commitTree).toHaveBeenCalledTimes(1);
     expect((logger.error as ReturnType<typeof vi.fn>)).toHaveBeenCalledWith(
       expect.objectContaining({ plan_id: PLAN_ID }),
       expect.stringContaining('audit write failed'),
@@ -1138,7 +1142,7 @@ describe('PlansService.swapItem (Story 3.12)', () => {
       recipeId: undefined,
       itemSlotId: undefined,
     });
-    expect(composer.refresh).toHaveBeenCalledWith(
+    expect(composer.refreshTree).toHaveBeenCalledWith(
       HOUSEHOLD_ID,
       WEEK_ID,
       REQUEST_ID,
@@ -1437,7 +1441,7 @@ describe('PlansService.pauseDay (Story 3.12)', () => {
       day: 'tuesday',
       pausedAt: expect.any(String),
     });
-    expect(composer.refresh).toHaveBeenCalledWith(
+    expect(composer.refreshTree).toHaveBeenCalledWith(
       HOUSEHOLD_ID,
       WEEK_ID,
       REQUEST_ID,

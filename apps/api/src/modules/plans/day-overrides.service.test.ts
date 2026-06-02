@@ -34,7 +34,7 @@ interface Mocks {
     findItemById: ReturnType<typeof vi.fn>;
     pauseItemById: ReturnType<typeof vi.fn>;
   };
-  briefStateComposer: BriefStateComposer & { refresh: ReturnType<typeof vi.fn> };
+  briefStateComposer: BriefStateComposer & { refreshTree: ReturnType<typeof vi.fn> };
   regenQueue: Queue & { add: ReturnType<typeof vi.fn> };
   auditService: AuditService & { write: ReturnType<typeof vi.fn> };
 }
@@ -50,7 +50,7 @@ function buildMocks(): Mocks {
       findItemById: vi.fn(),
       pauseItemById: vi.fn(),
     } as unknown as Mocks['plansRepo'],
-    briefStateComposer: { refresh: vi.fn().mockResolvedValue(undefined) } as unknown as Mocks['briefStateComposer'],
+    briefStateComposer: { refreshTree: vi.fn().mockResolvedValue(undefined) } as unknown as Mocks['briefStateComposer'],
     regenQueue: { add: vi.fn().mockResolvedValue({ id: 'job-1' }) } as unknown as Mocks['regenQueue'],
     auditService: { write: vi.fn().mockResolvedValue(undefined) } as unknown as Mocks['auditService'],
   };
@@ -183,7 +183,7 @@ describe('DayOverridesService.setOverride', () => {
       planId: PLAN_ID,
       pausedAt: expect.any(String),
     });
-    expect(mocks.briefStateComposer.refresh).toHaveBeenCalledTimes(1);
+    expect(mocks.briefStateComposer.refreshTree).toHaveBeenCalledTimes(1);
     expect(mocks.regenQueue.add).not.toHaveBeenCalled();
     expect(result.regenTriggered).toBe(false);
   });
@@ -220,7 +220,7 @@ describe('DayOverridesService.setOverride', () => {
       requestId: REQUEST_ID,
     });
 
-    expect(mocks.briefStateComposer.refresh).not.toHaveBeenCalled();
+    expect(mocks.briefStateComposer.refreshTree).not.toHaveBeenCalled();
   });
 
   it('enqueues a day-scope regen for composition-changing overrides (sport_practice)', async () => {
@@ -242,7 +242,6 @@ describe('DayOverridesService.setOverride', () => {
       plan_id: PLAN_ID,
       household_id: HOUSEHOLD_ID,
       week_of: planRow.week_of,
-      week_id: planRow.week_id,
       current_revision: planRow.revision,
       scope: 'day',
       day: planItem.day,

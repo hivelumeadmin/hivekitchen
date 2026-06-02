@@ -4,6 +4,84 @@ Status: in-progress
 
 ## Implementation log
 
+### 2026-06-02 — Phase 9b part 2 done (test fixture sweep)
+
+Migrated the tests left under `@ts-nocheck` after 9b part 1, plus the
+adjacent tests whose flat-shape stubs / week_id assertions started failing
+once the production code reached tree shape in 9a.
+
+Files migrated to tree shape:
+
+- `apps/api/src/modules/plans/plans.service.test.ts` — `@ts-nocheck` banner
+  removed. Imports cleaned up (dropped `CommitPlanInput`, `PlanComposeInput`,
+  `RecipeAgentExtraction`, `RecipeService`). Helpers rewritten:
+  - `makeInput` now produces `CommitPlanTreeInput` with one M-assignment,
+    one day, one main slot, one variation. Tests that need their own
+    `days[]` override pass a tree-shape literal through `makeInput({ days })`.
+  - `buildRepo` mocks `commitTree` instead of `commit`. Callers swept from
+    `repo.commit` / `repo.commit.mock` → `repo.commitTree` / `repo.commitTree.mock`.
+  - `buildBriefStateComposer` mocks `refreshTree` instead of `refresh`.
+  Test "passes only child_id/day/slot/ingredients to the guardrail (drops
+  recipe_id/item_id)" reframed to verify the tree-walk's guardrail item
+  emission per variation (the prior flat-shape concern doesn't exist in
+  the tree model). All 56 tests in this file now pass.
+- `apps/api/src/agents/orchestrator.planweek.test.ts` —
+  `makeValidPlanComposeOutput` + the swap-output literal both rewritten
+  to tree shape (`main_assignments` + `days[].slots[].variations`).
+  Required so the orchestrator's `PlanComposeTreeOutputSchema.parse` of
+  the stubbed `plan.compose` tool result succeeds. All 13 tests pass.
+- `apps/api/src/agents/orchestrator.test.ts` — `MINIMAL_PLAN_OUTPUT`
+  rewritten to tree shape. Two literal-string assertions updated from
+  the old "Generate plan_items only for active slots" wording to the
+  new "Emit slot rows only for active slots" wording 9a switched the
+  user-message line to.
+- `apps/api/src/agents/prompts/planner.prompt.test.ts` — canonical
+  allow-list assertion updated from 7-tool to 8-tool (3-31's
+  `recipe.discover` belongs on the planner's allow-list now; the
+  pre-9a test pre-dated it).
+- `apps/api/src/modules/plans/day-overrides.service.test.ts` — composer
+  mock + assertions swept from `refresh` → `refreshTree`. The
+  `PlanRegenerationJobData` assertion in the day-scope-regen test
+  dropped its `week_id` expectation (the field was removed from the
+  job-data shape in 9a).
+- `apps/api/src/modules/plans/plan-adjustment.service.test.ts` —
+  `week_id: 'week-a'` dropped from the `jobData.toMatchObject` shape
+  and added `expect(jobData).not.toHaveProperty('week_id')` to lock
+  the new contract.
+- `apps/api/src/modules/lunch-link/lunch-link.routes.test.ts` — composer
+  decorator + assertion swept `refresh` → `refreshTree`; describe title
+  updated to match.
+
+Verification:
+
+- API typecheck: 14 errors, unchanged baseline.
+- API tests: **11 files / 32 tests failing — BELOW the pre-9a baseline
+  of 12 files / 33 tests.** Net delta from 9b part 1 start (14 files
+  / 49 tests failing): 3 files cleaned, 17 tests recovered. The 32
+  remaining failures live in files this story has not touched (auth,
+  catalog-seed, children repo, extra-library, memory, audit types,
+  onboarding tools, day-overrides.repository, voice routes, voice
+  service, households routes); all pre-existing and out of 9b's
+  scope per the hand-off note's split.
+
+What 9b part 2 did NOT do (still on the punch list for 9b part 3 / 9c):
+
+- The proper tree-shape merges in `swap-retry.helper.ts` (per-variation
+  overlay onto previousCommit while preserving siblings) and
+  `plan-regeneration.job.ts` day-scope (overlay planner-emitted new day
+  onto existing tree via `getCurrentPlanTree`, keep other-day subtrees
+  + main_assignments intact). The stub from 9a is still in place;
+  surgical-eligible blocks pay one extra `planWeek` until 9b part 3
+  lands the real merges.
+- Items 7 + 8 from the hand-off: delete the flat surface in
+  `packages/contracts/src/plan.ts` + `packages/types` + the flat methods
+  on `PlansRepository` / `BriefStateComposer` / `DayOverridesService`
+  / `DayOverridesRepository` / `VariantProposalService` /
+  `VariantProposalRepository`. Coordinate with item 5 (day-overrides
+  route param swap + the consumer-side rewrites of `swapItem` +
+  `pauseDay` + day-overrides routes).
+- Item 1, 11–13 → 9c.
+
 ### 2026-06-01 — Phase 9b part 1 done (obsolete-test deletion)
 
 Scope this pass: delete the tests that exercised production code 9a already

@@ -6,10 +6,11 @@ describe('PLANNER_PROMPT', () => {
     expect(PLANNER_PROMPT.version).toMatch(/^v\d+\.\d+\.\d+$/);
   });
 
-  it('exposes the canonical 7-tool allow-list in the specified order', () => {
+  it('exposes the canonical 8-tool allow-list in the specified order', () => {
     expect(PLANNER_PROMPT.toolsAllowed).toEqual([
       'recipe.search',
       'recipe.fetch',
+      'recipe.discover',
       'memory.recall',
       'pantry.read',
       'plan.compose',

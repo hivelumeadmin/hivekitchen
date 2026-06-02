@@ -249,7 +249,7 @@ async function buildTestApp(
   app.decorate('supabase', supabaseMock as unknown as FastifyInstance['supabase']);
   // Slice 4-S4: stub briefStateComposer for the rate route's fire-and-forget refresh.
   app.decorate('briefStateComposer', {
-    refresh: vi.fn().mockResolvedValue(undefined),
+    refreshTree: vi.fn().mockResolvedValue(undefined),
   } as unknown as FastifyInstance['briefStateComposer']);
 
   await app.register(jwt, { secret: env.JWT_SECRET, sign: { expiresIn: '15m' } });
@@ -722,9 +722,9 @@ describe('POST /v1/lunch-link/:token/rate (public)', () => {
     });
   });
 
-  it('fires briefStateComposer.refresh with the Monday of the token date', async () => {
+  it('fires briefStateComposer.refreshTree with the Monday of the token date', async () => {
     app = await buildTestApp(buildS3MockSupabase({}));
-    const composer = (app as unknown as { briefStateComposer: { refresh: ReturnType<typeof vi.fn> } })
+    const composer = (app as unknown as { briefStateComposer: { refreshTree: ReturnType<typeof vi.fn> } })
       .briefStateComposer;
 
     const res = await app.inject({
@@ -735,7 +735,7 @@ describe('POST /v1/lunch-link/:token/rate (public)', () => {
     });
 
     expect(res.statusCode).toBe(204);
-    expect(composer.refresh).toHaveBeenCalledWith(
+    expect(composer.refreshTree).toHaveBeenCalledWith(
       HOUSEHOLD_ID,
       '2026-05-11',
       expect.any(String),
