@@ -107,9 +107,16 @@ export function BriefCanvas() {
   };
 
   const brief = data?.brief ?? null;
-  // Guard: hkFetch returns raw JSON without Zod parsing; cleared_allergies may be
-  // absent on a pre-migration cached response. Default to [] to prevent .length crash.
-  const clearedAllergies = brief?.cleared_allergies ?? [];
+  // Story 3-DM-D1 — the brief's tile_summaries / cleared_allergies /
+  // scaffolding_diff / plan_state now live under brief.payload. Guard: hkFetch
+  // returns raw JSON without Zod parsing, so payload (or a sub-field) may be
+  // absent on a pre-migration cached response — default each to prevent a crash.
+  const payload = brief?.payload;
+  const clearedAllergies = payload?.cleared_allergies ?? [];
+  const tileSummaries = payload?.tile_summaries ?? [];
+  const scaffoldingDiff = payload?.scaffolding_diff ?? null;
+  const planState = payload?.plan_state ?? null;
+  const planStateMessage = payload?.plan_state_message ?? null;
   const childColorMap = useMemo(
     () => buildChildColorMap(clearedAllergies),
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -345,23 +352,23 @@ export function BriefCanvas() {
             </div>
           )}
 
-          {brief.scaffolding_diff?.summary !== null && brief.scaffolding_diff?.summary !== undefined && (
+          {scaffoldingDiff !== null && (
             <div className="mb-6">
               <QuietDiff
-                summary={brief.scaffolding_diff.summary}
-                explanation={brief.scaffolding_diff.explanation}
+                summary={scaffoldingDiff.summary}
+                explanation={scaffoldingDiff.explanation}
               />
             </div>
           )}
 
-          {brief.plan_state === 'degraded' && brief.plan_state_message !== null && (
+          {planState === 'degraded' && planStateMessage !== null && planStateMessage !== '' && (
             <div
               className="mb-6 rounded-lg border border-foliage-200 bg-foliage-50 px-4 py-3 flex flex-col gap-2"
               role="region"
               aria-label="Cultural intersection notice"
             >
               <p className="font-sans text-[14px] text-foliage-800 leading-relaxed">
-                {brief.plan_state_message}
+                {planStateMessage}
               </p>
               <button
                 type="button"
@@ -390,10 +397,10 @@ export function BriefCanvas() {
           </PageHeader>
 
           <div
-            className={`grid grid-cols-2 ${brief.plan_tile_summaries.length <= 5 ? 'md:grid-cols-5' : 'md:grid-cols-6'} gap-4 mb-8`}
+            className={`grid grid-cols-2 ${tileSummaries.length <= 5 ? 'md:grid-cols-5' : 'md:grid-cols-6'} gap-4 mb-8`}
             aria-label="Weekly plan"
           >
-            {brief.plan_tile_summaries.map((summary) => {
+            {tileSummaries.map((summary) => {
               const tileState: PlanTileState =
                 summary.paused
                   ? 'paused'
@@ -493,9 +500,9 @@ export function BriefCanvas() {
 
           <PlanActionSection
             onSwapDay={
-              canSwap && brief.plan_tile_summaries.length > 0
+              canSwap && tileSummaries.length > 0
                 ? () => {
-                    const firstUnpaused = brief.plan_tile_summaries.find((s) => !s.paused);
+                    const firstUnpaused = tileSummaries.find((s) => !s.paused);
                     if (firstUnpaused) setActiveSwapDay(firstUnpaused.day);
                   }
                 : undefined

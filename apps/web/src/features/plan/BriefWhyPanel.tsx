@@ -24,8 +24,10 @@ function buildReasons(brief: BriefStateRow): readonly WhyReason[] {
   }
 
   // Safety / allergen clearance reason
-  if (brief.cleared_allergies.length > 0) {
-    const uniqueAllergens = [...new Set(brief.cleared_allergies.map((e) => e.allergen))];
+  // Story 3-DM-D1 — cleared_allergies now lives under brief.payload.
+  const clearedAllergies = brief.payload?.cleared_allergies ?? [];
+  if (clearedAllergies.length > 0) {
+    const uniqueAllergens = [...new Set(clearedAllergies.map((e) => e.allergen))];
     const allergenList = uniqueAllergens.slice(0, 3).join(', ');
     const overflow = uniqueAllergens.length > 3 ? ` +${uniqueAllergens.length - 3} more` : '';
     reasons.push({

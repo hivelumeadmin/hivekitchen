@@ -20,15 +20,20 @@ function briefResponse(scaffolding_diff: ScaffoldingDiff | null = null) {
       moment_headline: 'A quiet week, with one small surprise.',
       lumi_note: 'Tuesday flexes around your late meeting.',
       memory_prose: '',
-      plan_tile_summaries: [
-        { day: 'monday',    items: [{ child_id: CHILD_ID, slot: 'main', ingredients: ['rice', 'beans'] }] },
-        { day: 'tuesday',   items: [{ child_id: CHILD_ID, slot: 'main', ingredients: ['noodles'] }] },
-        { day: 'wednesday', items: [{ child_id: CHILD_ID, slot: 'main', ingredients: ['pasta'] }] },
-        { day: 'thursday',  items: [{ child_id: CHILD_ID, slot: 'main', ingredients: ['soup'] }] },
-        { day: 'friday',    items: [{ child_id: CHILD_ID, slot: 'main', ingredients: ['wrap'] }] },
-      ],
-      cleared_allergies: [],
-      scaffolding_diff,
+      payload: {
+        cleared_allergies: [],
+        plan_state: null,
+        plan_state_set_at: null,
+        plan_state_message: null,
+        tile_summaries: [
+          { day: 'monday',    items: [{ child_id: CHILD_ID, slot: 'main', ingredients: ['rice', 'beans'] }] },
+          { day: 'tuesday',   items: [{ child_id: CHILD_ID, slot: 'main', ingredients: ['noodles'] }] },
+          { day: 'wednesday', items: [{ child_id: CHILD_ID, slot: 'main', ingredients: ['pasta'] }] },
+          { day: 'thursday',  items: [{ child_id: CHILD_ID, slot: 'main', ingredients: ['soup'] }] },
+          { day: 'friday',    items: [{ child_id: CHILD_ID, slot: 'main', ingredients: ['wrap'] }] },
+        ],
+        scaffolding_diff,
+      },
       generated_at: '2026-05-02T00:00:00.000Z',
       plan_revision: 1,
       updated_at: '2026-05-02T00:00:00.000Z',
@@ -223,15 +228,20 @@ test.describe('Story 3-11: QuietDiff', () => {
             moment_headline: 'A quiet week, with one small surprise.',
             lumi_note: 'Tuesday flexes around your late meeting.',
             memory_prose: '',
-            plan_tile_summaries: [
-              { day: 'monday', items: [{ child_id: CHILD_ID, slot: 'main', ingredients: ['rice'] }] },
-            ],
-            cleared_allergies: [
-              { child_id: CHILD_ID, child_name: 'Asha', allergen: 'peanut' },
-            ],
-            scaffolding_diff: {
-              summary: "Swapped Tuesday's protein to match pantry",
-              explanation: 'Pantry had no chicken this week.',
+            payload: {
+              plan_state: null,
+              plan_state_set_at: null,
+              plan_state_message: null,
+              tile_summaries: [
+                { day: 'monday', items: [{ child_id: CHILD_ID, slot: 'main', ingredients: ['rice'] }] },
+              ],
+              cleared_allergies: [
+                { child_id: CHILD_ID, child_name: 'Asha', allergen: 'peanut' },
+              ],
+              scaffolding_diff: {
+                summary: "Swapped Tuesday's protein to match pantry",
+                explanation: 'Pantry had no chicken this week.',
+              },
             },
             generated_at: '2026-05-02T00:00:00.000Z',
             plan_revision: 1,

@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, waitFor, cleanup, fireEvent } from '@testing-library/react';
 import type { ReactNode } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import type { BriefResponse, BriefStateRow } from '@hivekitchen/types';
+import type { BriefResponse, BriefStatePayload, BriefStateRow } from '@hivekitchen/types';
 import { useAuthStore } from '@/stores/auth.store.js';
 import { BriefCanvas } from './BriefCanvas.js';
 
@@ -37,29 +37,38 @@ function renderWithClient(ui: ReactNode) {
 
 const PLAN_ID = '99999999-9999-4999-8999-999999999999';
 
-function makeBrief(overrides: Partial<BriefStateRow> = {}): BriefStateRow {
+// Story 3-DM-D1 — the brief's tile_summaries / cleared_allergies /
+// scaffolding_diff / plan_state* now live under a single `payload` object.
+// Tests pass payload sub-field overrides via `{ payload: { ... } }`.
+function makeBrief(
+  overrides: Partial<Omit<BriefStateRow, 'payload'>> & { payload?: Partial<BriefStatePayload> } = {},
+): BriefStateRow {
+  const { payload: payloadOverrides, ...rest } = overrides;
   return {
     household_id: HOUSEHOLD_ID,
     plan_id: PLAN_ID,
     moment_headline: 'A quiet week, with one small surprise.',
     lumi_note: 'Tuesday flexes around your late meeting.',
     memory_prose: '',
-    plan_tile_summaries: [
-      { day: 'monday', items: [{ plan_item_id: '00000000-0000-4000-8000-000000000010', child_id: CHILD_ID, slot: 'main', ingredients: ['rice', 'beans', 'cheese'] }], paused: false, lunch_link_suppressed_children: [], child_ratings: {} },
-      { day: 'tuesday', items: [{ plan_item_id: '00000000-0000-4000-8000-000000000011', child_id: CHILD_ID, slot: 'main', ingredients: ['noodles'] }], paused: false, lunch_link_suppressed_children: [], child_ratings: {} },
-      { day: 'wednesday', items: [{ plan_item_id: '00000000-0000-4000-8000-000000000012', child_id: CHILD_ID, slot: 'main', ingredients: ['pasta'] }], paused: false, lunch_link_suppressed_children: [], child_ratings: {} },
-      { day: 'thursday', items: [{ plan_item_id: '00000000-0000-4000-8000-000000000013', child_id: CHILD_ID, slot: 'main', ingredients: ['soup'] }], paused: false, lunch_link_suppressed_children: [], child_ratings: {} },
-      { day: 'friday', items: [{ plan_item_id: '00000000-0000-4000-8000-000000000014', child_id: CHILD_ID, slot: 'main', ingredients: ['wrap'] }], paused: false, lunch_link_suppressed_children: [], child_ratings: {} },
-    ],
-    cleared_allergies: [],
-    scaffolding_diff: null,
+    payload: {
+      tile_summaries: [
+        { day: 'monday', items: [{ plan_item_id: '00000000-0000-4000-8000-000000000010', child_id: CHILD_ID, slot: 'main', ingredients: ['rice', 'beans', 'cheese'] }], paused: false, lunch_link_suppressed_children: [], child_ratings: {} },
+        { day: 'tuesday', items: [{ plan_item_id: '00000000-0000-4000-8000-000000000011', child_id: CHILD_ID, slot: 'main', ingredients: ['noodles'] }], paused: false, lunch_link_suppressed_children: [], child_ratings: {} },
+        { day: 'wednesday', items: [{ plan_item_id: '00000000-0000-4000-8000-000000000012', child_id: CHILD_ID, slot: 'main', ingredients: ['pasta'] }], paused: false, lunch_link_suppressed_children: [], child_ratings: {} },
+        { day: 'thursday', items: [{ plan_item_id: '00000000-0000-4000-8000-000000000013', child_id: CHILD_ID, slot: 'main', ingredients: ['soup'] }], paused: false, lunch_link_suppressed_children: [], child_ratings: {} },
+        { day: 'friday', items: [{ plan_item_id: '00000000-0000-4000-8000-000000000014', child_id: CHILD_ID, slot: 'main', ingredients: ['wrap'] }], paused: false, lunch_link_suppressed_children: [], child_ratings: {} },
+      ],
+      cleared_allergies: [],
+      scaffolding_diff: null,
+      plan_state: null,
+      plan_state_set_at: null,
+      plan_state_message: null,
+      ...payloadOverrides,
+    },
     generated_at: '2026-05-02T00:00:00.000Z',
     plan_revision: 1,
     updated_at: '2026-05-02T00:00:00.000Z',
-    plan_state: null,
-    plan_state_set_at: null,
-    plan_state_message: null,
-    ...overrides,
+    ...rest,
   };
 }
 
@@ -189,7 +198,7 @@ describe('BriefCanvas', () => {
   it('renders no AllergyClearedBadge row when cleared_allergies is empty (Story 3.10)', async () => {
     const { hkFetch } = await import('@/lib/fetch.js');
     vi.mocked(hkFetch).mockResolvedValue({
-      brief: makeBrief({ cleared_allergies: [] }),
+      brief: makeBrief({ payload: { cleared_allergies: [] } }),
     } satisfies BriefResponse);
 
     renderWithClient(<BriefCanvas />);
@@ -204,10 +213,12 @@ describe('BriefCanvas', () => {
     const { hkFetch } = await import('@/lib/fetch.js');
     vi.mocked(hkFetch).mockResolvedValue({
       brief: makeBrief({
-        cleared_allergies: [
-          { child_id: CHILD_ID, child_name: 'Asha', allergen: 'peanut' },
-          { child_id: CHILD_ID, child_name: 'Asha', allergen: 'tree nut' },
-        ],
+        payload: {
+          cleared_allergies: [
+            { child_id: CHILD_ID, child_name: 'Asha', allergen: 'peanut' },
+            { child_id: CHILD_ID, child_name: 'Asha', allergen: 'tree nut' },
+          ],
+        },
       }),
     } satisfies BriefResponse);
 
@@ -231,9 +242,11 @@ describe('BriefCanvas', () => {
     const { hkFetch } = await import('@/lib/fetch.js');
     vi.mocked(hkFetch).mockResolvedValue({
       brief: makeBrief({
-        cleared_allergies: [
-          { child_id: CHILD_ID, child_name: 'Asha', allergen: 'peanut' },
-        ],
+        payload: {
+          cleared_allergies: [
+            { child_id: CHILD_ID, child_name: 'Asha', allergen: 'peanut' },
+          ],
+        },
       }),
     } satisfies BriefResponse);
 
@@ -253,7 +266,7 @@ describe('BriefCanvas', () => {
   it('renders no QuietDiff banner when scaffolding_diff is null (Story 3.11)', async () => {
     const { hkFetch } = await import('@/lib/fetch.js');
     vi.mocked(hkFetch).mockResolvedValue({
-      brief: makeBrief({ scaffolding_diff: null }),
+      brief: makeBrief({ payload: { scaffolding_diff: null } }),
     } satisfies BriefResponse);
 
     renderWithClient(<BriefCanvas />);
@@ -268,7 +281,9 @@ describe('BriefCanvas', () => {
     const { hkFetch } = await import('@/lib/fetch.js');
     vi.mocked(hkFetch).mockResolvedValue({
       brief: makeBrief({
-        scaffolding_diff: { summary: "Swapped Tuesday's protein to match pantry" },
+        payload: {
+          scaffolding_diff: { summary: "Swapped Tuesday's protein to match pantry" },
+        },
       }),
     } satisfies BriefResponse);
 
@@ -284,9 +299,11 @@ describe('BriefCanvas', () => {
     const { hkFetch } = await import('@/lib/fetch.js');
     vi.mocked(hkFetch).mockResolvedValue({
       brief: makeBrief({
-        scaffolding_diff: {
-          summary: "Swapped Tuesday's protein to match pantry",
-          explanation: 'Pantry had no chicken this week.',
+        payload: {
+          scaffolding_diff: {
+            summary: "Swapped Tuesday's protein to match pantry",
+            explanation: 'Pantry had no chicken this week.',
+          },
         },
       }),
     } satisfies BriefResponse);
@@ -337,8 +354,8 @@ describe('BriefCanvas — Story 3.12 (paused, swap picker)', () => {
   it('renders Paused copy on a tile when summary.paused is true', async () => {
     const { hkFetch } = await import('@/lib/fetch.js');
     const brief = makeBrief();
-    brief.plan_tile_summaries[1] = {
-      ...brief.plan_tile_summaries[1]!,
+    brief.payload.tile_summaries[1] = {
+      ...brief.payload.tile_summaries[1]!,
       paused: true,
     };
     vi.mocked(hkFetch).mockResolvedValue({ brief } satisfies BriefResponse);
@@ -395,8 +412,8 @@ describe('BriefCanvas — Story 3.12 (paused, swap picker)', () => {
   it('paused tile click does not open picker (onSwapIntent gated by !summary.paused)', async () => {
     const { hkFetch } = await import('@/lib/fetch.js');
     const brief = makeBrief();
-    brief.plan_tile_summaries[0] = {
-      ...brief.plan_tile_summaries[0]!,
+    brief.payload.tile_summaries[0] = {
+      ...brief.payload.tile_summaries[0]!,
       paused: true,
     };
     vi.mocked(hkFetch).mockResolvedValue({ brief } satisfies BriefResponse);
@@ -461,10 +478,12 @@ describe('BriefCanvas — Story 3.29 (degraded cultural-intersection note)', () 
     const { hkFetch } = await import('@/lib/fetch.js');
     vi.mocked(hkFetch).mockResolvedValue({
       brief: makeBrief({
-        plan_state: 'degraded',
-        plan_state_set_at: '2026-05-25T12:00:00.000Z',
-        plan_state_message:
-          "This week's plan couldn't honor every rule strictly. Try alternating whose rules lead each day?",
+        payload: {
+          plan_state: 'degraded',
+          plan_state_set_at: '2026-05-25T12:00:00.000Z',
+          plan_state_message:
+            "This week's plan couldn't honor every rule strictly. Try alternating whose rules lead each day?",
+        },
       }),
     } satisfies BriefResponse);
 
@@ -499,9 +518,11 @@ describe('BriefCanvas — Story 3.29 (degraded cultural-intersection note)', () 
     const { hkFetch } = await import('@/lib/fetch.js');
     vi.mocked(hkFetch).mockResolvedValue({
       brief: makeBrief({
-        plan_state: 'hard_failed',
-        plan_state_set_at: '2026-05-25T12:00:00.000Z',
-        plan_state_message: 'A hard-fail message that must NOT be rendered as the soft inline note.',
+        payload: {
+          plan_state: 'hard_failed',
+          plan_state_set_at: '2026-05-25T12:00:00.000Z',
+          plan_state_message: 'A hard-fail message that must NOT be rendered as the soft inline note.',
+        },
       }),
     } satisfies BriefResponse);
 
@@ -528,9 +549,11 @@ describe('BriefCanvas — Story 3.29 (degraded cultural-intersection note)', () 
       }
       return {
         brief: makeBrief({
-          plan_state: 'degraded',
-          plan_state_set_at: '2026-05-25T12:00:00.000Z',
-          plan_state_message: 'msg',
+          payload: {
+            plan_state: 'degraded',
+            plan_state_set_at: '2026-05-25T12:00:00.000Z',
+            plan_state_message: 'msg',
+          },
         }),
       } satisfies BriefResponse;
     });

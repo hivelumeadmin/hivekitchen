@@ -107,6 +107,8 @@ function buildRepo(opts: {
 } = {}): PlansRepository & {
   commitTree: ReturnType<typeof vi.fn>;
   findActiveByHouseholdAndWeek: ReturnType<typeof vi.fn>;
+  setPlanState: ReturnType<typeof vi.fn>;
+  clearDegradedPlanState: ReturnType<typeof vi.fn>;
 } {
   const commitTree = vi.fn(async (input: CommitPlanTreeInput, clearedAt: string, version: string) => {
     if (opts.commitImpl) return opts.commitImpl(input, clearedAt, version);
@@ -117,9 +119,20 @@ function buildRepo(opts: {
       ? { id: opts.existingPlanId, household_id: HOUSEHOLD_ID, week_id: WEEK_ID }
       : null;
   const findActiveByHouseholdAndWeek = vi.fn().mockResolvedValue(existingRow);
-  return { commitTree, findActiveByHouseholdAndWeek } as unknown as PlansRepository & {
+  // Story 3-DM-D1 — plan_state write path moved from BriefStateRepository to
+  // PlansRepository.
+  const setPlanState = vi.fn().mockResolvedValue(undefined);
+  const clearDegradedPlanState = vi.fn().mockResolvedValue(undefined);
+  return {
+    commitTree,
+    findActiveByHouseholdAndWeek,
+    setPlanState,
+    clearDegradedPlanState,
+  } as unknown as PlansRepository & {
     commitTree: ReturnType<typeof vi.fn>;
     findActiveByHouseholdAndWeek: ReturnType<typeof vi.fn>;
+    setPlanState: ReturnType<typeof vi.fn>;
+    clearDegradedPlanState: ReturnType<typeof vi.fn>;
   };
 }
 
@@ -1157,28 +1170,13 @@ describe('week-monday helpers (Story 3.14)', () => {
     expect(id1).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
   });
 });
-describe('PlansService.handleDegradedPlan (Story 3.29)', () => {
-  function buildBriefStateRepoWithPlanState(): BriefStateRepository & {
-    setPlanState: ReturnType<typeof vi.fn>;
-    clearDegradedPlanState: ReturnType<typeof vi.fn>;
-  } {
-    return {
-      findByHousehold: vi.fn().mockResolvedValue(null),
-      upsert: vi.fn().mockResolvedValue(undefined),
-      setPlanState: vi.fn().mockResolvedValue(undefined),
-      clearDegradedPlanState: vi.fn().mockResolvedValue(undefined),
-    } as unknown as BriefStateRepository & {
-      setPlanState: ReturnType<typeof vi.fn>;
-      clearDegradedPlanState: ReturnType<typeof vi.fn>;
-    };
-  }
-
-  it('writes plan_state=degraded + the canonical message to brief_state and emits plan.cultural_degraded audit', async () => {
-    const briefStateRepo = buildBriefStateRepoWithPlanState();
+describe('PlansService.handleDegradedPlan (Story 3.29 / 3-DM-D1)', () => {
+  it('writes plan_state=degraded + the canonical message via PlansRepository and emits plan.cultural_degraded audit', async () => {
+    const repo = buildRepo();
     const audit = buildAudit();
     const service = new PlansService({
-      repository: buildRepo(),
-      briefStateRepository: briefStateRepo,
+      repository: repo,
+      briefStateRepository: buildBriefStateRepo(),
       briefStateComposer: buildBriefStateComposer(),
       allergyGuardrail: buildGuardrail([{ verdict: 'cleared', conflicts: [] }]),
       auditService: audit,
@@ -1189,11 +1187,13 @@ describe('PlansService.handleDegradedPlan (Story 3.29)', () => {
 
     await service.handleDegradedPlan({
       householdId: HOUSEHOLD_ID,
+      planId: PLAN_ID,
       requestId: REQUEST_ID,
     });
 
-    expect(briefStateRepo.setPlanState).toHaveBeenCalledTimes(1);
-    const setArgs = briefStateRepo.setPlanState.mock.calls[0]![0];
+    expect(repo.setPlanState).toHaveBeenCalledTimes(1);
+    const setArgs = repo.setPlanState.mock.calls[0]![0];
+    expect(setArgs.planId).toBe(PLAN_ID);
     expect(setArgs.householdId).toBe(HOUSEHOLD_ID);
     expect(setArgs.planState).toBe('degraded');
     expect(setArgs.message).toBe(
@@ -1212,12 +1212,12 @@ describe('PlansService.handleDegradedPlan (Story 3.29)', () => {
   });
 
   it('still resolves when the audit write fails (best-effort)', async () => {
-    const briefStateRepo = buildBriefStateRepoWithPlanState();
+    const repo = buildRepo();
     const audit = buildAudit();
     audit.write.mockRejectedValueOnce(new Error('audit down'));
     const service = new PlansService({
-      repository: buildRepo(),
-      briefStateRepository: briefStateRepo,
+      repository: repo,
+      briefStateRepository: buildBriefStateRepo(),
       briefStateComposer: buildBriefStateComposer(),
       allergyGuardrail: buildGuardrail([{ verdict: 'cleared', conflicts: [] }]),
       auditService: audit,
@@ -1227,16 +1227,16 @@ describe('PlansService.handleDegradedPlan (Story 3.29)', () => {
     });
 
     await expect(
-      service.handleDegradedPlan({ householdId: HOUSEHOLD_ID, requestId: REQUEST_ID }),
+      service.handleDegradedPlan({ householdId: HOUSEHOLD_ID, planId: PLAN_ID, requestId: REQUEST_ID }),
     ).resolves.toBeUndefined();
-    expect(briefStateRepo.setPlanState).toHaveBeenCalledTimes(1);
+    expect(repo.setPlanState).toHaveBeenCalledTimes(1);
   });
 
-  it('clearDegradedPlanState delegates to the brief_state repository', async () => {
-    const briefStateRepo = buildBriefStateRepoWithPlanState();
+  it('clearDegradedPlanState delegates to the plans repository', async () => {
+    const repo = buildRepo();
     const service = new PlansService({
-      repository: buildRepo(),
-      briefStateRepository: briefStateRepo,
+      repository: repo,
+      briefStateRepository: buildBriefStateRepo(),
       briefStateComposer: buildBriefStateComposer(),
       allergyGuardrail: buildGuardrail([{ verdict: 'cleared', conflicts: [] }]),
       auditService: buildAudit(),
@@ -1247,6 +1247,6 @@ describe('PlansService.handleDegradedPlan (Story 3.29)', () => {
 
     await service.clearDegradedPlanState(HOUSEHOLD_ID);
 
-    expect(briefStateRepo.clearDegradedPlanState).toHaveBeenCalledWith(HOUSEHOLD_ID);
+    expect(repo.clearDegradedPlanState).toHaveBeenCalledWith(HOUSEHOLD_ID);
   });
 });

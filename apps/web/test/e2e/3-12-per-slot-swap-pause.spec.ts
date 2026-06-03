@@ -41,21 +41,26 @@ function briefResponse(opts: BriefOpts = {}) {
       moment_headline: 'A quiet week.',
       lumi_note: '',
       memory_prose: '',
-      plan_tile_summaries: [
-        {
-          day: 'monday',
-          paused: paused.has('monday'),
-          items: [{ plan_item_id: ITEM_ID_MON, child_id: CHILD_ID, slot: 'main', ingredients: ['rice', 'beans'] }],
-        },
-        { day: 'tuesday',   paused: paused.has('tuesday'),   items: tuesdayItems },
-        { day: 'wednesday', paused: paused.has('wednesday'), items: [{ plan_item_id: '55555555-5555-4555-8555-555555555504', child_id: CHILD_ID, slot: 'main', ingredients: ['pasta'] }] },
-        { day: 'thursday',  paused: paused.has('thursday'),  items: [{ plan_item_id: '55555555-5555-4555-8555-555555555505', child_id: CHILD_ID, slot: 'main', ingredients: ['soup'] }] },
-        { day: 'friday',    paused: paused.has('friday'),    items: [{ plan_item_id: '55555555-5555-4555-8555-555555555506', child_id: CHILD_ID, slot: 'main', ingredients: ['wrap'] }] },
-      ],
-      cleared_allergies: opts.clearedAllergyPeanut
-        ? [{ child_id: CHILD_ID, child_name: 'Asha', allergen: 'peanut', re_checking: false }]
-        : [],
-      scaffolding_diff: null,
+      payload: {
+        plan_state: null,
+        plan_state_set_at: null,
+        plan_state_message: null,
+        scaffolding_diff: null,
+        tile_summaries: [
+          {
+            day: 'monday',
+            paused: paused.has('monday'),
+            items: [{ plan_item_id: ITEM_ID_MON, child_id: CHILD_ID, slot: 'main', ingredients: ['rice', 'beans'] }],
+          },
+          { day: 'tuesday',   paused: paused.has('tuesday'),   items: tuesdayItems },
+          { day: 'wednesday', paused: paused.has('wednesday'), items: [{ plan_item_id: '55555555-5555-4555-8555-555555555504', child_id: CHILD_ID, slot: 'main', ingredients: ['pasta'] }] },
+          { day: 'thursday',  paused: paused.has('thursday'),  items: [{ plan_item_id: '55555555-5555-4555-8555-555555555505', child_id: CHILD_ID, slot: 'main', ingredients: ['soup'] }] },
+          { day: 'friday',    paused: paused.has('friday'),    items: [{ plan_item_id: '55555555-5555-4555-8555-555555555506', child_id: CHILD_ID, slot: 'main', ingredients: ['wrap'] }] },
+        ],
+        cleared_allergies: opts.clearedAllergyPeanut
+          ? [{ child_id: CHILD_ID, child_name: 'Asha', allergen: 'peanut', re_checking: false }]
+          : [],
+      },
       generated_at: '2026-05-02T00:00:00.000Z',
       plan_revision: 1,
       updated_at: '2026-05-02T00:00:00.000Z',

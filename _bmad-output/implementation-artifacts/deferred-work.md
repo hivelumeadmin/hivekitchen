@@ -1,5 +1,13 @@
 # Deferred Work Log
 
+## Deferred from: code review of 3-dm-d1-brief-state-payload (2026-06-02)
+
+- **`setPlanState` brief_state SELECT error silently discarded** — `PlansRepository.setPlanState()` step-2 SELECT uses only `{ data: bs }` destructure, discarding Supabase errors. Repository layer lacks `this.logger` by project convention; making this truly observable requires a logger dep or promoting to a service method. [`apps/api/src/modules/plans/plans.repository.ts` — setPlanState, mirror SELECT block]
+- **refreshTree vs setPlanState race on swap-triggered refreshes** — swap mutations trigger `refreshTree` outside BullMQ serialization. A swap-triggered refresh concurrently with `setPlanState` can transiently overwrite brief_state mirror with `plan_state: null` before `setPlanState` completes. `plans.state` remains correct. Fix would require distributed locking or moving mirror writes into the composer upsert. [`apps/api/src/modules/plans/brief-state.composer.ts:241`, `plans.repository.ts:setPlanState`]
+- **First-run degraded state lost when `refreshTree` fails before row creation** — if `refreshTree` fails on the first plan generation AND the plan is degraded, `setPlanState` skips the mirror write (no brief_state row exists) and the next `refreshTree` creates the row with `plan_state: null`. Degrade signal lost from brief_state. Requires cascaded failure (refreshTree fail + degraded plan). [`apps/api/src/modules/plans/plans.repository.ts` — setPlanState, `if (bs)` guard]
+- **`findActiveFuturePlanIds` selects `week_id` in its projection** — `.select('id, week_id, week_of, revision')` will fail at runtime against the real DB if `week_id` was dropped by the C1 migration (20261010000000). Pre-existing C1 regression; not introduced by D1. [`apps/api/src/modules/plans/plans.repository.ts:findActiveFuturePlanIds`]
+- **`makeBrief()` test helper spread fidelity gap** — `...payloadOverrides` spread sets `undefined` on sub-fields rather than omitting keys; component's `?? null` guard masks the distinction. Test-only impact. [`apps/web/src/features/plan/BriefCanvas.test.tsx:makeBrief`]
+
 ## Deferred from: 3-DM-B2 allergen consolidation (2026-05-31)
 
 - **ChildAllergensRepository adapter delete** — preserved as a thin delegating shim over `HouseholdAllergensRepository` to keep onboarding tools and children.service compiling. The test sweep landed without removing the adapter; mechanical follow-up is to switch all 4 callers (`children.repository`, `allergy-guardrail.repository`, `agents/tools/onboarding.tools`, `agents/tools/onboarding.tools.test`) to `HouseholdAllergensRepository` directly and delete the adapter file. [`apps/api/src/modules/children/child-allergens.repository.ts`]

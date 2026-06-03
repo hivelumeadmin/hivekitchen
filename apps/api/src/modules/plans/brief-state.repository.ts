@@ -1,13 +1,10 @@
 import { BaseRepository } from '../../repository/base.repository.js';
-import type {
-  BriefStateRow,
-  ClearedAllergyEntry,
-  PlanTileSummary,
-  ScaffoldingDiff,
-} from '@hivekitchen/types';
+import type { BriefStatePayload, BriefStateRow } from '@hivekitchen/types';
 
+// Story 3-DM-D1 — the four loose JSONB columns + the plan_state mirror are
+// consolidated into a single validated `payload` jsonb column.
 const BRIEF_STATE_COLUMNS =
-  'household_id, plan_id, moment_headline, lumi_note, memory_prose, plan_tile_summaries, cleared_allergies, scaffolding_diff, generated_at, plan_revision, updated_at, plan_state, plan_state_set_at, plan_state_message';
+  'household_id, plan_id, moment_headline, lumi_note, memory_prose, payload, generated_at, plan_revision, updated_at';
 
 export interface BriefStateUpsertInput {
   household_id: string;
@@ -15,9 +12,7 @@ export interface BriefStateUpsertInput {
   moment_headline: string;
   lumi_note: string;
   memory_prose: string;
-  plan_tile_summaries: PlanTileSummary[];
-  cleared_allergies: ClearedAllergyEntry[];
-  scaffolding_diff: ScaffoldingDiff | null;
+  payload: BriefStatePayload;  // Story 3-DM-D1 — replaces plan_tile_summaries, cleared_allergies, scaffolding_diff
   generated_at: string;
   plan_revision: number;
 }
@@ -60,46 +55,7 @@ export class BriefStateRepository extends BaseRepository {
     if (error) throw error;
   }
 
-  // Story 3.29 — set the soft plan_state signal AFTER the briefStateComposer
-  // has run; an UPDATE (not upsert) since the row must already exist for a
-  // degraded state to be meaningful (degradation describes a committed plan).
-  async setPlanState(opts: {
-    householdId: string;
-    planState: 'degraded' | 'hard_failed';
-    setAt: string;
-    message: string;
-  }): Promise<void> {
-    const { data, error } = await this.client
-      .from('brief_state')
-      .update({
-        plan_state: opts.planState,
-        plan_state_set_at: opts.setAt,
-        plan_state_message: opts.message,
-        updated_at: new Date().toISOString(),
-      })
-      .eq('household_id', opts.householdId)
-      .select('household_id')
-      .maybeSingle();
-    if (error) throw error;
-    if (data === null) {
-      throw new Error(`setPlanState: no brief_state row for household ${opts.householdId} — degraded flag not set`);
-    }
-  }
-
-  // Story 3.29 — clears the degraded plan_state once the parent picks a
-  // sovereignty mode. Filtered by plan_state='degraded' so a future hard_failed
-  // row isn't accidentally cleared by the same code path.
-  async clearDegradedPlanState(householdId: string): Promise<void> {
-    const { error } = await this.client
-      .from('brief_state')
-      .update({
-        plan_state: null,
-        plan_state_set_at: null,
-        plan_state_message: null,
-        updated_at: new Date().toISOString(),
-      })
-      .eq('household_id', householdId)
-      .eq('plan_state', 'degraded');
-    if (error) throw error;
-  }
+  // Story 3-DM-D1 — setPlanState() / clearDegradedPlanState() moved to
+  // PlansRepository. plans.state is now the source of truth for plan state;
+  // those methods write the plans row and patch the brief_state.payload mirror.
 }

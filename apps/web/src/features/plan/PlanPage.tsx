@@ -174,9 +174,10 @@ export function PlanPage() {
     () => (data ? adaptPlansResponse(data).childIdOrder : []),
     [data],
   );
+  // Story 3-DM-D1 — cleared_allergies now lives under brief.payload.
   const childColorMap = useMemo(
-    () => buildChildColorMap(childIdOrder, brief?.cleared_allergies ?? []),
-    [childIdOrder, brief?.cleared_allergies],
+    () => buildChildColorMap(childIdOrder, brief?.payload?.cleared_allergies ?? []),
+    [childIdOrder, brief?.payload?.cleared_allergies],
   );
 
   // Story 3.15 — derive a deep link to last week's historical plan view.

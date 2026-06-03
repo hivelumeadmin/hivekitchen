@@ -44,40 +44,45 @@ function briefWithHighActivityExtra(opts: {
       moment_headline: 'A busy week.',
       lumi_note: '',
       memory_prose: '',
-      plan_tile_summaries: [
-        {
-          day: 'monday',
-          paused: false,
-          items: [{ plan_item_id: ITEM_MON_MAIN, child_id: CHILD_ID, slot: 'main', ingredients: ['rice', 'beans'] }],
-        },
-        {
-          day: 'tuesday',
-          paused: false,
-          items: [{ plan_item_id: '55555555-5555-4555-8555-555555555502', child_id: CHILD_ID, slot: 'main', ingredients: ['noodles'] }],
-        },
-        {
-          // Wednesday = sport_practice day; planner proposed an Extra for this child
-          // (Extra slot normally OFF, but high-activity override detected — AC2 MVP).
-          day: 'wednesday',
-          paused: false,
-          items: [
-            { plan_item_id: ITEM_WED_MAIN,  child_id: CHILD_ID, slot: 'main',  ingredients: ['pasta'] },
-            { plan_item_id: ITEM_WED_EXTRA, child_id: CHILD_ID, slot: 'extra', ingredients: extraIngredients },
-          ],
-        },
-        {
-          day: 'thursday',
-          paused: false,
-          items: [{ plan_item_id: '55555555-5555-4555-8555-555555555504', child_id: CHILD_ID, slot: 'main', ingredients: ['soup'] }],
-        },
-        {
-          day: 'friday',
-          paused: false,
-          items: [{ plan_item_id: '55555555-5555-4555-8555-555555555505', child_id: CHILD_ID, slot: 'main', ingredients: ['wrap'] }],
-        },
-      ],
-      cleared_allergies: [],
-      scaffolding_diff: null,
+      payload: {
+        cleared_allergies: [],
+        scaffolding_diff: null,
+        plan_state: null,
+        plan_state_set_at: null,
+        plan_state_message: null,
+        tile_summaries: [
+          {
+            day: 'monday',
+            paused: false,
+            items: [{ plan_item_id: ITEM_MON_MAIN, child_id: CHILD_ID, slot: 'main', ingredients: ['rice', 'beans'] }],
+          },
+          {
+            day: 'tuesday',
+            paused: false,
+            items: [{ plan_item_id: '55555555-5555-4555-8555-555555555502', child_id: CHILD_ID, slot: 'main', ingredients: ['noodles'] }],
+          },
+          {
+            // Wednesday = sport_practice day; planner proposed an Extra for this child
+            // (Extra slot normally OFF, but high-activity override detected — AC2 MVP).
+            day: 'wednesday',
+            paused: false,
+            items: [
+              { plan_item_id: ITEM_WED_MAIN,  child_id: CHILD_ID, slot: 'main',  ingredients: ['pasta'] },
+              { plan_item_id: ITEM_WED_EXTRA, child_id: CHILD_ID, slot: 'extra', ingredients: extraIngredients },
+            ],
+          },
+          {
+            day: 'thursday',
+            paused: false,
+            items: [{ plan_item_id: '55555555-5555-4555-8555-555555555504', child_id: CHILD_ID, slot: 'main', ingredients: ['soup'] }],
+          },
+          {
+            day: 'friday',
+            paused: false,
+            items: [{ plan_item_id: '55555555-5555-4555-8555-555555555505', child_id: CHILD_ID, slot: 'main', ingredients: ['wrap'] }],
+          },
+        ],
+      },
       generated_at: '2026-05-02T00:00:00.000Z',
       plan_revision: 1,
       updated_at: '2026-05-02T00:00:00.000Z',

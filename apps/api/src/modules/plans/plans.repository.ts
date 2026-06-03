@@ -14,8 +14,11 @@ import type {
 } from '@hivekitchen/types';
 import { getCurrentWeekMonday } from '../../lib/derive-week-id.js';
 
+// Story 3-DM-D1 — week_id dropped (C1 migration 20261010000000 removed the
+// column); state/state_set_at/state_message absorbed from brief_state so all
+// PlansRepository reads return the canonical plan-state fields.
 const PLAN_COLUMNS =
-  'id, household_id, week_id, week_of, revision, generated_at, guardrail_cleared_at, guardrail_version, prompt_version, created_at, updated_at';
+  'id, household_id, week_of, revision, generated_at, guardrail_cleared_at, guardrail_version, prompt_version, state, state_set_at, state_message, created_at, updated_at';
 
 // Story 3-DM-C1 — column constants for the tree-shape tables.
 // The flat PLAN_ITEM_COLUMNS retired with the plan_items table cutover.
@@ -428,6 +431,115 @@ export class PlansRepository extends BaseRepository {
     });
     if (error) throw error;
     return data as string;
+  }
+
+  // Story 3-DM-D1 — set the soft plan_state signal. Source of truth is the
+  // plans row; the brief_state.payload plan_state mirror is patched
+  // best-effort so the Brief route (which reads brief_state only) reflects it
+  // without a second join. Safe under per-household BullMQ serialization
+  // (one plan-gen job per household at a time per Story 3.7).
+  async setPlanState(opts: {
+    planId: string;
+    householdId: string;
+    planState: 'degraded' | 'hard_failed';
+    setAt: string;
+    message: string;
+  }): Promise<void> {
+    const now = new Date().toISOString();
+
+    // 1. Update the plans row.
+    const { data, error } = await this.client
+      .from('plans')
+      .update({
+        state: opts.planState,
+        state_set_at: opts.setAt,
+        state_message: opts.message,
+        updated_at: now,
+      })
+      .eq('id', opts.planId)
+      .eq('household_id', opts.householdId)
+      .select('id')
+      .maybeSingle();
+    if (error) throw error;
+    if (data === null) {
+      throw new Error(
+        `setPlanState: no plans row for plan ${opts.planId} / household ${opts.householdId}`,
+      );
+    }
+
+    // 2. Mirror into brief_state.payload (best-effort; row may not exist yet).
+    const { data: bs } = await this.client
+      .from('brief_state')
+      .select('payload')
+      .eq('household_id', opts.householdId)
+      .maybeSingle();
+    if (bs) {
+      const merged = {
+        ...(bs.payload as Record<string, unknown>),
+        plan_state: opts.planState,
+        plan_state_set_at: opts.setAt,
+        plan_state_message: opts.message,
+      };
+      const { error: bsErr } = await this.client
+        .from('brief_state')
+        .update({ payload: merged, updated_at: now })
+        .eq('household_id', opts.householdId);
+      if (bsErr) {
+        // Non-fatal: the plans row is updated; the brief_state mirror can lag.
+        // The next refreshTree() carries forward plan_state from the payload.
+      }
+    }
+  }
+
+  // Story 3-DM-D1 — clears the degraded plan_state once the parent picks a
+  // sovereignty mode. Filtered by state='degraded' so a hard_failed plan
+  // isn't accidentally cleared by the same code path. Mirrors the clear into
+  // brief_state.payload as well.
+  async clearDegradedPlanState(householdId: string): Promise<void> {
+    const now = new Date().toISOString();
+
+    // 1. Clear on plans (only rows currently in 'degraded' state — hard_failed stays).
+    // Use .select('id') so we know whether any row was actually cleared before
+    // touching the brief_state mirror (avoids wiping a hard_failed mirror when
+    // no degraded row existed).
+    const { data: cleared, error } = await this.client
+      .from('plans')
+      .update({
+        state: null,
+        state_set_at: null,
+        state_message: null,
+        updated_at: now,
+      })
+      .eq('household_id', householdId)
+      .eq('state', 'degraded')
+      .select('id');
+    if (error) throw error;
+
+    // 2. Clear the plan_state mirror in brief_state.payload — only if a degraded
+    // row was actually updated. Skipping when cleared is empty prevents wiping a
+    // hard_failed mirror signal that shouldn't be touched by this code path.
+    if (!cleared || cleared.length === 0) return;
+
+    const { data: bs } = await this.client
+      .from('brief_state')
+      .select('payload')
+      .eq('household_id', householdId)
+      .maybeSingle();
+    if (bs) {
+      const merged = {
+        ...(bs.payload as Record<string, unknown>),
+        plan_state: null,
+        plan_state_set_at: null,
+        plan_state_message: null,
+      };
+      const { error: bsErr } = await this.client
+        .from('brief_state')
+        .update({ payload: merged, updated_at: now })
+        .eq('household_id', householdId);
+      if (bsErr) {
+        // Non-fatal: the plans rows are cleared; the brief_state mirror can lag.
+      }
+    }
   }
 }
 

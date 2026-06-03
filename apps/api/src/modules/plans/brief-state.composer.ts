@@ -213,7 +213,7 @@ export class BriefStateComposer {
       const variations = await this.plansRepo.findVariationsBySlotIds(slotIds);
 
       const tree = composePlanTree({ days, mainAssignments, slots, variations });
-      const previousTileSummaries = previousBrief?.plan_tile_summaries ?? null;
+      const previousTileSummaries = previousBrief?.payload?.tile_summaries ?? null;
 
       const upsertInput: BriefStateUpsertInput = {
         household_id: householdId,
@@ -221,17 +221,27 @@ export class BriefStateComposer {
         moment_headline: '',
         lumi_note: '',
         memory_prose: '',
-        plan_tile_summaries: this.buildTileSummariesTree(
-          tree,
-          suppressionByDay,
-          ratingsMap,
-        ),
-        cleared_allergies: this.buildClearedAllergiesTree(tree, children),
-        scaffolding_diff: this.buildScaffoldingDiffTree(
-          previousTileSummaries,
-          tree,
-          opts.userInitiated ?? false,
-        ),
+        payload: {
+          tile_summaries: this.buildTileSummariesTree(
+            tree,
+            suppressionByDay,
+            ratingsMap,
+          ),
+          cleared_allergies: this.buildClearedAllergiesTree(tree, children),
+          scaffolding_diff: this.buildScaffoldingDiffTree(
+            previousTileSummaries,
+            tree,
+            opts.userInitiated ?? false,
+          ),
+          // Story 3-DM-D1 — carry forward the plan_state mirror from the
+          // previous payload so a brief refresh does NOT silently clear a
+          // degraded state that was set between commits. The mirror is cleared
+          // only via PlansRepository.clearDegradedPlanState (sovereignty-mode
+          // selection); the composer never re-evaluates degradation.
+          plan_state: previousBrief?.payload?.plan_state ?? null,
+          plan_state_set_at: previousBrief?.payload?.plan_state_set_at ?? null,
+          plan_state_message: previousBrief?.payload?.plan_state_message ?? null,
+        },
         generated_at: new Date().toISOString(),
         plan_revision: plan.revision,
       };

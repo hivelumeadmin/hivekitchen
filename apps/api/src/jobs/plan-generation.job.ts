@@ -444,6 +444,7 @@ const planGenerationPlugin: FastifyPluginAsync = async (fastify) => {
         try {
           await fastify.plansService.handleDegradedPlan({
             householdId: household_id,
+            planId: committedPlanId,
             requestId: request_id,
           });
         } catch (err) {

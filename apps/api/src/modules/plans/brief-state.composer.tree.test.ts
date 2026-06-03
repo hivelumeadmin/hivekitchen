@@ -190,7 +190,14 @@ describe('BriefStateComposer.refreshTree — 8-read parallelism + composition', 
     slots?: PlanSlotRow[];
     variations?: PlanSlotVariationRow[];
     children?: DecryptedChildRow[];
-    previousBrief?: { plan_tile_summaries: [] } | null;
+    previousBrief?: {
+      payload: {
+        tile_summaries: [];
+        plan_state: null;
+        plan_state_set_at: null;
+        plan_state_message: null;
+      };
+    } | null;
   }) {
     const findCurrentByHousehold = vi.fn().mockResolvedValue(opts.plan ?? null);
     const findMainAssignmentsByPlanId = vi.fn().mockResolvedValue(opts.mainAssignments ?? []);
@@ -262,16 +269,18 @@ describe('BriefStateComposer.refreshTree — 8-read parallelism + composition', 
     expect(mocks.upsert).toHaveBeenCalledTimes(1);
 
     const upsertCall = mocks.upsert.mock.calls[0]![0] as {
-      plan_tile_summaries: Array<{ day: string; items: Array<{ child_id: string; slot: string; recipe_id?: string }> }>;
-      cleared_allergies: Array<{ child_id: string; allergen: string }>;
+      payload: {
+        tile_summaries: Array<{ day: string; items: Array<{ child_id: string; slot: string; recipe_id?: string }> }>;
+        cleared_allergies: Array<{ child_id: string; allergen: string }>;
+      };
     };
 
-    expect(upsertCall.plan_tile_summaries).toHaveLength(1);
-    expect(upsertCall.plan_tile_summaries[0]?.day).toBe('monday');
-    expect(upsertCall.plan_tile_summaries[0]?.items[0]?.child_id).toBe(CHILD_A);
-    expect(upsertCall.plan_tile_summaries[0]?.items[0]?.slot).toBe('main');
-    expect(upsertCall.plan_tile_summaries[0]?.items[0]?.recipe_id).toBe(RECIPE_1);
-    expect(upsertCall.cleared_allergies).toEqual([
+    expect(upsertCall.payload.tile_summaries).toHaveLength(1);
+    expect(upsertCall.payload.tile_summaries[0]?.day).toBe('monday');
+    expect(upsertCall.payload.tile_summaries[0]?.items[0]?.child_id).toBe(CHILD_A);
+    expect(upsertCall.payload.tile_summaries[0]?.items[0]?.slot).toBe('main');
+    expect(upsertCall.payload.tile_summaries[0]?.items[0]?.recipe_id).toBe(RECIPE_1);
+    expect(upsertCall.payload.cleared_allergies).toEqual([
       { child_id: CHILD_A, child_name: expect.any(String), allergen: 'peanut' },
     ]);
   });
@@ -291,9 +300,9 @@ describe('BriefStateComposer.refreshTree — 8-read parallelism + composition', 
     await composer.refreshTree(HOUSEHOLD_ID, WEEK_ID, REQUEST_ID);
 
     const upsertCall = mocks.upsert.mock.calls[0]![0] as {
-      plan_tile_summaries: Array<{ day: string; paused: boolean }>;
+      payload: { tile_summaries: Array<{ day: string; paused: boolean }> };
     };
-    expect(upsertCall.plan_tile_summaries[0]?.paused).toBe(true);
+    expect(upsertCall.payload.tile_summaries[0]?.paused).toBe(true);
   });
 
   it('marks a day paused via day-level paused_at even if variations aren’t', async () => {
@@ -308,9 +317,9 @@ describe('BriefStateComposer.refreshTree — 8-read parallelism + composition', 
     await composer.refreshTree(HOUSEHOLD_ID, WEEK_ID, REQUEST_ID);
 
     const upsertCall = mocks.upsert.mock.calls[0]![0] as {
-      plan_tile_summaries: Array<{ day: string; paused: boolean }>;
+      payload: { tile_summaries: Array<{ day: string; paused: boolean }> };
     };
-    expect(upsertCall.plan_tile_summaries[0]?.paused).toBe(true);
+    expect(upsertCall.payload.tile_summaries[0]?.paused).toBe(true);
   });
 
   it('writes an audit failure event when a parallel read throws', async () => {
@@ -369,8 +378,8 @@ describe('BriefStateComposer.refreshTree — 8-read parallelism + composition', 
     await composerWithLink.refreshTree(HOUSEHOLD_ID, WEEK_ID, REQUEST_ID);
 
     const upsertCall = mocks.upsert.mock.calls[0]![0] as {
-      plan_tile_summaries: Array<{ day: string; lunch_link_suppressed_children: string[] }>;
+      payload: { tile_summaries: Array<{ day: string; lunch_link_suppressed_children: string[] }> };
     };
-    expect(upsertCall.plan_tile_summaries[0]?.lunch_link_suppressed_children).toEqual([CHILD_A]);
+    expect(upsertCall.payload.tile_summaries[0]?.lunch_link_suppressed_children).toEqual([CHILD_A]);
   });
 });

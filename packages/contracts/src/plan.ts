@@ -237,26 +237,36 @@ export const ScaffoldingDiffSchema = z.object({
   explanation: z.string().min(1).max(500).optional(),
 });
 
+// Story 3-DM-D1 — single payload column shape for brief_state. Consolidates
+// the four loose JSONB columns (tile_summaries / cleared_allergies /
+// scaffolding_diff) plus the plan_state mirror into one validated object.
+// Source of truth for plan state lives on plans.state; the plan_state* fields
+// here are a mirror for routes that read brief_state only (the Brief route at
+// GET /v1/households/:id/brief). All sub-fields carry defaults so parsing the
+// column default '{}' (a brand-new, content-less row) succeeds cleanly.
+export const BriefStatePayloadSchema = z.object({
+  tile_summaries: z.array(PlanTileSummarySchema).default([]),
+  cleared_allergies: z.array(ClearedAllergyEntrySchema).default([]),
+  scaffolding_diff: ScaffoldingDiffSchema.nullable().default(null),
+  // plan_state mirror — source of truth is plans.state. Null when no
+  // degradation/failure.
+  plan_state: z.enum(['hard_failed', 'degraded']).nullable().default(null),
+  plan_state_set_at: z.string().datetime({ offset: true }).nullable().default(null),
+  plan_state_message: z.string().max(500).nullable().default(null),
+});
+
 export const BriefStateRowSchema = z.object({
   household_id: z.string().uuid(),
   plan_id: z.string().uuid().nullable().default(null),  // Story 3.12 — null for pre-migration rows
   moment_headline: z.string(),
   lumi_note: z.string(),
   memory_prose: z.string(),
-  plan_tile_summaries: z.array(PlanTileSummarySchema),
-  cleared_allergies: z.array(ClearedAllergyEntrySchema).default([]),
-  scaffolding_diff: ScaffoldingDiffSchema.nullable().default(null),
+  // Story 3-DM-D1 — the four loose JSONB columns + the plan_state mirror now
+  // live inside one validated payload object (see BriefStatePayloadSchema).
+  payload: BriefStatePayloadSchema,
   generated_at: z.string().datetime({ offset: true }),
   plan_revision: z.number().int().min(0),
   updated_at: z.string().datetime({ offset: true }),
-  // Story 3.29 — soft cultural-degradation signal surfaced inline in BriefCanvas.
-  // null = normal/no degradation (most rows; default for pre-migration parses).
-  // 'degraded' = planner signaled CULTURAL_INTERSECTION_EMPTY; the parent sees
-  // the "try alternating" toggle. 'hard_failed' is reserved — the current
-  // hard-fail surface (Story 3.25/3.26) reads from audit_log, not brief_state.
-  plan_state: z.enum(['hard_failed', 'degraded']).nullable().default(null),
-  plan_state_set_at: z.string().datetime({ offset: true }).nullable().default(null),
-  plan_state_message: z.string().min(1).max(500).nullable().default(null),
 });
 
 // API response for GET /v1/households/:id/brief.

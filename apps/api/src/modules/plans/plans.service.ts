@@ -352,11 +352,13 @@ export class PlansService {
   // catches them so plan delivery is unaffected.
   async handleDegradedPlan(opts: {
     householdId: string;
+    planId: string;        // Story 3-DM-D1 — required for the plans-table write
     requestId: string;
   }): Promise<void> {
     const message =
       "This week's plan couldn't honor every rule strictly. Try alternating whose rules lead each day?";
-    await this.briefStateRepo.setPlanState({
+    await this.repo.setPlanState({
+      planId: opts.planId,
       householdId: opts.householdId,
       planState: 'degraded',
       setAt: new Date().toISOString(),
@@ -381,7 +383,7 @@ export class PlansService {
   // (called from PATCH /v1/households/:id/sovereignty-mode). Idempotent — a
   // null plan_state row is left untouched.
   async clearDegradedPlanState(householdId: string): Promise<void> {
-    await this.briefStateRepo.clearDegradedPlanState(householdId);
+    await this.repo.clearDegradedPlanState(householdId);
   }
 
   // Story 3.25 — does a plan.hard_fail audit row exist for this household+week?

@@ -181,6 +181,7 @@ import {
   PlanTileSummarySchema,
   ClearedAllergyEntrySchema,
   ScaffoldingDiffSchema,
+  BriefStatePayloadSchema,
   BriefStateRowSchema,
   BriefResponseSchema,
   RegeneratePlanQuerySchema,
@@ -525,6 +526,8 @@ export type PlanRow = z.infer<typeof PlanRowSchema>;
 
 // brief_state projection (Story 3.6)
 export type PlanTileSummary = z.infer<typeof PlanTileSummarySchema>;
+// Story 3-DM-D1 — consolidated brief_state payload shape.
+export type BriefStatePayload = z.infer<typeof BriefStatePayloadSchema>;
 export type BriefStateRow = z.infer<typeof BriefStateRowSchema>;
 export type BriefResponse = z.infer<typeof BriefResponseSchema>;
 
