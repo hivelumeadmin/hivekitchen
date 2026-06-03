@@ -1,4 +1,6 @@
 export const AUDIT_EVENT_TYPES = [
+  // planner (agent observability — emitted when LLM output fails schema validation)
+  'planner.bad_output',
   // plan
   'plan.generated',
   'plan.regenerated',

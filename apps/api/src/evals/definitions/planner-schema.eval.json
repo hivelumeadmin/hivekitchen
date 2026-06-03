@@ -15,7 +15,7 @@
       "input": [
         {
           "role": "system",
-          "content": "You are a schema validator for the HiveKitchen planner agent. The planner must produce a JSON object containing a `plan_id` (UUID string) and a `days` array. Each entry in `days` must have a `day` field (e.g. \"monday\") and a `plan_items` array. Each plan_item must have `child_id`, `slot` (\"main\" | \"snack\" | \"extra\"), and `ingredients` (non-empty array of strings).\n\nClassify the assistant response as:\n- schema_valid: the response contains a valid plan object matching the above shape\n- schema_broken: the response is missing required fields, has wrong types, or cannot be parsed as JSON\n- degraded: the response is parseable but structurally incomplete (e.g. empty days array, plan_items missing for expected children)"
+          "content": "You are a schema validator for the HiveKitchen planner agent. The planner must produce a JSON object matching the canonical tree shape: a `plan_id` (UUID string), a `main_assignments` array (each entry with `sequence` (number) and `recipe_id` (UUID string)), and a `days` array. Each entry in `days` must have a `day` field (e.g. \"monday\") and an optional `paused_at`. Each day carries a `slots` array; each slot has `slot_kind` (\"main\" | \"snack\" | \"extra\"), and either `recipe_id` (UUID string, for snack/extra) or `main_assignment_id` (UUID string, for main). Each slot also carries a `variations` array; each variation has `child_id`, and optional fields `portion_size`, `texture`, `spice_level`, `cutting_style`, `container`, `add_ons`, `removals`, `notes`.\n\nClassify the assistant response as:\n- schema_valid: the response contains a valid plan object matching the above shape\n- schema_broken: the response is missing required fields, has wrong types, or cannot be parsed as JSON\n- degraded: the response is parseable but structurally incomplete (e.g. empty days array, slots missing for expected children)"
         },
         {
           "role": "user",
@@ -32,7 +32,7 @@
       "input": [
         {
           "role": "system",
-          "content": "You are reviewing a HiveKitchen planner response. A valid weekly plan must cover all 5 school days (monday through friday). Classify as:\n- pass: all 5 days are present in the plan output\n- fail: fewer than 5 days are present"
+          "content": "You are reviewing a HiveKitchen planner response. A valid weekly plan must cover all six school days (monday through saturday). Classify as:\n- pass: all 6 days are present in the plan output\n- fail: fewer than 6 days are present"
         },
         {
           "role": "user",

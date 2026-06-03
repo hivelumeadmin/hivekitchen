@@ -52,7 +52,7 @@ export interface PlannerCulturalContext {
 // Story 3.20 — per-child bag-slot configuration (snack/extra on/off). Main is
 // always on, so it's not part of the shape. The planner uses this to decide
 // which slots to fill for each child; an inactive slot must produce no
-// plan_items entry, not an entry with empty ingredients.
+// plan_slots entry, not an entry with empty ingredients.
 export interface PlannerBagComposition {
   child_id: string;
   child_name: string;
@@ -427,7 +427,27 @@ export class DomainOrchestrator {
         }
 
         if (tc.name === 'plan.compose') {
-          planComposeResult = PlanComposeTreeOutputSchema.parse(result);
+          // On planner.bad_output rate spike, see
+          // _bmad-output/implementation-artifacts/planner-prompt-rollback.md
+          const parseResult = PlanComposeTreeOutputSchema.safeParse(result);
+          if (!parseResult.success) {
+            try {
+              await this.auditService.write({
+                event_type: 'planner.bad_output',
+                household_id: householdId,
+                request_id: requestId,
+                metadata: {
+                  agent: 'planner',
+                  weekOf,
+                  zodIssues: parseResult.error.issues,
+                },
+              });
+            } catch {
+              // audit write failure must not suppress the schema error
+            }
+            throw parseResult.error;
+          }
+          planComposeResult = parseResult.data;
         }
 
         messages.push({
@@ -590,7 +610,25 @@ export class DomainOrchestrator {
         }
 
         if (tc.name === 'plan.compose') {
-          swapResult = PlanComposeTreeOutputSchema.parse(result);
+          const parseResult = PlanComposeTreeOutputSchema.safeParse(result);
+          if (!parseResult.success) {
+            try {
+              await this.auditService.write({
+                event_type: 'planner.bad_output',
+                household_id: opts.householdId,
+                request_id: opts.requestId,
+                metadata: {
+                  agent: 'swap',
+                  weekOf: opts.weekOf,
+                  zodIssues: parseResult.error.issues,
+                },
+              });
+            } catch {
+              // audit write failure must not suppress the schema error
+            }
+            throw parseResult.error;
+          }
+          swapResult = parseResult.data;
         }
 
         messages.push({
@@ -808,9 +846,9 @@ export function buildCulturalContextLines(
 }
 
 // Story 3.20 — formats per-child bag composition as planner context lines.
-// The planner must omit plan_items for inactive slots; emitting items with
-// empty ingredients would break the guardrail's `min(1)` invariant and feel
-// to the parent like the slot is still "live but blank".
+// The planner must omit plan_slots entries for inactive slots; emitting items
+// with empty ingredients would break the guardrail's `min(1)` invariant and
+// feel to the parent like the slot is still "live but blank".
 export function buildBagCompositionLines(
   compositions: readonly PlannerBagComposition[] | undefined,
 ): string[] {

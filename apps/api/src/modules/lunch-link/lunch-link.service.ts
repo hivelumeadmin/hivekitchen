@@ -11,7 +11,7 @@ import { NotFoundError } from '../../common/errors.js';
 import type { LunchLinkRepository } from './lunch-link.repository.js';
 import type { HeartNoteRepository } from '../heart-notes/heart-note.repository.js';
 
-// Hardcoded stub bag — real bag from plan_items ships in a later slice.
+// Hardcoded stub bag — real bag from plan_slots + plan_slot_variations ships in a later slice.
 const STUB_BAG = {
   name: 'Sandwich, apple & water',
   sub: 'Packed for you today',

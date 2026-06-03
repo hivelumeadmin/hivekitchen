@@ -982,4 +982,137 @@ describe('DomainOrchestrator', () => {
       expect(recoveredCall).toBeUndefined();
     });
   });
+
+  // Story 3-DM-C2 — planner.bad_output audit instrumentation. The .safeParse
+  // swap at orchestrator.ts:430 (planner) / :593 (swap) must emit exactly one
+  // audit row per structurally-invalid plan.compose result and still throw so
+  // the BullMQ worker's failure semantics are unchanged.
+  describe('planner.bad_output audit emission', () => {
+    let savedComposeSpec: ToolSpec;
+
+    beforeEach(() => {
+      savedComposeSpec = TOOL_MANIFEST.get('plan.compose')!;
+    });
+
+    afterEach(() => {
+      TOOL_MANIFEST.set('plan.compose', savedComposeSpec);
+    });
+
+    const STRUCTURALLY_INVALID_RESULT = {
+      // Missing required tree fields (plan_id, main_assignments, days, etc.)
+      // — schema rejects with at least one ZodIssue.
+      not_a_plan: true,
+    };
+
+    it('planner path: structurally invalid plan.compose result → 1 planner.bad_output audit + throws', async () => {
+      const provider = buildProvider('primary', {
+        completeWithMessages: vi.fn().mockResolvedValue({
+          content: null,
+          toolCalls: [
+            { id: 'tc-bad', name: 'plan.compose', arguments: STRUCTURALLY_INVALID_RESULT },
+          ],
+          finishReason: 'tool_calls',
+          usage: { promptTokens: 1, completionTokens: 1, cachedPromptTokens: 0 },
+        }),
+      });
+
+      const { orchestrator, audit } = buildOrchestrator([provider]);
+      const composeSpec = TOOL_MANIFEST.get('plan.compose')!;
+      TOOL_MANIFEST.set('plan.compose', {
+        ...composeSpec,
+        fn: vi.fn().mockResolvedValue(STRUCTURALLY_INVALID_RESULT),
+      });
+
+      await expect(
+        orchestrator.planWeek({
+          householdId: HOUSEHOLD_ID,
+          weekOf: '2026-11-02',
+          requestId: 'req-bad-planner',
+        }),
+      ).rejects.toThrow();
+
+      const calls = (audit.write as unknown as ReturnType<typeof vi.fn>).mock.calls;
+      const badOutputCalls = calls.filter(
+        (c: Array<{ event_type: string }>) => c[0]?.event_type === 'planner.bad_output',
+      );
+      expect(badOutputCalls).toHaveLength(1);
+      const auditCall = badOutputCalls[0]?.[0] as {
+        event_type: string;
+        household_id: string;
+        request_id: string;
+        metadata: { agent: string; weekOf: string; zodIssues: unknown };
+      };
+      expect(auditCall).toMatchObject({
+        event_type: 'planner.bad_output',
+        household_id: HOUSEHOLD_ID,
+        request_id: 'req-bad-planner',
+        metadata: {
+          agent: 'planner',
+          weekOf: '2026-11-02',
+        },
+      });
+      expect(Array.isArray(auditCall.metadata.zodIssues)).toBe(true);
+      expect((auditCall.metadata.zodIssues as unknown[]).length).toBeGreaterThan(0);
+    });
+
+    it('swap path: structurally invalid plan.compose result → 1 planner.bad_output audit (agent=swap) + throws', async () => {
+      const provider = buildProvider('primary', {
+        completeWithMessages: vi.fn().mockResolvedValue({
+          content: null,
+          toolCalls: [
+            { id: 'tc-bad-swap', name: 'plan.compose', arguments: STRUCTURALLY_INVALID_RESULT },
+          ],
+          finishReason: 'tool_calls',
+          usage: { promptTokens: 1, completionTokens: 1, cachedPromptTokens: 0 },
+        }),
+      });
+
+      const { orchestrator, audit } = buildOrchestrator([provider]);
+      const composeSpec = TOOL_MANIFEST.get('plan.compose')!;
+      TOOL_MANIFEST.set('plan.compose', {
+        ...composeSpec,
+        fn: vi.fn().mockResolvedValue(STRUCTURALLY_INVALID_RESULT),
+      });
+
+      await expect(
+        orchestrator.swapBlockedItems({
+          householdId: HOUSEHOLD_ID,
+          weekOf: '2026-11-02',
+          requestId: 'req-bad-swap',
+          blockedItems: [
+            {
+              child_id: CHILD_ID,
+              day: 'monday',
+              slot: 'main',
+              original_ingredients: ['peanut butter'],
+              blocked_by: [{ allergen: 'peanut', ingredient: 'peanut butter' }],
+            },
+          ],
+        }),
+      ).rejects.toThrow();
+
+      const calls = (audit.write as unknown as ReturnType<typeof vi.fn>).mock.calls;
+      const badOutputCalls = calls.filter(
+        (c: Array<{ event_type: string }>) => c[0]?.event_type === 'planner.bad_output',
+      );
+      expect(badOutputCalls).toHaveLength(1);
+      const auditCall = badOutputCalls[0]?.[0] as {
+        event_type: string;
+        household_id: string;
+        request_id: string;
+        metadata: { agent: string; weekOf: string; zodIssues: unknown };
+      };
+      expect(auditCall).toMatchObject({
+        event_type: 'planner.bad_output',
+        household_id: HOUSEHOLD_ID,
+        request_id: 'req-bad-swap',
+        metadata: {
+          agent: 'swap',
+          weekOf: '2026-11-02',
+        },
+      });
+      expect(Array.isArray(auditCall.metadata.zodIssues)).toBe(true);
+      expect((auditCall.metadata.zodIssues as unknown[]).length).toBeGreaterThan(0);
+    });
+  });
 });

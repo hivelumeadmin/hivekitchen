@@ -251,7 +251,7 @@ const householdsRoutesPlugin: FastifyPluginAsync = async (fastify) => {
   );
 
   // Story 3.21 — DELETE /v1/households/:id/extra-library/:itemId
-  // Soft-deletes a library item so plan_items references and audit history
+  // Soft-deletes a library item so plan_slots references and audit history
   // continue to resolve. Primary Parent only — library entries are
   // household-level decisions.
   fastify.delete(

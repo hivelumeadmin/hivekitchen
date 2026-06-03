@@ -15,7 +15,7 @@ export interface CreateExtraLibraryParams {
 
 // Story 3.21 — household-scoped library of parent-authored reusable Extra
 // items. Soft-delete on archive so the planner's audit trail and any
-// plan_items references continue to resolve.
+// plan_slots references continue to resolve.
 export class ExtraLibraryRepository extends BaseRepository {
   async create(input: CreateExtraLibraryParams): Promise<ExtraLibraryItem> {
     const { data, error } = await this.client

@@ -680,7 +680,7 @@ export class RecipesRepository extends BaseRepository {
    * use_count = 1 on first sighting; on conflict, increment counters and
    * stamp last_used_at. Uses a Postgres rpc for true atomicity — a
    * SELECT-then-UPDATE pattern would race when the same recipe lands on
-   * multiple plan_items in a single commit batch.
+   * multiple plan_slots in a single commit batch.
    */
   async upsertUsageIncrement(
     householdId: string,

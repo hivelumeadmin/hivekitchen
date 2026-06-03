@@ -243,7 +243,7 @@ export function useConfirmVariantProposalMutation() {
 
 // PATCH /v1/households/:id/sovereignty-mode — Story 3.29.
 // On success invalidates ['brief'] so the inline degraded note disappears (the
-// API clears brief_state.plan_state) and the queued regen plan replaces the
+// API clears plans.state) and the queued regen plan replaces the
 // degraded one when committed.
 export function useUpdateSovereigntyModeMutation() {
   const queryClient = useQueryClient();

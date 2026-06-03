@@ -49,9 +49,9 @@ export interface RecipeServiceDiscoverDeps {
 //
 //  2. SERVER WRITE PATH (slice D.1):
 //     `materializeFromPlanItem()` creates (or reuses) a recipes row at
-//     plan-commit time so plan_items.recipe_id always points at a real
-//     recipe. `recordUse()` upserts household_recipe_usage so the kitchen
-//     map's favourite-recipes projection has signal to rank by.
+//     plan-commit time so plan_slots.recipe_id and plan_main_assignments.recipe_id
+//     always point at a real recipe. `recordUse()` upserts household_recipe_usage
+//     so the kitchen map's favourite-recipes projection has signal to rank by.
 //
 // Both paths require a RecipesRepository. The orchestrator + plans hook
 // each construct RecipeService with the repository wired in.
@@ -442,7 +442,7 @@ export class RecipeService {
    *   - ingredients array is empty
    *
    * Returns the recipe id (existing or freshly inserted) otherwise. Plan
-   * commit attaches this id to plan_items.recipe_id.
+   * commit attaches this id to plan_main_assignments.recipe_id.
    *
    * Naming heuristic (deterministic, no LLM):
    *   - one ingredient  → "Chickpea curry"
