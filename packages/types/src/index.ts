@@ -243,6 +243,10 @@ import {
   FlavorPassportStampSchema,
   FlavorPassportStateSchema,
   FlavorPassportResponseSchema,
+  // Slice 4-S15 — Child Request-a-Lunch + Parent Approval
+  ChildRequestCreateSchema,
+  ChildRequestSchema,
+  PendingChildRequestsResponseSchema,
   // Story 3.27 — variant proposal active-learning
   PlanVariantProposalOutputSchema,
   VariantProposalSchema,
@@ -626,6 +630,11 @@ export type LunchLinkPauseResponse = z.infer<typeof LunchLinkPauseResponseSchema
 export type FlavorPassportStamp = z.infer<typeof FlavorPassportStampSchema>;
 export type FlavorPassportState = z.infer<typeof FlavorPassportStateSchema>;
 export type FlavorPassportResponse = z.infer<typeof FlavorPassportResponseSchema>;
+
+// Slice 4-S15 — Child Request-a-Lunch + Parent Approval
+export type ChildRequestCreate = z.infer<typeof ChildRequestCreateSchema>;
+export type ChildRequest = z.infer<typeof ChildRequestSchema>;
+export type PendingChildRequestsResponse = z.infer<typeof PendingChildRequestsResponseSchema>;
 
 // Slice 4-S13 — Grandparent Guest Author cap
 export type { GuestAuthorCapResponse } from '@hivekitchen/contracts';

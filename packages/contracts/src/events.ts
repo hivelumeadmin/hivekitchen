@@ -32,4 +32,11 @@ export const InvalidationEvent = z.discriminatedUnion('type', [
   z.object({ type: z.literal('thread.resync'), thread_id: z.string().uuid(), from_seq: SequenceId }),
   z.object({ type: z.literal('voice.session.started'), session_id: z.string().uuid(), user_id: z.string().uuid() }),
   z.object({ type: z.literal('voice.session.ended'), session_id: z.string().uuid(), user_id: z.string().uuid() }),
+  // Slice 4-S15 — a child submitted a request / a parent resolved one. The
+  // server-side fan-out that emits these lands with the SSE dispatcher (Story
+  // 5.2); the contract + web handler land now so the parent's pending-requests
+  // query refetches once that dispatcher ships. household_id is snake_case to
+  // match every other member of this union.
+  z.object({ type: z.literal('child_request.received'), household_id: z.string().uuid() }),
+  z.object({ type: z.literal('child_request.resolved'), household_id: z.string().uuid() }),
 ]);

@@ -193,6 +193,16 @@ export function createSseBridge(queryClient: QueryClient): SseBridge {
         // Story 5.2 will wire Redis pub/sub fan-out. For now these events are logged only.
         break;
 
+      case 'child_request.received':
+      case 'child_request.resolved':
+        // Slice 4-S15 — refresh the parent's pending-requests list. The
+        // server-side emitter lands with the SSE dispatcher (Story 5.2); this
+        // handler is ready for it now.
+        void queryClient.invalidateQueries({
+          queryKey: QueryKeys.childRequests(event.household_id),
+        });
+        break;
+
       default: {
         // Exhaustiveness check — TypeScript compile error if a new InvalidationEvent
         // type is added to packages/contracts without a matching case here.

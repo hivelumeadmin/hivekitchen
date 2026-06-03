@@ -16,6 +16,7 @@ export * from './heart-notes.js';
 export * from './guest-author.js';
 export * from './lunch-link.js';
 export * from './flavor-passport.js';
+export * from './child-request.js';
 export * from './household-profile.js';
 export * from './extra-rules.js';
 export * from './school-policy.js';

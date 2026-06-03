@@ -6,6 +6,7 @@ import { useComplianceStore } from '@/stores/compliance.store.js';
 import { PageHeader } from '@/components/PageHeader.js';
 import { AddChildForm } from '@/features/children/AddChildForm.js';
 import { BagCompositionCard } from '@/features/children/BagCompositionCard.js';
+import { PendingChildRequests } from '@/features/child-requests/PendingChildRequests.js';
 import { AllergyClearedBadge } from './AllergyClearedBadge.js';
 import {
   AllergyUncertaintyBanner,
@@ -395,6 +396,10 @@ export function BriefCanvas() {
           >
             {brief.moment_headline !== '' ? brief.moment_headline : 'Your week, ready'}
           </PageHeader>
+
+          {/* Slice 4-S15 — pending child "request a lunch" suggestions. Renders
+              nothing when there are none. */}
+          {householdId !== null && <PendingChildRequests householdId={householdId} />}
 
           <div
             className={`grid grid-cols-2 ${tileSummaries.length <= 5 ? 'md:grid-cols-5' : 'md:grid-cols-6'} gap-4 mb-8`}

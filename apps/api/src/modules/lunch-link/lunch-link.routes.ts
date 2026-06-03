@@ -1,5 +1,6 @@
 import { Buffer } from 'node:buffer';
 import fp from 'fastify-plugin';
+import { z } from 'zod';
 import type { FastifyPluginAsync } from 'fastify';
 import {
   LunchLinkDevParamsSchema,
@@ -11,11 +12,13 @@ import {
   LunchLinkExpiredPayloadSchema,
   RateLunchLinkBodySchema,
   FlavorPassportResponseSchema,
+  ChildRequestCreateSchema,
 } from '@hivekitchen/contracts';
 import type {
   LunchLinkDevParams,
   GenerateLunchLinkBody,
   LunchLinkTokenParam,
+  ChildRequestCreate,
 } from '@hivekitchen/contracts';
 import { authorize } from '../../middleware/authorize.hook.js';
 import { LunchLinkRepository } from './lunch-link.repository.js';
@@ -26,6 +29,10 @@ import { ChildPreferencesRepository } from '../child-preferences/child-preferenc
 import { ChildPreferencesService } from '../child-preferences/child-preferences.service.js';
 import { FlavorPassportRepository } from '../flavor-passport/flavor-passport.repository.js';
 import { FlavorPassportService } from '../flavor-passport/flavor-passport.service.js';
+import { FoodPreferencesRepository } from '../food-preferences/food-preferences.repository.js';
+import { ThreadRepository } from '../threads/thread.repository.js';
+import { ChildRequestRepository } from '../child-requests/child-request.repository.js';
+import { ChildRequestService } from '../child-requests/child-request.service.js';
 import { NotFoundError } from '../../common/errors.js';
 
 const lunchLinkRoutesPlugin: FastifyPluginAsync = async (fastify) => {
@@ -51,6 +58,16 @@ const lunchLinkRoutesPlugin: FastifyPluginAsync = async (fastify) => {
   // Slice 4-S12 — FlavorPassport read service for the public child endpoint.
   const flavorPassportService = new FlavorPassportService(
     new FlavorPassportRepository(fastify.supabase, fastify.log),
+  );
+
+  // Slice 4-S15 — child request-a-lunch service for the public submit endpoint.
+  // Constructed here (mirrors the 4-S12 FlavorPassport injection) so the public
+  // child route can verify the token read-only and persist the request.
+  const childRequestService = new ChildRequestService(
+    new ChildRequestRepository(fastify.supabase),
+    new FoodPreferencesRepository(fastify.supabase, kek),
+    new ThreadRepository(fastify.supabase),
+    fastify.log,
   );
 
   const requireMember = authorize(['primary_parent', 'secondary_caregiver']);
@@ -243,6 +260,42 @@ const lunchLinkRoutesPlugin: FastifyPluginAsync = async (fastify) => {
         { childFirst: true },
       );
       return reply.send(passport);
+    },
+  );
+
+  // Slice 4-S15 — child-facing: submit a text request-a-lunch suggestion.
+  // PUBLIC — authenticate hook skips POST /v1/lunch-link/:token/child-request
+  // via regex. Read-only token verification (no open recorded). All token
+  // failure modes (invalid / expired / suppressed) collapse to 404 — oracle
+  // prevention, identical to the /rate and /passport routes. A duplicate
+  // submission on the same session surfaces as 409 (ConflictError).
+  fastify.post(
+    '/v1/lunch-link/:token/child-request',
+    {
+      schema: {
+        params: LunchLinkTokenParamSchema,
+        body: ChildRequestCreateSchema,
+        response: { 201: z.object({ id: z.string().uuid() }) },
+      },
+    },
+    async (request, reply) => {
+      const { token } = request.params as LunchLinkTokenParam;
+      const body = request.body as ChildRequestCreate;
+
+      const verified = await service.verifyTokenForRead(token);
+      if (verified.status !== 'valid') {
+        throw new NotFoundError('Link not found');
+      }
+
+      const created = await childRequestService.submitRequest(
+        {
+          childId: verified.childId,
+          householdId: verified.householdId,
+          sessionId: verified.sessionId,
+        },
+        body.request_text,
+      );
+      return reply.status(201).send(created);
     },
   );
 };

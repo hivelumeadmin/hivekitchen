@@ -44,4 +44,13 @@ export const QueryKeys = {
 
   /** @example QueryKeys.brief('household-uuid') → ['brief', 'household-uuid'] */
   brief: (householdId: string): ['brief', string] => ['brief', householdId],
+
+  /**
+   * Slice 4-S15 — pending child requests for the parent's planning page.
+   * Invalidated by the `child_request.received` / `child_request.resolved`
+   * SSE events.
+   * @example QueryKeys.childRequests('household-uuid') → ['child-requests', 'household-uuid']
+   */
+  childRequests: (householdId: string): ['child-requests', string] =>
+    ['child-requests', householdId],
 } as const;

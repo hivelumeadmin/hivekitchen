@@ -299,7 +299,7 @@ export class LunchLinkService {
   async verifyTokenForRead(
     rawToken: string,
   ): Promise<
-    | { status: 'valid'; childId: string; householdId: string }
+    | { status: 'valid'; childId: string; householdId: string; sessionId: string }
     | { status: 'invalid' }
   > {
     const parsed = parseToken(rawToken);
@@ -326,6 +326,9 @@ export class LunchLinkService {
       status: 'valid',
       childId: parsed.child_id,
       householdId: session.household_id,
+      // Slice 4-S15 — the child-request submit endpoint needs the session id to
+      // satisfy the one-request-per-session UNIQUE constraint.
+      sessionId: session.id,
     };
   }
 

@@ -133,6 +133,8 @@ interface S3MockOpts {
   // Slice 4-S12 — child_preferences rows for the FlavorPassport endpoint, with
   // embedded recipes(canonical_name, cuisine_tags, recipe_steps(...)).
   childPreferences?: unknown[];
+  // Slice 4-S15 — child_lunch_requests insert result for the submit endpoint.
+  childRequestInsert?: SupabaseResult;
 }
 
 /**
@@ -229,6 +231,16 @@ function buildS3MockSupabase(opts: S3MockOpts) {
             data: opts.childPreferences ?? [],
             error: null,
           }));
+        case 'child_lunch_requests':
+          return chainable(() =>
+            opts.childRequestInsert === undefined
+              ? { data: { id: '99999999-9999-4999-8999-999999999999' }, error: null }
+              : opts.childRequestInsert,
+          );
+        case 'threads':
+          // No active planning thread → the best-effort Lumi-turn injection is
+          // a no-op (it logs at warn and returns).
+          return chainable(() => ({ data: null, error: null }));
         default:
           throw new Error(`unexpected table ${table}`);
       }
@@ -894,5 +906,134 @@ describe('GET /v1/lunch-link/:token/passport (public)', () => {
       '2026-05-11',
       expect.any(String),
     );
+  });
+});
+
+describe('POST /v1/lunch-link/:token/child-request (public)', () => {
+  let app: FastifyInstance;
+  afterEach(async () => {
+    if (app) await app.close();
+  });
+
+  it('201 with { id } for a valid token + valid body', async () => {
+    app = await buildTestApp(buildS3MockSupabase({}));
+
+    const res = await app.inject({
+      method: 'POST',
+      url: `/v1/lunch-link/${forgeLunchToken()}/child-request`,
+      payload: { request_text: 'I want pizza on Friday!' },
+    });
+
+    expect(res.statusCode).toBe(201);
+    const body = JSON.parse(res.body) as { id: string };
+    expect(body.id).toBe('99999999-9999-4999-8999-999999999999');
+  });
+
+  it('does not require an Authorization header (auth-exclusion regex covers it)', async () => {
+    app = await buildTestApp(buildS3MockSupabase({}));
+
+    const res = await app.inject({
+      method: 'POST',
+      url: `/v1/lunch-link/${forgeLunchToken()}/child-request`,
+      payload: { request_text: 'hello' },
+    });
+
+    expect(res.statusCode).not.toBe(401);
+    expect(res.statusCode).not.toBe(403);
+  });
+
+  it('404 for an invalid (malformed) token — oracle prevention', async () => {
+    app = await buildTestApp(buildS3MockSupabase({}));
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/v1/lunch-link/garbage-no-dot/child-request',
+      payload: { request_text: 'hello' },
+    });
+
+    expect(res.statusCode).toBe(404);
+  });
+
+  it('404 for a token signed with the wrong HMAC key', async () => {
+    app = await buildTestApp(buildS3MockSupabase({}));
+
+    const res = await app.inject({
+      method: 'POST',
+      url: `/v1/lunch-link/${forgeLunchToken({ hmacKey: 'b'.repeat(64) })}/child-request`,
+      payload: { request_text: 'hello' },
+    });
+
+    expect(res.statusCode).toBe(404);
+  });
+
+  it('404 for an expired token — no expiry detail leaked', async () => {
+    app = await buildTestApp(buildS3MockSupabase({}));
+
+    const res = await app.inject({
+      method: 'POST',
+      url: `/v1/lunch-link/${forgeLunchToken({ exp: '2000-01-01T00:00:00.000Z' })}/child-request`,
+      payload: { request_text: 'hello' },
+    });
+
+    expect(res.statusCode).toBe(404);
+  });
+
+  it('409 when a request already exists for the session (UNIQUE on session_id)', async () => {
+    app = await buildTestApp(
+      buildS3MockSupabase({
+        childRequestInsert: { data: null, error: { code: '23505', message: 'duplicate key' } },
+      }),
+    );
+
+    const res = await app.inject({
+      method: 'POST',
+      url: `/v1/lunch-link/${forgeLunchToken()}/child-request`,
+      payload: { request_text: 'second request' },
+    });
+
+    expect(res.statusCode).toBe(409);
+  });
+
+  // The slice doc says 422 for over-length text, but this codebase returns 400
+  // for ALL Zod body-validation failures (ValidationError.status=400; app.ts maps
+  // ZodError → 400). 422 is reserved for semantic domain errors (guardrail, cap).
+  it('400 when request_text exceeds 200 chars (schema body validation)', async () => {
+    app = await buildTestApp(buildS3MockSupabase({}));
+
+    const res = await app.inject({
+      method: 'POST',
+      url: `/v1/lunch-link/${forgeLunchToken()}/child-request`,
+      payload: { request_text: 'x'.repeat(201) },
+    });
+
+    expect(res.statusCode).toBe(400);
+  });
+
+  it('400 when request_text is empty', async () => {
+    app = await buildTestApp(buildS3MockSupabase({}));
+
+    const res = await app.inject({
+      method: 'POST',
+      url: `/v1/lunch-link/${forgeLunchToken()}/child-request`,
+      payload: { request_text: '' },
+    });
+
+    expect(res.statusCode).toBe(400);
+  });
+
+  it('404 for a suppressed session (suppressed_at set) — oracle prevention', async () => {
+    app = await buildTestApp(
+      buildS3MockSupabase({
+        session: sampleSessionRow({ suppressed_at: '2026-05-17T08:00:00.000Z' }),
+      }),
+    );
+
+    const res = await app.inject({
+      method: 'POST',
+      url: `/v1/lunch-link/${forgeLunchToken()}/child-request`,
+      payload: { request_text: 'hello' },
+    });
+
+    expect(res.statusCode).toBe(404);
   });
 });
