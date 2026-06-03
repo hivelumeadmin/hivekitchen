@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { useParams } from 'react-router-dom';
+import { Link, useParams } from 'react-router-dom';
 import { hkFetch, publicGet, publicPost } from '@/lib/fetch.js';
 import type {
   LunchLinkDevResponse,
@@ -282,6 +282,22 @@ export default function LunchLinkRoute() {
             isHmac ? ((data as LunchLinkPayload).rating ?? undefined) : undefined
           }
         />
+        {/* Slice 4-S12: understated link to the cumulative FlavorPassport. The
+            passport page handles its own empty state, so this shows
+            unconditionally for real (HMAC) links — no extra API call here. The
+            child name rides along via router state since the public passport
+            response carries no name. */}
+        {isHmac && linkId && (
+          <p className="text-center">
+            <Link
+              to={`/lunch/${linkId}/passport`}
+              state={{ childName }}
+              className="text-sm text-fg-muted underline"
+            >
+              See {childName}&apos;s flavor passport →
+            </Link>
+          </p>
+        )}
       </div>
     </main>
   );

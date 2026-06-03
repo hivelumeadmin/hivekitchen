@@ -1,6 +1,7 @@
 import fp from 'fastify-plugin';
 import type { FastifyPluginAsync } from 'fastify';
 import { Buffer } from 'node:buffer';
+import { z } from 'zod';
 import {
   AddChildBodySchema,
   AddChildResponseSchema,
@@ -19,6 +20,7 @@ import {
   LunchLinkPauseInputSchema,
   LunchLinkPauseResponseSchema,
   ChildSignalOutputSchema,
+  FlavorPassportResponseSchema,
 } from '@hivekitchen/contracts';
 import type {
   AddChildBody,
@@ -36,6 +38,8 @@ import { ChildrenRepository } from './children.repository.js';
 import { ChildrenService } from './children.service.js';
 import { ChildPreferencesRepository } from '../child-preferences/child-preferences.repository.js';
 import { loadChildSignal } from '../child-preferences/child-signal.assembler.js';
+import { FlavorPassportRepository } from '../flavor-passport/flavor-passport.repository.js';
+import { FlavorPassportService } from '../flavor-passport/flavor-passport.service.js';
 import { SchoolPoliciesRepository } from './school-policies.repository.js';
 import { SchoolPoliciesService } from './school-policies.service.js';
 import { ExtraRulesRepository } from './extra-rules.repository.js';
@@ -84,6 +88,11 @@ const childrenRoutesPlugin: FastifyPluginAsync = async (fastify) => {
 
   // Slice 4-S11 — Layer 2 signal read for the per-child signal-summary endpoint.
   const childPreferencesRepository = new ChildPreferencesRepository(fastify.supabase);
+
+  // Slice 4-S12 — FlavorPassport read service for the parent endpoint.
+  const flavorPassportService = new FlavorPassportService(
+    new FlavorPassportRepository(fastify.supabase, fastify.log),
+  );
 
   // Story 3.28 — lunch link suppression. Decorated by plansHook; children-routes
   // depends on it so plansHook must be registered before childrenRoutes.
@@ -370,6 +379,32 @@ const childrenRoutesPlugin: FastifyPluginAsync = async (fastify) => {
         per_child: signal.per_child.filter((c) => c.child_id === childId),
         family_liked: signal.family_liked,
       });
+    },
+  );
+
+  // Slice 4-S12 — GET /v1/children/:childId/flavor-passport
+  // Per-child cumulative flavor journey. Either caregiver may read. The query is
+  // household-scoped, so a childId outside the caller's household simply yields
+  // an empty passport (no existence oracle). Parent view orders chronologically
+  // (childFirst:false) — the journey from the beginning.
+  fastify.get(
+    '/v1/children/:childId/flavor-passport',
+    {
+      preHandler: requireMember,
+      schema: {
+        params: z.object({ childId: z.string().uuid() }),
+        response: { 200: FlavorPassportResponseSchema },
+      },
+    },
+    async (request, reply) => {
+      const { childId } = request.params as { childId: string };
+      const householdId = request.user.household_id;
+
+      const passport = await flavorPassportService.buildPassport(childId, householdId, {
+        childFirst: false,
+      });
+
+      return reply.status(200).send(passport);
     },
   );
 

@@ -130,6 +130,9 @@ interface S3MockOpts {
   session?: LunchLinkSessionRow | null;
   upsertedSession?: LunchLinkSessionRow | null;
   noteRow?: HeartNoteRow | null;
+  // Slice 4-S12 — child_preferences rows for the FlavorPassport endpoint, with
+  // embedded recipes(canonical_name, cuisine_tags, recipe_steps(...)).
+  childPreferences?: unknown[];
 }
 
 /**
@@ -219,6 +222,11 @@ function buildS3MockSupabase(opts: S3MockOpts) {
         case 'heart_notes':
           return chainable(() => ({
             data: opts.noteRow === undefined ? null : opts.noteRow,
+            error: null,
+          }));
+        case 'child_preferences':
+          return chainable(() => ({
+            data: opts.childPreferences ?? [],
             error: null,
           }));
         default:
@@ -720,6 +728,152 @@ describe('POST /v1/lunch-link/:token/rate (public)', () => {
       household_id: HOUSEHOLD_ID,
       metadata: expect.objectContaining({ child_id: CHILD_ID, date: DATE, rating: 'loved' }),
     });
+  });
+});
+
+describe('GET /v1/lunch-link/:token/passport (public)', () => {
+  let app: FastifyInstance;
+  afterEach(async () => {
+    if (app) await app.close();
+  });
+
+  function passportRow(overrides: Record<string, unknown> = {}) {
+    return {
+      recipe_id: '66666666-6666-4666-8666-666666666666',
+      slot_kind: 'main',
+      signal_type: 'loved',
+      signal_date: '2026-05-10',
+      recipes: { canonical_name: 'Tikka wrap', cuisine_tags: ['indian'], recipe_steps: [] },
+      ...overrides,
+    };
+  }
+
+  it('200 with a valid passport shape for a valid unexpired token', async () => {
+    app = await buildTestApp(
+      buildS3MockSupabase({ childPreferences: [passportRow()] }),
+    );
+
+    const res = await app.inject({
+      method: 'GET',
+      url: `/v1/lunch-link/${forgeLunchToken()}/passport`,
+    });
+
+    expect(res.statusCode).toBe(200);
+    const body = JSON.parse(res.body) as {
+      child_id: string;
+      state: string;
+      stamps: Array<{ recipe_name: string; signal_type: string }>;
+    };
+    expect(body.child_id).toBe(CHILD_ID);
+    expect(body.state).toBe('developing');
+    expect(body.stamps).toHaveLength(1);
+    expect(body.stamps[0]?.recipe_name).toBe('Tikka wrap');
+  });
+
+  it('orders loved stamps before ok stamps (childFirst)', async () => {
+    app = await buildTestApp(
+      buildS3MockSupabase({
+        childPreferences: [
+          passportRow({
+            recipe_id: '11111111-aaaa-4aaa-8aaa-111111111111',
+            signal_type: 'ok',
+            signal_date: '2026-05-20',
+          }),
+          passportRow({
+            recipe_id: '22222222-aaaa-4aaa-8aaa-222222222222',
+            signal_type: 'loved',
+            signal_date: '2026-05-01',
+          }),
+        ],
+      }),
+    );
+
+    const res = await app.inject({
+      method: 'GET',
+      url: `/v1/lunch-link/${forgeLunchToken()}/passport`,
+    });
+
+    expect(res.statusCode).toBe(200);
+    const body = JSON.parse(res.body) as { stamps: Array<{ signal_type: string }> };
+    expect(body.stamps.map((s) => s.signal_type)).toEqual(['loved', 'ok']);
+  });
+
+  it('does not require an Authorization header (no 401)', async () => {
+    app = await buildTestApp(buildS3MockSupabase({ childPreferences: [] }));
+
+    const res = await app.inject({
+      method: 'GET',
+      url: `/v1/lunch-link/${forgeLunchToken()}/passport`,
+    });
+
+    expect(res.statusCode).not.toBe(401);
+    expect(res.statusCode).not.toBe(403);
+  });
+
+  it('404 for a malformed token', async () => {
+    app = await buildTestApp(buildS3MockSupabase({}));
+
+    const res = await app.inject({
+      method: 'GET',
+      url: '/v1/lunch-link/garbage-no-dot/passport',
+    });
+
+    expect(res.statusCode).toBe(404);
+  });
+
+  it('404 for a token signed with the wrong HMAC key', async () => {
+    app = await buildTestApp(buildS3MockSupabase({}));
+
+    const res = await app.inject({
+      method: 'GET',
+      url: `/v1/lunch-link/${forgeLunchToken({ hmacKey: 'b'.repeat(64) })}/passport`,
+    });
+
+    expect(res.statusCode).toBe(404);
+  });
+
+  it('404 for an expired token — no expiry detail leaked (oracle prevention)', async () => {
+    app = await buildTestApp(buildS3MockSupabase({ childPreferences: [passportRow()] }));
+
+    const res = await app.inject({
+      method: 'GET',
+      url: `/v1/lunch-link/${forgeLunchToken({ exp: '2000-01-01T00:00:00.000Z' })}/passport`,
+    });
+
+    // Identical to invalid/suppressed — never 410, never an expiry message.
+    expect(res.statusCode).toBe(404);
+  });
+
+  it('404 for a suppressed session', async () => {
+    app = await buildTestApp(
+      buildS3MockSupabase({
+        session: sampleSessionRow({ suppressed_at: '2026-05-17T08:00:00.000Z' }),
+        childPreferences: [passportRow()],
+      }),
+    );
+
+    const res = await app.inject({
+      method: 'GET',
+      url: `/v1/lunch-link/${forgeLunchToken()}/passport`,
+    });
+
+    expect(res.statusCode).toBe(404);
+  });
+
+  it('emits no audit context — passport reads are not link opens', async () => {
+    const capturedAudit: { value: unknown } = { value: undefined };
+    app = await buildTestApp(
+      buildS3MockSupabase({ childPreferences: [passportRow()] }),
+      'development',
+      capturedAudit,
+    );
+
+    await app.inject({
+      method: 'GET',
+      url: `/v1/lunch-link/${forgeLunchToken()}/passport`,
+    });
+
+    expect(capturedAudit.value).toBeUndefined();
   });
 
   it('fires briefStateComposer.refreshTree with the Monday of the token date', async () => {

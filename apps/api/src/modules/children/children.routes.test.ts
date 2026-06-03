@@ -114,6 +114,9 @@ interface MockDbState {
   householdAllergens: HouseholdAllergenRowDb[];
   householdCulturalIdentifiers: HouseholdCulturalIdentifierRowDb[];
   dietaryPreferences: DietaryPreferenceRowDb[];
+  // Slice 4-S12 — child_preferences rows (with embedded recipes) for the
+  // FlavorPassport endpoint.
+  childPreferences: unknown[];
 }
 
 // In-memory Supabase mock — children + users (for parental_notice gate).
@@ -133,6 +136,7 @@ function buildMockSupabase(state: MockDbState) {
       if (table === 'household_cultural_identifiers')
         return householdCulturalIdentifiersTable(state);
       if (table === 'dietary_preferences') return dietaryPreferencesTable(state);
+      if (table === 'child_preferences') return childPreferencesTable(state);
       throw new Error(`unexpected table: ${table}`);
     },
     rpc(_fnName: string) {
@@ -518,6 +522,26 @@ function emptyState(opts: {
     householdAllergens: [],
     householdCulturalIdentifiers: [],
     dietaryPreferences: [],
+    childPreferences: [],
+  };
+}
+
+// Slice 4-S12 — minimal child_preferences mock for the FlavorPassport endpoint.
+// FlavorPassportRepository calls .select(embed).eq('child_id').eq('household_id')
+// .in('signal_type', [...]) and awaits the result.
+function childPreferencesTable(state: MockDbState) {
+  return {
+    select() {
+      const chain = {
+        eq() {
+          return chain;
+        },
+        in() {
+          return Promise.resolve({ data: state.childPreferences, error: null });
+        },
+      };
+      return chain;
+    },
   };
 }
 
@@ -2017,6 +2041,111 @@ describe('POST /v1/children/:childId/lunch-link-pause', () => {
       url: `/v1/children/${childId}/lunch-link-pause`,
       headers: { authorization: `Bearer ${token}` },
       payload: { suppress: true },
+    });
+
+    expect(res.statusCode).toBe(400);
+  });
+});
+
+// Slice 4-S12 — parent FlavorPassport endpoint.
+describe('GET /v1/children/:childId/flavor-passport', () => {
+  let app: FastifyInstance;
+  afterEach(async () => {
+    if (app) await app.close();
+  });
+
+  const PASSPORT_CHILD_ID = '88888888-8888-4888-8888-888888888888';
+  const PASSPORT_RECIPE_ID = '99999999-9999-4999-8999-999999999999';
+
+  function passportRow(overrides: Record<string, unknown> = {}) {
+    return {
+      recipe_id: PASSPORT_RECIPE_ID,
+      slot_kind: 'main',
+      signal_type: 'loved',
+      signal_date: '2026-05-10',
+      recipes: { canonical_name: 'Tikka wrap', cuisine_tags: ['indian'], recipe_steps: [] },
+      ...overrides,
+    };
+  }
+
+  it('200 with a valid FlavorPassportResponse shape', async () => {
+    const state = emptyState();
+    state.childPreferences = [passportRow()];
+    app = await buildTestApp({ state });
+    const token = signPrimaryParentToken(app);
+
+    const res = await app.inject({
+      method: 'GET',
+      url: `/v1/children/${PASSPORT_CHILD_ID}/flavor-passport`,
+      headers: { authorization: `Bearer ${token}` },
+    });
+
+    expect(res.statusCode).toBe(200);
+    const body = JSON.parse(res.body) as {
+      child_id: string;
+      state: string;
+      stamps: Array<{ recipe_name: string; method_caption: string | null }>;
+    };
+    expect(body.child_id).toBe(PASSPORT_CHILD_ID);
+    expect(body.state).toBe('developing');
+    expect(body.stamps).toHaveLength(1);
+    expect(body.stamps[0]?.recipe_name).toBe('Tikka wrap');
+  });
+
+  it('200 empty state for a child with no positive signals', async () => {
+    const state = emptyState();
+    state.childPreferences = [];
+    app = await buildTestApp({ state });
+    const token = signPrimaryParentToken(app);
+
+    const res = await app.inject({
+      method: 'GET',
+      url: `/v1/children/${PASSPORT_CHILD_ID}/flavor-passport`,
+      headers: { authorization: `Bearer ${token}` },
+    });
+
+    expect(res.statusCode).toBe(200);
+    const body = JSON.parse(res.body) as { state: string; stamps: unknown[] };
+    expect(body.state).toBe('empty');
+    expect(body.stamps).toEqual([]);
+  });
+
+  it('secondary caregiver may read', async () => {
+    const state = emptyState();
+    state.childPreferences = [passportRow()];
+    app = await buildTestApp({ state });
+    const token = signSecondaryCaregiverToken(app);
+
+    const res = await app.inject({
+      method: 'GET',
+      url: `/v1/children/${PASSPORT_CHILD_ID}/flavor-passport`,
+      headers: { authorization: `Bearer ${token}` },
+    });
+
+    expect(res.statusCode).toBe(200);
+  });
+
+  it('401 without an auth token', async () => {
+    const state = emptyState();
+    app = await buildTestApp({ state });
+
+    const res = await app.inject({
+      method: 'GET',
+      url: `/v1/children/${PASSPORT_CHILD_ID}/flavor-passport`,
+    });
+
+    expect(res.statusCode).toBe(401);
+  });
+
+  it('400 when childId is not a UUID', async () => {
+    const state = emptyState();
+    app = await buildTestApp({ state });
+    const token = signPrimaryParentToken(app);
+
+    const res = await app.inject({
+      method: 'GET',
+      url: `/v1/children/not-a-uuid/flavor-passport`,
+      headers: { authorization: `Bearer ${token}` },
     });
 
     expect(res.statusCode).toBe(400);

@@ -290,6 +290,45 @@ export class LunchLinkService {
     };
   }
 
+  // Slice 4-S12: read-only token verification for the FlavorPassport child
+  // endpoint. Unlike verifyAndFetch this records NO open, fetches no heart note,
+  // and has no audit footprint — the passport is a read-only view, not a link
+  // open. Reuses the same HMAC + session + suppression + expiry checks so every
+  // failure mode collapses to status:'invalid' (the caller returns 404 for all
+  // of them — oracle prevention).
+  async verifyTokenForRead(
+    rawToken: string,
+  ): Promise<
+    | { status: 'valid'; childId: string; householdId: string }
+    | { status: 'invalid' }
+  > {
+    const parsed = parseToken(rawToken);
+    if (parsed === null) return { status: 'invalid' };
+
+    const hmacKey = await this.lunchLinkRepo.findHmacKey(parsed.date);
+    if (hmacKey === null) return { status: 'invalid' };
+
+    if (!verifyHmac(parsed.encodedPayload, parsed.signature, hmacKey)) {
+      return { status: 'invalid' };
+    }
+
+    const session = await this.lunchLinkRepo.findSession(parsed.child_id, parsed.date);
+    if (session === null) return { status: 'invalid' };
+    if (session.suppressed_at !== null && session.suppressed_at !== undefined) {
+      return { status: 'invalid' };
+    }
+
+    if (Date.now() >= new Date(parsed.exp).getTime()) {
+      return { status: 'invalid' };
+    }
+
+    return {
+      status: 'valid',
+      childId: parsed.child_id,
+      householdId: session.household_id,
+    };
+  }
+
   // Returns null when childId is not in the caller's household; the caller
   // raises 404 from that null.
   async getDevPayload(

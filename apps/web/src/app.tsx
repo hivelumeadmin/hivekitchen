@@ -43,6 +43,8 @@ import GroceryListRoute from './routes/(app)/grocery-list.js';
 import KitchenInspirationRoute from './routes/(app)/kitchen-inspiration.js';
 import KitchenProfileRoute from './routes/(app)/kitchen-profile.js';
 import LunchLinkRoute from './routes/(app)/lunch-link.js';
+import ChildFlavorPassportPage from './routes/(app)/child-flavor-passport.js';
+import LunchPassportRoute from './routes/(app)/lunch-passport.js';
 
 function RootRedirect() {
   const hash = typeof window !== 'undefined' ? window.location.hash : '';
@@ -73,6 +75,7 @@ const router = createBrowserRouter([
       { path: '/app/children/:childId/school-policies', element: <ChildSchoolPoliciesPage /> },
       { path: '/app/children/:childId/bag-composition', element: <ChildBagCompositionPage /> },
       { path: '/app/children/:childId/extra-rules', element: <ChildExtraRulesPage /> },
+      { path: '/app/children/:childId/flavor-passport', element: <ChildFlavorPassportPage /> },
       { path: '/app/day/:day', element: <DayDetailRoute /> },
       { path: '/app/heart-note', element: <HeartNoteRoute /> },
       { path: '/app/heart-notes', element: <HeartNotesRoute /> },
@@ -83,6 +86,7 @@ const router = createBrowserRouter([
       // Lunch Link — child-scope surface. AppLayout's useMatch('/lunch/*')
       // suppresses the parent LumiOrb/LumiPanel for these routes.
       { path: '/lunch/:linkId', element: <LunchLinkRoute /> },
+      { path: '/lunch/:linkId/passport', element: <LunchPassportRoute /> },
       { path: '/account', element: <AccountPage /> },
     ],
   },

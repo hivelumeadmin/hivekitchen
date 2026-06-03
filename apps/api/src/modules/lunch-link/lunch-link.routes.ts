@@ -10,6 +10,7 @@ import {
   LunchLinkPayloadSchema,
   LunchLinkExpiredPayloadSchema,
   RateLunchLinkBodySchema,
+  FlavorPassportResponseSchema,
 } from '@hivekitchen/contracts';
 import type {
   LunchLinkDevParams,
@@ -23,6 +24,8 @@ import { HeartNoteRepository } from '../heart-notes/heart-note.repository.js';
 import { PlansRepository } from '../plans/plans.repository.js';
 import { ChildPreferencesRepository } from '../child-preferences/child-preferences.repository.js';
 import { ChildPreferencesService } from '../child-preferences/child-preferences.service.js';
+import { FlavorPassportRepository } from '../flavor-passport/flavor-passport.repository.js';
+import { FlavorPassportService } from '../flavor-passport/flavor-passport.service.js';
 import { NotFoundError } from '../../common/errors.js';
 
 const lunchLinkRoutesPlugin: FastifyPluginAsync = async (fastify) => {
@@ -43,6 +46,11 @@ const lunchLinkRoutesPlugin: FastifyPluginAsync = async (fastify) => {
     new ChildPreferencesRepository(fastify.supabase),
     new PlansRepository(fastify.supabase),
     fastify.log,
+  );
+
+  // Slice 4-S12 — FlavorPassport read service for the public child endpoint.
+  const flavorPassportService = new FlavorPassportService(
+    new FlavorPassportRepository(fastify.supabase, fastify.log),
   );
 
   const requireMember = authorize(['primary_parent', 'secondary_caregiver']);
@@ -207,6 +215,34 @@ const lunchLinkRoutesPlugin: FastifyPluginAsync = async (fastify) => {
         });
 
       return reply.status(204).send();
+    },
+  );
+
+  // Slice 4-S12 — child-facing: cumulative FlavorPassport for the token's child.
+  // PUBLIC — authenticate hook skips GET /v1/lunch-link/:token/passport via regex.
+  // Read-only: no open recorded, no audit event emitted. All token failure modes
+  // (invalid / expired / suppressed) collapse to 404 — oracle prevention.
+  fastify.get(
+    '/v1/lunch-link/:token/passport',
+    {
+      schema: {
+        params: LunchLinkTokenParamSchema,
+        response: { 200: FlavorPassportResponseSchema },
+      },
+    },
+    async (request, reply) => {
+      const { token } = request.params as LunchLinkTokenParam;
+      const verified = await service.verifyTokenForRead(token);
+      if (verified.status !== 'valid') {
+        throw new NotFoundError('Link not found');
+      }
+
+      const passport = await flavorPassportService.buildPassport(
+        verified.childId,
+        verified.householdId,
+        { childFirst: true },
+      );
+      return reply.send(passport);
     },
   );
 };

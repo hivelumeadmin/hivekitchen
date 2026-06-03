@@ -239,6 +239,10 @@ import {
   // Story 3.28 — Lunch Link suppression
   LunchLinkPauseInputSchema,
   LunchLinkPauseResponseSchema,
+  // Slice 4-S12 — FlavorPassport
+  FlavorPassportStampSchema,
+  FlavorPassportStateSchema,
+  FlavorPassportResponseSchema,
   // Story 3.27 — variant proposal active-learning
   PlanVariantProposalOutputSchema,
   VariantProposalSchema,
@@ -617,6 +621,11 @@ export type RuleSetOutput = z.infer<typeof RuleSetOutputSchema>;
 // Story 3.28 — Lunch Link suppression
 export type LunchLinkPauseInput = z.infer<typeof LunchLinkPauseInputSchema>;
 export type LunchLinkPauseResponse = z.infer<typeof LunchLinkPauseResponseSchema>;
+
+// Slice 4-S12 — FlavorPassport
+export type FlavorPassportStamp = z.infer<typeof FlavorPassportStampSchema>;
+export type FlavorPassportState = z.infer<typeof FlavorPassportStateSchema>;
+export type FlavorPassportResponse = z.infer<typeof FlavorPassportResponseSchema>;
 
 // Story 3.27 — variant proposal active-learning
 export type PlanVariantProposalOutput = z.infer<typeof PlanVariantProposalOutputSchema>;

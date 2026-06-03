@@ -15,6 +15,10 @@ const LUNCH_LINK_PUBLIC_RE = /^\/v1\/lunch-link\/[^/]+$/;
 // Slice 4-S4 — POST /v1/lunch-link/:token/rate is the public child-facing
 // rating endpoint. Only POST to this exact path shape is skipped.
 const LUNCH_LINK_RATE_RE = /^\/v1\/lunch-link\/[^/]+\/rate$/;
+// Slice 4-S12 — GET /v1/lunch-link/:token/passport is the public child-facing
+// FlavorPassport endpoint. The :token-only regex above stops at the path
+// boundary, so the /passport sub-path needs its own exclusion.
+const LUNCH_LINK_PASSPORT_RE = /^\/v1\/lunch-link\/[^/]+\/passport$/;
 
 interface AccessTokenPayload {
   sub: string;
@@ -37,6 +41,7 @@ const authenticateHookPlugin: FastifyPluginAsync = async (fastify) => {
     if (SKIP_EXACT.has(url)) return;
     if (SKIP_PREFIXES.some((prefix) => url.startsWith(prefix))) return;
     if (request.method === 'GET' && LUNCH_LINK_PUBLIC_RE.test(url)) return;
+    if (request.method === 'GET' && LUNCH_LINK_PASSPORT_RE.test(url)) return;
     if (request.method === 'POST' && LUNCH_LINK_RATE_RE.test(url)) return;
 
     const header = request.headers.authorization;
