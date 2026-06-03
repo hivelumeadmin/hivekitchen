@@ -86,7 +86,9 @@ export class InviteService {
 
     return {
       role: row.role,
-      scope_target: '/app/household/settings',
+      // Slice 4-S13 — grandparents land on their composer, not caregiver settings.
+      scope_target:
+        row.role === 'guest_author' ? '/guest-author/compose' : '/app/household/settings',
       household_id: row.household_id,
       invite_id: row.id,
     };

@@ -270,8 +270,39 @@ describe('POST /v1/auth/invites/redeem', () => {
       household_id: string;
     };
     expect(body.role).toBe('secondary_caregiver');
+    // Regression: secondary_caregiver must keep landing on caregiver settings.
     expect(body.scope_target).toBe('/app/household/settings');
     expect(body.household_id).toBe(SAMPLE_HOUSEHOLD_ID);
+  });
+
+  it('guest_author token → 200 with scope_target /guest-author/compose', async () => {
+    const supabaseMock = buildMockSupabase({
+      findInviteResult: activeInviteRow({ role: 'guest_author' }),
+      updateAffectedRows: 1,
+    });
+    app = await buildTestApp(supabaseMock);
+
+    const futureExp = Math.floor(Date.now() / 1000) + 14 * 24 * 60 * 60;
+    const rawJwt = craftInviteJwt({
+      household_id: SAMPLE_HOUSEHOLD_ID,
+      role: 'guest_author',
+      invite_id: SAMPLE_INVITE_ID,
+      jti: SAMPLE_INVITE_ID,
+      iat: Math.floor(Date.now() / 1000),
+      exp: futureExp,
+    });
+    const token = encodeInviteToken(rawJwt);
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/v1/auth/invites/redeem',
+      payload: { token },
+    });
+
+    expect(res.statusCode).toBe(200);
+    const body = JSON.parse(res.body) as { role: string; scope_target: string };
+    expect(body.role).toBe('guest_author');
+    expect(body.scope_target).toBe('/guest-author/compose');
   });
 
   it('expired JWT → 410 link-expired', async () => {

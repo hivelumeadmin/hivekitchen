@@ -1,5 +1,9 @@
 # Deferred Work Log
 
+## Deferred from: code review of 4-s13-grandparent-composer-at-cap-rhythm (2026-06-03)
+
+- **API-level cap bypass repeatable via direct calls** — `POST /v1/heart-notes` with `scheduled_for` in next month bypasses the monthly cap unconditionally. After the first bypass note is created (in the current month), subsequent calls in the same month with `isNextMonthOrLater(scheduled_for) = true` are also allowed. The UI prevents this by transitioning to a confirmation state after one click; direct API callers (or a UI bug) could create multiple future-month drafts. Guest authors are invited household members (low risk), and the story explicitly scopes the bypass as the "Save for next month" UX feature. Fix in a future slice: track bypass usage per month (e.g., count any note with `scheduled_for` in next month and cap at 1 bypass/month). [`apps/api/src/modules/heart-notes/heart-note.routes.ts:509` — `isNextMonthOrLater` bypass in cap guard]
+
 ## Deferred from: code review of 3-dm-d1-brief-state-payload (2026-06-02)
 
 - **`setPlanState` brief_state SELECT error silently discarded** — `PlansRepository.setPlanState()` step-2 SELECT uses only `{ data: bs }` destructure, discarding Supabase errors. Repository layer lacks `this.logger` by project convention; making this truly observable requires a logger dep or promoting to a service method. [`apps/api/src/modules/plans/plans.repository.ts` — setPlanState, mirror SELECT block]

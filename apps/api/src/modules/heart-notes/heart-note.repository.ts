@@ -198,6 +198,32 @@ export class HeartNoteRepository extends BaseRepository {
     return data !== null;
   }
 
+  // Slice 4-S13 — counts non-cancelled notes this author created in the current
+  // calendar month (UTC). Drives the grandparent guest_author monthly cap. The
+  // cap is counted against the month a note was *created*, not its scheduled_for
+  // — a note created today but scheduled for next month still spends this
+  // month's slot. Count-only query: no content read, no DEK fetch.
+  async countAuthoredThisMonth(authorUserId: string, householdId: string): Promise<number> {
+    const now = new Date();
+    const year = now.getUTCFullYear();
+    const month = String(now.getUTCMonth() + 1).padStart(2, '0');
+    const nextYear = now.getUTCMonth() === 11 ? year + 1 : year;
+    const nextMonth = String(now.getUTCMonth() + 2 > 12 ? 1 : now.getUTCMonth() + 2).padStart(2, '0');
+    const monthStart = `${String(year)}-${month}-01T00:00:00Z`;
+    const monthEnd = `${String(nextYear)}-${nextMonth}-01T00:00:00Z`;
+
+    const { count, error } = await this.client
+      .from('heart_notes')
+      .select('id', { count: 'exact', head: true })
+      .eq('author_user_id', authorUserId)
+      .eq('household_id', householdId)
+      .neq('status', 'cancelled')
+      .gte('created_at', monthStart)
+      .lt('created_at', monthEnd);
+    if (error) throw error;
+    return count ?? 0;
+  }
+
   async patch(
     id: string,
     householdId: string,

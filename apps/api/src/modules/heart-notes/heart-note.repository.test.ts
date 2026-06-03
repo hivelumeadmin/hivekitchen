@@ -48,6 +48,7 @@ function buildMockClient(opts: {
 
   function selectChain(storeOpts: SelectChainOpts) {
     const filters: Record<string, unknown> = {};
+    const neqFilters: Record<string, unknown> = {};
     const inFilters: Record<string, unknown[]> = {};
     const rangeFilters: Array<{ col: string; op: 'gte' | 'lt'; val: string }> = [];
     let orderCol: string | undefined;
@@ -57,6 +58,9 @@ function buildMockClient(opts: {
     function matches(r: HeartNoteRow): boolean {
       for (const [col, val] of Object.entries(filters)) {
         if ((r as unknown as Record<string, unknown>)[col] !== val) return false;
+      }
+      for (const [col, val] of Object.entries(neqFilters)) {
+        if ((r as unknown as Record<string, unknown>)[col] === val) return false;
       }
       for (const [col, vals] of Object.entries(inFilters)) {
         const v = (r as unknown as Record<string, unknown>)[col];
@@ -90,6 +94,10 @@ function buildMockClient(opts: {
         filters[col] = val;
         return chain;
       },
+      neq(col: string, val: unknown) {
+        neqFilters[col] = val;
+        return chain;
+      },
       gte(col: string, val: string) {
         rangeFilters.push({ col, op: 'gte', val });
         return chain;
@@ -119,10 +127,11 @@ function buildMockClient(opts: {
       // listByHousehold awaits the chain directly (no maybeSingle / single).
       // Supabase's PostgrestFilterBuilder is thenable; vi.fn doesn't get
       // exercised here because the test simply awaits the chain.
-      then(resolve: (value: { data: HeartNoteRow[]; error: null }) => void) {
+      // countAuthoredThisMonth (head: true) reads `count` off the same await.
+      then(resolve: (value: { data: HeartNoteRow[]; count: number; error: null }) => void) {
         const filtered = storeOpts.storeRows.filter(matches);
         const result = applyOrderLimit(filtered);
-        resolve({ data: result, error: null });
+        resolve({ data: result, count: filtered.length, error: null });
       },
     };
     return chain;
@@ -549,5 +558,92 @@ describe('HeartNoteRepository.patch (NOOP mode — kek = null)', () => {
     });
 
     expect(result).toBeNull();
+  });
+});
+
+describe('HeartNoteRepository.countAuthoredThisMonth (Slice 4-S13)', () => {
+  const now = new Date();
+  // Day 1 at noon is always inside the current calendar month and >= monthStart.
+  const thisMonth = (day: number): string =>
+    new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), day, 12, 0, 0)).toISOString();
+  const lastMonth = (): string =>
+    new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 1, 15, 12, 0, 0)).toISOString();
+
+  it('returns 0 when the author has no notes', async () => {
+    const mock = buildMockClient({ rows: [] });
+    const repo = new HeartNoteRepository(mock as unknown as SupabaseClient, null);
+
+    const count = await repo.countAuthoredThisMonth(USER_ID, HOUSEHOLD_ID);
+
+    expect(count).toBe(0);
+  });
+
+  it('counts 2 active notes created this month', async () => {
+    const rows = [
+      makeRow({ id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', created_at: thisMonth(1) }),
+      makeRow({ id: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', created_at: thisMonth(2) }),
+    ];
+    const mock = buildMockClient({ rows });
+    const repo = new HeartNoteRepository(mock as unknown as SupabaseClient, null);
+
+    const count = await repo.countAuthoredThisMonth(USER_ID, HOUSEHOLD_ID);
+
+    expect(count).toBe(2);
+  });
+
+  it('excludes cancelled notes (a cancelled slot is free again)', async () => {
+    const rows = [
+      makeRow({
+        id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+        status: 'cancelled',
+        created_at: thisMonth(1),
+      }),
+    ];
+    const mock = buildMockClient({ rows });
+    const repo = new HeartNoteRepository(mock as unknown as SupabaseClient, null);
+
+    const count = await repo.countAuthoredThisMonth(USER_ID, HOUSEHOLD_ID);
+
+    expect(count).toBe(0);
+  });
+
+  it('excludes notes created in a previous month', async () => {
+    const rows = [
+      makeRow({ id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', created_at: lastMonth() }),
+    ];
+    const mock = buildMockClient({ rows });
+    const repo = new HeartNoteRepository(mock as unknown as SupabaseClient, null);
+
+    const count = await repo.countAuthoredThisMonth(USER_ID, HOUSEHOLD_ID);
+
+    expect(count).toBe(0);
+  });
+
+  it('counts a single note created this month', async () => {
+    const rows = [
+      makeRow({ id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', created_at: thisMonth(1) }),
+    ];
+    const mock = buildMockClient({ rows });
+    const repo = new HeartNoteRepository(mock as unknown as SupabaseClient, null);
+
+    const count = await repo.countAuthoredThisMonth(USER_ID, HOUSEHOLD_ID);
+
+    expect(count).toBe(1);
+  });
+
+  it('counts by author_user_id, not household — another author does not consume this cap', async () => {
+    const rows = [
+      makeRow({
+        id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+        author_user_id: '99999999-9999-4999-8999-999999999999',
+        created_at: thisMonth(1),
+      }),
+    ];
+    const mock = buildMockClient({ rows });
+    const repo = new HeartNoteRepository(mock as unknown as SupabaseClient, null);
+
+    const count = await repo.countAuthoredThisMonth(USER_ID, HOUSEHOLD_ID);
+
+    expect(count).toBe(0);
   });
 });

@@ -26,6 +26,8 @@ import LoginPage from './routes/auth/login.js';
 import AuthCallbackPage from './routes/auth/callback.js';
 import ResetPasswordPage from './routes/auth/reset-password.js';
 import InviteRedeemPage from './routes/invite/$token.js';
+import GrandparentScopeLayout from './routes/(grandparent)/layout.js';
+import GrandparentComposePage from './routes/(grandparent)/compose.js';
 import AppLayout from './routes/(app)/layout.js';
 import AppHomePage from './routes/(app)/index.js';
 import OnboardingPage from './routes/(app)/onboarding.js';
@@ -63,6 +65,17 @@ const router = createBrowserRouter([
   { path: '/auth/callback', element: <AuthCallbackPage /> },
   { path: '/auth/reset-password', element: <ResetPasswordPage /> },
   { path: '/invite/:token', element: <InviteRedeemPage /> },
+  // Grandparent composer — `.grandparent-scope` (single-column, no app shell,
+  // no ambient Lumi). GrandparentScopeLayout sets the scope class and renders
+  // its child directly, so the page is wrapped here rather than via an Outlet.
+  {
+    path: '/guest-author/compose',
+    element: (
+      <GrandparentScopeLayout>
+        <GrandparentComposePage />
+      </GrandparentScopeLayout>
+    ),
+  },
   // Onboarding owns its own Lumi surface — kept flat (no AppLayout, no ambient orb).
   { path: '/onboarding', element: <OnboardingPage /> },
   // Authenticated household routes get the ambient Lumi orb + panel via AppLayout.

@@ -64,6 +64,8 @@ interface MockOpts {
   patchError?: unknown;
   // listResult — returned by listByHousehold (no maybeSingle, awaited).
   listResult?: HeartNoteRow[];
+  // countResult — returned by countAuthoredThisMonth (head:true, awaited).
+  countResult?: number;
   // childExists: true = child belongs to the caller's household (default).
   // Set false to simulate a cross-household child_id rejection.
   childExists?: boolean;
@@ -104,13 +106,14 @@ function buildMockSupabase(opts: MockOpts) {
 
 interface SelectChain {
   eq: (col: string, val: unknown) => SelectChain;
+  neq: (col: string, val: unknown) => SelectChain;
   gte: (col: string, val: unknown) => SelectChain;
   lt: (col: string, val: unknown) => SelectChain;
   in: (col: string, vals: unknown[]) => SelectChain;
   order: (col: string, options: { ascending: boolean }) => SelectChain;
   limit: (n: number) => SelectChain;
   maybeSingle: () => Promise<{ data: unknown; error: unknown }>;
-  then: (resolve: (value: { data: unknown; error: unknown }) => void) => void;
+  then: (resolve: (value: { data: unknown; count: number; error: unknown }) => void) => void;
 }
 
 // Flexible chain supporting:
@@ -122,6 +125,9 @@ function buildHeartNotesSelectChain(opts: MockOpts): SelectChain {
   let gteCalled = false;
   const chain: SelectChain = {
     eq(_col: string, _val: unknown) {
+      return chain;
+    },
+    neq(_col: string, _val: unknown) {
       return chain;
     },
     gte(_col: string, _val: unknown) {
@@ -155,9 +161,14 @@ function buildHeartNotesSelectChain(opts: MockOpts): SelectChain {
         : opts.findResult ?? null;
       return { data, error: opts.findError ?? null };
     }),
-    then(resolve: (value: { data: unknown; error: unknown }) => void) {
-      // Awaited directly == listByHousehold.
-      resolve({ data: opts.listResult ?? [], error: opts.findError ?? null });
+    then(resolve: (value: { data: unknown; count: number; error: unknown }) => void) {
+      // Awaited directly == listByHousehold (reads data) or
+      // countAuthoredThisMonth (reads count, head:true).
+      resolve({
+        data: opts.listResult ?? [],
+        count: opts.countResult ?? 0,
+        error: opts.findError ?? null,
+      });
     },
   };
   return chain;
@@ -336,6 +347,77 @@ describe('POST /v1/heart-notes', () => {
     });
 
     expect(res.statusCode).toBe(401);
+  });
+
+  // Slice 4-S13 — guest_author monthly cap enforcement.
+  it('201 — guest_author under cap (notesUsed=0) can compose', async () => {
+    app = await buildTestApp(
+      buildMockSupabase({ insertResult: sampleRow(), countResult: 0 }),
+    );
+    const token = signToken(app, { role: 'guest_author' });
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/v1/heart-notes',
+      headers: { authorization: `Bearer ${token}` },
+      payload: { child_id: CHILD_ID, content: 'love you' },
+    });
+
+    expect(res.statusCode).toBe(201);
+  });
+
+  it('422 GUEST_AUTHOR_CAP_REACHED — guest_author at cap (notesUsed=2), no schedule', async () => {
+    app = await buildTestApp(
+      buildMockSupabase({ insertResult: sampleRow(), countResult: 2 }),
+    );
+    const token = signToken(app, { role: 'guest_author' });
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/v1/heart-notes',
+      headers: { authorization: `Bearer ${token}` },
+      payload: { child_id: CHILD_ID, content: 'one more' },
+    });
+
+    expect(res.statusCode).toBe(422);
+    const body = JSON.parse(res.body) as { type: string };
+    expect(body.type).toBe('/errors/guest-author-cap-reached');
+  });
+
+  it('201 — guest_author at cap may still schedule for next month (cap bypass)', async () => {
+    const now = new Date();
+    const nextMonth = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1))
+      .toISOString()
+      .slice(0, 10);
+    app = await buildTestApp(
+      buildMockSupabase({ insertResult: sampleRow({ scheduled_for: nextMonth }), countResult: 2 }),
+    );
+    const token = signToken(app, { role: 'guest_author' });
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/v1/heart-notes',
+      headers: { authorization: `Bearer ${token}` },
+      payload: { child_id: CHILD_ID, content: '', scheduled_for: nextMonth },
+    });
+
+    expect(res.statusCode).toBe(201);
+  });
+
+  it('201 — primary_parent is never cap-checked (notesUsed irrelevant)', async () => {
+    app = await buildTestApp(
+      buildMockSupabase({ insertResult: sampleRow(), countResult: 99 }),
+    );
+    const token = signToken(app); // defaults to primary_parent
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/v1/heart-notes',
+      headers: { authorization: `Bearer ${token}` },
+      payload: { child_id: CHILD_ID, content: 'unbounded' },
+    });
+
+    expect(res.statusCode).toBe(201);
   });
 });
 

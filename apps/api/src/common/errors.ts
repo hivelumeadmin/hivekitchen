@@ -154,6 +154,19 @@ export class HouseholdDecryptError extends DomainError {
   }
 }
 
+// Slice 4-S13 — guest_author hit the monthly note cap (2 / calendar month).
+// The semantic error code GUEST_AUTHOR_CAP_REACHED is carried by the RFC 7807
+// `type` slug; the envelope has no separate `code` field. The composer detects
+// it via HTTP 422 and flips to its at-cap rhythm state.
+export class GuestAuthorCapReachedError extends DomainError {
+  readonly type = '/errors/guest-author-cap-reached';
+  readonly status = 422;
+  readonly title = 'Monthly note cap reached';
+  constructor() {
+    super('Monthly note cap reached. Schedule for next month to continue.');
+  }
+}
+
 export function isDomainError(err: unknown): err is DomainError {
   return err instanceof DomainError;
 }

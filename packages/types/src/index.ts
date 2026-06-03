@@ -627,6 +627,9 @@ export type FlavorPassportStamp = z.infer<typeof FlavorPassportStampSchema>;
 export type FlavorPassportState = z.infer<typeof FlavorPassportStateSchema>;
 export type FlavorPassportResponse = z.infer<typeof FlavorPassportResponseSchema>;
 
+// Slice 4-S13 — Grandparent Guest Author cap
+export type { GuestAuthorCapResponse } from '@hivekitchen/contracts';
+
 // Story 3.27 — variant proposal active-learning
 export type PlanVariantProposalOutput = z.infer<typeof PlanVariantProposalOutputSchema>;
 export type VariantProposal = z.infer<typeof VariantProposalSchema>;
