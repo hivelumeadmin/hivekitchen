@@ -1,6 +1,6 @@
 # Story 3-DM-D1: brief_state.payload consolidation + plan_state write path migration
 
-Status: review
+Status: done
 
 ## Story
 
