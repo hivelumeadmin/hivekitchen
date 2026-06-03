@@ -46,6 +46,7 @@ export function StationeryCard(props: StationeryCardProps) {
           }}
           placeholder={props.placeholder}
           maxLength={props.charCap}
+          dir="auto"
           className="min-h-[360px] w-full resize-none border-none bg-transparent font-serif text-[22px] italic leading-relaxed text-fg/90 placeholder:text-fg/20 focus:outline-none focus:ring-0"
           aria-label="Heart Note"
         />

@@ -104,6 +104,9 @@ export default function LunchLinkRoute() {
     typeof navigator !== 'undefined' ? navigator.onLine : true,
   );
   const [lastSyncedAt, setLastSyncedAt] = useState<string | null>(null);
+  // Slice 4-S15 — child "request a lunch" affordance.
+  const [requestText, setRequestText] = useState('');
+  const [requestState, setRequestState] = useState<'idle' | 'submitting' | 'submitted'>('idle');
 
   useEffect(() => {
     const handleOnline = () => {
@@ -227,6 +230,21 @@ export default function LunchLinkRoute() {
 
   const { childName, date, heartNote, bag } = data;
   const dateLabel = formatDateLabel(date);
+  // The public payload carries no parent name; the heart-note author label is
+  // the closest available, with a generic fallback (no extra API call — 4-S15).
+  const parentName = heartNote?.authorDisplayName ?? 'your parent';
+
+  // Slice 4-S15 — submit the child's request. publicPost never throws; route on
+  // status. 201 → confirmation; 409 (already submitted) → confirmation; any
+  // other status → re-show the form (silent retry).
+  const handleSubmitRequest = async () => {
+    if (!linkId || requestText.trim().length === 0) return;
+    setRequestState('submitting');
+    const { status } = await publicPost(`/v1/lunch-link/${linkId}/child-request`, {
+      request_text: requestText,
+    });
+    setRequestState(status === 201 || status === 409 ? 'submitted' : 'idle');
+  };
 
   // Slice 4-S4: fire-and-forget rating submission. The FeedbackBlock locks
   // immediately on tap regardless of API outcome.
@@ -297,6 +315,48 @@ export default function LunchLinkRoute() {
               See {childName}&apos;s flavor passport →
             </Link>
           </p>
+        )}
+        {/* Slice 4-S15 — child "request a lunch" affordance. Real (HMAC) links
+            only; hidden once submitted. */}
+        {isHmac && linkId && (
+          requestState === 'submitted' ? (
+            <p role="status" className="text-center text-[22px] text-fg-muted">
+              Got it! Your note is on its way.
+            </p>
+          ) : (
+            <div className="space-y-3">
+              <label
+                htmlFor="child-request-input"
+                className="block font-serif text-[22px] text-fg"
+              >
+                Tell {parentName} back
+              </label>
+              <textarea
+                id="child-request-input"
+                value={requestText}
+                onChange={(e) => setRequestText(e.target.value.slice(0, 200))}
+                maxLength={200}
+                rows={3}
+                dir="auto"
+                placeholder="I'd love…"
+                className="min-h-[48px] w-full resize-none rounded-lg border border-fg-muted/20 bg-surface p-3 font-serif text-[22px] leading-relaxed text-fg placeholder:text-fg-muted/40 focus:outline-none"
+              />
+              {requestText.length > 0 && (
+                <p aria-live="polite" className="text-right text-sm text-fg-muted">
+                  {requestText.length} / 200
+                </p>
+              )}
+              <button
+                type="button"
+                onClick={() => void handleSubmitRequest()}
+                disabled={requestState === 'submitting' || requestText.trim().length === 0}
+                aria-busy={requestState === 'submitting'}
+                className="inline-flex min-h-[56px] w-full items-center justify-center gap-2 rounded-lg bg-amber-warm px-8 font-medium uppercase tracking-widest text-bg transition-all duration-200 hover:bg-amber active:scale-95 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                Send to {parentName}
+              </button>
+            </div>
+          )
         )}
       </div>
     </main>

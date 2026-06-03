@@ -13,6 +13,21 @@ const expectedFonts = [
   'PublicSans-LatinExt.woff2',
 ];
 
+// Multilingual Heart Note subsets (4-S16). Web-only — apps/marketing renders no
+// Heart Notes, so these are deliberately NOT added to expectedFonts (which is
+// asserted against both apps).
+const multilingualFonts = [
+  'NotoSerifDevanagari.woff2',
+  'NotoSerifBengali.woff2',
+  'NotoSerifHebrew.woff2',
+  'NotoSerifTamil.woff2',
+  'NotoNaskhArabic.woff2',
+  'NotoSansDevanagari.woff2',
+  'NotoSansBengali.woff2',
+  'NotoSansHebrew.woff2',
+  'NotoSansTamil.woff2',
+];
+
 describe('self-hosted font files', () => {
   it.skipIf(!!process.env.CI)(
     'exist in apps/web/public/fonts/',
@@ -30,6 +45,19 @@ describe('self-hosted font files', () => {
       for (const font of expectedFonts) {
         const path = resolve(root, 'apps/marketing/public/fonts', font);
         expect(existsSync(path), `missing: apps/marketing/public/fonts/${font}`).toBe(true);
+      }
+    },
+  );
+});
+
+describe('multilingual Heart Note font subsets (4-S16)', () => {
+  // Web-only: apps/marketing renders no Heart Notes and must not carry these.
+  it.skipIf(!!process.env.CI)(
+    'exist in apps/web/public/fonts/ only',
+    () => {
+      for (const font of multilingualFonts) {
+        const path = resolve(root, 'apps/web/public/fonts', font);
+        expect(existsSync(path), `missing: apps/web/public/fonts/${font}`).toBe(true);
       }
     },
   );

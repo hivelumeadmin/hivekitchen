@@ -10,6 +10,17 @@ const colorGroups = [
 
 const stops = [50, 100, 200, 300, 400, 500, 600, 700, 800, 900] as const;
 
+// 4-S16 — multilingual Heart Note specimen. Renders each script in the serif
+// (Heart Note) register with dir="auto" so a reviewer can eyeball glyph
+// correctness (no tofu) + RTL flow on Hebrew/Arabic.
+const multilingualSpecimen = [
+  { script: 'Devanagari (Hindi)', text: 'आज स्कूल में मज़ा करना' },
+  { script: 'Bengali', text: 'আজ স্কুলে মজা করো' },
+  { script: 'Tamil', text: 'இன்று பள்ளியில் மகிழுங்கள்' },
+  { script: 'Hebrew (RTL)', text: 'תהנה היום בבית הספר' },
+  { script: 'Arabic (RTL)', text: 'استمتع في المدرسة اليوم' },
+] as const;
+
 export function DevTokensPage() {
   return (
     <main style={{ padding: '2rem', fontFamily: 'var(--font-sans)' }}>
@@ -51,6 +62,22 @@ export function DevTokensPage() {
         <p style={{ fontFamily: 'var(--font-sans)', fontSize: '1rem' }}>
           Public Sans — all UI, body, buttons, labels.
         </p>
+        <h3 style={{ fontFamily: 'var(--font-serif)', fontSize: '1rem', marginTop: '1.5rem' }}>
+          Multilingual Heart Note (serif register · dir=&quot;auto&quot;)
+        </h3>
+        {multilingualSpecimen.map(({ script, text }) => (
+          // Label sits OUTSIDE the dir="auto" node so the specimen text infers
+          // direction from its own first strong character (RTL for Hebrew/Arabic),
+          // not from the Latin label.
+          <div key={script} style={{ margin: '0.5rem 0' }}>
+            <span style={{ fontFamily: 'var(--font-sans)', fontSize: '0.75rem', color: 'var(--warm-neutral-700)' }}>
+              {script}
+            </span>
+            <p dir="auto" style={{ fontFamily: 'var(--font-serif)', fontSize: '1.5rem', margin: '0.1rem 0 0' }}>
+              {text}
+            </p>
+          </div>
+        ))}
       </section>
       <section style={{ marginTop: '2rem' }}>
         <h2 style={{ fontFamily: 'var(--font-serif)', fontSize: '1.25rem' }}>Motion</h2>

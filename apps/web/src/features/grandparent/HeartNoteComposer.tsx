@@ -104,6 +104,7 @@ export function HeartNoteComposer(props: HeartNoteComposerProps) {
         <textarea
           value={content}
           readOnly
+          dir="auto"
           className="mt-6 min-h-[140px] w-full cursor-not-allowed resize-none border-none bg-transparent font-serif text-[26px] leading-relaxed text-fg opacity-50 focus:outline-none"
           aria-label="Heart Note (read-only — monthly cap reached)"
         />
@@ -134,6 +135,7 @@ export function HeartNoteComposer(props: HeartNoteComposerProps) {
         onChange={(e) => setContent(e.target.value)}
         placeholder={`Write something for ${childName}…`}
         maxLength={280}
+        dir="auto"
         className="min-h-[220px] w-full resize-none border-none bg-transparent font-serif text-[26px] leading-relaxed text-fg placeholder:text-fg-muted/40 focus:outline-none focus:ring-0"
         aria-label="Heart Note"
       />
