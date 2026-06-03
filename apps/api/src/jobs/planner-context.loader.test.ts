@@ -1,8 +1,8 @@
 import { describe, it, expect, vi } from 'vitest';
 import { loadHighActivityExtraProposalsForHousehold } from './planner-context.loader.js';
-import type { DayOverridesRepository } from '../modules/plans/day-overrides.repository.js';
+import type { PlanDayContextRepository } from '../modules/plans/plan-day-context.repository.js';
 import type { PlannerBagComposition } from '../agents/orchestrator.js';
-import type { DayOverride } from '@hivekitchen/types';
+import type { PlanDayContext } from '@hivekitchen/types';
 
 const HOUSEHOLD_ID = '11111111-1111-4111-8111-111111111111';
 const CHILD_A = '22222222-2222-4222-8222-222222222222';
@@ -11,14 +11,14 @@ const CHILD_B = '33333333-3333-4333-8333-333333333333';
 // weekOf = 2026-11-02 (Monday). Expected window: 2026-11-02..2026-11-06 (Fri).
 const WEEK_OF = '2026-11-02';
 
-function makeOverride(childId: string, date: string, type: DayOverride['override_type']): DayOverride {
+function makeOverride(childId: string, date: string, type: PlanDayContext['context_type']): PlanDayContext {
   return {
     id: '00000000-0000-4000-8000-000000000000',
-    plan_item_id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+    plan_slot_id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
     child_id: childId,
     household_id: HOUSEHOLD_ID,
     override_date: date,
-    override_type: type,
+    context_type: type,
     is_lumi_proposed: false,
     confirmed_at: null,
     reverted_at: null,
@@ -27,10 +27,10 @@ function makeOverride(childId: string, date: string, type: DayOverride['override
   };
 }
 
-function makeRepo(overrides: DayOverride[]): DayOverridesRepository {
+function makeRepo(overrides: PlanDayContext[]): PlanDayContextRepository {
   return {
     findActiveByHousehold: vi.fn().mockResolvedValue(overrides),
-  } as unknown as DayOverridesRepository;
+  } as unknown as PlanDayContextRepository;
 }
 
 const extraOffCompositions: PlannerBagComposition[] = [
@@ -61,8 +61,8 @@ describe('loadHighActivityExtraProposalsForHousehold', () => {
     ]);
     const result = await loadHighActivityExtraProposalsForHousehold(HOUSEHOLD_ID, WEEK_OF, extraOffCompositions, repo);
     expect(result).toHaveLength(2);
-    expect(result[0]).toMatchObject({ child_id: CHILD_A, override_date: '2026-11-04', override_type: 'sport_practice' });
-    expect(result[1]).toMatchObject({ child_id: CHILD_B, override_date: '2026-11-06', override_type: 'field_trip' });
+    expect(result[0]).toMatchObject({ child_id: CHILD_A, override_date: '2026-11-04', context_type: 'sport_practice' });
+    expect(result[1]).toMatchObject({ child_id: CHILD_B, override_date: '2026-11-06', context_type: 'field_trip' });
   });
 
   it('excludes Saturday overrides — window ends at Friday', async () => {
@@ -88,9 +88,9 @@ describe('loadHighActivityExtraProposalsForHousehold', () => {
 
   it('excludes non-high-activity override types', async () => {
     const repo = makeRepo([
-      makeOverride(CHILD_A, '2026-11-04', 'bag_suspended'),
-      makeOverride(CHILD_A, '2026-11-04', 'sick_day'),
       makeOverride(CHILD_A, '2026-11-04', 'half_day'),
+      makeOverride(CHILD_A, '2026-11-04', 'post_dentist'),
+      makeOverride(CHILD_A, '2026-11-04', 'test_day'),
     ]);
     const result = await loadHighActivityExtraProposalsForHousehold(HOUSEHOLD_ID, WEEK_OF, extraOffCompositions, repo);
     expect(result).toEqual([]);
@@ -136,6 +136,6 @@ describe('loadHighActivityExtraProposalsForHousehold', () => {
     ]);
     const result = await loadHighActivityExtraProposalsForHousehold(HOUSEHOLD_ID, WEEK_OF, extraOffCompositions, repo);
     expect(result).toHaveLength(1);
-    expect(result[0]?.override_type).toBe('sport_practice');
+    expect(result[0]?.context_type).toBe('sport_practice');
   });
 });

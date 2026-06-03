@@ -78,14 +78,14 @@ export interface PlannerExtraLibraryItem {
 }
 
 // Story 3.22 — children whose Extra slot is OFF but who have a high-activity
-// day_override (sport_practice / field_trip) on the upcoming week. The planner
-// is instructed to propose one Extra item for those specific days; full parent-
-// confirmation UX is deferred to a follow-up story.
+// plan_day_context (sport_practice / field_trip) on the upcoming week. The
+// planner is instructed to propose one Extra item for those specific days;
+// full parent-confirmation UX is deferred to a follow-up story.
 export interface PlannerExtraProposal {
   child_id: string;
   child_name: string;
   override_date: string;
-  override_type: 'sport_practice' | 'field_trip';
+  context_type: 'sport_practice' | 'field_trip';
 }
 
 // Story 3.27 — children whose `variant_eligible` flag is true (Epic 4 will
@@ -922,7 +922,7 @@ export function buildExtraProposalLines(
   ];
   for (const p of proposals) {
     lines.push(
-      `- On ${p.override_date}, ${p.child_name} (${p.child_id}) has a ${p.override_type}. Add one Extra item for that day only; do not add Extra on other days for this child.`,
+      `- On ${p.override_date}, ${p.child_name} (${p.child_id}) has a ${p.context_type}. Add one Extra item for that day only; do not add Extra on other days for this child.`,
     );
   }
   return lines;

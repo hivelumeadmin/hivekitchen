@@ -1,6 +1,6 @@
 import { useState } from 'react';
-import type { DayOverrideType } from '@hivekitchen/types';
-import { useSetDayOverrideMutation, useRevertDayOverrideMutation } from './mutations.js';
+import type { PlanDayContextType } from '@hivekitchen/types';
+import { useSetPlanDayContextMutation, useRevertPlanDayContextMutation } from './mutations.js';
 
 interface OverridePickerProps {
   planId: string;
@@ -14,18 +14,18 @@ interface OverridePickerProps {
   onCancel: () => void;
   // When set, shows an active-override banner with an undo button at the top
   // of the picker. Pass when the brief reports an existing override for this slot.
-  activeOverride?: { id: string; type: DayOverrideType };
+  activeOverride?: { id: string; type: PlanDayContextType };
 }
 
+// 3-DM-E1 — pause-overlapping options (No lunch needed / Sick day) were dropped
+// from the enum; those flows belong on the day/child pause routes, not here.
 const OVERRIDE_OPTIONS: ReadonlyArray<{
-  type: DayOverrideType;
+  type: PlanDayContextType;
   label: string;
   description: string;
 }> = [
-  { type: 'bag_suspended', label: 'No lunch needed', description: 'Child is absent or skipping' },
   { type: 'half_day',      label: 'Half-day',        description: 'Shorter school day, lighter bag' },
   { type: 'field_trip',    label: 'Field trip',      description: 'Portable, no-mess foods' },
-  { type: 'sick_day',      label: 'Sick day',        description: 'Gentle, easy-to-eat foods' },
   { type: 'post_dentist',  label: 'Post-dentist',    description: 'Soft foods only' },
   { type: 'early_release', label: 'Early release',   description: 'Same plan, earlier delivery' },
   { type: 'sport_practice',label: 'Sport practice',  description: 'Extra energy — protein + carbs' },
@@ -47,8 +47,8 @@ export function OverridePicker({
   activeOverride,
 }: OverridePickerProps) {
   const [error, setError] = useState<string | null>(null);
-  const setOverride = useSetDayOverrideMutation();
-  const revertOverride = useRevertDayOverrideMutation();
+  const setOverride = useSetPlanDayContextMutation();
+  const revertOverride = useRevertPlanDayContextMutation();
 
   const isPending = setOverride.isPending || revertOverride.isPending;
 
@@ -56,14 +56,14 @@ export function OverridePicker({
     ? OVERRIDE_OPTIONS.find((o) => o.type === activeOverride.type)?.label
     : null;
 
-  async function selectOverride(type: DayOverrideType) {
+  async function selectOverride(type: PlanDayContextType) {
     setError(null);
     try {
       await setOverride.mutateAsync({
         planId,
         planSlotId,
         input: {
-          override_type: type,
+          context_type: type,
           override_date: overrideDate,
           child_id: childId,
           is_lumi_proposed: false,

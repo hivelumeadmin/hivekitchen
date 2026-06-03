@@ -17,7 +17,7 @@ export * from './lunch-link.js';
 export * from './household-profile.js';
 export * from './extra-rules.js';
 export * from './school-policy.js';
-export * from './day-override.js';
+export * from './plan-day-context.js';
 export * from './cultural.js';
 export * from './lumi.js';
 export * from './recipe.js';

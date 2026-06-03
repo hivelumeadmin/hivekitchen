@@ -17,13 +17,13 @@ import {
   MainAssignmentParamSchema,
   VariationParamSchema,
   PlanSlotParamSchema,
-  DayOverrideSlotParamSchema,
-  DayOverrideSlotRevertParamSchema,
+  PlanDayContextSlotParamSchema,
+  PlanDayContextSlotRevertParamSchema,
   WeekdaySchema,
   RegeneratePlanQuerySchema,
   RegeneratePlanResponseSchema,
-  SetDayOverrideInputSchema,
-  SetDayOverrideResponseSchema,
+  SetPlanDayContextInputSchema,
+  SetPlanDayContextResponseSchema,
   ConfirmVariantProposalInputSchema,
 } from '@hivekitchen/contracts';
 import type {
@@ -34,7 +34,7 @@ import type {
   PausePlanDayTreeInput,
   PauseChildOnDayInput,
   RegeneratePlanQuery,
-  SetDayOverrideInput,
+  SetPlanDayContextInput,
   ConfirmVariantProposalInput,
   Weekday,
   VariantProposal,
@@ -476,18 +476,18 @@ const plansRoutesPlugin: FastifyPluginAsync = async (fastify) => {
   //
   // Story 3-DM-C1 — day-level context override scoped to a plan_slot.
   // Composition-changing overrides (field_trip / half_day / post_dentist /
-  // sport_practice / test_day) enqueue a day-scope regen. Pause-overlapping
-  // overrides (bag_suspended / sick_day) are rejected at the service layer —
-  // the canonical pause grain lives on plan_days.paused_at /
-  // plan_slot_variations.paused_at.
+  // sport_practice / test_day) enqueue a day-scope regen. Pause semantics
+  // (formerly bag_suspended / sick_day) are no longer expressible here — the
+  // canonical pause grain lives on plan_days.paused_at /
+  // plan_slot_variations.paused_at, and those enum values were dropped by E1.
   fastify.post(
     '/v1/plans/:planId/slots/:planSlotId/override',
     {
       preHandler: requireMember,
       schema: {
-        params: DayOverrideSlotParamSchema,
-        body: SetDayOverrideInputSchema,
-        response: { 201: SetDayOverrideResponseSchema },
+        params: PlanDayContextSlotParamSchema,
+        body: SetPlanDayContextInputSchema,
+        response: { 201: SetPlanDayContextResponseSchema },
       },
     },
     async (request, reply) => {
@@ -498,10 +498,10 @@ const plansRoutesPlugin: FastifyPluginAsync = async (fastify) => {
         planId: string;
         planSlotId: string;
       };
-      const body = request.body as SetDayOverrideInput;
+      const body = request.body as SetPlanDayContextInput;
 
       const { override, regenTriggered } =
-        await fastify.dayOverridesService.setOverrideTree({
+        await fastify.planDayContextService.setOverride({
           planId,
           planSlotId,
           householdId: request.user.household_id,
@@ -524,7 +524,7 @@ const plansRoutesPlugin: FastifyPluginAsync = async (fastify) => {
     {
       preHandler: requireMember,
       schema: {
-        params: DayOverrideSlotRevertParamSchema,
+        params: PlanDayContextSlotRevertParamSchema,
       },
     },
     async (request, reply) => {
@@ -537,7 +537,7 @@ const plansRoutesPlugin: FastifyPluginAsync = async (fastify) => {
         overrideId: string;
       };
 
-      await fastify.dayOverridesService.revertOverrideTree({
+      await fastify.planDayContextService.revertOverride({
         planId,
         planSlotId,
         overrideId,

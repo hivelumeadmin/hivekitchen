@@ -16,7 +16,7 @@ import { CulturalCalendarService } from '../services/cultural-calendar.service.j
 import { MemoryContextService } from '../services/memory-context.service.js';
 import { ExtraRulesRepository } from '../modules/children/extra-rules.repository.js';
 import { ExtraLibraryRepository } from '../modules/households/extra-library.repository.js';
-import { DayOverridesRepository } from '../modules/plans/day-overrides.repository.js';
+import { PlanDayContextRepository } from '../modules/plans/plan-day-context.repository.js';
 import { deriveWeekId } from '../lib/derive-week-id.js';
 import {
   loadBagCompositionsForHousehold,
@@ -158,10 +158,10 @@ const planGenerationPlugin: FastifyPluginAsync = async (fastify) => {
   // Story 3.21 — Extra slot pin/ban rules + household custom Extra library.
   const extraRulesRepository = new ExtraRulesRepository(fastify.supabase);
   const extraLibraryRepository = new ExtraLibraryRepository(fastify.supabase);
-  // Story 3.22 — high-activity Extra proposals (FR119) read active day_overrides
-  // and pair them with bag-composition data to surface sport_practice/field_trip
-  // days for children whose Extra slot is OFF.
-  const dayOverridesRepository = new DayOverridesRepository(fastify.supabase);
+  // Story 3.22 — high-activity Extra proposals (FR119) read active
+  // plan_day_context rows and pair them with bag-composition data to surface
+  // sport_practice/field_trip days for children whose Extra slot is OFF.
+  const planDayContextRepository = new PlanDayContextRepository(fastify.supabase);
 
   // Fan-out scheduler — Friday 10:00 UTC (= 06:00 ET / 03:00 PT). For each
   // active household, enqueues a delayed per-household job that fires at
@@ -293,7 +293,7 @@ const planGenerationPlugin: FastifyPluginAsync = async (fastify) => {
           household_id,
           week_of,
           bagCompositions,
-          dayOverridesRepository,
+          planDayContextRepository,
         ),
       ]);
 
@@ -312,7 +312,7 @@ const planGenerationPlugin: FastifyPluginAsync = async (fastify) => {
               proposals: extraProposals.map((p) => ({
                 child_id: p.child_id,
                 override_date: p.override_date,
-                override_type: p.override_type,
+                context_type: p.context_type,
               })),
             },
           });

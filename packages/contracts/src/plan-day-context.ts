@@ -1,33 +1,35 @@
 import { z } from 'zod';
 
-// Story 3.19 — Day-level context overrides (FR118, FR119).
-// Each row is a one-off override on a single (plan_item, child, date). The
-// override auto-reverts after override_date via the nightly job
+// Story 3-DM-E1 — plan_day_context (formerly the day-overrides table).
+// FR118, FR119 — day-level context hints for composition-changing events.
+// Pause semantics (bag_suspended, sick_day) live on plan_days.paused_at +
+// paused_reason, not here.
+//
+// Each row is a one-off context hint on a single (plan_slot, child, date). It
+// auto-reverts after override_date via the nightly job
 // (apps/api/src/jobs/day-override-revert.job.ts) — the row remains for audit
 // with reverted_at populated.
 //
 // Mirrors:
-//   - supabase/migrations/.../create_day_overrides.sql
-//   - apps/api/src/modules/plans/day-overrides.repository.ts
+//   - supabase/migrations/20261012000000_plan_day_context_rename.sql
+//   - apps/api/src/modules/plans/plan-day-context.repository.ts
 
-export const DayOverrideTypeSchema = z.enum([
-  'bag_suspended',
+export const PlanDayContextTypeSchema = z.enum([
   'half_day',
   'field_trip',
-  'sick_day',
   'post_dentist',
   'early_release',
   'sport_practice',
   'test_day',
 ]);
 
-export const DayOverrideSchema = z.object({
+export const PlanDayContextSchema = z.object({
   id: z.string().uuid(),
-  plan_item_id: z.string().uuid(),
+  plan_slot_id: z.string().uuid(),
   child_id: z.string().uuid(),
   household_id: z.string().uuid(),
   override_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/), // YYYY-MM-DD
-  override_type: DayOverrideTypeSchema,
+  context_type: PlanDayContextTypeSchema,
   is_lumi_proposed: z.boolean(),
   confirmed_at: z.string().datetime({ offset: true }).nullable(),
   reverted_at: z.string().datetime({ offset: true }).nullable(),
@@ -35,14 +37,14 @@ export const DayOverrideSchema = z.object({
   updated_at: z.string().datetime({ offset: true }),
 });
 
-// POST /v1/plans/:planId/items/:itemId/override body.
+// POST /v1/plans/:planId/slots/:planSlotId/override body.
 // is_lumi_proposed defaults to false; parent-initiated overrides confirm
 // immediately (confirmed_at = now()). Lumi-proposed overrides start unconfirmed
 // and require a follow-up call to confirm — wiring is deferred (see Dev Notes).
 // .strict() rejects unknown keys so a stale client cannot smuggle in fields.
-export const SetDayOverrideInputSchema = z
+export const SetPlanDayContextInputSchema = z
   .object({
-    override_type: DayOverrideTypeSchema,
+    context_type: PlanDayContextTypeSchema,
     override_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
     child_id: z.string().uuid(),
     is_lumi_proposed: z.boolean().default(false),
@@ -53,13 +55,7 @@ export const SetDayOverrideInputSchema = z
     { message: 'override_date must be today or in the future', path: ['override_date'] },
   );
 
-export const SetDayOverrideResponseSchema = z.object({
-  override: DayOverrideSchema,
+export const SetPlanDayContextResponseSchema = z.object({
+  override: PlanDayContextSchema,
   regen_triggered: z.boolean(),
 });
-
-// Story 3-DM-C1 Phase 9b part 4 step 5 — flat DayOverridePlanItemParamSchema
-// and DayOverrideRevertParamSchema retired with the planItemId route param.
-// The canonical replacements live in plan.ts under
-// DayOverrideSlotParamSchema and DayOverrideSlotRevertParamSchema
-// (planSlotId-keyed).

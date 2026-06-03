@@ -1,43 +1,46 @@
 import { describe, it, expect } from 'vitest';
 import {
-  DayOverrideTypeSchema,
-  DayOverrideSchema,
-  SetDayOverrideInputSchema,
-  SetDayOverrideResponseSchema,
-} from './day-override.js';
+  PlanDayContextTypeSchema,
+  PlanDayContextSchema,
+  SetPlanDayContextInputSchema,
+  SetPlanDayContextResponseSchema,
+} from './plan-day-context.js';
 
 const UUID = '11111111-1111-4111-8111-111111111111';
 const UUID2 = '22222222-2222-4222-8222-222222222222';
 const UUID3 = '33333333-3333-4333-8333-333333333333';
 const UUID4 = '44444444-4444-4444-8444-444444444444';
 
-describe('DayOverrideTypeSchema', () => {
+describe('PlanDayContextTypeSchema', () => {
   it.each([
-    'bag_suspended',
     'half_day',
     'field_trip',
-    'sick_day',
     'post_dentist',
     'early_release',
     'sport_practice',
     'test_day',
   ])('accepts %s', (value) => {
-    expect(DayOverrideTypeSchema.safeParse(value).success).toBe(true);
+    expect(PlanDayContextTypeSchema.safeParse(value).success).toBe(true);
   });
 
-  it('rejects an unknown override type', () => {
-    expect(DayOverrideTypeSchema.safeParse('snow_day').success).toBe(false);
+  it('rejects an unknown context type', () => {
+    expect(PlanDayContextTypeSchema.safeParse('snow_day').success).toBe(false);
+  });
+
+  it('rejects the retired pause-overlapping values', () => {
+    expect(PlanDayContextTypeSchema.safeParse('bag_suspended').success).toBe(false);
+    expect(PlanDayContextTypeSchema.safeParse('sick_day').success).toBe(false);
   });
 });
 
-describe('DayOverrideSchema', () => {
+describe('PlanDayContextSchema', () => {
   const baseRow = {
     id: UUID,
-    plan_item_id: UUID2,
+    plan_slot_id: UUID2,
     child_id: UUID3,
     household_id: UUID4,
     override_date: '2026-05-06',
-    override_type: 'sport_practice' as const,
+    context_type: 'sport_practice' as const,
     is_lumi_proposed: false,
     confirmed_at: '2026-05-06T08:00:00.000Z',
     reverted_at: null,
@@ -45,13 +48,13 @@ describe('DayOverrideSchema', () => {
     updated_at: '2026-05-06T08:00:00.000Z',
   };
 
-  it('round-trips a confirmed override row', () => {
-    expect(DayOverrideSchema.safeParse(baseRow).success).toBe(true);
+  it('round-trips a confirmed context row', () => {
+    expect(PlanDayContextSchema.safeParse(baseRow).success).toBe(true);
   });
 
   it('accepts a Lumi-proposed unconfirmed row (confirmed_at null)', () => {
     expect(
-      DayOverrideSchema.safeParse({
+      PlanDayContextSchema.safeParse({
         ...baseRow,
         is_lumi_proposed: true,
         confirmed_at: null,
@@ -61,46 +64,47 @@ describe('DayOverrideSchema', () => {
 
   it('rejects a malformed override_date', () => {
     expect(
-      DayOverrideSchema.safeParse({ ...baseRow, override_date: '05/06/2026' }).success,
+      PlanDayContextSchema.safeParse({ ...baseRow, override_date: '05/06/2026' }).success,
     ).toBe(false);
   });
 });
 
-describe('SetDayOverrideInputSchema', () => {
+describe('SetPlanDayContextInputSchema', () => {
+  // Future date so the refine() (override_date must be today-or-later) accepts it.
   const baseInput = {
-    override_type: 'field_trip' as const,
-    override_date: '2026-05-06',
+    context_type: 'field_trip' as const,
+    override_date: '2099-01-15',
     child_id: UUID3,
   };
 
   it('defaults is_lumi_proposed to false when omitted', () => {
-    const parsed = SetDayOverrideInputSchema.parse(baseInput);
+    const parsed = SetPlanDayContextInputSchema.parse(baseInput);
     expect(parsed.is_lumi_proposed).toBe(false);
   });
 
   it('rejects unknown extra keys (.strict)', () => {
     expect(
-      SetDayOverrideInputSchema.safeParse({ ...baseInput, extra: 'x' }).success,
+      SetPlanDayContextInputSchema.safeParse({ ...baseInput, extra: 'x' }).success,
     ).toBe(false);
   });
 
   it('rejects an invalid date format', () => {
     expect(
-      SetDayOverrideInputSchema.safeParse({ ...baseInput, override_date: 'tomorrow' }).success,
+      SetPlanDayContextInputSchema.safeParse({ ...baseInput, override_date: 'tomorrow' }).success,
     ).toBe(false);
   });
 });
 
-describe('SetDayOverrideResponseSchema', () => {
+describe('SetPlanDayContextResponseSchema', () => {
   it('accepts a populated success body', () => {
     const body = {
       override: {
         id: UUID,
-        plan_item_id: UUID2,
+        plan_slot_id: UUID2,
         child_id: UUID3,
         household_id: UUID4,
         override_date: '2026-05-06',
-        override_type: 'sick_day' as const,
+        context_type: 'field_trip' as const,
         is_lumi_proposed: false,
         confirmed_at: '2026-05-06T08:00:00.000Z',
         reverted_at: null,
@@ -109,6 +113,6 @@ describe('SetDayOverrideResponseSchema', () => {
       },
       regen_triggered: false,
     };
-    expect(SetDayOverrideResponseSchema.safeParse(body).success).toBe(true);
+    expect(SetPlanDayContextResponseSchema.safeParse(body).success).toBe(true);
   });
 });

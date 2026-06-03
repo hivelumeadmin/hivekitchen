@@ -1,7 +1,7 @@
 import fp from 'fastify-plugin';
 import type { FastifyPluginAsync } from 'fastify';
 import type { Job } from 'bullmq';
-import { DayOverridesRepository } from '../modules/plans/day-overrides.repository.js';
+import { PlanDayContextRepository } from '../modules/plans/plan-day-context.repository.js';
 
 const REVERT_QUEUE = 'day-override-revert';
 const REVERT_SCHEDULER_ID = 'day-override-revert-nightly';
@@ -13,7 +13,7 @@ const dayOverrideRevertPlugin: FastifyPluginAsync = async (fastify) => {
     );
   }
 
-  const repo = new DayOverridesRepository(fastify.supabase);
+  const repo = new PlanDayContextRepository(fastify.supabase);
   const queue = fastify.bullmq.getQueue(REVERT_QUEUE);
 
   // Story 3.19 — nightly soft-revert sweep at 00:05 UTC. The five-minute

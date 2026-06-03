@@ -11,12 +11,6 @@ const CHILD_ID = '33333333-3333-4333-8333-333333333333';
 const ITEM_ID_MON = '55555555-5555-4555-8555-555555555501';
 const ITEM_ID_TUE = '55555555-5555-4555-8555-555555555502';
 const SWAP_URL = `**/v1/plans/${PLAN_ID}/items/*`;
-// Story 3-19 unified the sick-day flow under the override endpoint.
-// PATCH /days/:day/pause is no longer reachable from the UI; the L1 picker
-// now exposes "This day is different…" → OverridePicker → "Sick day" which
-// POSTs the override route.
-const OVERRIDE_URL = `**/v1/plans/${PLAN_ID}/items/*/override`;
-const UUID_V4_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 interface BriefOpts {
   paused?: ReadonlyArray<'monday' | 'tuesday' | 'wednesday' | 'thursday' | 'friday' | 'saturday'>;
@@ -149,92 +143,11 @@ test.describe('Story 3-12: Picker opens / dismisses', () => {
   });
 });
 
-test.describe('Story 3-12: Sick-day pause via unified override flow (AC #2)', () => {
-  // Story 3-19 unified sick-day under the OverridePicker: parents reach it via
-  // L1 "This day is different…" → OverridePicker → "Sick day". The legacy
-  // PATCH /v1/plans/:planId/days/:day/pause endpoint is no longer reachable
-  // from the UI for the sick-day intent.
-  test('selecting "Sick day" POSTs the unified override endpoint with Idempotency-Key', async ({
-    page,
-  }) => {
-    let captured: {
-      url: string;
-      method: string;
-      idempotencyKey: string | null;
-      body: Record<string, unknown> | null;
-    } | null = null;
-    await page.route(OVERRIDE_URL, async (route: Route) => {
-      const req = route.request();
-      captured = {
-        url: req.url(),
-        method: req.method(),
-        idempotencyKey: req.headers()['idempotency-key'] ?? null,
-        body: (req.postDataJSON() as Record<string, unknown> | null) ?? null,
-      };
-      await route.fulfill({
-        status: 201,
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          override: {
-            id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
-            plan_item_id: ITEM_ID_MON,
-            child_id: CHILD_ID,
-            household_id: SAMPLE_HOUSEHOLD_ID,
-            override_date: '2026-05-04',
-            override_type: 'sick_day',
-            is_lumi_proposed: false,
-            confirmed_at: '2026-05-04T08:00:00.000Z',
-            reverted_at: null,
-            created_at: '2026-05-04T08:00:00.000Z',
-            updated_at: '2026-05-04T08:00:00.000Z',
-          },
-          regen_triggered: false,
-        }),
-      });
-    });
-
-    await navigateToApp(page);
-    await openPickerForDay(page, 'Monday');
-    await page.getByRole('button', { name: /this day is different/i }).click();
-    await page.getByRole('button', { name: /^sick day/i }).click();
-
-    await expect.poll(() => captured?.url ?? '').toMatch(
-      new RegExp(`/v1/plans/${PLAN_ID}/items/${ITEM_ID_MON}/override$`),
-    );
-    expect(captured!.method).toBe('POST');
-    // requireIdempotencyKey expects a UUID — assert format.
-    expect(captured!.idempotencyKey).toMatch(UUID_V4_RE);
-    expect(captured!.body).toMatchObject({
-      override_type: 'sick_day',
-      child_id: CHILD_ID,
-      is_lumi_proposed: false,
-    });
-    expect(captured!.body!['override_date']).toMatch(/^\d{4}-\d{2}-\d{2}$/);
-
-    // Picker dismisses on success.
-    await expect(page.getByRole('group', { name: /edit monday/i })).toHaveCount(0);
-    await expect(page.getByRole('group', { name: /day-level context override/i })).toHaveCount(0);
-  });
-
-  test('override failure keeps the OverridePicker open with an inline alert', async ({ page }) => {
-    await page.route(OVERRIDE_URL, (route) =>
-      route.fulfill({
-        status: 500,
-        headers: { 'Content-Type': 'application/problem+json' },
-        body: JSON.stringify({ type: '/errors/server', status: 500, title: 'oops' }),
-      }),
-    );
-    await navigateToApp(page);
-    await openPickerForDay(page, 'Monday');
-    await page.getByRole('button', { name: /this day is different/i }).click();
-    await page.getByRole('button', { name: /^sick day/i }).click();
-
-    // OverridePicker has an inline error region (Story 3-19); assert it appears
-    // and the picker stays mounted so the parent can retry.
-    await expect(page.getByRole('alert')).toBeVisible();
-    await expect(page.getByRole('group', { name: /day-level context override/i })).toBeVisible();
-  });
-});
+// Story 3-DM-E1 — the "Sick-day pause via unified override flow" tests were
+// removed: sick_day / bag_suspended were dropped from plan_day_context_type, so
+// the OverridePicker no longer offers those options. The canonical pause grain
+// lives on plan_days.paused_at / plan_slot_variations.paused_at; wiring a pause
+// UI to those routes is a separate slice.
 
 test.describe('Story 3-12: Change item — L1 → L2 → L3 navigation', () => {
   test('single-item day skips L2 and goes straight to L3', async ({ page }) => {

@@ -4,7 +4,7 @@ import type { CulturalCalendarService } from '../services/cultural-calendar.serv
 import type { MemoryContextService } from '../services/memory-context.service.js';
 import type { ExtraRulesRepository } from '../modules/children/extra-rules.repository.js';
 import type { ExtraLibraryRepository } from '../modules/households/extra-library.repository.js';
-import type { DayOverridesRepository } from '../modules/plans/day-overrides.repository.js';
+import type { PlanDayContextRepository } from '../modules/plans/plan-day-context.repository.js';
 import type {
   PlannerBagComposition,
   PlannerCulturalContext,
@@ -59,7 +59,7 @@ export async function loadExtraRulesForChildren(
   return rules;
 }
 
-// Story 3.22 — selects high-activity overrides (sport_practice / field_trip)
+// Story 3.22 — selects high-activity context rows (sport_practice / field_trip)
 // targeting children whose Extra slot is OFF and whose override_date falls in
 // the upcoming plan week. The planner uses this to propose a one-day Extra for
 // those children even though their Extra is normally suppressed.
@@ -71,7 +71,7 @@ export async function loadHighActivityExtraProposalsForHousehold(
   householdId: string,
   weekOf: string,
   bagCompositions: readonly PlannerBagComposition[],
-  dayOverridesRepository: DayOverridesRepository,
+  planDayContextRepository: PlanDayContextRepository,
 ): Promise<PlannerExtraProposal[]> {
   const childrenWithExtraOff = new Map<string, string>();
   for (const bc of bagCompositions) {
@@ -79,16 +79,16 @@ export async function loadHighActivityExtraProposalsForHousehold(
   }
   if (childrenWithExtraOff.size === 0) return [];
 
-  const overrides = await dayOverridesRepository.findActiveByHousehold(householdId);
-  if (overrides.length === 0) return [];
+  const contexts = await planDayContextRepository.findActiveByHousehold(householdId);
+  if (contexts.length === 0) return [];
 
   const weekStart = weekOf;
   const weekEnd = addDaysIso(weekOf, 4); // Mon..Fri (inclusive end)
 
   const proposals: PlannerExtraProposal[] = [];
   const seen = new Set<string>();
-  for (const o of overrides) {
-    if (o.override_type !== 'sport_practice' && o.override_type !== 'field_trip') continue;
+  for (const o of contexts) {
+    if (o.context_type !== 'sport_practice' && o.context_type !== 'field_trip') continue;
     if (o.override_date < weekStart || o.override_date > weekEnd) continue;
     const childName = childrenWithExtraOff.get(o.child_id);
     if (childName === undefined) continue;
@@ -99,7 +99,7 @@ export async function loadHighActivityExtraProposalsForHousehold(
       child_id: o.child_id,
       child_name: childName,
       override_date: o.override_date,
-      override_type: o.override_type,
+      context_type: o.context_type,
     });
   }
   return proposals;

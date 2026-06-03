@@ -6,8 +6,8 @@ import type {
   PlanSlotVariationRow,
   PauseReason,
   RegeneratePlanResponse,
-  SetDayOverrideInput,
-  SetDayOverrideResponse,
+  SetPlanDayContextInput,
+  SetPlanDayContextResponse,
   SwapMainInput,
   SwapMainResponse,
   SwapSlotRecipeInput,
@@ -165,19 +165,19 @@ export function usePauseChildOnDayMutation() {
 }
 
 // POST /v1/plans/:planId/slots/:planSlotId/override with Idempotency-Key.
-// Story 3.19 — day-level context override (FR118, FR119). Path param swaps
-// from planItemId → planSlotId in the tree model. On success: invalidates
-// ['brief'] so paused-state and any tile copy reflects immediately. The async
-// regen, when triggered, lands later via plan_revision bump.
-export function useSetDayOverrideMutation() {
+// Story 3.19 / 3-DM-E1 — day-level context (FR118, FR119), formerly the
+// day-overrides table. On success: invalidates ['brief'] so paused-state and any
+// tile copy reflects immediately. The async regen, when triggered, lands later
+// via plan_revision bump.
+export function useSetPlanDayContextMutation() {
   const queryClient = useQueryClient();
   return useMutation<
-    SetDayOverrideResponse,
+    SetPlanDayContextResponse,
     Error,
-    { planId: string; planSlotId: string; input: SetDayOverrideInput }
+    { planId: string; planSlotId: string; input: SetPlanDayContextInput }
   >({
     mutationFn: ({ planId, planSlotId, input }) =>
-      hkFetch<SetDayOverrideResponse>(
+      hkFetch<SetPlanDayContextResponse>(
         `/v1/plans/${planId}/slots/${planSlotId}/override`,
         {
           method: 'POST',
@@ -192,9 +192,9 @@ export function useSetDayOverrideMutation() {
 }
 
 // DELETE /v1/plans/:planId/slots/:planSlotId/override/:overrideId with Idempotency-Key.
-// Story 3.19 — soft revert. Brief is invalidated so the tile clears any
-// override copy / paused state on the next render.
-export function useRevertDayOverrideMutation() {
+// Story 3.19 / 3-DM-E1 — soft revert. Brief is invalidated so the tile clears
+// any context copy / paused state on the next render.
+export function useRevertPlanDayContextMutation() {
   const queryClient = useQueryClient();
   return useMutation<
     void,

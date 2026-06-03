@@ -1,8 +1,8 @@
 import { describe, it, expect, vi } from 'vitest';
 import type { FastifyBaseLogger } from 'fastify';
 import type { Queue } from 'bullmq';
-import { DayOverridesService } from './day-overrides.service.js';
-import type { DayOverridesRepository } from './day-overrides.repository.js';
+import { PlanDayContextService } from './plan-day-context.service.js';
+import type { PlanDayContextRepository } from './plan-day-context.repository.js';
 import type { PlansRepository } from './plans.repository.js';
 import type { BriefStateComposer } from './brief-state.composer.js';
 import type { AuditService } from '../../audit/audit.service.js';
@@ -10,11 +10,12 @@ import type {
   PlanDayRow,
   PlanRow,
   PlanSlotRow,
-  SetDayOverrideInput,
+  SetPlanDayContextInput,
 } from '@hivekitchen/types';
-import { ConflictError, NotFoundError } from '../../common/errors.js';
+import { NotFoundError } from '../../common/errors.js';
 
-// Story 3-DM-C1 Phase 6 — setOverrideTree + revertOverrideTree smoke tests.
+// Story 3-DM-E1 — setOverride + revertOverride smoke tests (renamed from
+// the C1 tree variants).
 
 const HOUSEHOLD = '11111111-1111-4111-8111-111111111111';
 const PLAN_ID = '22222222-2222-4222-8222-222222222222';
@@ -81,30 +82,30 @@ function buildService(opts: {
   plan?: PlanRow | null;
   days?: PlanDayRow[];
   slots?: PlanSlotRow[];
-  override?: { id: string; override_type: string; override_date: string } | null;
-  existing?: { id: string; override_type: string; override_date: string } | null;
+  override?: { id: string; context_type: string; override_date: string } | null;
+  existing?: { id: string; context_type: string; override_date: string } | null;
 } = {}) {
   const findByIdForOps = vi.fn().mockResolvedValue(opts.plan ?? buildPlan());
   const findDaysByPlanId = vi.fn().mockResolvedValue(opts.days ?? [buildDayRow()]);
   const findSlotsByPlanId = vi.fn().mockResolvedValue(opts.slots ?? [buildSlotRow()]);
-  const upsertTree = vi.fn().mockResolvedValue(
-    opts.override ?? { id: OVERRIDE_ID, override_type: 'field_trip', override_date: '2026-06-03' },
+  const upsert = vi.fn().mockResolvedValue(
+    opts.override ?? { id: OVERRIDE_ID, context_type: 'field_trip', override_date: '2026-06-03' },
   );
-  const revertTree = vi.fn().mockResolvedValue(
-    opts.existing ?? { id: OVERRIDE_ID, override_type: 'field_trip', override_date: '2026-06-03' },
+  const revert = vi.fn().mockResolvedValue(
+    opts.existing ?? { id: OVERRIDE_ID, context_type: 'field_trip', override_date: '2026-06-03' },
   );
-  const findActiveByIdTree = vi.fn().mockResolvedValue(opts.existing ?? { id: OVERRIDE_ID });
+  const findActiveById = vi.fn().mockResolvedValue(opts.existing ?? { id: OVERRIDE_ID });
   const write = vi.fn().mockResolvedValue(undefined);
   const queueAdd = vi.fn().mockResolvedValue(undefined);
 
-  const repo = { upsertTree, revertTree, findActiveByIdTree } as unknown as DayOverridesRepository;
+  const repo = { upsert, revert, findActiveById } as unknown as PlanDayContextRepository;
   const plansRepo = { findByIdForOps, findDaysByPlanId, findSlotsByPlanId } as unknown as PlansRepository;
   const composer = { refresh: vi.fn() } as unknown as BriefStateComposer;
   const queue = { add: queueAdd } as unknown as Queue;
   const audit = { write } as unknown as AuditService;
 
   return {
-    service: new DayOverridesService({
+    service: new PlanDayContextService({
       repository: repo,
       plansRepository: plansRepo,
       briefStateComposer: composer,
@@ -116,79 +117,53 @@ function buildService(opts: {
       findByIdForOps,
       findDaysByPlanId,
       findSlotsByPlanId,
-      upsertTree,
-      revertTree,
-      findActiveByIdTree,
+      upsert,
+      revert,
+      findActiveById,
       write,
       queueAdd,
     },
   };
 }
 
-function input(overrides: Partial<SetDayOverrideInput> = {}): SetDayOverrideInput {
+function input(overrides: Partial<SetPlanDayContextInput> = {}): SetPlanDayContextInput {
   return {
     child_id: CHILD_A,
     override_date: '2026-06-03',
-    override_type: 'field_trip',
+    context_type: 'field_trip',
     is_lumi_proposed: false,
     ...overrides,
   };
 }
 
-describe('DayOverridesService.setOverrideTree', () => {
-  it('rejects bag_suspended (retired by canonical model)', async () => {
-    const { service } = buildService();
-    await expect(
-      service.setOverrideTree({
-        planId: PLAN_ID,
-        planSlotId: PLAN_SLOT_ID,
-        householdId: HOUSEHOLD,
-        input: input({ override_type: 'bag_suspended' }),
-        requestId: REQ,
-      }),
-    ).rejects.toBeInstanceOf(ConflictError);
-  });
-
-  it('rejects sick_day (retired by canonical model)', async () => {
-    const { service } = buildService();
-    await expect(
-      service.setOverrideTree({
-        planId: PLAN_ID,
-        planSlotId: PLAN_SLOT_ID,
-        householdId: HOUSEHOLD,
-        input: input({ override_type: 'sick_day' }),
-        requestId: REQ,
-      }),
-    ).rejects.toBeInstanceOf(ConflictError);
-  });
-
-  it('writes upsertTree with plan_slot_id for a composition-changing override', async () => {
+describe('PlanDayContextService.setOverride', () => {
+  it('writes upsert with plan_slot_id for a composition-changing context', async () => {
     const { service, mocks } = buildService();
-    const result = await service.setOverrideTree({
+    const result = await service.setOverride({
       planId: PLAN_ID,
       planSlotId: PLAN_SLOT_ID,
       householdId: HOUSEHOLD,
-      input: input({ override_type: 'field_trip' }),
+      input: input({ context_type: 'field_trip' }),
       requestId: REQ,
     });
-    expect(mocks.upsertTree).toHaveBeenCalledWith(
+    expect(mocks.upsert).toHaveBeenCalledWith(
       expect.objectContaining({
         planSlotId: PLAN_SLOT_ID,
         childId: CHILD_A,
         householdId: HOUSEHOLD,
-        overrideType: 'field_trip',
+        contextType: 'field_trip',
       }),
     );
     expect(result.override.id).toBe(OVERRIDE_ID);
   });
 
-  it('enqueues a day-scope regen for a composition-changing override', async () => {
+  it('enqueues a day-scope regen for a composition-changing context', async () => {
     const { service, mocks } = buildService();
-    const result = await service.setOverrideTree({
+    const result = await service.setOverride({
       planId: PLAN_ID,
       planSlotId: PLAN_SLOT_ID,
       householdId: HOUSEHOLD,
-      input: input({ override_type: 'field_trip' }),
+      input: input({ context_type: 'field_trip' }),
       requestId: REQ,
     });
     expect(mocks.queueAdd).toHaveBeenCalledTimes(1);
@@ -203,9 +178,9 @@ describe('DayOverridesService.setOverrideTree', () => {
     expect(result.regenTriggered).toBe(true);
   });
 
-  it('writes audit metadata with plan_slot_id', async () => {
+  it('writes audit metadata with plan_slot_id and context_type', async () => {
     const { service, mocks } = buildService();
-    await service.setOverrideTree({
+    await service.setOverride({
       planId: PLAN_ID,
       planSlotId: PLAN_SLOT_ID,
       householdId: HOUSEHOLD,
@@ -217,19 +192,32 @@ describe('DayOverridesService.setOverrideTree', () => {
         event_type: 'plan.day_override_set',
         metadata: expect.objectContaining({
           plan_slot_id: PLAN_SLOT_ID,
-          override_type: 'field_trip',
+          context_type: 'field_trip',
         }),
       }),
     );
   });
+
+  it('does not enqueue a regen for early_release (event-only context type)', async () => {
+    const { service, mocks } = buildService();
+    const result = await service.setOverride({
+      planId: PLAN_ID,
+      planSlotId: PLAN_SLOT_ID,
+      householdId: HOUSEHOLD,
+      input: input({ context_type: 'early_release' }),
+      requestId: REQ,
+    });
+    expect(mocks.queueAdd).not.toHaveBeenCalled();
+    expect(result.regenTriggered).toBe(false);
+  });
 });
 
-describe('DayOverridesService.revertOverrideTree', () => {
-  it('throws NotFoundError when the override does not exist', async () => {
+describe('PlanDayContextService.revertOverride', () => {
+  it('throws NotFoundError when the context does not exist', async () => {
     const { service, mocks } = buildService();
-    mocks.findActiveByIdTree.mockResolvedValueOnce(null);
+    mocks.findActiveById.mockResolvedValueOnce(null);
     await expect(
-      service.revertOverrideTree({
+      service.revertOverride({
         planId: PLAN_ID,
         planSlotId: PLAN_SLOT_ID,
         overrideId: OVERRIDE_ID,
@@ -239,16 +227,16 @@ describe('DayOverridesService.revertOverrideTree', () => {
     ).rejects.toBeInstanceOf(NotFoundError);
   });
 
-  it('calls revertTree and writes the reverted audit event', async () => {
+  it('calls revert and writes the reverted audit event', async () => {
     const { service, mocks } = buildService();
-    await service.revertOverrideTree({
+    await service.revertOverride({
       planId: PLAN_ID,
       planSlotId: PLAN_SLOT_ID,
       overrideId: OVERRIDE_ID,
       householdId: HOUSEHOLD,
       requestId: REQ,
     });
-    expect(mocks.revertTree).toHaveBeenCalledWith(OVERRIDE_ID, HOUSEHOLD, PLAN_SLOT_ID);
+    expect(mocks.revert).toHaveBeenCalledWith(OVERRIDE_ID, HOUSEHOLD, PLAN_SLOT_ID);
     expect(mocks.write).toHaveBeenCalledWith(
       expect.objectContaining({
         event_type: 'plan.day_override_reverted',

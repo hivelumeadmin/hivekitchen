@@ -63,7 +63,7 @@ function overrideSuccessBody(opts: { itemId: string; overrideType: string; regen
       child_id: CHILD_ID,
       household_id: SAMPLE_HOUSEHOLD_ID,
       override_date: '2026-05-06',
-      override_type: opts.overrideType,
+      context_type: opts.overrideType,
       is_lumi_proposed: false,
       confirmed_at: '2026-05-06T08:00:00.000Z',
       reverted_at: null,
@@ -125,11 +125,9 @@ test.describe('Story 3-19: OverridePicker entry', () => {
     await navigateToApp(page);
     await openOverridePickerForDay(page, 'Monday');
 
-    // All eight override options visible (AC #1).
-    await expect(page.getByRole('button', { name: /no lunch needed/i })).toBeVisible();
+    // All six context options visible (AC #1).
     await expect(page.getByRole('button', { name: /half-day/i })).toBeVisible();
     await expect(page.getByRole('button', { name: /field trip/i })).toBeVisible();
-    await expect(page.getByRole('button', { name: /^sick day/i })).toBeVisible();
     await expect(page.getByRole('button', { name: /post-dentist/i })).toBeVisible();
     await expect(page.getByRole('button', { name: /early release/i })).toBeVisible();
     await expect(page.getByRole('button', { name: /sport practice/i })).toBeVisible();
@@ -187,7 +185,7 @@ test.describe('Story 3-19: POST /v1/plans/:planId/items/:itemId/override (AC #1)
     expect(captured!.method).toBe('POST');
     expect(captured!.idempotencyKey).toMatch(UUID_V4_RE);
     expect(captured!.body).toMatchObject({
-      override_type: 'sport_practice',
+      context_type: 'sport_practice',
       child_id: CHILD_ID,
       is_lumi_proposed: false,
     });
@@ -197,27 +195,6 @@ test.describe('Story 3-19: POST /v1/plans/:planId/items/:itemId/override (AC #1)
     // Picker dismisses on success.
     await expect(page.getByRole('group', { name: /day-level context override/i })).toHaveCount(0);
     await expect(page.getByRole('group', { name: /edit monday/i })).toHaveCount(0);
-  });
-
-  test('selecting bag_suspended (non-composition) still posts and dismisses', async ({ page }) => {
-    let captured: { body: Record<string, unknown> | null } | null = null;
-
-    await page.route(OVERRIDE_URL, async (route: Route) => {
-      const req = route.request();
-      captured = { body: (req.postDataJSON() as Record<string, unknown> | null) ?? null };
-      await route.fulfill({
-        status: 201,
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(overrideSuccessBody({ itemId: ITEM_ID_MON, overrideType: 'bag_suspended', regen: false })),
-      });
-    });
-
-    await navigateToApp(page);
-    await openOverridePickerForDay(page, 'Monday');
-    await page.getByRole('button', { name: /no lunch needed/i }).click();
-
-    await expect.poll(() => captured?.body?.['override_type'] ?? null).toBe('bag_suspended');
-    await expect(page.getByRole('group', { name: /day-level context override/i })).toHaveCount(0);
   });
 
   test('multi-item day posts the override against the slot picked in L2', async ({ page }) => {

@@ -20,7 +20,7 @@ import { MemoryContextService } from '../services/memory-context.service.js';
 import { ExtraRulesRepository } from '../modules/children/extra-rules.repository.js';
 import { ExtraLibraryRepository } from '../modules/households/extra-library.repository.js';
 import { HouseholdsRepository } from '../modules/households/households.repository.js';
-import { DayOverridesRepository } from '../modules/plans/day-overrides.repository.js';
+import { PlanDayContextRepository } from '../modules/plans/plan-day-context.repository.js';
 import {
   loadBagCompositionsForHousehold,
   loadCulturalContextForHousehold,
@@ -100,7 +100,7 @@ const planRegenerationPlugin: FastifyPluginAsync = async (fastify) => {
   );
   const extraRulesRepository = new ExtraRulesRepository(fastify.supabase);
   const extraLibraryRepository = new ExtraLibraryRepository(fastify.supabase);
-  const dayOverridesRepository = new DayOverridesRepository(fastify.supabase);
+  const planDayContextRepository = new PlanDayContextRepository(fastify.supabase);
   const householdsRepository = new HouseholdsRepository(fastify.supabase, null);
   const regenWorker = fastify.bullmq.getWorker(
     REGEN_QUEUE,
@@ -154,7 +154,7 @@ const planRegenerationPlugin: FastifyPluginAsync = async (fastify) => {
           household_id,
           week_of,
           bagCompositions,
-          dayOverridesRepository,
+          planDayContextRepository,
         ),
       ]);
 

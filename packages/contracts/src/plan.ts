@@ -834,14 +834,14 @@ export const PlanSlotParamSchema = z.object({
   planSlotId: z.string().uuid(),
 });
 
-// Day-overrides flip the path param from planItemId → planSlotId. The
-// override is now scoped to a slot (not a per-(child,day,slot) flat item).
-export const DayOverrideSlotParamSchema = z.object({
+// plan_day_context is scoped to a slot (not a per-(child,day,slot) flat item):
+// the path param is planSlotId.
+export const PlanDayContextSlotParamSchema = z.object({
   planId: z.string().uuid(),
   planSlotId: z.string().uuid(),
 });
 
-export const DayOverrideSlotRevertParamSchema = z.object({
+export const PlanDayContextSlotRevertParamSchema = z.object({
   planId: z.string().uuid(),
   planSlotId: z.string().uuid(),
   overrideId: z.string().uuid(),

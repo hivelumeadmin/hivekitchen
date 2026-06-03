@@ -115,7 +115,7 @@ async function main(): Promise<void> {
   // Deepest-leaf tables first (nothing else FKs into them)
   await clearTable(supabase, 'variant_proposals');
   await clearTable(supabase, 'extra_removal_signals');
-  await clearTable(supabase, 'day_overrides');
+  await clearTable(supabase, 'plan_day_context');
   await clearTable(supabase, 'guardrail_decisions');
   await clearTable(supabase, 'plan_items');
   await clearTable(supabase, 'plans');

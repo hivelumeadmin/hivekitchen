@@ -20,7 +20,7 @@ import { plansRoutes } from './plans.routes.js';
 // tree-shape wire. Each route exercises 401/403/idempotency/validation rails +
 // at least one happy path + the relevant error mapping (NotFound → 404,
 // SwapGuardrailBlockedError → 422, ValidationError → 400). Mocks replace
-// fastify.plansService / fastify.dayOverridesService / fastify.variantProposalService.
+// fastify.plansService / fastify.planDayContextService / fastify.variantProposalService.
 
 const SAMPLE_USER_ID = '11111111-1111-4111-8111-111111111111';
 const SAMPLE_HOUSEHOLD_ID = '22222222-2222-4222-8222-222222222222';
@@ -102,10 +102,10 @@ const MOCK_VARIATION = {
 
 const MOCK_OVERRIDE = {
   id: SAMPLE_OVERRIDE_ID,
-  plan_item_id: '00000000-0000-4000-8000-000000000099',
+  plan_slot_id: SAMPLE_SLOT_ID,
   household_id: SAMPLE_HOUSEHOLD_ID,
   child_id: SAMPLE_CHILD_ID,
-  override_type: 'field_trip' as const,
+  context_type: 'field_trip' as const,
   override_date: '2026-06-03',
   is_lumi_proposed: false,
   confirmed_at: '2026-05-30T12:00:00.000Z',
@@ -169,20 +169,20 @@ function buildPlansService(overrides: PlansServiceMocks = {}) {
   };
 }
 
-interface DayOverridesServiceMocks {
-  setOverrideTree?: ReturnType<typeof vi.fn>;
-  revertOverrideTree?: ReturnType<typeof vi.fn>;
+interface PlanDayContextServiceMocks {
+  setOverride?: ReturnType<typeof vi.fn>;
+  revertOverride?: ReturnType<typeof vi.fn>;
 }
 
-function buildDayOverridesService(overrides: DayOverridesServiceMocks = {}) {
+function buildPlanDayContextService(overrides: PlanDayContextServiceMocks = {}) {
   return {
-    setOverrideTree:
-      overrides.setOverrideTree ??
+    setOverride:
+      overrides.setOverride ??
       vi
         .fn()
         .mockResolvedValue({ override: MOCK_OVERRIDE, regenTriggered: true }),
-    revertOverrideTree:
-      overrides.revertOverrideTree ?? vi.fn().mockResolvedValue(undefined),
+    revertOverride:
+      overrides.revertOverride ?? vi.fn().mockResolvedValue(undefined),
   };
 }
 
@@ -204,7 +204,7 @@ function buildVariantProposalService(
 
 async function buildTestApp(opts: {
   plansService?: ReturnType<typeof buildPlansService>;
-  dayOverridesService?: ReturnType<typeof buildDayOverridesService>;
+  planDayContextService?: ReturnType<typeof buildPlanDayContextService>;
   variantProposalService?: ReturnType<typeof buildVariantProposalService>;
 } = {}): Promise<FastifyInstance> {
   const app = Fastify({ logger: false, genReqId: () => randomUUID() });
@@ -220,8 +220,8 @@ async function buildTestApp(opts: {
     (opts.plansService ?? buildPlansService()) as unknown as FastifyInstance['plansService'],
   );
   app.decorate(
-    'dayOverridesService',
-    (opts.dayOverridesService ?? buildDayOverridesService()) as unknown as FastifyInstance['dayOverridesService'],
+    'planDayContextService',
+    (opts.planDayContextService ?? buildPlanDayContextService()) as unknown as FastifyInstance['planDayContextService'],
   );
   app.decorate(
     'variantProposalService',
@@ -1231,10 +1231,10 @@ describe('POST /v1/plans/:planId/slots/:planSlotId/override', () => {
   });
 
   const URL = `/v1/plans/${SAMPLE_PLAN_ID}/slots/${SAMPLE_SLOT_ID}/override`;
-  // Use a future date so the SetDayOverrideInputSchema refine() accepts it.
+  // Use a future date so the SetPlanDayContextInputSchema refine() accepts it.
   const FUTURE_DATE = '2099-01-15';
   const VALID_BODY = {
-    override_type: 'field_trip' as const,
+    context_type: 'field_trip' as const,
     override_date: FUTURE_DATE,
     child_id: SAMPLE_CHILD_ID,
     is_lumi_proposed: false,
@@ -1278,9 +1278,9 @@ describe('POST /v1/plans/:planId/slots/:planSlotId/override', () => {
     expect(res.statusCode).toBe(400);
   });
 
-  it('returns 201 with { override, regen_triggered } and forwards planSlotId to setOverrideTree', async () => {
-    const dayOverridesService = buildDayOverridesService();
-    app = await buildTestApp({ dayOverridesService });
+  it('returns 201 with { override, regen_triggered } and forwards planSlotId to setOverride', async () => {
+    const planDayContextService = buildPlanDayContextService();
+    app = await buildTestApp({ planDayContextService });
     const token = signPrimary(app);
     const res = await app.inject({
       method: 'POST',
@@ -1298,7 +1298,7 @@ describe('POST /v1/plans/:planId/slots/:planSlotId/override', () => {
     };
     expect(body.override.id).toBe(SAMPLE_OVERRIDE_ID);
     expect(body.regen_triggered).toBe(true);
-    expect(dayOverridesService.setOverrideTree).toHaveBeenCalledWith({
+    expect(planDayContextService.setOverride).toHaveBeenCalledWith({
       planId: SAMPLE_PLAN_ID,
       planSlotId: SAMPLE_SLOT_ID,
       householdId: SAMPLE_HOUSEHOLD_ID,
@@ -1342,12 +1342,12 @@ describe('DELETE /v1/plans/:planId/slots/:planSlotId/override/:overrideId', () =
   });
 
   it('returns 404 when service throws NotFoundError', async () => {
-    const dayOverridesService = buildDayOverridesService({
-      revertOverrideTree: vi
+    const planDayContextService = buildPlanDayContextService({
+      revertOverride: vi
         .fn()
-        .mockRejectedValue(new NotFoundError(`day_override ${SAMPLE_OVERRIDE_ID}`)),
+        .mockRejectedValue(new NotFoundError(`plan_day_context ${SAMPLE_OVERRIDE_ID}`)),
     });
-    app = await buildTestApp({ dayOverridesService });
+    app = await buildTestApp({ planDayContextService });
     const token = signPrimary(app);
     const res = await app.inject({
       method: 'DELETE',
@@ -1360,9 +1360,9 @@ describe('DELETE /v1/plans/:planId/slots/:planSlotId/override/:overrideId', () =
     expect(res.statusCode).toBe(404);
   });
 
-  it('returns 204 and forwards planSlotId to revertOverrideTree', async () => {
-    const dayOverridesService = buildDayOverridesService();
-    app = await buildTestApp({ dayOverridesService });
+  it('returns 204 and forwards planSlotId to revertOverride', async () => {
+    const planDayContextService = buildPlanDayContextService();
+    app = await buildTestApp({ planDayContextService });
     const token = signSecondary(app);
     const res = await app.inject({
       method: 'DELETE',
@@ -1373,7 +1373,7 @@ describe('DELETE /v1/plans/:planId/slots/:planSlotId/override/:overrideId', () =
       },
     });
     expect(res.statusCode).toBe(204);
-    expect(dayOverridesService.revertOverrideTree).toHaveBeenCalledWith({
+    expect(planDayContextService.revertOverride).toHaveBeenCalledWith({
       planId: SAMPLE_PLAN_ID,
       planSlotId: SAMPLE_SLOT_ID,
       overrideId: SAMPLE_OVERRIDE_ID,

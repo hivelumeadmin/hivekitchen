@@ -99,10 +99,10 @@ import {
   UpdateSchoolPolicyResponseSchema,
   GetSchoolPoliciesResponseSchema,
   SchoolPolicyChildIdParamSchema,
-  DayOverrideTypeSchema,
-  DayOverrideSchema,
-  SetDayOverrideInputSchema,
-  SetDayOverrideResponseSchema,
+  PlanDayContextTypeSchema,
+  PlanDayContextSchema,
+  SetPlanDayContextInputSchema,
+  SetPlanDayContextResponseSchema,
   CulturalKeySchema,
   TierSchema,
   TemplateStateSchema,
@@ -270,8 +270,8 @@ import {
   MainAssignmentParamSchema,
   VariationParamSchema,
   PlanSlotParamSchema,
-  DayOverrideSlotParamSchema,
-  DayOverrideSlotRevertParamSchema,
+  PlanDayContextSlotParamSchema,
+  PlanDayContextSlotRevertParamSchema,
 } from '@hivekitchen/contracts';
 
 // Auth
@@ -421,11 +421,11 @@ export type UpdateSchoolPolicyResponse = z.infer<typeof UpdateSchoolPolicyRespon
 export type GetSchoolPoliciesResponse = z.infer<typeof GetSchoolPoliciesResponseSchema>;
 export type SchoolPolicyChildIdParam = z.infer<typeof SchoolPolicyChildIdParamSchema>;
 
-// Day-level context overrides (Story 3.19 — FR118, FR119)
-export type DayOverrideType = z.infer<typeof DayOverrideTypeSchema>;
-export type DayOverride = z.infer<typeof DayOverrideSchema>;
-export type SetDayOverrideInput = z.infer<typeof SetDayOverrideInputSchema>;
-export type SetDayOverrideResponse = z.infer<typeof SetDayOverrideResponseSchema>;
+// Day-level context (Story 3.19 / 3-DM-E1 — FR118, FR119; formerly the day-overrides table)
+export type PlanDayContextType = z.infer<typeof PlanDayContextTypeSchema>;
+export type PlanDayContext = z.infer<typeof PlanDayContextSchema>;
+export type SetPlanDayContextInput = z.infer<typeof SetPlanDayContextInputSchema>;
+export type SetPlanDayContextResponse = z.infer<typeof SetPlanDayContextResponseSchema>;
 
 // Cultural priors (Story 2.11)
 export type CulturalKey = z.infer<typeof CulturalKeySchema>;
@@ -648,5 +648,5 @@ export type PauseChildOnDayInput = z.infer<typeof PauseChildOnDayInputSchema>;
 export type MainAssignmentParam = z.infer<typeof MainAssignmentParamSchema>;
 export type VariationParam = z.infer<typeof VariationParamSchema>;
 export type PlanSlotParam = z.infer<typeof PlanSlotParamSchema>;
-export type DayOverrideSlotParam = z.infer<typeof DayOverrideSlotParamSchema>;
-export type DayOverrideSlotRevertParam = z.infer<typeof DayOverrideSlotRevertParamSchema>;
+export type PlanDayContextSlotParam = z.infer<typeof PlanDayContextSlotParamSchema>;
+export type PlanDayContextSlotRevertParam = z.infer<typeof PlanDayContextSlotRevertParamSchema>;

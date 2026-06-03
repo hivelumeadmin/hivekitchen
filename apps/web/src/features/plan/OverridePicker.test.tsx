@@ -15,7 +15,7 @@ vi.mock('@/lib/fetch.js', async () => {
 const PLAN_ID = '99999999-9999-4999-8999-999999999999';
 // Story 3-DM-C1 Phase 9b part 4 step 4 — overrides are scoped to a slot
 // (not a per-(child, day, slot) flat item) in the tree model. Param rename
-// flows through useSetDayOverrideMutation: planItemId → planSlotId.
+// flows through useSetPlanDayContextMutation: planItemId → planSlotId.
 const SLOT_ID = '00000000-0000-4000-8000-000000000010';
 const CHILD_ID = '11111111-1111-4111-8111-111111111111';
 const OVERRIDE_DATE = '2026-05-06';
@@ -52,12 +52,10 @@ afterEach(() => {
 });
 
 describe('OverridePicker', () => {
-  it('renders all eight override options', () => {
+  it('renders all six context options', () => {
     renderPicker();
-    expect(screen.getByRole('button', { name: /No lunch needed/i })).toBeDefined();
     expect(screen.getByRole('button', { name: /Half-day/i })).toBeDefined();
     expect(screen.getByRole('button', { name: /Field trip/i })).toBeDefined();
-    expect(screen.getByRole('button', { name: /Sick day/i })).toBeDefined();
     expect(screen.getByRole('button', { name: /Post-dentist/i })).toBeDefined();
     expect(screen.getByRole('button', { name: /Early release/i })).toBeDefined();
     expect(screen.getByRole('button', { name: /Sport practice/i })).toBeDefined();
@@ -69,11 +67,11 @@ describe('OverridePicker', () => {
     vi.mocked(hkFetch).mockResolvedValueOnce({
       override: {
         id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
-        plan_item_id: SLOT_ID,
+        plan_slot_id: SLOT_ID,
         child_id: CHILD_ID,
         household_id: '22222222-2222-4222-8222-222222222222',
         override_date: OVERRIDE_DATE,
-        override_type: 'sport_practice',
+        context_type: 'sport_practice',
         is_lumi_proposed: false,
         confirmed_at: '2026-05-06T08:00:00.000Z',
         reverted_at: null,
@@ -95,7 +93,7 @@ describe('OverridePicker', () => {
       expect.objectContaining({
         method: 'POST',
         body: expect.objectContaining({
-          override_type: 'sport_practice',
+          context_type: 'sport_practice',
           override_date: OVERRIDE_DATE,
           child_id: CHILD_ID,
           is_lumi_proposed: false,

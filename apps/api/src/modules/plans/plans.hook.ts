@@ -9,8 +9,8 @@ import { BriefStateComposer } from './brief-state.composer.js';
 import { ChildAllergensRepository } from '../children/child-allergens.repository.js';
 import { ChildrenRepository } from '../children/children.repository.js';
 import { REGEN_QUEUE } from '../../jobs/plan-regeneration.job.js';
-import { DayOverridesRepository } from './day-overrides.repository.js';
-import { DayOverridesService } from './day-overrides.service.js';
+import { PlanDayContextRepository } from './plan-day-context.repository.js';
+import { PlanDayContextService } from './plan-day-context.service.js';
 import { ExtraRulesRepository } from '../children/extra-rules.repository.js';
 import { ExtraRemovalSignalService } from './extra-removal-signal.service.js';
 import { RecipeService } from '../recipe/recipe.service.js';
@@ -146,14 +146,14 @@ const plansHookPlugin: FastifyPluginAsync = async (fastify) => {
   // Story 3.19 — day-level context overrides. Reuses REGEN_QUEUE for the
   // composition-changing override regen path so no new BullMQ topology is
   // introduced.
-  if (fastify.hasDecorator('dayOverridesService')) {
+  if (fastify.hasDecorator('planDayContextService')) {
     throw new Error(
-      'dayOverridesService already decorated — check plugin registration order',
+      'planDayContextService already decorated — check plugin registration order',
     );
   }
-  const dayOverridesRepository = new DayOverridesRepository(fastify.supabase);
-  const dayOverridesService = new DayOverridesService({
-    repository: dayOverridesRepository,
+  const planDayContextRepository = new PlanDayContextRepository(fastify.supabase);
+  const planDayContextService = new PlanDayContextService({
+    repository: planDayContextRepository,
     plansRepository: repository,
     briefStateComposer,
     regenQueue: fastify.bullmq.getQueue(REGEN_QUEUE),
@@ -164,7 +164,7 @@ const plansHookPlugin: FastifyPluginAsync = async (fastify) => {
   fastify.decorate('plansService', plansService);
   fastify.decorate('briefStateComposer', briefStateComposer);
   fastify.decorate('planAdjustmentService', planAdjustmentService);
-  fastify.decorate('dayOverridesService', dayOverridesService);
+  fastify.decorate('planDayContextService', planDayContextService);
   fastify.decorate('lunchLinkSessionRepository', lunchLinkSessionRepository);
   fastify.decorate('variantProposalService', variantProposalService);
 };

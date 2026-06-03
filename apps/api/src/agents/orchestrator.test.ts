@@ -635,13 +635,13 @@ describe('DomainOrchestrator', () => {
           child_id: CHILD_ID,
           child_name: 'Asha',
           override_date: '2026-11-04',
-          override_type: 'sport_practice',
+          context_type: 'sport_practice',
         },
         {
           child_id: '33333333-3333-4333-8333-333333333333',
           child_name: 'Kai',
           override_date: '2026-11-06',
-          override_type: 'field_trip',
+          context_type: 'field_trip',
         },
       ];
       const lines = buildExtraProposalLines(proposals);
