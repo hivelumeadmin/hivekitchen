@@ -20,6 +20,9 @@ import { authorize } from '../../middleware/authorize.hook.js';
 import { LunchLinkRepository } from './lunch-link.repository.js';
 import { LunchLinkService, getMondayOfWeek } from './lunch-link.service.js';
 import { HeartNoteRepository } from '../heart-notes/heart-note.repository.js';
+import { PlansRepository } from '../plans/plans.repository.js';
+import { ChildPreferencesRepository } from '../child-preferences/child-preferences.repository.js';
+import { ChildPreferencesService } from '../child-preferences/child-preferences.service.js';
 import { NotFoundError } from '../../common/errors.js';
 
 const lunchLinkRoutesPlugin: FastifyPluginAsync = async (fastify) => {
@@ -32,6 +35,14 @@ const lunchLinkRoutesPlugin: FastifyPluginAsync = async (fastify) => {
     lunchLinkRepo,
     heartNoteRepo,
     fastify.env.WEB_BASE_URL,
+  );
+
+  // Slice 4-S11 — Layer 2 signal write. Constructed here so the rate route can
+  // fire-and-forget child_preferences signals after the rating is persisted.
+  const childPrefsService = new ChildPreferencesService(
+    new ChildPreferencesRepository(fastify.supabase),
+    new PlansRepository(fastify.supabase),
+    fastify.log,
   );
 
   const requireMember = authorize(['primary_parent', 'secondary_caregiver']);
@@ -179,6 +190,21 @@ const lunchLinkRoutesPlugin: FastifyPluginAsync = async (fastify) => {
         getMondayOfWeek(result.date),
         request.id,
       );
+
+      // Slice 4-S11 — fire-and-forget Layer 2 signal write. Never blocks the
+      // child's rating response (the emoji tap is optimistically locked client-
+      // side). recordRatingSignals already swallows its own errors; the .catch
+      // is defence in depth against an unexpected synchronous throw.
+      void childPrefsService
+        .recordRatingSignals({
+          householdId: result.householdId,
+          childId: result.childId,
+          rating,
+          signalDate: result.date,
+        })
+        .catch((err: unknown) => {
+          request.log.warn({ err }, 'child_preferences: recordRatingSignals failed');
+        });
 
       return reply.status(204).send();
     },

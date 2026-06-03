@@ -131,6 +131,11 @@ import {
   RecipeDiscoverOutputSchema,
   RecipeDiscoverConstraintsSchema,
   RecipeDetailSchema,
+  ChildSignalInputSchema,
+  ChildSignalRecipeItemSchema,
+  ChildSignalPerChildSchema,
+  ChildSignalFamilyPatternSchema,
+  ChildSignalOutputSchema,
   RecipeRowSchema,
   RecipeUnitSchema,
   RecipeSourceSchema,
@@ -462,6 +467,13 @@ export type RecipeAgentExtraction = z.infer<typeof RecipeAgentExtractionSchema>;
 export type RecipeDiscoverInput = z.infer<typeof RecipeDiscoverInputSchema>;
 export type RecipeDiscoverOutput = z.infer<typeof RecipeDiscoverOutputSchema>;
 export type RecipeDiscoverConstraints = z.infer<typeof RecipeDiscoverConstraintsSchema>;
+
+// Story 4-S11 — child_signal agent tool I/O
+export type ChildSignalInput = z.infer<typeof ChildSignalInputSchema>;
+export type ChildSignalRecipeItem = z.infer<typeof ChildSignalRecipeItemSchema>;
+export type ChildSignalPerChild = z.infer<typeof ChildSignalPerChildSchema>;
+export type ChildSignalFamilyPattern = z.infer<typeof ChildSignalFamilyPatternSchema>;
+export type ChildSignalOutput = z.infer<typeof ChildSignalOutputSchema>;
 
 // Slice A0 — Recipes catalog DB row shapes
 export type RecipeRow = z.infer<typeof RecipeRowSchema>;

@@ -18,6 +18,7 @@ import {
   ExtraRulesChildIdParamSchema,
   LunchLinkPauseInputSchema,
   LunchLinkPauseResponseSchema,
+  ChildSignalOutputSchema,
 } from '@hivekitchen/contracts';
 import type {
   AddChildBody,
@@ -33,6 +34,8 @@ import { ComplianceService } from '../compliance/compliance.service.js';
 import { ChildAllergensRepository } from './child-allergens.repository.js';
 import { ChildrenRepository } from './children.repository.js';
 import { ChildrenService } from './children.service.js';
+import { ChildPreferencesRepository } from '../child-preferences/child-preferences.repository.js';
+import { loadChildSignal } from '../child-preferences/child-signal.assembler.js';
 import { SchoolPoliciesRepository } from './school-policies.repository.js';
 import { SchoolPoliciesService } from './school-policies.service.js';
 import { ExtraRulesRepository } from './extra-rules.repository.js';
@@ -78,6 +81,9 @@ const childrenRoutesPlugin: FastifyPluginAsync = async (fastify) => {
 
   // Story 3.21 — extra-rules repository. PII-free; no encryption needed.
   const extraRulesRepository = new ExtraRulesRepository(fastify.supabase);
+
+  // Slice 4-S11 — Layer 2 signal read for the per-child signal-summary endpoint.
+  const childPreferencesRepository = new ChildPreferencesRepository(fastify.supabase);
 
   // Story 3.28 — lunch link suppression. Decorated by plansHook; children-routes
   // depends on it so plansHook must be registered before childrenRoutes.
@@ -330,6 +336,40 @@ const childrenRoutesPlugin: FastifyPluginAsync = async (fastify) => {
       }
 
       return reply.status(200).send({ child_id: childId, extra_rules });
+    },
+  );
+
+  // Slice 4-S11 — GET /v1/children/:childId/signal-summary
+  // Per-child Layer 2 preference summary (30-day lookback). Primary Parent only.
+  // This is the verification surface for the child_preferences feedback loop —
+  // there is no web UI in this slice. family_liked stays household-scoped (the
+  // parent owns every child in the household); per_child is filtered to the
+  // requested child only.
+  fastify.get(
+    '/v1/children/:childId/signal-summary',
+    {
+      preHandler: requirePrimaryParent,
+      schema: { response: { 200: ChildSignalOutputSchema } },
+    },
+    async (request, reply) => {
+      const { childId } = request.params as { childId: string };
+      const householdId = request.user.household_id;
+
+      // Ownership: 404 if the child is not in the caller's household.
+      const child = await childrenRepository.findById(householdId, childId);
+      if (child === null) throw new NotFoundError(`child not found: ${childId}`);
+
+      const signal = await loadChildSignal({
+        childPrefsRepo: childPreferencesRepository,
+        childrenRepo: childrenRepository,
+        householdId,
+        lookbackDays: 30,
+      });
+
+      return reply.status(200).send({
+        per_child: signal.per_child.filter((c) => c.child_id === childId),
+        family_liked: signal.family_liked,
+      });
     },
   );
 

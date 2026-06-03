@@ -1,4 +1,5 @@
 import type { ChildrenRepository } from '../modules/children/children.repository.js';
+import type { ChildPreferencesRepository } from '../modules/child-preferences/child-preferences.repository.js';
 import type { CulturalPriorRepository } from '../modules/cultural-priors/cultural-prior.repository.js';
 import type { CulturalCalendarService } from '../services/cultural-calendar.service.js';
 import type { MemoryContextService } from '../services/memory-context.service.js';
@@ -15,13 +16,28 @@ import type {
 } from '../agents/orchestrator.js';
 import type { CulturalTemplateKey } from '../services/cultural-calendar.service.js';
 
-// Story 3.27 — children whose variant_eligible flag is true.
+// Story 3.27 / 4-S11 — variant-eligible children, now derived from REAL rating
+// engagement rather than the manually-flipped children.variant_eligible MVP
+// stub: a child qualifies with >= 3 distinct signal_dates in child_preferences
+// within the past 30 days (i.e. the family has used the rating feature
+// meaningfully). The threshold is conservative; lower to 2 if too few families
+// qualify — it is a single constant here.
+const VARIANT_ELIGIBLE_MIN_SIGNAL_DATES = 3;
+const VARIANT_ELIGIBLE_WINDOW_DAYS = 30;
+
 export async function loadVariantEligibleChildrenForHousehold(
   householdId: string,
-  childrenRepository: ChildrenRepository,
+  childPreferencesRepository: ChildPreferencesRepository,
 ): Promise<PlannerVariantEligibleChild[]> {
-  const rows = await childrenRepository.findVariantEligibleByHousehold(householdId);
-  return rows.map((r) => ({ child_id: r.child_id, child_name: r.name }));
+  const sinceDate = new Date(Date.now() - VARIANT_ELIGIBLE_WINDOW_DAYS * 86_400_000)
+    .toISOString()
+    .slice(0, 10);
+  const rows = await childPreferencesRepository.getVariantEligibleChildIds(
+    householdId,
+    sinceDate,
+    VARIANT_ELIGIBLE_MIN_SIGNAL_DATES,
+  );
+  return rows.map((r) => ({ child_id: r.child_id, child_name: r.child_name }));
 }
 
 export async function loadBagCompositionsForHousehold(

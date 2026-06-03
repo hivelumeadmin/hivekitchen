@@ -22,6 +22,7 @@ export * from './cultural.js';
 export * from './lumi.js';
 export * from './recipe.js';
 export * from './recipe-vocabulary.js';
+export * from './child-signal.js';
 export * from './enforcement.js';
 export * from './kitchen-map.js';
 export * from './onboarding-tools.js';

@@ -8,6 +8,9 @@ import { ThreadRepository } from '../modules/threads/thread.repository.js';
 import { RecipeService } from '../modules/recipe/recipe.service.js';
 import { RecipesRepository } from '../modules/recipe/recipes.repository.js';
 import { PantryService } from '../modules/pantry/pantry.service.js';
+import { ChildPreferencesRepository } from '../modules/child-preferences/child-preferences.repository.js';
+import { ChildAllergensRepository } from '../modules/children/child-allergens.repository.js';
+import { ChildrenRepository } from '../modules/children/children.repository.js';
 import { DomainOrchestrator } from './orchestrator.js';
 import type { OrchestratorServices } from './orchestrator.js';
 import { OpenAIAdapter } from './providers/openai.adapter.js';
@@ -67,6 +70,18 @@ const orchestratorHookPlugin: FastifyPluginAsync = async (fastify) => {
   const recipeService = new RecipeService(recipesRepository, fastify.log);
   const pantryService = new PantryService();
 
+  // Story 4-S11 — child_signal tool deps. kek=null is fine: findByHouseholdId
+  // reads names + plaintext allergen/tag rows only; the household DEK path is
+  // never exercised here (mirrors the plan-generation job's ChildrenRepository).
+  const childPreferencesRepository = new ChildPreferencesRepository(fastify.supabase);
+  const childAllergensRepository = new ChildAllergensRepository(fastify.supabase, null);
+  const childrenRepository = new ChildrenRepository(
+    fastify.supabase,
+    null,
+    fastify.log,
+    childAllergensRepository,
+  );
+
   const services: OrchestratorServices = {
     memory: fastify.memoryService,
     allergyGuardrail: fastify.allergyGuardrailService,
@@ -74,6 +89,8 @@ const orchestratorHookPlugin: FastifyPluginAsync = async (fastify) => {
     pantry: pantryService,
     plan: fastify.plansService,
     culturalPrior: culturalPriorService,
+    childPrefs: childPreferencesRepository,
+    children: childrenRepository,
   };
 
   // OPENAI_TRACES_ENABLED is env-validated; staging/prod are hard-blocked from

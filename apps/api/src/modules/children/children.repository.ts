@@ -231,24 +231,12 @@ export class ChildrenRepository extends BaseRepository {
     }));
   }
 
-  // Story 3.27 — variant-eligible children for the planning week. Until Epic 4
-  // ships real rating counts on lunch_link_sessions, this is a flat boolean
-  // column on `children` flipped by ops / Lumi. Plain-text reads (no decrypt).
-  async findVariantEligibleByHousehold(
-    householdId: string,
-  ): Promise<Array<{ child_id: string; name: string }>> {
-    const { data, error } = await this.client
-      .from('children')
-      .select('id, name')
-      .eq('household_id', householdId)
-      .eq('variant_eligible', true);
-    if (error) throw error;
-    type Row = { id: string; name: string };
-    return ((data as Row[] | null) ?? []).map((row) => ({
-      child_id: row.id,
-      name: row.name,
-    }));
-  }
+  // Story 3.27 / 4-S11 — variant-eligible children are no longer derived from a
+  // manually-flipped children.variant_eligible boolean. The derivation moved to
+  // real child_preferences signal counts; see
+  // ChildPreferencesRepository.getVariantEligibleChildIds +
+  // loadVariantEligibleChildrenForHousehold. The variant_eligible column is left
+  // in place (no longer read by app code) — dropping it is a separate migration.
 
   /**
    * Slice C — update the encrypted profile fields on an existing child.

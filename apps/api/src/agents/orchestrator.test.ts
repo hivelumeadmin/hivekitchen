@@ -9,6 +9,7 @@ import {
   buildExtraRulesLines,
 } from './orchestrator.js';
 import type {
+  OrchestratorServices,
   PlannerBagComposition,
   PlannerCulturalContext,
   PlannerExtraLibraryItem,
@@ -138,6 +139,19 @@ function buildProvider(name: string, overrides: Partial<LLMProvider> = {}): LLMP
   } as LLMProvider;
 }
 
+function buildChildPrefsRepo() {
+  return {
+    getAggregatedSignals: vi.fn().mockResolvedValue([]),
+    getVariantEligibleChildIds: vi.fn().mockResolvedValue([]),
+  } as unknown as OrchestratorServices['childPrefs'];
+}
+
+function buildChildrenRepo() {
+  return {
+    findByHouseholdId: vi.fn().mockResolvedValue([]),
+  } as unknown as OrchestratorServices['children'];
+}
+
 function buildOrchestrator(providers: LLMProvider[]) {
   const audit = buildAudit();
   const allergy = buildAllergyService();
@@ -150,7 +164,16 @@ function buildOrchestrator(providers: LLMProvider[]) {
   const logger = buildLogger();
   const orchestrator = new DomainOrchestrator(
     providers,
-    { memory, allergyGuardrail: allergy, recipe, pantry, plan, culturalPrior },
+    {
+      memory,
+      allergyGuardrail: allergy,
+      recipe,
+      pantry,
+      plan,
+      culturalPrior,
+      childPrefs: buildChildPrefsRepo(),
+      children: buildChildrenRepo(),
+    },
     redis,
     audit,
     logger,
@@ -211,6 +234,8 @@ describe('DomainOrchestrator', () => {
             pantry: buildPantryService(),
             plan: buildPlansService(),
             culturalPrior: buildCulturalPriorService(),
+            childPrefs: buildChildPrefsRepo(),
+            children: buildChildrenRepo(),
           },
           buildRedis(),
           buildAudit(),

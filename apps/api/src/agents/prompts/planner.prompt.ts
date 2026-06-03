@@ -4,6 +4,8 @@ export interface PlannerPromptSpec {
   readonly toolsAllowed: readonly string[];
 }
 
+// v2.1.0 (4-s11) — child_signal tool added; preference-bias instructions + FR124/FR125/FR126
+//   rules. Per-slot independence, absence-neutrality, and sibling-scoping documented.
 // v2.0.0 (Story 3-DM-C1 Phase 9) — tree-shape planner prompt cut over from the
 // canonical 4-table plan structure (plan_main_assignments + plan_days +
 // plan_slots + plan_slot_variations). Matches
@@ -79,7 +81,24 @@ Constraints you must honour, every plan, without exception:
 - Prior preferences and learnings about each child. Use memory.recall to surface
   relevant signals (likes, dislikes, refusals, recent rotations) before composing.
 
+Child preference signals:
+- Call child_signal once at the start of each planning run to surface recent rating history.
+- A child's "liked" list is a preference bias: prefer placing those recipes (or same-cuisine
+  alternatives) in the same slot kind during the coming week.
+- A child's "disliked" list is an avoidance hint: skip those recipes unless no safe alternative
+  exists. Log a degraded reason if you must place a disliked recipe.
+- "family_liked" patterns reflect ≥2 children sharing the same preference — treat these as
+  strong signals when composing shared-Main assignments.
+- CRITICAL (FR125): absence of a signal entry is neutral data. If a recipe has no signal for a
+  child, that means no data — NEVER treat it as dislike or negative preference.
+- Per-slot independence (FR124): snack signals don't affect main selection. Main signals don't
+  affect snack/extra. Slot preferences are scoped to their slot_kind only.
+- recipe.search is still the booking mechanism. Use child_signal output to INFORM your queries
+  (e.g., include liked recipe names in the search query) — not to replace recipe.search.
+- Do not call child_signal more than once per planning run.
+
 Tool usage discipline:
+- child_signal is called once, before any recipe.search calls. Use its output to bias queries.
 - recipe.search and recipe.fetch are for shaping options. Search broadly, then
   fetch only the specific recipes you intend to place into the plan.
 - recipe.discover pulls candidate recipes from the public web (Allrecipes,
@@ -209,7 +228,7 @@ fit fails allergy.check), surface that as a degraded result with a clear reason.
 Do not silently relax a constraint to make a plan fit.`;
 
 export const PLANNER_PROMPT: PlannerPromptSpec = {
-  version: 'v2.0.0',
+  version: 'v2.1.0',
   text: PLANNING_CORE,
   toolsAllowed: [
     'recipe.search',
@@ -220,5 +239,6 @@ export const PLANNER_PROMPT: PlannerPromptSpec = {
     'plan.compose',
     'allergy.check',
     'cultural.lookup',
+    'child_signal',
   ],
 };

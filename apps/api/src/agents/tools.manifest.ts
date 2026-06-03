@@ -5,6 +5,8 @@ import {
   AllergenDeclareOutputSchema,
   AllergyCheckInputSchema,
   AllergyCheckOutputSchema,
+  ChildSignalInputSchema,
+  ChildSignalOutputSchema,
   CuisineDeclareInputSchema,
   CuisineDeclareOutputSchema,
   CulturalLookupInputSchema,
@@ -153,6 +155,19 @@ const culturalLookupStubSpec = stubSpec(
   'cultural.lookup not wired — DomainOrchestrator constructor must inject createCulturalLookupSpec(culturalPriorService, redis)',
 );
 
+// Story 4-S11 — child_signal stub. Real wiring is injected per-construction in
+// the DomainOrchestrator constructor (needs the child-preferences + children
+// repositories + redis). Registered here so the tool-manifest CI lint (Story
+// 1.9) sees a complete entry for the name exported by child-signal.tools.ts.
+const childSignalStubSpec = stubSpec(
+  'child_signal',
+  'Get per-child recipe preference signals from recent emoji ratings. Call once at the start of each planning run.',
+  ChildSignalInputSchema,
+  ChildSignalOutputSchema,
+  200,
+  'child_signal not wired — DomainOrchestrator constructor must inject createChildSignalSpec(childPrefsRepo, childrenRepo, redis)',
+);
+
 // Slice 2.5-s1 — seven new onboarding tools. Registered as stubs in this
 // slice; factory functions exist in onboarding.tools.ts as deterministic-
 // stub successes (input validated, no DB write, Pino log emitted). Full
@@ -232,6 +247,7 @@ export const TOOL_MANIFEST = new Map<string, ToolSpec>([
   ['pantry.read', pantryReadStubSpec],
   ['plan.compose', planComposeStubSpec],
   ['cultural.lookup', culturalLookupStubSpec],
+  ['child_signal', childSignalStubSpec],
   ['household.set_name', householdSetNameStubSpec],
   ['allergen.declare', allergenDeclareStubSpec],
   ['dietary.declare', dietaryDeclareStubSpec],

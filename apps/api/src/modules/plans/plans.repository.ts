@@ -80,6 +80,28 @@ export class PlansRepository extends BaseRepository {
     return (data as PlanRow | null) ?? null;
   }
 
+  // Story 4-S11 — resolve the committed plan_id for a (household, week_of) pair
+  // by the calendar Monday date rather than the derived week_id. The Layer-2
+  // signal write only has the rating's session date in hand, so it looks the
+  // plan up by week_of directly. Highest revision among cleared rows wins; null
+  // when the week hasn't been generated yet (a normal state — the caller skips).
+  async findCommittedPlanIdByWeekOf(opts: {
+    householdId: string;
+    weekOf: string;
+  }): Promise<string | null> {
+    const { data, error } = await this.client
+      .from('plans')
+      .select('id')
+      .eq('household_id', opts.householdId)
+      .eq('week_of', opts.weekOf)
+      .not('guardrail_cleared_at', 'is', null)
+      .order('revision', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (error) throw error;
+    return (data as { id: string } | null)?.id ?? null;
+  }
+
   async findCurrentByHousehold(opts: {
     householdId: string;
     weekId: string;

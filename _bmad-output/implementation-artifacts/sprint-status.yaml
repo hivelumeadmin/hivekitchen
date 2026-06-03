@@ -1,5 +1,5 @@
 # generated: 2026-04-23
-# last_updated: 2026-06-02 (3-dm-e1 → done — code review complete: 5 patches applied (upsert conflict .maybySingle + null guard, migration IF EXISTS, 23505 test, early_release no-regen test, cascade comment); 5 deferred; 8 dismissed. All 11 ACs pass. 15/15 plan-day-context tests green. USER-SIDE GATES remain: supabase db push --include-all + Task-1 verification SQL.)
+# last_updated: 2026-06-03 (4-s11 → done — code review complete: 1 patch applied (RLS policy users.household_id → current_household_id); 1 deferred (heart_notes same bug); 21 dismissed. USER-SIDE GATE: supabase db push --include-all (migration 20261013000000). Earlier: 4-s11 → ready-for-dev — story file authored; 3-dm-e1 → done — code review complete: 5 patches applied; 5 deferred; 8 dismissed. All 11 ACs pass.)
 # project: hivekitchen
 # project_key: NOKEY
 # tracking_system: file-system
@@ -252,7 +252,7 @@ development_status:
   4-s8-sendgrid-email-delivery: deferred                                      # folds: 4.7 (email) — deferred 2026-05-29
   4-s9-twilio-sms-whatsapp-parent-copied-url: deferred                        # folds: 4.7 (remaining) — deferred 2026-05-29
   4-s10-service-worker-offline-lunch-link: done                              # folds: 4.8; code review complete 2026-05-31 — 2 patches applied (isOnline badge-clear AC4, snapshot.rating != null); 9/9 E2E tests pass
-  4-s11-layer-2-signal-planner-feedback-loop: backlog                         # folds: 4.14 (full)
+  4-s11-layer-2-signal-planner-feedback-loop: done                            # folds: 4.14 (full); code review complete 2026-06-03 — 1 patch applied (RLS policy users.household_id → current_household_id); 1 deferred (heart_notes same bug, pre-existing); 21 dismissed. USER-SIDE GATE: supabase db push --include-all (migration 20261013000000)
   4-s12-flavorpassport: backlog                                               # folds: 4.9
   4-s13-grandparent-composer-at-cap-rhythm: backlog                           # folds: 4.10
   4-s14-premium-voice-playback: deferred                                      # folds: 4.11 — deferred 2026-05-29

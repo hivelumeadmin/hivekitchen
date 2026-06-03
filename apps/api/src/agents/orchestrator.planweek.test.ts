@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { FastifyBaseLogger } from 'fastify';
 import type { Redis } from 'ioredis';
 import { DomainOrchestrator } from './orchestrator.js';
+import type { OrchestratorServices } from './orchestrator.js';
 import { TOOL_MANIFEST } from './tools.manifest.js';
 import type { ToolSpec } from './tools.manifest.js';
 import type { LLMProvider, LLMResponse } from './providers/llm-provider.interface.js';
@@ -83,6 +84,19 @@ function buildCulturalPriorService() {
   } as unknown as CulturalPriorService;
 }
 
+function buildChildPrefsRepo() {
+  return {
+    getAggregatedSignals: vi.fn().mockResolvedValue([]),
+    getVariantEligibleChildIds: vi.fn().mockResolvedValue([]),
+  } as unknown as OrchestratorServices['childPrefs'];
+}
+
+function buildChildrenRepo() {
+  return {
+    findByHouseholdId: vi.fn().mockResolvedValue([]),
+  } as unknown as OrchestratorServices['children'];
+}
+
 function buildRedis() {
   const pipeline = {
     zadd: vi.fn().mockReturnThis(),
@@ -124,6 +138,8 @@ function buildOrchestrator(provider: LLMProvider) {
       pantry: buildPantryService(),
       plan: buildPlansService(),
       culturalPrior: buildCulturalPriorService(),
+      childPrefs: buildChildPrefsRepo(),
+      children: buildChildrenRepo(),
     },
     buildRedis(),
     buildAudit(),

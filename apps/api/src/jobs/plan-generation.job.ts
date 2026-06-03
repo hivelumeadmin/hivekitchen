@@ -11,6 +11,7 @@ import { GuardrailRejectionError } from '../common/errors.js';
 import { HouseholdsRepository } from '../modules/households/households.repository.js';
 import { ChildAllergensRepository } from '../modules/children/child-allergens.repository.js';
 import { ChildrenRepository } from '../modules/children/children.repository.js';
+import { ChildPreferencesRepository } from '../modules/child-preferences/child-preferences.repository.js';
 import { CulturalPriorRepository } from '../modules/cultural-priors/cultural-prior.repository.js';
 import { CulturalCalendarService } from '../services/cultural-calendar.service.js';
 import { MemoryContextService } from '../services/memory-context.service.js';
@@ -155,6 +156,9 @@ const planGenerationPlugin: FastifyPluginAsync = async (fastify) => {
     fastify.log,
     childAllergensRepository,
   );
+  // Story 4-S11 — variant-eligible derivation now reads child_preferences
+  // signal counts instead of the children.variant_eligible boolean stub.
+  const childPreferencesRepository = new ChildPreferencesRepository(fastify.supabase);
   // Story 3.21 — Extra slot pin/ban rules + household custom Extra library.
   const extraRulesRepository = new ExtraRulesRepository(fastify.supabase);
   const extraLibraryRepository = new ExtraLibraryRepository(fastify.supabase);
@@ -274,7 +278,7 @@ const planGenerationPlugin: FastifyPluginAsync = async (fastify) => {
         loadCulturalContextForHousehold(household_id, week_of, culturalPriorRepository, culturalCalendarService, memoryContextService),
         loadBagCompositionsForHousehold(household_id, childrenRepository),
         loadExtraLibraryForHousehold(household_id, extraLibraryRepository),
-        loadVariantEligibleChildrenForHousehold(household_id, childrenRepository),
+        loadVariantEligibleChildrenForHousehold(household_id, childPreferencesRepository),
         householdsRepoForRun.getSovereigntyMode(household_id).catch((err: unknown) => {
           fastify.log.warn(
             { err, household_id },

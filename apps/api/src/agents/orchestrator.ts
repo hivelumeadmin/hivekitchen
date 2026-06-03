@@ -11,8 +11,11 @@ import type { RecipeService } from '../modules/recipe/recipe.service.js';
 import type { PantryService } from '../modules/pantry/pantry.service.js';
 import type { PlansService } from '../modules/plans/plans.service.js';
 import type { CulturalPriorService } from '../modules/cultural-priors/cultural-prior.service.js';
+import type { ChildPreferencesRepository } from '../modules/child-preferences/child-preferences.repository.js';
+import type { ChildrenRepository } from '../modules/children/children.repository.js';
 import { TOOL_MANIFEST } from './tools.manifest.js';
 import { createAllergyCheckSpec } from './tools/allergy.tools.js';
+import { createChildSignalSpec } from './tools/child-signal.tools.js';
 import { createMemoryNoteSpec, createMemoryRecallSpec } from './tools/memory.tools.js';
 import {
   createRecipeDiscoverSpec,
@@ -88,11 +91,13 @@ export interface PlannerExtraProposal {
   context_type: 'sport_practice' | 'field_trip';
 }
 
-// Story 3.27 — children whose `variant_eligible` flag is true (Epic 4 will
-// derive this from real lunch_link_sessions rating counts; today it is a
-// manually-flipped MVP stub). The planner may include AT MOST ONE
-// variant_proposal in the plan output for these children — see
-// PlanVariantProposalOutputSchema.
+// Story 3.27 / 4-S11 — children eligible for a variant proposal. Eligibility is
+// now derived from REAL rating engagement: >= 3 distinct child_preferences
+// signal dates in the past 30 days (see loadVariantEligibleChildrenForHousehold
+// + ChildPreferencesRepository.getVariantEligibleChildIds). The earlier
+// manually-flipped children.variant_eligible MVP stub is retired. The planner
+// may include AT MOST ONE variant_proposal in the plan output for these
+// children — see PlanVariantProposalOutputSchema.
 export interface PlannerVariantEligibleChild {
   child_id: string;
   child_name: string;
@@ -139,6 +144,10 @@ export interface OrchestratorServices {
   pantry: PantryService;
   plan: PlansService;
   culturalPrior: CulturalPriorService;
+  // Story 4-S11 — the child_signal planner tool reads aggregated rating
+  // signals (childPrefs) joined with the children roster (children) for names.
+  childPrefs: ChildPreferencesRepository;
+  children: ChildrenRepository;
 }
 
 const FAILURE_THRESHOLD = 5;
@@ -176,6 +185,7 @@ export class DomainOrchestrator {
     TOOL_MANIFEST.set('pantry.read', createPantryReadSpec(services.pantry, redis));
     TOOL_MANIFEST.set('plan.compose', createPlanComposeSpec(services.plan, redis));
     TOOL_MANIFEST.set('cultural.lookup', createCulturalLookupSpec(services.culturalPrior, redis));
+    TOOL_MANIFEST.set('child_signal', createChildSignalSpec(services.childPrefs, services.children, redis));
 
     this.breaker = new CircuitBreaker({
       failureThreshold: FAILURE_THRESHOLD,
