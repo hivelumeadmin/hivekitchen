@@ -21,9 +21,10 @@ const boundariesPlugin = boundariesPluginRaw;
 import { noCrossScopeComponent } from './rules/no-cross-scope-component.js';
 import { noDialogOutsideAllowlist } from './rules/no-dialog-outside-allowlist.js';
 import { logicalPropertiesOnly } from './rules/logical-properties-only.js';
+import { noHeartNoteFrequencyReference } from './rules/no-heart-note-frequency-reference.js';
 
 export type { ScopeClass, ScopeRestrictions } from './rules/no-cross-scope-component.js';
-export { noCrossScopeComponent, noDialogOutsideAllowlist, logicalPropertiesOnly };
+export { noCrossScopeComponent, noDialogOutsideAllowlist, logicalPropertiesOnly, noHeartNoteFrequencyReference };
 
 export interface ScopeAllowlistOptions {
   [scope: string]: { forbiddenComponents: string[] };
@@ -46,6 +47,7 @@ const hivekitchenPlugin = {
     'no-cross-scope-component': noCrossScopeComponent,
     'no-dialog-outside-allowlist': noDialogOutsideAllowlist,
     'logical-properties-only': logicalPropertiesOnly,
+    'no-heart-note-frequency-reference': noHeartNoteFrequencyReference,
   },
 };
 
@@ -61,6 +63,7 @@ export function baseConfig(): Linter.Config[] {
       files: ['**/*.{ts,tsx,js,jsx,mjs,cjs}'],
       rules: {
         'hivekitchen/logical-properties-only': 'error',
+        'hivekitchen/no-heart-note-frequency-reference': 'error',
         '@typescript-eslint/consistent-type-imports': 'error',
         '@typescript-eslint/no-explicit-any': 'error',
         eqeqeq: ['error', 'always'],
