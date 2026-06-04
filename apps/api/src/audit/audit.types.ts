@@ -132,3 +132,13 @@ export interface AuditWriteInput {
   stages?: AuditStage[];
   metadata: Record<string, unknown>;
 }
+
+// Slice 4-S17 — read-side row shape for the allergy transparency log. Only the
+// three allergy.* event types are ever returned by
+// AuditRepository.findAllergyEventsByHousehold.
+export type AllergyAuditRow = {
+  id: string;
+  event_type: 'allergy.guardrail_rejection' | 'allergy.uncertainty' | 'allergy.check_overridden';
+  metadata: Record<string, unknown>;
+  created_at: string;
+};

@@ -13,6 +13,7 @@ export * from './onboarding-state.js';
 export * from './compliance.js';
 export * from './children.js';
 export * from './heart-notes.js';
+export * from './allergy-transparency.js';
 export * from './guest-author.js';
 export * from './lunch-link.js';
 export * from './flavor-passport.js';

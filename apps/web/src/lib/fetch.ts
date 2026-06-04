@@ -127,6 +127,44 @@ export async function publicPost(
   return { status: res.status, body: respBody };
 }
 
+/**
+ * Authenticated fetch that returns the raw response body as a Blob — for
+ * binary / non-JSON downloads (e.g. the allergy transparency log PDF). Mirrors
+ * hkFetch's auth header + single 401-refresh-and-retry, but never calls
+ * `.json()` on the body. Throws HkApiError on a non-2xx response.
+ */
+export async function hkFetchBlob(path: string, init: HkFetchInit): Promise<Blob> {
+  const doFetch = (token: string | null): Promise<Response> => {
+    const headers: Record<string, string> = { ...(init.headers ?? {}) };
+    if (init.body !== undefined) headers['Content-Type'] = 'application/json';
+    if (token !== null) headers['Authorization'] = `Bearer ${token}`;
+    return fetch(`${API_BASE_URL}${path}`, {
+      method: init.method,
+      headers,
+      credentials: 'include',
+      body: init.body !== undefined ? JSON.stringify(init.body) : undefined,
+      signal: init.signal,
+    });
+  };
+
+  let res = await doFetch(useAuthStore.getState().accessToken);
+  if (res.status === 401) {
+    const newToken = await tryRefreshSession();
+    if (newToken !== null) res = await doFetch(newToken);
+  }
+
+  if (!res.ok) {
+    let problem: unknown = null;
+    try {
+      problem = await res.json();
+    } catch {
+      // not JSON
+    }
+    throw new HkApiError(res.status, problem);
+  }
+  return res.blob();
+}
+
 export async function hkFetch<T = unknown>(path: string, init: HkFetchInit): Promise<T> {
   const accessToken = useAuthStore.getState().accessToken;
   // Caller headers first; then overwrite with Content-Type and Authorization so auth always wins.

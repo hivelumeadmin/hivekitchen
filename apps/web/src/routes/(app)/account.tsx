@@ -8,7 +8,7 @@ import {
   type CulturalLanguagePreference,
   CULTURAL_LANGUAGE_VALUES,
 } from '@hivekitchen/types';
-import { hkFetch, HkApiError } from '@/lib/fetch.js';
+import { hkFetch, hkFetchBlob, HkApiError } from '@/lib/fetch.js';
 import { useLumiContext } from '@/hooks/useLumiContext.js';
 import { useAuthStore } from '@/stores/auth.store.js';
 import { useComplianceStore } from '@/stores/compliance.store.js';
@@ -67,6 +67,9 @@ export default function AccountPage() {
   const [culturalLanguage, setCulturalLanguage] = useState<CulturalLanguagePreference>('default');
   const [culturalSaving, setCulturalSaving] = useState(false);
   const [culturalError, setCulturalError] = useState<string | null>(null);
+
+  const [downloading, setDownloading] = useState<'json' | 'pdf' | null>(null);
+  const [downloadError, setDownloadError] = useState<string | null>(null);
 
   useEffect(() => {
     if (accessToken === null) {
@@ -207,6 +210,33 @@ export default function AccountPage() {
       }
     } finally {
       setCulturalSaving(false);
+    }
+  }
+
+  // Slice 4-S17 — download the household's allergy transparency log (JSON or
+  // PDF). The endpoint returns a binary/non-JSON body, so it uses hkFetchBlob
+  // (not hkFetch). The synthetic-anchor click is the only reliable cross-browser
+  // way to save a same-origin response instead of navigating to it.
+  async function handleDownload(format: 'json' | 'pdf') {
+    setDownloadError(null);
+    setDownloading(format);
+    try {
+      const blob = await hkFetchBlob('/v1/heart-notes/transparency-log', {
+        method: 'POST',
+        body: { format },
+      });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `allergy-log-${new Date().toISOString().slice(0, 10)}.${format}`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch {
+      setDownloadError('Could not download your allergy log. Please try again later.');
+    } finally {
+      setDownloading(null);
     }
   }
 
@@ -425,6 +455,36 @@ export default function AccountPage() {
             </div>
           )}
         </section>
+
+        {(profile.role === 'primary_parent' || profile.role === 'secondary_caregiver') && (
+          <section className="space-y-3 border-t border-border pt-6">
+            <h2 className="font-serif text-xl text-fg">Allergy safety log</h2>
+            <p className="text-sm text-fg-muted">
+              Download a record of every allergy safety decision Lumi has made for your household.
+            </p>
+            <div className="flex gap-3">
+              <button
+                type="button"
+                onClick={() => void handleDownload('json')}
+                disabled={downloading !== null}
+                className="rounded border border-border px-4 py-2 text-sm disabled:opacity-50"
+              >
+                {downloading === 'json' ? 'Preparing…' : 'Download JSON'}
+              </button>
+              <button
+                type="button"
+                onClick={() => void handleDownload('pdf')}
+                disabled={downloading !== null}
+                className="rounded border border-border px-4 py-2 text-sm disabled:opacity-50"
+              >
+                {downloading === 'pdf' ? 'Preparing…' : 'Download PDF'}
+              </button>
+            </div>
+            {downloadError && (
+              <p role="alert" className="text-sm text-safety-red">{downloadError}</p>
+            )}
+          </section>
+        )}
       </div>
     </main>
   );

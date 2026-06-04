@@ -2,6 +2,7 @@ import { Buffer } from 'node:buffer';
 import fp from 'fastify-plugin';
 import type { FastifyPluginAsync } from 'fastify';
 import {
+  AllergyTransparencyExportBodySchema,
   CreateHeartNoteBodySchema,
   GetHeartNotesQuerySchema,
   HeartNoteIdParamSchema,
@@ -12,6 +13,7 @@ import {
   PatchHeartNoteBodySchema,
 } from '@hivekitchen/contracts';
 import type {
+  AllergyTransparencyExportBody,
   CreateHeartNoteBody,
   GetHeartNotesQuery,
   HeartNoteIdParam,
@@ -20,6 +22,8 @@ import type {
 } from '@hivekitchen/contracts';
 import { authorize } from '../../middleware/authorize.hook.js';
 import { GuestAuthorCapReachedError } from '../../common/errors.js';
+import { AuditRepository } from '../../audit/audit.repository.js';
+import { AllergyTransparencyService } from '../allergy-transparency/allergy-transparency.service.js';
 import { HeartNoteRepository } from './heart-note.repository.js';
 import { HeartNoteService } from './heart-note.service.js';
 
@@ -48,6 +52,10 @@ const heartNoteRoutesPlugin: FastifyPluginAsync = async (fastify) => {
     : null;
   const repository = new HeartNoteRepository(fastify.supabase, kek);
   const service = new HeartNoteService(repository);
+  // Slice 4-S17 — allergy transparency log export. Reuses the heartNoteRoutes
+  // scope (and its requireMember prehandler) per the spec route
+  // POST /v1/heart-notes/transparency-log. Read-only over audit_log.
+  const transparencyService = new AllergyTransparencyService(new AuditRepository(fastify.supabase));
 
   // Slice 4-S1 — either caregiver in the household may compose a heart note.
   // Authoring permission widens beyond the primary parent because both
@@ -176,6 +184,35 @@ const heartNoteRoutesPlugin: FastifyPluginAsync = async (fastify) => {
         },
       };
       return { note };
+    },
+  );
+
+  // Slice 4-S17 — FR80 transparency log export. Dual-format (JSON / PDF). No
+  // Zod `response` schema: the PDF path returns a Readable that Fastify pipes
+  // as-is, so a serializer would try to JSON-encode the stream. Household scope
+  // is taken from the JWT only — never from the body — to prevent cross-
+  // household data leakage. This export is not itself audited (out of FR80).
+  fastify.post(
+    '/v1/heart-notes/transparency-log',
+    {
+      preHandler: requireMember,
+      schema: { body: AllergyTransparencyExportBodySchema },
+    },
+    async (request, reply) => {
+      const { format } = request.body as AllergyTransparencyExportBody;
+      const householdId = request.user.household_id;
+
+      if (format === 'pdf') {
+        const stream = await transparencyService.exportAsPdf(householdId);
+        const date = new Date().toISOString().slice(0, 10);
+        return reply
+          .type('application/pdf')
+          .header('Content-Disposition', `attachment; filename="allergy-log-${date}.pdf"`)
+          .send(stream);
+      }
+
+      const log = await transparencyService.exportAsJson(householdId);
+      return reply.code(200).send(log);
     },
   );
 };
