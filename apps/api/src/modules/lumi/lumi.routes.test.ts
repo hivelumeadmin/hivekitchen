@@ -79,23 +79,70 @@ interface SupabaseMockOpts {
   capturedAmbientThreadInsert?: (row: Record<string, unknown>) => void;
   capturedTalkSessionInsert?: (row: Record<string, unknown>) => void;
   capturedTalkSessionUpdate?: (row: Record<string, unknown>) => void;
+  capturedTurnInsert?: (row: Record<string, unknown>) => void;
 }
 
 function buildMockSupabase(opts: SupabaseMockOpts) {
   const turnsDescending = opts.turnsDescending ?? [];
   let threadInsertCount = 0;
+  // POST /turns: server_seq is API-assigned, so getNextSeq reads max(server_seq)
+  // from previously-inserted turns this request. Track them in-closure.
+  const insertedTurns: TurnFixture[] = [];
 
   return {
     from(table: string) {
       if (table === 'thread_turns') {
         return {
-          select: () => ({
-            eq: () => ({
-              order: () => ({
-                limit: vi.fn().mockResolvedValue({ data: turnsDescending, error: null }),
+          insert: vi.fn().mockImplementation((row: Record<string, unknown>) => {
+            opts.capturedTurnInsert?.(row);
+            const turnRow: TurnFixture = {
+              id: `00000000-0000-4000-8000-${String(insertedTurns.length + 1).padStart(12, '0')}`,
+              thread_id: row.thread_id as string,
+              server_seq: row.server_seq as number,
+              role: row.role as TurnFixture['role'],
+              body: row.body as TurnFixture['body'],
+              modality: row.modality as TurnFixture['modality'],
+              created_at: '2026-04-30T00:00:00.000Z',
+            };
+            insertedTurns.push(turnRow);
+            return {
+              select: () => ({
+                single: vi.fn().mockResolvedValue({ data: turnRow, error: null }),
               }),
-            }),
+            };
           }),
+          // Branch on the selected column to distinguish the two read shapes:
+          //   'server_seq' → getNextSeq → .eq.order.limit.maybeSingle()
+          //   TURN_COLUMNS → getThreadTurns → .eq.order.limit() (awaited)
+          select: (columns: string) => {
+            if (columns === 'server_seq') {
+              return {
+                eq: () => ({
+                  order: () => ({
+                    limit: () => ({
+                      maybeSingle: vi.fn().mockImplementation(() => {
+                        const max = insertedTurns.reduce(
+                          (m, t) => (t.server_seq > m ? t.server_seq : m),
+                          0,
+                        );
+                        return Promise.resolve({
+                          data: max > 0 ? { server_seq: max } : null,
+                          error: null,
+                        });
+                      }),
+                    }),
+                  }),
+                }),
+              };
+            }
+            return {
+              eq: () => ({
+                order: () => ({
+                  limit: vi.fn().mockResolvedValue({ data: turnsDescending, error: null }),
+                }),
+              }),
+            };
+          },
         };
       }
 
@@ -478,6 +525,163 @@ describe('GET /v1/lumi/threads/:threadId/turns', () => {
     const res = await app.inject({
       method: 'GET',
       url: `/v1/lumi/threads/${SAMPLE_THREAD_ID}/turns`,
+    });
+
+    expect(res.statusCode).toBe(401);
+  });
+});
+
+describe('POST /v1/lumi/turns', () => {
+  let app: FastifyInstance;
+
+  afterEach(async () => {
+    if (app) await app.close();
+  });
+
+  it('201 with { thread_id, user_turn, lumi_turn } — lazy-creates the ambient thread', async () => {
+    const threadInserts: Record<string, unknown>[] = [];
+    app = await buildTestApp({
+      supabase: buildMockSupabase({
+        activeAmbientThread: null,
+        capturedAmbientThreadInsert: (row) => threadInserts.push(row),
+      }),
+    });
+    const token = signToken(app);
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/v1/lumi/turns',
+      headers: { authorization: `Bearer ${token}` },
+      payload: { message: 'What did Maya have yesterday?', context_signal: VALID_CONTEXT_SIGNAL_PLANNING },
+    });
+
+    expect(res.statusCode).toBe(201);
+    const body = JSON.parse(res.body) as {
+      thread_id: string;
+      user_turn: TurnFixture;
+      lumi_turn: TurnFixture;
+    };
+    expect(body.thread_id).toBe(NEW_THREAD_ID);
+    expect(body.user_turn.role).toBe('user');
+    expect(body.user_turn.body).toEqual({ type: 'message', content: 'What did Maya have yesterday?' });
+    expect(body.lumi_turn.role).toBe('lumi');
+    // API-assigned monotonic seq: user first, lumi second.
+    expect(body.user_turn.server_seq).toBe(1);
+    expect(body.lumi_turn.server_seq).toBe(2);
+    // Lazy-created exactly one thread of type=surface, modality=text.
+    expect(threadInserts).toHaveLength(1);
+    expect(threadInserts[0]).toMatchObject({ household_id: SAMPLE_HOUSEHOLD_ID, type: 'planning', modality: 'text' });
+  });
+
+  it('the Lumi turn body content is the stub reply "Got it."', async () => {
+    app = await buildTestApp({
+      supabase: buildMockSupabase({ activeAmbientThread: null }),
+    });
+    const token = signToken(app);
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/v1/lumi/turns',
+      headers: { authorization: `Bearer ${token}` },
+      payload: { message: 'anything at all', context_signal: VALID_CONTEXT_SIGNAL_PLANNING },
+    });
+
+    expect(res.statusCode).toBe(201);
+    const body = JSON.parse(res.body) as { lumi_turn: TurnFixture };
+    expect(body.lumi_turn.body).toEqual({ type: 'message', content: 'Got it.' });
+  });
+
+  it('reuses an existing ambient thread — no new thread inserted', async () => {
+    const threadInserts: Record<string, unknown>[] = [];
+    app = await buildTestApp({
+      supabase: buildMockSupabase({
+        activeAmbientThread: {
+          id: SAMPLE_THREAD_ID,
+          household_id: SAMPLE_HOUSEHOLD_ID,
+          type: 'planning',
+          status: 'active',
+          modality: 'voice',
+          created_at: '2026-04-30T00:00:00.000Z',
+        },
+        capturedAmbientThreadInsert: (row) => threadInserts.push(row),
+      }),
+    });
+    const token = signToken(app);
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/v1/lumi/turns',
+      headers: { authorization: `Bearer ${token}` },
+      payload: { message: 'hello again', context_signal: VALID_CONTEXT_SIGNAL_PLANNING },
+    });
+
+    expect(res.statusCode).toBe(201);
+    const body = JSON.parse(res.body) as { thread_id: string };
+    expect(body.thread_id).toBe(SAMPLE_THREAD_ID);
+    expect(threadInserts).toHaveLength(0);
+  });
+
+  it('onboarding surface → 400 (must use the dedicated onboarding route)', async () => {
+    app = await buildTestApp({
+      supabase: buildMockSupabase({ activeAmbientThread: null }),
+    });
+    const token = signToken(app);
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/v1/lumi/turns',
+      headers: { authorization: `Bearer ${token}` },
+      payload: { message: 'hi', context_signal: VALID_CONTEXT_SIGNAL_ONBOARDING },
+    });
+
+    expect(res.statusCode).toBe(400);
+    const body = JSON.parse(res.body) as { type: string };
+    expect(body.type).toBe('/errors/validation');
+  });
+
+  it('whitespace-only message → 400 (rejected by the contract trim+min)', async () => {
+    app = await buildTestApp({
+      supabase: buildMockSupabase({ activeAmbientThread: null }),
+    });
+    const token = signToken(app);
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/v1/lumi/turns',
+      headers: { authorization: `Bearer ${token}` },
+      payload: { message: '   ', context_signal: VALID_CONTEXT_SIGNAL_PLANNING },
+    });
+
+    expect(res.statusCode).toBe(400);
+    const body = JSON.parse(res.body) as { type: string };
+    expect(body.type).toBe('/errors/validation');
+  });
+
+  it('empty message → 400', async () => {
+    app = await buildTestApp({
+      supabase: buildMockSupabase({ activeAmbientThread: null }),
+    });
+    const token = signToken(app);
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/v1/lumi/turns',
+      headers: { authorization: `Bearer ${token}` },
+      payload: { message: '', context_signal: VALID_CONTEXT_SIGNAL_PLANNING },
+    });
+
+    expect(res.statusCode).toBe(400);
+  });
+
+  it('unauthenticated POST → 401', async () => {
+    app = await buildTestApp({
+      supabase: buildMockSupabase({ activeAmbientThread: null }),
+    });
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/v1/lumi/turns',
+      payload: { message: 'hi', context_signal: VALID_CONTEXT_SIGNAL_PLANNING },
     });
 
     expect(res.statusCode).toBe(401);

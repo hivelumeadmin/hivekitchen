@@ -2,9 +2,12 @@ import type { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
 import {
   LumiThreadTurnsResponseSchema,
+  LumiTurnRequestSchema,
+  LumiTurnResponseSchema,
   VoiceTalkSessionCreateSchema,
   VoiceTalkSessionResponseSchema,
 } from '@hivekitchen/contracts';
+import type { LumiTurnRequest } from '@hivekitchen/types';
 import { LumiRepository } from './lumi.repository.js';
 import { LumiService } from './lumi.service.js';
 
@@ -41,6 +44,25 @@ export const lumiRoutes: FastifyPluginAsync = async (fastify) => {
       const { threadId } = request.params as z.infer<typeof ThreadTurnsParamsSchema>;
       const turns = await repository.getThreadTurns(threadId, request.user.household_id);
       return { thread_id: threadId, turns };
+    },
+  );
+
+  fastify.post(
+    '/turns',
+    {
+      schema: {
+        body: LumiTurnRequestSchema,
+        response: { 201: LumiTurnResponseSchema },
+      },
+    },
+    async (request, reply) => {
+      const body = request.body as LumiTurnRequest;
+      const result = await service.submitTextTurn({
+        householdId: request.user.household_id,
+        message: body.message,
+        contextSignal: body.context_signal,
+      });
+      return reply.code(201).send(result);
     },
   );
 

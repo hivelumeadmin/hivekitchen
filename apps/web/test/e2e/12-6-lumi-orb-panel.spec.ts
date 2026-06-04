@@ -68,14 +68,14 @@ test.describe('Story 12-6: LumiOrb + LumiPanel ambient surface', () => {
     await expect(page.getByRole('complementary', { name: /lumi panel/i })).toBeVisible();
   });
 
-  test('panel contains Lumi header, dismiss button, and disabled textarea', async ({ page }) => {
+  test('panel contains Lumi header, dismiss button, and enabled textarea (wired in 12-S8)', async ({ page }) => {
     await page.goto('/app');
     await page.getByRole('button', { name: /open lumi/i }).click();
     const panel = page.getByRole('complementary', { name: /lumi panel/i });
     await expect(panel.getByRole('button', { name: /close lumi panel/i })).toBeVisible();
     const textarea = panel.getByLabel(/ask lumi/i);
     await expect(textarea).toBeVisible();
-    await expect(textarea).toBeDisabled();
+    await expect(textarea).not.toBeDisabled();
   });
 
   test('panel shows empty-state copy when no turns are loaded', async ({ page }) => {

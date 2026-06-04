@@ -4,6 +4,7 @@ import {
   LumiContextSignalSchema,
   LumiTurnRequestSchema,
   LumiThreadTurnsResponseSchema,
+  LumiTurnResponseSchema,
   VoiceTalkSessionCreateSchema,
   VoiceTalkSessionResponseSchema,
   LumiNudgeEventSchema,
@@ -277,6 +278,46 @@ describe('LumiThreadTurnsResponseSchema', () => {
     const result = LumiThreadTurnsResponseSchema.safeParse({
       thread_id: UUID3,
       turns: [{ ...TURN_FIXTURE, role: 'admin' }],
+    });
+    expect(result.success).toBe(false);
+  });
+});
+
+describe('LumiTurnResponseSchema', () => {
+  const USER_TURN = { ...TURN_FIXTURE, id: UUID1, role: 'user', server_seq: '1' } as const;
+  const LUMI_TURN = { ...TURN_FIXTURE, id: UUID2, role: 'lumi', server_seq: '2' } as const;
+
+  it('accepts a valid payload with thread_id, user_turn and lumi_turn', () => {
+    const result = LumiTurnResponseSchema.safeParse({
+      thread_id: UUID3,
+      user_turn: USER_TURN,
+      lumi_turn: LUMI_TURN,
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('rejects a missing lumi_turn', () => {
+    const result = LumiTurnResponseSchema.safeParse({
+      thread_id: UUID3,
+      user_turn: USER_TURN,
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects a non-uuid thread_id', () => {
+    const result = LumiTurnResponseSchema.safeParse({
+      thread_id: 'not-a-uuid',
+      user_turn: USER_TURN,
+      lumi_turn: LUMI_TURN,
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects when user_turn does not match the Turn schema', () => {
+    const result = LumiTurnResponseSchema.safeParse({
+      thread_id: UUID3,
+      user_turn: { ...USER_TURN, role: 'admin' },
+      lumi_turn: LUMI_TURN,
     });
     expect(result.success).toBe(false);
   });

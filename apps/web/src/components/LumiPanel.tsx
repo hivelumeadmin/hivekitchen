@@ -1,5 +1,5 @@
-import { useEffect } from 'react';
-import { LumiThreadTurnsResponseSchema } from '@hivekitchen/contracts';
+import { useEffect, useState, type FormEvent } from 'react';
+import { LumiThreadTurnsResponseSchema, LumiTurnResponseSchema } from '@hivekitchen/contracts';
 import type { LumiSurface, Turn } from '@hivekitchen/types';
 import { hkFetch } from '@/lib/fetch.js';
 import { useLumiStore } from '@/stores/lumi.store.js';
@@ -13,6 +13,43 @@ export function LumiPanel() {
   const isHydrating = useLumiStore((s) => s.isHydrating);
   const voiceError = useLumiStore((s) => s.voiceError);
   const surface = useLumiStore((s) => s.surface);
+  const contextSignal = useLumiStore((s) => s.contextSignal);
+
+  const [draft, setDraft] = useState('');
+  const [isSending, setIsSending] = useState(false);
+  const [sendError, setSendError] = useState<string | null>(null);
+
+  async function handleSubmit(e: FormEvent) {
+    e.preventDefault();
+    const message = draft.trim();
+    if (!message || isSending) return;
+
+    setIsSending(true);
+    setSendError(null);
+
+    try {
+      const raw = await hkFetch<unknown>('/v1/lumi/turns', {
+        method: 'POST',
+        body: { message, context_signal: contextSignal ?? { surface } },
+      });
+      const data = LumiTurnResponseSchema.parse(raw);
+
+      // Pin threadIds[surface] so the next panel open pre-hydrates from the
+      // lazily-created thread. Append both turns rather than re-hydrating
+      // (hydrateThread would replace the whole list — see 12.7 invariants).
+      useLumiStore.setState((s) => ({
+        threadIds: { ...s.threadIds, [surface]: data.thread_id },
+      }));
+      useLumiStore.getState().appendTurn(data.user_turn);
+      useLumiStore.getState().appendTurn(data.lumi_turn);
+      setDraft('');
+    } catch {
+      // Draft is NOT cleared — the user can retry or edit.
+      setSendError("Lumi couldn't send that. Try again.");
+    } finally {
+      setIsSending(false);
+    }
+  }
 
   // Hydrate when the panel opens or the surface changes (Story 12.7 wires setContext).
   // AbortController cancels the in-flight request on panel close or surface switch.
@@ -102,16 +139,28 @@ export function LumiPanel() {
         </p>
       )}
 
-      <div className="border-t border-stone-200 px-4 py-3">
-        {/* TODO Story 12.10 — wire POST /v1/lumi/turns and remove disabled. */}
+      <form onSubmit={handleSubmit} className="border-t border-stone-200 px-4 py-3">
         <textarea
           aria-label="Ask Lumi"
           placeholder="Ask Lumi…"
           rows={2}
-          disabled
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          disabled={isSending}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' && !e.shiftKey) {
+              e.preventDefault();
+              void handleSubmit(e as unknown as FormEvent);
+            }
+          }}
           className="w-full resize-none rounded-md border border-stone-200 bg-white px-2 py-1 font-sans text-sm text-stone-700 placeholder:text-stone-400 disabled:bg-stone-100 disabled:cursor-not-allowed focus:outline-none focus:ring-2 focus:ring-amber-700"
         />
-      </div>
+        {sendError !== null && (
+          <p role="alert" className="mt-1 font-sans text-xs text-red-700">
+            {sendError}
+          </p>
+        )}
+      </form>
     </aside>
   );
 }

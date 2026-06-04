@@ -46,6 +46,16 @@ export const LumiThreadTurnsResponseSchema = z.object({
   turns: z.array(Turn),
 });
 
+// LumiTurnResponse — POST /v1/lumi/turns response (Story 12-S8). The API
+// persists the user turn and the Lumi reply, then returns both plus the
+// resolved (possibly lazy-created) thread_id so the client can append without
+// a full re-hydration and pin threadIds[surface] for subsequent panel opens.
+export const LumiTurnResponseSchema = z.object({
+  thread_id: z.string().uuid(),
+  user_turn: Turn,
+  lumi_turn: Turn,
+});
+
 // VoiceTalkSessionCreate — POST /v1/lumi/voice/sessions body (Story 12.5).
 // A talk session is a short-lived ElevenLabs token pair, distinct from the
 // long-lived HiveKitchen user session. Surface is derived from
@@ -78,6 +88,7 @@ export type LumiSurface = z.infer<typeof LumiSurfaceSchema>;
 export type LumiContextSignal = z.infer<typeof LumiContextSignalSchema>;
 export type LumiTurnRequest = z.infer<typeof LumiTurnRequestSchema>;
 export type LumiThreadTurnsResponse = z.infer<typeof LumiThreadTurnsResponseSchema>;
+export type LumiTurnResponse = z.infer<typeof LumiTurnResponseSchema>;
 export type VoiceTalkSessionCreate = z.infer<typeof VoiceTalkSessionCreateSchema>;
 export type VoiceTalkSessionResponse = z.infer<typeof VoiceTalkSessionResponseSchema>;
 export type LumiNudgeEvent = z.infer<typeof LumiNudgeEventSchema>;

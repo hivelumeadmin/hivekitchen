@@ -1,4 +1,4 @@
-import type { Turn } from '@hivekitchen/types';
+import type { Turn, TurnBody } from '@hivekitchen/types';
 import { BaseRepository } from '../../repository/base.repository.js';
 import { ForbiddenError } from '../../common/errors.js';
 import {
@@ -109,6 +109,56 @@ export class LumiRepository extends BaseRepository {
       }
       return winner;
     }
+  }
+
+  // Append a turn to an ambient thread. server_seq is API-assigned — the column
+  // is `bigint NOT NULL` with no DB default (migration 20260504010000); the
+  // value is read as max+1 and retried on the (thread_id, server_seq)
+  // unique-violation a concurrent inserter can cause. Mirrors
+  // ThreadRepository.appendTurnNext for the same table.
+  async insertTurn(input: {
+    threadId: string;
+    role: 'user' | 'lumi' | 'system';
+    body: TurnBody;
+    modality: 'text' | 'voice';
+  }): Promise<Turn> {
+    const MAX_ATTEMPTS = 3;
+    let lastErr: unknown = new Error(
+      'insertTurn exhausted retries with no captured error',
+    );
+    for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
+      const seq = await this.getNextSeq(input.threadId);
+      const { data, error } = await this.client
+        .from('thread_turns')
+        .insert({
+          thread_id: input.threadId,
+          server_seq: seq,
+          role: input.role,
+          body: input.body,
+          modality: input.modality,
+        })
+        .select(TURN_COLUMNS)
+        .single();
+      if (error === null) return mapRowToTurn(data as TurnRow);
+      if (!isUniqueViolation(error)) throw error;
+      lastErr = error;
+    }
+    throw lastErr instanceof Error
+      ? lastErr
+      : new Error('insertTurn exhausted retries on unique-violation');
+  }
+
+  private async getNextSeq(threadId: string): Promise<number> {
+    const { data, error } = await this.client
+      .from('thread_turns')
+      .select('server_seq')
+      .eq('thread_id', threadId)
+      .order('server_seq', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (error) throw error;
+    const row = data as { server_seq: number } | null;
+    return row !== null ? row.server_seq + 1 : 1;
   }
 
   async createTalkSession(input: {

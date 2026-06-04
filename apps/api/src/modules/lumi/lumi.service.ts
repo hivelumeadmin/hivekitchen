@@ -1,7 +1,8 @@
 import type { FastifyBaseLogger } from 'fastify';
 import type Redis from 'ioredis';
-import type { LumiSurface, LumiContextSignal } from '@hivekitchen/types';
+import type { LumiSurface, LumiContextSignal, Turn } from '@hivekitchen/types';
 import { ForbiddenError, UpstreamError, ValidationError } from '../../common/errors.js';
+import { LumiAgent } from '../../agents/lumi.agent.js';
 import type { LumiRepository, TalkSessionRow } from './lumi.repository.js';
 
 export interface LumiServiceDeps {
@@ -138,6 +139,47 @@ export class LumiService {
       tts_token: ttsToken,
       voice_id: this.voiceId,
     };
+  }
+
+  // Ambient text turn (Story 12-S8). Lazy-resolves the per-surface ambient
+  // thread, persists the user turn, asks the (stubbed) LumiAgent for a reply,
+  // persists that, and returns both. The thread row is modality-agnostic
+  // (ADR-002 Decision 3) — created with `modality='text'` here but shared with
+  // any voice turns on the same surface. Real LLM dispatch lands in 12-S9.
+  async submitTextTurn(input: {
+    householdId: string;
+    message: string;
+    contextSignal: LumiContextSignal;
+  }): Promise<{ thread_id: string; user_turn: Turn; lumi_turn: Turn }> {
+    const surface = input.contextSignal.surface;
+    assertAmbientSurface(surface);
+
+    const existing = await this.repository.findActiveAmbientThread(
+      input.householdId,
+      surface,
+    );
+    const thread =
+      existing ??
+      (await this.repository.createAmbientThread(input.householdId, surface, 'text'));
+
+    const userTurn = await this.repository.insertTurn({
+      threadId: thread.id,
+      role: 'user',
+      body: { type: 'message', content: input.message },
+      modality: 'text',
+    });
+
+    const agent = new LumiAgent();
+    const lumiText = await agent.respond({ message: input.message });
+
+    const lumiTurn = await this.repository.insertTurn({
+      threadId: thread.id,
+      role: 'lumi',
+      body: { type: 'message', content: lumiText },
+      modality: 'text',
+    });
+
+    return { thread_id: thread.id, user_turn: userTurn, lumi_turn: lumiTurn };
   }
 
   async closeTalkSession(input: {

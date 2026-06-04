@@ -17,6 +17,21 @@ function turn(id: string, text: string, role: 'user' | 'lumi' = 'user'): Turn {
   };
 }
 
+function makeTurnResponse(userText = 'hi', lumiText = 'Got it.') {
+  return {
+    thread_id: THREAD_ID,
+    user_turn: turn('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', userText, 'user'),
+    lumi_turn: turn('bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', lumiText, 'lumi'),
+  };
+}
+
+function jsonResponse(body: unknown, status = 200): Response {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { 'Content-Type': 'application/json' },
+  });
+}
+
 const originalFetch = globalThis.fetch;
 
 describe('LumiPanel', () => {
@@ -96,20 +111,20 @@ describe('LumiPanel', () => {
     expect(screen.getByText(/catching up with lumi/i)).toBeDefined();
   });
 
-  it('text input is rendered but disabled (stub for Story 12.10)', () => {
+  it('text input is enabled (composer wired in Story 12-S8)', () => {
     useLumiStore.getState().openPanel();
     render(<LumiPanel />);
 
     const input = screen.getByLabelText(/ask lumi/i) as HTMLTextAreaElement;
-    expect(input.disabled).toBe(true);
+    expect(input.disabled).toBe(false);
   });
 
-  it('voice mode shows the "tap orb to end" hint and keeps input disabled', () => {
+  it('voice mode shows the "tap orb to end" hint and leaves the composer usable', () => {
     useLumiStore.getState().openPanel('voice');
     render(<LumiPanel />);
 
     expect(screen.getByText(/tap the orb to end voice session/i)).toBeDefined();
-    expect((screen.getByLabelText(/ask lumi/i) as HTMLTextAreaElement).disabled).toBe(true);
+    expect((screen.getByLabelText(/ask lumi/i) as HTMLTextAreaElement).disabled).toBe(false);
   });
 
   it('renders voiceError as an alert when set', () => {
@@ -190,6 +205,100 @@ describe('LumiPanel', () => {
     });
     expect(useLumiStore.getState().turns).toEqual([]);
     warnSpy.mockRestore();
+  });
+
+  it('submitting a message POSTs to /v1/lumi/turns with the message and context signal', async () => {
+    useLumiStore.setState({ isPanelOpen: true, surface: 'planning' });
+    const fetchSpy = vi.fn().mockResolvedValue(jsonResponse(makeTurnResponse()));
+    globalThis.fetch = fetchSpy as unknown as typeof fetch;
+
+    render(<LumiPanel />);
+    const input = screen.getByLabelText(/ask lumi/i);
+    fireEvent.change(input, { target: { value: 'hello lumi' } });
+    fireEvent.submit(input.closest('form')!);
+
+    await waitFor(() => expect(fetchSpy).toHaveBeenCalled());
+    const [url, init] = fetchSpy.mock.calls[0] as [string, RequestInit];
+    expect(String(url)).toContain('/v1/lumi/turns');
+    expect(init.method).toBe('POST');
+    expect(JSON.parse(init.body as string)).toEqual({
+      message: 'hello lumi',
+      context_signal: { surface: 'planning' },
+    });
+  });
+
+  it('appends both the user turn and the Lumi reply after a successful submit', async () => {
+    useLumiStore.setState({ isPanelOpen: true, surface: 'planning' });
+    globalThis.fetch = vi
+      .fn()
+      .mockResolvedValue(jsonResponse(makeTurnResponse('Hello Lumi', 'Got it.'))) as unknown as typeof fetch;
+
+    render(<LumiPanel />);
+    const input = screen.getByLabelText(/ask lumi/i);
+    fireEvent.change(input, { target: { value: 'Hello Lumi' } });
+    fireEvent.submit(input.closest('form')!);
+
+    await waitFor(() => {
+      expect(screen.getByText('Hello Lumi')).toBeDefined();
+      expect(screen.getByText('Got it.')).toBeDefined();
+    });
+  });
+
+  it('pins threadIds[surface] from the response after the first submit', async () => {
+    useLumiStore.setState({ isPanelOpen: true, surface: 'planning' });
+    globalThis.fetch = vi
+      .fn()
+      .mockResolvedValue(jsonResponse(makeTurnResponse())) as unknown as typeof fetch;
+
+    render(<LumiPanel />);
+    const input = screen.getByLabelText(/ask lumi/i);
+    fireEvent.change(input, { target: { value: 'hi' } });
+    fireEvent.submit(input.closest('form')!);
+
+    await waitFor(() => {
+      expect(useLumiStore.getState().threadIds.planning).toBe(THREAD_ID);
+    });
+  });
+
+  it('on a failed send, restores the draft and shows an inline error', async () => {
+    useLumiStore.setState({ isPanelOpen: true, surface: 'planning' });
+    globalThis.fetch = vi
+      .fn()
+      .mockResolvedValue(jsonResponse({ type: '/errors/upstream', status: 502 }, 502)) as unknown as typeof fetch;
+
+    render(<LumiPanel />);
+    const input = screen.getByLabelText(/ask lumi/i) as HTMLTextAreaElement;
+    fireEvent.change(input, { target: { value: 'will fail' } });
+    fireEvent.submit(input.closest('form')!);
+
+    await waitFor(() => expect(screen.getByRole('alert')).toBeDefined());
+    expect(screen.getByRole('alert').textContent).toContain("couldn't send");
+    // The draft is preserved so the user can retry or edit.
+    expect(input.value).toBe('will fail');
+  });
+
+  it('disables the composer while a send is in flight (prevents double-send)', async () => {
+    useLumiStore.setState({ isPanelOpen: true, surface: 'planning' });
+    let resolveFetch!: (r: Response) => void;
+    const pending = new Promise<Response>((resolve) => {
+      resolveFetch = resolve;
+    });
+    const fetchSpy = vi.fn().mockReturnValue(pending);
+    globalThis.fetch = fetchSpy as unknown as typeof fetch;
+
+    render(<LumiPanel />);
+    const input = screen.getByLabelText(/ask lumi/i) as HTMLTextAreaElement;
+    fireEvent.change(input, { target: { value: 'first' } });
+    fireEvent.submit(input.closest('form')!);
+
+    await waitFor(() => expect(input.disabled).toBe(true));
+
+    // A second submit while the first is in flight must not fire another request.
+    fireEvent.submit(input.closest('form')!);
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+
+    resolveFetch(jsonResponse(makeTurnResponse()));
+    await waitFor(() => expect(input.disabled).toBe(false));
   });
 });
 
