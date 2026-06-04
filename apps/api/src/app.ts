@@ -50,6 +50,7 @@ import { complianceRoutes } from './modules/compliance/compliance.routes.js';
 import { childrenRoutes } from './modules/children/children.routes.js';
 import { culturalPriorRoutes } from './modules/cultural-priors/cultural-prior.routes.js';
 import { householdsRoutes } from './modules/households/households.routes.js';
+import { memoryRoutes } from './modules/memory/memory.routes.js';
 import { plansRoutes } from './modules/plans/plans.routes.js';
 import { lumiRoutes } from './modules/lumi/lumi.routes.js';
 import { heartNoteRoutes } from './modules/heart-notes/heart-note.routes.js';
@@ -222,6 +223,7 @@ export async function buildApp(opts: BuildAppOptions) {
   await app.register(childrenRoutes);
   await app.register(culturalPriorRoutes);
   await app.register(householdsRoutes);
+  await app.register(memoryRoutes);
   await app.register(plansRoutes);
   await app.register(lumiRoutes, { prefix: '/v1/lumi' });
   await app.register(heartNoteRoutes);

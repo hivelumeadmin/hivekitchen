@@ -10,6 +10,8 @@ import {
   MemoryProvenanceSchema,
   MemoryRecallInputSchema,
   MemoryRecallOutputSchema,
+  GetMemoryResponseSchema,
+  GetProvenanceResponseSchema,
 } from './memory.js';
 
 const UUID1 = '00000000-0000-4000-8000-000000000001';
@@ -272,5 +274,64 @@ describe('MemoryNodeSchema and MemoryProvenanceSchema', () => {
       superseded_by: null,
     });
     expect(r.success).toBe(true);
+  });
+});
+
+describe('GetMemoryResponseSchema', () => {
+  const node = {
+    id: UUID1,
+    household_id: UUID2,
+    node_type: 'allergy' as const,
+    facet: 'peanut',
+    subject_child_id: null,
+    prose_text: 'Declared allergy: peanut',
+    soft_forget_at: null,
+    hard_forgotten: false,
+    created_at: DT,
+    updated_at: DT,
+  };
+
+  it('parses a valid payload with an empty nodes array', () => {
+    expect(GetMemoryResponseSchema.safeParse({ nodes: [] }).success).toBe(true);
+  });
+
+  it('parses a valid payload with one node', () => {
+    expect(GetMemoryResponseSchema.safeParse({ nodes: [node] }).success).toBe(true);
+  });
+
+  it('rejects a payload missing the nodes field', () => {
+    expect(GetMemoryResponseSchema.safeParse({}).success).toBe(false);
+  });
+
+  it('rejects a node with an unknown node_type', () => {
+    const r = GetMemoryResponseSchema.safeParse({
+      nodes: [{ ...node, node_type: 'mystery' }],
+    });
+    expect(r.success).toBe(false);
+  });
+});
+
+describe('GetProvenanceResponseSchema', () => {
+  const provenance = {
+    id: UUID1,
+    memory_node_id: UUID2,
+    source_type: 'turn' as const,
+    source_ref: { thread_id: UUID1 },
+    captured_at: DT,
+    captured_by: UUID2,
+    confidence: 0.87,
+    superseded_by: null,
+  };
+
+  it('parses a valid payload with an empty provenance array', () => {
+    expect(GetProvenanceResponseSchema.safeParse({ provenance: [] }).success).toBe(true);
+  });
+
+  it('parses a valid payload with one provenance record', () => {
+    expect(GetProvenanceResponseSchema.safeParse({ provenance: [provenance] }).success).toBe(true);
+  });
+
+  it('rejects a payload missing the provenance field', () => {
+    expect(GetProvenanceResponseSchema.safeParse({}).success).toBe(false);
   });
 });

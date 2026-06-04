@@ -324,3 +324,48 @@ describe('MemoryService.noteFromAgent', () => {
     expect(state.insertProvenanceCalls[0].confidence).toBe(0.7);
   });
 });
+
+describe('MemoryService.findActive', () => {
+  it('delegates to repository.findActiveNodes and returns its rows', async () => {
+    const rows = [makeNodeRow({ prose_text: 'a' }), makeNodeRow({ prose_text: 'b' })];
+    const findActiveNodes = vi.fn().mockResolvedValue(rows);
+    const repository = { findActiveNodes } as unknown as MemoryRepository;
+    const service = new MemoryService({ repository, logger: buildLogger() });
+
+    const out = await service.findActive(HOUSEHOLD_ID);
+
+    expect(findActiveNodes).toHaveBeenCalledWith(HOUSEHOLD_ID);
+    expect(out).toBe(rows);
+  });
+});
+
+const NODE_ID = '55555555-5555-4555-8555-555555555555';
+
+describe('MemoryService.getProvenance', () => {
+  it('returns provenance rows when the node belongs to the household', async () => {
+    const node = makeNodeRow();
+    const rows = [makeProvenanceRow()];
+    const findNodeByIdForHousehold = vi.fn().mockResolvedValue(node);
+    const findProvenanceByNodeId = vi.fn().mockResolvedValue(rows);
+    const repository = { findNodeByIdForHousehold, findProvenanceByNodeId } as unknown as MemoryRepository;
+    const service = new MemoryService({ repository, logger: buildLogger() });
+
+    const result = await service.getProvenance(NODE_ID, HOUSEHOLD_ID);
+
+    expect(findNodeByIdForHousehold).toHaveBeenCalledWith(NODE_ID, HOUSEHOLD_ID);
+    expect(findProvenanceByNodeId).toHaveBeenCalledWith(NODE_ID);
+    expect(result).toBe(rows);
+  });
+
+  it('returns null when the node is not found or belongs to another household', async () => {
+    const findNodeByIdForHousehold = vi.fn().mockResolvedValue(null);
+    const findProvenanceByNodeId = vi.fn();
+    const repository = { findNodeByIdForHousehold, findProvenanceByNodeId } as unknown as MemoryRepository;
+    const service = new MemoryService({ repository, logger: buildLogger() });
+
+    const result = await service.getProvenance(NODE_ID, HOUSEHOLD_ID);
+
+    expect(result).toBeNull();
+    expect(findProvenanceByNodeId).not.toHaveBeenCalled();
+  });
+});

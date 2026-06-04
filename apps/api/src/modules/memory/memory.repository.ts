@@ -94,4 +94,44 @@ export class MemoryRepository extends BaseRepository {
     if (error) throw error;
     return (data ?? []) as MemoryNodeRow[];
   }
+
+  // Story 7-S1 — read path for the Visible Memory page. Unlike findNodes()
+  // (planner recall), this additionally excludes soft-forgotten nodes so they
+  // don't render on the UI; they reappear with a "won't use this" affordance
+  // in a later slice.
+  async findActiveNodes(householdId: string): Promise<MemoryNodeRow[]> {
+    const { data, error } = await this.client
+      .from('memory_nodes')
+      .select(NODE_COLUMNS)
+      .eq('household_id', householdId)
+      .eq('hard_forgotten', false)
+      .is('soft_forget_at', null)
+      .order('created_at', { ascending: true });
+    if (error) throw error;
+    return (data ?? []) as MemoryNodeRow[];
+  }
+
+  // Story 7-S2 — ownership-scoped node lookup. Returns null when the node
+  // doesn't exist OR belongs to a different household (prevents info leakage).
+  async findNodeByIdForHousehold(nodeId: string, householdId: string): Promise<MemoryNodeRow | null> {
+    const { data, error } = await this.client
+      .from('memory_nodes')
+      .select(NODE_COLUMNS)
+      .eq('id', nodeId)
+      .eq('household_id', householdId)
+      .maybeSingle();
+    if (error) throw error;
+    return (data ?? null) as MemoryNodeRow | null;
+  }
+
+  // Story 7-S2 — ordered provenance records for a node, newest first.
+  async findProvenanceByNodeId(nodeId: string): Promise<MemoryProvenanceRow[]> {
+    const { data, error } = await this.client
+      .from('memory_provenance')
+      .select(PROVENANCE_COLUMNS)
+      .eq('memory_node_id', nodeId)
+      .order('captured_at', { ascending: false });
+    if (error) throw error;
+    return (data ?? []) as MemoryProvenanceRow[];
+  }
 }

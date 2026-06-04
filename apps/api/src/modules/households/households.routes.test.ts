@@ -150,6 +150,7 @@ function householdsTable(state: MockState) {
 interface BuildAppOpts {
   state: MockState;
   plansService?: Partial<FastifyInstance['plansService']>;
+  memoryService?: Partial<FastifyInstance['memoryService']>;
 }
 
 async function buildTestApp(opts: BuildAppOpts): Promise<FastifyInstance> {
@@ -196,6 +197,12 @@ async function buildTestApp(opts: BuildAppOpts): Promise<FastifyInstance> {
 
   if (opts.plansService) {
     app.decorate('plansService', opts.plansService as unknown as FastifyInstance['plansService']);
+  }
+  if (opts.memoryService) {
+    app.decorate(
+      'memoryService',
+      opts.memoryService as unknown as FastifyInstance['memoryService'],
+    );
   }
   await app.register(householdsRoutes);
   await app.ready();
@@ -471,6 +478,129 @@ describe('GET /v1/households/:householdId/brief', () => {
     const res = await app.inject({
       method: 'GET',
       url: `/v1/households/${SAMPLE_HOUSEHOLD_ID}/brief`,
+    });
+
+    expect(res.statusCode).toBe(401);
+  });
+});
+
+// ===========================================================================
+// Story 7-S1 — GET /v1/households/:householdId/memory (Visible Memory read)
+// ===========================================================================
+
+describe('GET /v1/households/:householdId/memory', () => {
+  let app: FastifyInstance;
+
+  afterEach(async () => {
+    if (app) await app.close();
+  });
+
+  interface MemoryNodeRowShape {
+    id: string;
+    household_id: string;
+    node_type: string;
+    facet: string;
+    subject_child_id: string | null;
+    prose_text: string;
+    soft_forget_at: string | null;
+    hard_forgotten: boolean;
+    created_at: string;
+    updated_at: string;
+  }
+
+  function sampleNode(overrides: Partial<MemoryNodeRowShape> = {}): MemoryNodeRowShape {
+    return {
+      id: '00000000-0000-4000-8000-000000000001',
+      household_id: SAMPLE_HOUSEHOLD_ID,
+      node_type: 'preference',
+      facet: 'avoids spicy',
+      subject_child_id: null,
+      prose_text: 'Child avoids spicy peppers.',
+      soft_forget_at: null,
+      hard_forgotten: false,
+      created_at: '2026-04-30T00:00:00.000Z',
+      updated_at: '2026-04-30T00:00:00.000Z',
+      ...overrides,
+    };
+  }
+
+  async function buildMemoryApp(findActive: (id: string) => Promise<MemoryNodeRowShape[]>) {
+    return buildTestApp({
+      state: freshState(),
+      memoryService: { findActive: findActive as FastifyInstance['memoryService']['findActive'] },
+    });
+  }
+
+  it('returns 200 with { nodes: [] } when there are no active nodes', async () => {
+    app = await buildMemoryApp(async () => []);
+    const token = signPrimary(app);
+
+    const res = await app.inject({
+      method: 'GET',
+      url: `/v1/households/${SAMPLE_HOUSEHOLD_ID}/memory`,
+      headers: { authorization: `Bearer ${token}` },
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual({ nodes: [] });
+  });
+
+  it('returns 200 with the active nodes when they exist, passing the household id through', async () => {
+    const nodes = [
+      sampleNode({ id: '00000000-0000-4000-8000-00000000000a', prose_text: 'first' }),
+      sampleNode({ id: '00000000-0000-4000-8000-00000000000b', prose_text: 'second' }),
+    ];
+    const findActive = vi.fn(async () => nodes);
+    app = await buildMemoryApp(findActive);
+    const token = signPrimary(app);
+
+    const res = await app.inject({
+      method: 'GET',
+      url: `/v1/households/${SAMPLE_HOUSEHOLD_ID}/memory`,
+      headers: { authorization: `Bearer ${token}` },
+    });
+
+    expect(res.statusCode).toBe(200);
+    const body = res.json() as { nodes: MemoryNodeRowShape[] };
+    expect(body.nodes.map((n) => n.prose_text)).toEqual(['first', 'second']);
+    expect(findActive).toHaveBeenCalledWith(SAMPLE_HOUSEHOLD_ID);
+  });
+
+  it('accepts secondary_caregiver tokens', async () => {
+    app = await buildMemoryApp(async () => []);
+    const token = signSecondary(app);
+
+    const res = await app.inject({
+      method: 'GET',
+      url: `/v1/households/${SAMPLE_HOUSEHOLD_ID}/memory`,
+      headers: { authorization: `Bearer ${token}` },
+    });
+
+    expect(res.statusCode).toBe(200);
+  });
+
+  it('returns 403 when the JWT household_id does not match the URL param', async () => {
+    const findActive = vi.fn(async () => []);
+    app = await buildMemoryApp(findActive);
+    const OTHER_HOUSEHOLD = '99999999-9999-4999-8999-999999999999';
+    const token = signPrimary(app, SAMPLE_HOUSEHOLD_ID);
+
+    const res = await app.inject({
+      method: 'GET',
+      url: `/v1/households/${OTHER_HOUSEHOLD}/memory`,
+      headers: { authorization: `Bearer ${token}` },
+    });
+
+    expect(res.statusCode).toBe(403);
+    expect(findActive).not.toHaveBeenCalled();
+  });
+
+  it('returns 401 without a token', async () => {
+    app = await buildMemoryApp(async () => []);
+
+    const res = await app.inject({
+      method: 'GET',
+      url: `/v1/households/${SAMPLE_HOUSEHOLD_ID}/memory`,
     });
 
     expect(res.statusCode).toBe(401);

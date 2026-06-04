@@ -7,7 +7,7 @@ import type {
   MemoryRecallOutput,
 } from '@hivekitchen/types';
 import type { AuditService } from '../../audit/audit.service.js';
-import type { MemoryRepository } from './memory.repository.js';
+import type { MemoryNodeRow, MemoryProvenanceRow, MemoryRepository } from './memory.repository.js';
 
 export interface MemoryServiceDeps {
   repository: MemoryRepository;
@@ -154,6 +154,19 @@ export class MemoryService {
     }
 
     return { nodeCount };
+  }
+
+  // Story 7-S1 — UI read path for the Visible Memory page (active nodes only).
+  async findActive(householdId: string): Promise<MemoryNodeRow[]> {
+    return this.repository.findActiveNodes(householdId);
+  }
+
+  // Story 7-S2 — provenance for a single node scoped to the caller's household.
+  // Returns null when the node is not found or belongs to a different household.
+  async getProvenance(nodeId: string, householdId: string): Promise<MemoryProvenanceRow[] | null> {
+    const node = await this.repository.findNodeByIdForHousehold(nodeId, householdId);
+    if (!node) return null;
+    return this.repository.findProvenanceByNodeId(nodeId);
   }
 
   async recall(input: MemoryRecallInput): Promise<MemoryRecallOutput> {

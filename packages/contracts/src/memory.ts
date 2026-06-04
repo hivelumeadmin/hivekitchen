@@ -45,6 +45,13 @@ export const MemoryNodeSchema = z.object({
   updated_at: z.string().datetime({ offset: true }),
 });
 
+// Story 7-S1 — read response for the Visible Memory page. Returns active
+// nodes only (the route filters hard_forgotten=false AND soft_forget_at IS NULL).
+export const GetMemoryResponseSchema = z.object({
+  nodes: z.array(MemoryNodeSchema),
+});
+export type GetMemoryResponse = z.infer<typeof GetMemoryResponseSchema>;
+
 export const MemoryProvenanceSchema = z.object({
   id: z.string().uuid(),
   memory_node_id: z.string().uuid(),
@@ -55,6 +62,12 @@ export const MemoryProvenanceSchema = z.object({
   confidence: z.number().min(0).max(1),
   superseded_by: z.string().uuid().nullable(),
 });
+
+// Story 7-S2 — provenance read response for a single memory node.
+export const GetProvenanceResponseSchema = z.object({
+  provenance: z.array(MemoryProvenanceSchema),
+});
+export type GetProvenanceResponse = z.infer<typeof GetProvenanceResponseSchema>;
 
 export const MemoryNoteInputSchema = z.object({
   household_id: z.string().uuid(),

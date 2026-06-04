@@ -4,6 +4,7 @@ import type { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
 import {
   BriefResponseSchema,
+  GetMemoryResponseSchema,
   TileRetryRequestSchema,
   CreateExtraLibraryItemInputSchema,
   ExtraLibraryItemSchema,
@@ -174,6 +175,29 @@ const householdsRoutesPlugin: FastifyPluginAsync = async (fastify) => {
       }
       const brief = await fastify.plansService.getBrief(householdId);
       return { brief };
+    },
+  );
+
+  // Story 7-S1 — GET /v1/households/:householdId/memory — Visible Memory read.
+  // Returns active memory nodes only (hard_forgotten=false AND
+  // soft_forget_at IS NULL), ordered created_at ASC. Distinct from the
+  // planner recall path, which keeps soft-forgotten nodes visible.
+  fastify.get(
+    '/v1/households/:householdId/memory',
+    {
+      preHandler: requireParentOrCaregiver,
+      schema: {
+        params: z.object({ householdId: z.string().uuid() }),
+        response: { 200: GetMemoryResponseSchema },
+      },
+    },
+    async (request) => {
+      const { householdId } = request.params as { householdId: string };
+      if (householdId !== request.user.household_id) {
+        throw new ForbiddenError('Cannot access another household memory');
+      }
+      const nodes = await fastify.memoryService.findActive(householdId);
+      return { nodes };
     },
   );
 
