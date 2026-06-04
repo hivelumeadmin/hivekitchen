@@ -34,10 +34,10 @@ export function LumiOrb() {
       className={[
         'fixed bottom-6 right-6 z-50',
         'h-10 w-10 rounded-full',
-        'bg-amber-500 text-white shadow-lg',
-        'ring-1 ring-amber-700/20',
-        'hover:bg-amber-600 transition-colors motion-reduce:transition-none',
-        'focus:outline-none focus:ring-2 focus:ring-amber-700 focus:ring-offset-2',
+        'bg-lumi-terracotta text-white shadow-lg',
+        'ring-1 ring-lumi-terracotta-700/20',
+        'hover:bg-lumi-terracotta-warmed transition-colors motion-reduce:transition-none',
+        'focus:outline-none focus:ring-2 focus:ring-foliage focus:ring-offset-2',
         buttonAnimationClass,
       ]
         .filter(Boolean)
@@ -46,7 +46,7 @@ export function LumiOrb() {
       {isVoiceActive && (
         <span
           aria-hidden="true"
-          className="absolute inset-0 rounded-full bg-amber-400 opacity-75 animate-ping motion-reduce:animate-none"
+          className="absolute inset-0 rounded-full bg-lumi-terracotta-400 opacity-75 animate-ping motion-reduce:animate-none"
         />
       )}
     </button>

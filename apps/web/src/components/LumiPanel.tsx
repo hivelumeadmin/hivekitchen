@@ -99,15 +99,15 @@ export function LumiPanel() {
     <aside
       id="lumi-panel"
       aria-label="Lumi panel"
-      className="fixed bottom-20 right-6 z-50 w-full max-w-xs rounded-2xl border border-stone-200 bg-stone-50 shadow-xl"
+      className="fixed bottom-20 right-6 z-50 w-full max-w-xs rounded-lg border border-border bg-surface shadow-xl"
     >
       <header className="flex items-center justify-between px-4 pt-3 pb-2">
-        <p className="font-serif text-sm text-stone-700">Lumi</p>
+        <p className="font-serif text-sm text-fg">Lumi</p>
         <button
           type="button"
           onClick={handleClose}
           aria-label="Close Lumi panel"
-          className="text-stone-500 hover:text-stone-800 transition-colors motion-reduce:transition-none focus:outline-none focus:ring-2 focus:ring-amber-700 rounded"
+          className="text-fg-muted hover:text-fg transition-colors motion-reduce:transition-none focus:outline-none focus:ring-2 focus:ring-foliage rounded"
         >
           <span aria-hidden="true">×</span>
         </button>
@@ -115,11 +115,11 @@ export function LumiPanel() {
 
       <div className="px-4 pb-3 max-h-72 overflow-y-auto flex flex-col gap-2">
         {showLoading ? (
-          <p role="status" className="font-sans text-xs text-stone-500 italic">
+          <p role="status" className="font-sans text-xs text-fg-muted italic">
             Catching up with Lumi…
           </p>
         ) : visibleTurns.length === 0 ? (
-          <p className="font-sans text-xs text-stone-500">
+          <p className="font-sans text-xs text-fg-muted">
             Nothing to show yet.
           </p>
         ) : (
@@ -128,18 +128,18 @@ export function LumiPanel() {
       </div>
 
       {isVoiceMode && (
-        <p className="px-4 pb-2 font-sans text-xs text-stone-600">
+        <p className="px-4 pb-2 font-sans text-xs text-fg-muted">
           Tap the orb to end voice session.
         </p>
       )}
 
       {isVoiceMode && voiceError !== null && (
-        <p role="alert" className="px-4 pb-2 font-sans text-xs text-red-700">
+        <p role="alert" className="px-4 pb-2 font-sans text-xs text-lumi-terracotta">
           {voiceError}
         </p>
       )}
 
-      <form onSubmit={handleSubmit} className="border-t border-stone-200 px-4 py-3">
+      <form onSubmit={handleSubmit} className="border-t border-border px-4 py-3">
         <textarea
           aria-label="Ask Lumi"
           placeholder="Ask Lumi…"
@@ -153,10 +153,10 @@ export function LumiPanel() {
               void handleSubmit(e as unknown as FormEvent);
             }
           }}
-          className="w-full resize-none rounded-md border border-stone-200 bg-white px-2 py-1 font-sans text-sm text-stone-700 placeholder:text-stone-400 disabled:bg-stone-100 disabled:cursor-not-allowed focus:outline-none focus:ring-2 focus:ring-amber-700"
+          className="w-full resize-none rounded-md border border-border bg-surface text-fg px-2 py-1 font-sans text-sm placeholder:text-fg-muted disabled:bg-surface-2 disabled:cursor-not-allowed focus:outline-none focus:ring-2 focus:ring-foliage"
         />
         {sendError !== null && (
-          <p role="alert" className="mt-1 font-sans text-xs text-red-700">
+          <p role="alert" className="mt-1 font-sans text-xs text-lumi-terracotta">
             {sendError}
           </p>
         )}
@@ -173,10 +173,10 @@ function TurnRow({ turn }: { turn: Turn }) {
 
   return (
     <div className="flex flex-col gap-0.5">
-      <span className="font-sans text-[11px] uppercase tracking-wide text-stone-500">
+      <span className="font-sans text-[11px] uppercase tracking-wide text-fg-muted">
         {senderLabel}
       </span>
-      <p className="font-sans text-sm text-stone-800 whitespace-pre-wrap">
+      <p className="font-sans text-sm text-fg whitespace-pre-wrap">
         {turn.body.content}
       </p>
     </div>
