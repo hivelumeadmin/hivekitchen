@@ -1,5 +1,18 @@
 # Deferred Work Log
 
+## Deferred from: code review of 7-s12-state-residency-override-scaffold (2026-06-05)
+
+- **D-1: Non-existent `householdId` silently returns `[]`** — `maybeSingle()` returns `{data:null}` when household not found; code falls through to `stateResidency=null → return []`, masking a bad ID at the call site. No 404 behavior. Add a `if (!hRow) throw new NotFoundError(...)` guard when Epic 8 wires the first caller. [`apps/api/src/modules/compliance/compliance.repository.ts`]
+- **D-2: `households.state_residency` has no DB CHECK constraint** — column is `TEXT` with no `CHECK (char_length(state_residency)=2 AND state_residency ~ '^[A-Z]{2}$')`. Invalid values bypass Zod validation on direct DB writes. Add constraint in Epic 8's `setStateResidency` migration. [`supabase/migrations/20260613000000_state_residency_scaffold.sql`]
+- **D-3: `state_compliance_overrides.state` has no DB CHECK constraint** — `state TEXT NOT NULL` with no format guard; lowercase or long values silently return zero overrides. Add CHECK alongside D-2. [`supabase/migrations/20260613000000_state_residency_scaffold.sql`]
+- **D-4: `override_type` is unconstrained free text** — no DB enum or `z.enum()` in the contract; future branching on this field will break on typos. Lock down to a known enum once Epic 8 defines the first override_type value. [`packages/contracts/src/state-compliance.ts` / migration]
+- **D-5: TOCTOU between two-step household+overrides queries** — `state_residency` could be updated concurrently between the two awaits, returning overrides for the wrong state. Resolve by converting to a single JOIN when Epic 8 wires the route. [`apps/api/src/modules/compliance/compliance.repository.ts`]
+- **D-6: `today` uses Node.js UTC clock** — `new Date().toISOString().slice(0,10)` is always UTC; a US household at midnight may get the wrong calendar day. Document as UTC-anchored or derive from the DB's `NOW()::DATE` at route wiring time. [`apps/api/src/modules/compliance/compliance.repository.ts`]
+- **D-7: Repository mock doesn't assert `.eq()` argument values** — `householdId` and `stateResidency` passed to queries are never validated; a bug passing the wrong value would not be caught. Add `expect(_val).toBe(HOUSEHOLD_ID)` assertions to the mock when test coverage is deepened. [`apps/api/src/modules/compliance/state-compliance.repository.test.ts`]
+- **D-8: No composite index on `(state, effective_from)`** — the query filters on both columns; the single-column index on `state` will degrade to a secondary in-memory filter at scale. Add `CREATE INDEX ... ON state_compliance_overrides (state, effective_from)` in a follow-up migration. [`supabase/migrations/20260613000000_state_residency_scaffold.sql`]
+- **D-9: No `effective_to` column** — retiring an override requires DELETE with no audit history of when it was active. Add `effective_to DATE` + filter `AND (effective_to IS NULL OR effective_to > today)` when the first real override_type is defined. [`supabase/migrations/20260613000000_state_residency_scaffold.sql`]
+- **D-10: Two sequential DB round-trips** — household lookup + overrides query could be a single JOIN, eliminating the TOCTOU window and one network hop. Optimize when Epic 8 wires the route. [`apps/api/src/modules/compliance/compliance.repository.ts`]
+
 ## Deferred from: code review of 7-s10-json-data-export (2026-06-05)
 
 - **D-1: Unbounded export payload size** — no size guard before `JSON.stringify(snapshot)` + Supabase Storage upload; a large household could produce a payload exceeding the 50 MB bucket limit and exhaust all 3 BullMQ retry attempts with no user notification. Pre-existing beta-scale design constraint; no spec requirement for a guard. [`apps/api/src/jobs/data-export.job.ts`]

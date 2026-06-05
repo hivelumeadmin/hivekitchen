@@ -35,3 +35,4 @@ export * from './enforcement.js';
 export * from './kitchen-map.js';
 export * from './onboarding-tools.js';
 export * from './pantry.js';
+export * from './state-compliance.js';

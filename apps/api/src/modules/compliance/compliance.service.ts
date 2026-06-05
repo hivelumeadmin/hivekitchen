@@ -1,6 +1,6 @@
 import type { FastifyBaseLogger } from 'fastify';
 import { ConflictError, ParentalNoticeRequiredError } from '../../common/errors.js';
-import type { ComplianceRepository } from './compliance.repository.js';
+import type { ComplianceRepository, StateComplianceOverrideRow } from './compliance.repository.js';
 import { CONSENT_DECLARATION_V1 } from './consent-declarations/v1.js';
 import {
   PARENTAL_NOTICE_V1_CONTENT,
@@ -194,6 +194,11 @@ export class ComplianceService {
       result: { acknowledged_at, document_version },
       isNewAcknowledgment,
     };
+  }
+
+  // Story 7-S12: thin delegation to repository. No business logic at MVP.
+  async getStateOverrides(householdId: string): Promise<StateComplianceOverrideRow[]> {
+    return this.repository.getOverridesForHousehold(householdId);
   }
 
   async assertParentalNoticeAcknowledged(userId: string): Promise<void> {

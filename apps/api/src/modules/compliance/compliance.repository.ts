@@ -17,6 +17,15 @@ export interface UserAcknowledgmentState {
   acknowledged_version: string | null;
 }
 
+export interface StateComplianceOverrideRow {
+  id: string;
+  state: string;
+  override_type: string;
+  value: unknown;
+  effective_from: string;
+  created_at: string;
+}
+
 const CONSENT_COLUMNS =
   'id, household_id, mechanism, signed_at, signed_by_user_id, document_version, created_at';
 
@@ -102,6 +111,37 @@ export class ComplianceRepository extends BaseRepository {
       acknowledged_at: row.parental_notice_acknowledged_at,
       acknowledged_version: row.parental_notice_acknowledged_version,
     };
+  }
+
+  // Story 7-S12: State-patchwork compliance overrides scaffold (AR-21, NFR-COMP-3).
+  // Reads households.state_residency, then queries state_compliance_overrides for
+  // active overrides (effective_from ≤ today). Returns [] at MVP (no rows exist).
+  // Future state delta: insert a row into state_compliance_overrides — no code change needed.
+  async getOverridesForHousehold(householdId: string): Promise<StateComplianceOverrideRow[]> {
+    // Step 1: resolve the household's US state residency.
+    const { data: hRow, error: hError } = await this.client
+      .from('households')
+      .select('state_residency')
+      .eq('id', householdId)
+      .maybeSingle();
+    if (hError) throw hError;
+
+    const stateResidency =
+      (hRow as { state_residency: string | null } | null)?.state_residency ?? null;
+
+    // NULL state_residency → COPPA baseline applies; no state-specific overrides.
+    if (!stateResidency) return [];
+
+    // Step 2: active overrides for this state (effective_from ≤ today).
+    const today = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
+    const { data, error } = await this.client
+      .from('state_compliance_overrides')
+      .select('id, state, override_type, value, effective_from, created_at')
+      .eq('state', stateResidency)
+      .lte('effective_from', today);
+    if (error) throw error;
+
+    return (data as StateComplianceOverrideRow[] | null) ?? [];
   }
 
   async markParentalNoticeAcknowledged(

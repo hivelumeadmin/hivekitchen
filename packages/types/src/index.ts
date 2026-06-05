@@ -294,6 +294,7 @@ import {
   PlanSlotParamSchema,
   PlanDayContextSlotParamSchema,
   PlanDayContextSlotRevertParamSchema,
+  StateComplianceOverridesResponseSchema,
 } from '@hivekitchen/contracts';
 
 // Auth
@@ -714,3 +715,6 @@ export type VariationParam = z.infer<typeof VariationParamSchema>;
 export type PlanSlotParam = z.infer<typeof PlanSlotParamSchema>;
 export type PlanDayContextSlotParam = z.infer<typeof PlanDayContextSlotParamSchema>;
 export type PlanDayContextSlotRevertParam = z.infer<typeof PlanDayContextSlotRevertParamSchema>;
+
+// State-residency compliance scaffold (Story 7-S12 — AR-21, NFR-COMP-3)
+export type StateComplianceOverridesResponse = z.infer<typeof StateComplianceOverridesResponseSchema>;
