@@ -41,6 +41,7 @@ import { catalogRecoveryJobPlugin } from './jobs/catalog-recovery.job.js';
 import { heartNoteDeliveryJobPlugin } from './jobs/heart-note-delivery.job.js';
 import { memoryForgetJobPlugin } from './jobs/memory-forget.job.js';
 import { dataExportJobPlugin } from './jobs/data-export.job.js';
+import { accountDeletionJobPlugin } from './jobs/account-deletion.job.js';
 import { healthRoutes } from './modules/internal/health.routes.js';
 import { eventsRoutes } from './routes/v1/events/events.routes.js';
 import { authRoutes } from './modules/auth/auth.routes.js';
@@ -147,6 +148,11 @@ export async function buildApp(opts: BuildAppOptions) {
   // snapshot, uploads to Supabase Storage, and emails a signed URL. Depends on
   // supabase + bullmq + sendgrid + auditService (auditHook above).
   await app.register(dataExportJobPlugin);
+  // Slice 7-S11 — nightly 04:00 UTC sweep that hard-deletes households past the
+  // 30-day deletion threshold (COPPA right-to-delete; regulatory MVP wall).
+  // Staggered 1h after memory-forget (03:00 UTC). Depends on supabase + bullmq
+  // + auditService (auditHook above).
+  await app.register(accountDeletionJobPlugin);
   await app.register(catalogSeedJobPlugin);
 
   await app.register(cookie);

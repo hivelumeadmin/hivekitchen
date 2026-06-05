@@ -19,6 +19,8 @@ import {
   ParentalDashboardResponseSchema,
   ConsentHistoryResponseSchema,
   DataExportResponseSchema,
+  DeleteHouseholdRequestSchema,
+  DeleteHouseholdResponseSchema,
 } from '@hivekitchen/contracts';
 import type {
   TileRetryRequest,
@@ -312,6 +314,97 @@ const householdsRoutesPlugin: FastifyPluginAsync = async (fastify) => {
         status: 'queued' as const,
         message:
           "We're preparing your export. You'll receive an email with a download link within 72 hours.",
+      };
+    },
+  );
+
+  // Story 7-S11 — POST /v1/households/:householdId/delete
+  // COPPA right-to-delete (FR69, NFR-PRIV-2). Regulatory MVP wall.
+  // Soft-deletes the household (sets deletion_requested_at), bans the caller,
+  // and revokes all active sessions. Hard-delete runs at day 30 via
+  // account-deletion.job.ts. Primary Parent only.
+  fastify.post(
+    '/v1/households/:householdId/delete',
+    {
+      preHandler: authorize(['primary_parent']),
+      schema: {
+        params: z.object({ householdId: z.string().uuid() }),
+        body: DeleteHouseholdRequestSchema,
+        response: { 200: DeleteHouseholdResponseSchema },
+      },
+    },
+    async (request, reply) => {
+      const { householdId } = request.params as { householdId: string };
+      const { confirmation_name } = request.body as { confirmation_name: string };
+
+      if (householdId !== request.user.household_id) {
+        throw new ForbiddenError('Cannot delete another household');
+      }
+
+      const household = await households.getDisplayName(householdId);
+      if (!household) {
+        throw new NotFoundError(`Household not found: ${householdId}`);
+      }
+
+      // Idempotent: if deletion is already scheduled, return early with no
+      // repeat auth revocation.
+      if (household.deletion_requested_at !== null) {
+        const scheduledAt = new Date(
+          new Date(household.deletion_requested_at).getTime() + 30 * 24 * 60 * 60 * 1000,
+        ).toISOString();
+        reply.status(200);
+        return {
+          status: 'already_scheduled' as const,
+          scheduled_hard_delete_at: scheduledAt,
+          message: 'Account deletion is already scheduled.',
+        };
+      }
+
+      // Confirmation name check (case-insensitive, trimmed).
+      const expectedName = (household.display_name ?? '').trim().toLowerCase();
+      const givenName = confirmation_name.trim().toLowerCase();
+      if (expectedName === '' || expectedName !== givenName) {
+        throw new ValidationError('Household name does not match');
+      }
+
+      const now = new Date().toISOString();
+      const scheduledHardDeleteAt = new Date(
+        new Date(now).getTime() + 30 * 24 * 60 * 60 * 1000,
+      ).toISOString();
+
+      // 1. Soft-delete: set deletion_requested_at.
+      await households.requestDeletion(householdId, now);
+
+      // 2. Ban login (~100-year ban prevents any re-authentication).
+      await fastify.supabase.auth.admin.updateUserById(request.user.id, {
+        ban_duration: '876600h',
+      });
+
+      // 3. Revoke all active sessions.
+      await fastify.supabase.auth.admin.signOut(request.user.id, 'global');
+
+      // 4. Audit row (best-effort — the deletion is already scheduled).
+      try {
+        await auditService.write({
+          event_type: 'account.deletion_requested',
+          household_id: householdId,
+          user_id: request.user.id,
+          request_id: randomUUID(),
+          metadata: { scheduled_hard_delete_at: scheduledHardDeleteAt },
+        });
+      } catch (auditErr) {
+        request.log.warn(
+          { err: auditErr, module: 'households', action: 'audit.failed', householdId },
+          'account-deletion: audit write failed — deletion scheduled, continuing',
+        );
+      }
+
+      reply.status(200);
+      return {
+        status: 'scheduled' as const,
+        scheduled_hard_delete_at: scheduledHardDeleteAt,
+        message:
+          'Your account deletion has been scheduled. Your data will be permanently erased within 30 days.',
       };
     },
   );

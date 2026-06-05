@@ -68,6 +68,8 @@ export const AUDIT_EVENT_TYPES = [
   'account.updated',
   'account.deleted',
   'account.exported',   // Story 7-S10 — data portability export
+  'account.deletion_requested', // Story 7-S11 — soft-delete + login lock
+  'account.hard_deleted',       // Story 7-S11 — 30-day cascade complete
   // auth
   'auth.login',
   'auth.logout',

@@ -8,6 +8,7 @@ export * from './memory.js';
 export * from './parental-dashboard.js';
 export * from './consent-history.js';
 export * from './data-export.js';
+export * from './account-deletion.js';
 export * from './presence.js';
 export * from './errors.js';
 export * from './users.js';

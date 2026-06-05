@@ -10,6 +10,7 @@ import { householdsRoutes } from './households.routes.js';
 import {
   ConsentHistoryResponseSchema,
   DataExportResponseSchema,
+  DeleteHouseholdResponseSchema,
   ParentalDashboardResponseSchema,
 } from '@hivekitchen/contracts';
 
@@ -1972,5 +1973,292 @@ describe('POST /v1/households/:householdId/export (7-S10)', () => {
 
     expect(res.statusCode).toBe(400);
     expect(queue.add).not.toHaveBeenCalled();
+  });
+});
+
+// ===========================================================================
+// Story 7-S11 — POST /v1/households/:householdId/delete (account deletion)
+// ===========================================================================
+
+interface DeleteMockState {
+  household: { display_name: string | null; deletion_requested_at: string | null } | null;
+  deletionRequestedAt: string | null;
+  audit: Array<{ event_type: string; metadata: Record<string, unknown> }>;
+  updateUserByIdCalls: Array<[string, { ban_duration?: string }]>;
+  signOutCalls: Array<[string, string]>;
+}
+
+function buildDeleteMockSupabase(state: DeleteMockState) {
+  return {
+    from(table: string) {
+      if (table === 'households') {
+        return {
+          select: (_cols: string) => ({
+            eq: (_col: string, _val: string) => ({
+              maybeSingle: async () => ({ data: state.household, error: null }),
+            }),
+          }),
+          update: (patch: Record<string, unknown>) => ({
+            eq: (_col: string, _val: string) => {
+              if (typeof patch.deletion_requested_at === 'string') {
+                state.deletionRequestedAt = patch.deletion_requested_at;
+              }
+              return Promise.resolve({ error: null });
+            },
+          }),
+        };
+      }
+      if (table === 'audit_log') {
+        return {
+          insert: (row: { event_type: string; metadata?: Record<string, unknown> }) => {
+            state.audit.push({ event_type: row.event_type, metadata: row.metadata ?? {} });
+            return Promise.resolve({ data: null, error: null });
+          },
+        };
+      }
+      throw new Error(`unexpected table: ${table}`);
+    },
+    auth: {
+      admin: {
+        updateUserById: vi.fn(async (id: string, attrs: { ban_duration?: string }) => {
+          state.updateUserByIdCalls.push([id, attrs]);
+          return { data: {}, error: null };
+        }),
+        signOut: vi.fn(async (id: string, scope: string) => {
+          state.signOutCalls.push([id, scope]);
+          return { data: {}, error: null };
+        }),
+      },
+    },
+  };
+}
+
+function freshDeleteState(
+  overrides: Partial<{ display_name: string | null; deletion_requested_at: string | null }> = {},
+): DeleteMockState {
+  return {
+    household: {
+      display_name: overrides.display_name ?? 'The Menon Kitchen',
+      deletion_requested_at: overrides.deletion_requested_at ?? null,
+    },
+    deletionRequestedAt: null,
+    audit: [],
+    updateUserByIdCalls: [],
+    signOutCalls: [],
+  };
+}
+
+async function buildDeleteApp(state: DeleteMockState): Promise<FastifyInstance> {
+  const app = Fastify({ logger: false, genReqId: () => randomUUID() });
+  app.setValidatorCompiler(validatorCompiler);
+  app.setSerializerCompiler(serializerCompiler);
+
+  const env = {
+    NODE_ENV: 'development' as const,
+    JWT_SECRET,
+    ENVELOPE_ENCRYPTION_MASTER_KEY: '',
+  };
+  app.decorate('env', env as unknown as FastifyInstance['env']);
+  app.decorate(
+    'supabase',
+    buildDeleteMockSupabase(state) as unknown as FastifyInstance['supabase'],
+  );
+
+  await app.register(jwt, { secret: JWT_SECRET, sign: { expiresIn: '15m' } });
+  await app.register(authenticateHook);
+
+  app.setErrorHandler((err, request, reply) => {
+    if (isDomainError(err)) {
+      void reply.status(err.status).type('application/problem+json').send({
+        type: err.type,
+        status: err.status,
+        title: err.title,
+        detail: err.detail,
+        instance: request.id,
+      });
+      return;
+    }
+    if (err instanceof ZodError) {
+      void reply.status(400).send({ type: '/errors/validation', status: 400 });
+      return;
+    }
+    const obj = err as { validation?: unknown; cause?: unknown };
+    if (obj.cause instanceof ZodError) {
+      void reply.status(400).send({ type: '/errors/validation', status: 400 });
+      return;
+    }
+    if (Array.isArray(obj.validation) && obj.validation.length > 0) {
+      void reply.status(400).send({ type: '/errors/validation', status: 400 });
+      return;
+    }
+    void reply.status(500).send({ type: '/errors/internal', status: 500 });
+  });
+
+  await app.register(householdsRoutes);
+  await app.ready();
+  return app;
+}
+
+describe('POST /v1/households/:householdId/delete (7-S11)', () => {
+  let app: FastifyInstance;
+
+  afterEach(async () => {
+    if (app) await app.close();
+  });
+
+  it('200 — soft-deletes, bans login, revokes sessions, audits, and returns a scheduled body', async () => {
+    const state = freshDeleteState();
+    app = await buildDeleteApp(state);
+    const token = signPrimary(app);
+
+    const res = await app.inject({
+      method: 'POST',
+      url: `/v1/households/${SAMPLE_HOUSEHOLD_ID}/delete`,
+      headers: { authorization: `Bearer ${token}` },
+      payload: { confirmation_name: 'The Menon Kitchen' },
+    });
+
+    expect(res.statusCode).toBe(200);
+    const parsed = DeleteHouseholdResponseSchema.safeParse(res.json());
+    expect(parsed.success).toBe(true);
+    const body = res.json() as ReturnType<typeof DeleteHouseholdResponseSchema.parse>;
+    expect(body.status).toBe('scheduled');
+
+    expect(state.deletionRequestedAt).not.toBeNull();
+    expect(state.updateUserByIdCalls).toEqual([[SAMPLE_USER_ID, { ban_duration: '876600h' }]]);
+    expect(state.signOutCalls).toEqual([[SAMPLE_USER_ID, 'global']]);
+    expect(state.audit.some((r) => r.event_type === 'account.deletion_requested')).toBe(true);
+  });
+
+  it('200 — matches the household name case-insensitively after trimming', async () => {
+    const state = freshDeleteState();
+    app = await buildDeleteApp(state);
+    const token = signPrimary(app);
+
+    const res = await app.inject({
+      method: 'POST',
+      url: `/v1/households/${SAMPLE_HOUSEHOLD_ID}/delete`,
+      headers: { authorization: `Bearer ${token}` },
+      payload: { confirmation_name: '  the menon kitchen  ' },
+    });
+
+    expect(res.statusCode).toBe(200);
+  });
+
+  it('200 already_scheduled — idempotent path does not re-revoke auth', async () => {
+    const state = freshDeleteState({ deletion_requested_at: '2026-06-01T00:00:00.000Z' });
+    app = await buildDeleteApp(state);
+    const token = signPrimary(app);
+
+    const res = await app.inject({
+      method: 'POST',
+      url: `/v1/households/${SAMPLE_HOUSEHOLD_ID}/delete`,
+      headers: { authorization: `Bearer ${token}` },
+      payload: { confirmation_name: 'The Menon Kitchen' },
+    });
+
+    expect(res.statusCode).toBe(200);
+    const body = res.json() as ReturnType<typeof DeleteHouseholdResponseSchema.parse>;
+    expect(body.status).toBe('already_scheduled');
+    expect(state.updateUserByIdCalls).toHaveLength(0);
+    expect(state.signOutCalls).toHaveLength(0);
+  });
+
+  it('400 when confirmation_name does not match the household name', async () => {
+    const state = freshDeleteState();
+    app = await buildDeleteApp(state);
+    const token = signPrimary(app);
+
+    const res = await app.inject({
+      method: 'POST',
+      url: `/v1/households/${SAMPLE_HOUSEHOLD_ID}/delete`,
+      headers: { authorization: `Bearer ${token}` },
+      payload: { confirmation_name: 'wrong name' },
+    });
+
+    expect(res.statusCode).toBe(400);
+    expect(state.deletionRequestedAt).toBeNull();
+    expect(state.updateUserByIdCalls).toHaveLength(0);
+  });
+
+  it('400 when :householdId is not a valid UUID', async () => {
+    const state = freshDeleteState();
+    app = await buildDeleteApp(state);
+    const token = signPrimary(app);
+
+    const res = await app.inject({
+      method: 'POST',
+      url: `/v1/households/not-a-uuid/delete`,
+      headers: { authorization: `Bearer ${token}` },
+      payload: { confirmation_name: 'The Menon Kitchen' },
+    });
+
+    expect(res.statusCode).toBe(400);
+  });
+
+  it('403 when :householdId is not the caller’s household', async () => {
+    const state = freshDeleteState();
+    app = await buildDeleteApp(state);
+    const token = signPrimary(app, SAMPLE_HOUSEHOLD_ID);
+
+    const res = await app.inject({
+      method: 'POST',
+      url: `/v1/households/${OTHER_HOUSEHOLD_ID}/delete`,
+      headers: { authorization: `Bearer ${token}` },
+      payload: { confirmation_name: 'The Menon Kitchen' },
+    });
+
+    expect(res.statusCode).toBe(403);
+    expect(state.updateUserByIdCalls).toHaveLength(0);
+  });
+
+  it('403 for secondary_caregiver — deletion is primary-parent only', async () => {
+    const state = freshDeleteState();
+    app = await buildDeleteApp(state);
+    const token = signSecondary(app);
+
+    const res = await app.inject({
+      method: 'POST',
+      url: `/v1/households/${SAMPLE_HOUSEHOLD_ID}/delete`,
+      headers: { authorization: `Bearer ${token}` },
+      payload: { confirmation_name: 'The Menon Kitchen' },
+    });
+
+    expect(res.statusCode).toBe(403);
+    expect(state.updateUserByIdCalls).toHaveLength(0);
+  });
+
+  it('403 for guest_author — deletion is primary-parent only', async () => {
+    const state = freshDeleteState();
+    app = await buildDeleteApp(state);
+    const token = app.jwt.sign({
+      sub: SAMPLE_USER_ID,
+      hh: SAMPLE_HOUSEHOLD_ID,
+      role: 'guest_author',
+    });
+
+    const res = await app.inject({
+      method: 'POST',
+      url: `/v1/households/${SAMPLE_HOUSEHOLD_ID}/delete`,
+      headers: { authorization: `Bearer ${token}` },
+      payload: { confirmation_name: 'The Menon Kitchen' },
+    });
+
+    expect(res.statusCode).toBe(403);
+    expect(state.updateUserByIdCalls).toHaveLength(0);
+  });
+
+  it('401 without a token', async () => {
+    const state = freshDeleteState();
+    app = await buildDeleteApp(state);
+
+    const res = await app.inject({
+      method: 'POST',
+      url: `/v1/households/${SAMPLE_HOUSEHOLD_ID}/delete`,
+      payload: { confirmation_name: 'The Menon Kitchen' },
+    });
+
+    expect(res.statusCode).toBe(401);
+    expect(state.updateUserByIdCalls).toHaveLength(0);
   });
 });

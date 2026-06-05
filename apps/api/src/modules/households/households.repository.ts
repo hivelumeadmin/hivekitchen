@@ -384,6 +384,44 @@ export class HouseholdsRepository extends BaseRepository {
     });
     if (error) throw error;
   }
+
+  // 7-S11: look up display_name for deletion confirmation match.
+  async getDisplayName(
+    householdId: string,
+  ): Promise<{ display_name: string | null; deletion_requested_at: string | null } | null> {
+    const { data, error } = await this.client
+      .from('households')
+      .select('display_name, deletion_requested_at')
+      .eq('id', householdId)
+      .maybeSingle();
+    if (error) throw error;
+    return data as {
+      display_name: string | null;
+      deletion_requested_at: string | null;
+    } | null;
+  }
+
+  // 7-S11: soft-delete — sets deletion_requested_at.
+  async requestDeletion(householdId: string, now: string): Promise<void> {
+    const { error } = await this.client
+      .from('households')
+      .update({ deletion_requested_at: now })
+      .eq('id', householdId);
+    if (error) throw error;
+  }
+
+  // 7-S11: job sweep — find households past the 30-day threshold.
+  async findPendingHardDeletes(
+    cutoffIso: string,
+  ): Promise<Array<{ id: string; deletion_requested_at: string }>> {
+    const { data, error } = await this.client
+      .from('households')
+      .select('id, deletion_requested_at')
+      .not('deletion_requested_at', 'is', null)
+      .lt('deletion_requested_at', cutoffIso);
+    if (error) throw error;
+    return (data ?? []) as Array<{ id: string; deletion_requested_at: string }>;
+  }
 }
 
 export function decryptCaregiverRelationships(

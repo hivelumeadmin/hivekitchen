@@ -62,6 +62,7 @@ import {
   ConsentHistoryEventSchema,
   ConsentHistoryResponseSchema,
   DataExportResponseSchema,
+  DeleteHouseholdResponseSchema,
   SurfaceKind,
   PresenceEvent,
   ErrorCode,
@@ -389,6 +390,9 @@ export type ConsentHistoryResponse = z.infer<typeof ConsentHistoryResponseSchema
 
 // Data portability export (Story 7-S10 — FR71 / NFR-PRIV-6 / AR-22)
 export type DataExportResponse = z.infer<typeof DataExportResponseSchema>;
+
+// Account deletion (Story 7-S11 — FR69 / NFR-PRIV-2 — 30-day cascade)
+export type DeleteHouseholdResponse = z.infer<typeof DeleteHouseholdResponseSchema>;
 
 // Presence
 export type SurfaceKind = z.infer<typeof SurfaceKind>;

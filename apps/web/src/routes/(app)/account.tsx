@@ -6,6 +6,7 @@ import {
   type UpdateProfileRequest,
   type NotificationPrefs,
   type CulturalLanguagePreference,
+  type KitchenMap,
   CULTURAL_LANGUAGE_VALUES,
 } from '@hivekitchen/types';
 import { hkFetch, hkFetchBlob, HkApiError } from '@/lib/fetch.js';
@@ -14,6 +15,7 @@ import { useAuthStore } from '@/stores/auth.store.js';
 import { useComplianceStore } from '@/stores/compliance.store.js';
 import { ParentalNoticeView } from '@/features/compliance/ParentalNoticeView.js';
 import { PageHeader } from '@/components/PageHeader.js';
+import { Dialog } from '@/components/Dialog.js';
 
 type LoadState = 'loading' | 'ready' | 'error';
 
@@ -73,6 +75,13 @@ export default function AccountPage() {
   const [downloadError, setDownloadError] = useState<string | null>(null);
 
   const [exportState, setExportState] = useState<'idle' | 'pending' | 'success' | 'error'>('idle');
+
+  const [showDeleteDialog, setShowDeleteDialog] = useState(false);
+  const [deleteConfirmInput, setDeleteConfirmInput] = useState('');
+  const [householdDisplayName, setHouseholdDisplayName] = useState<string | null>(null);
+  const [householdDisplayNameLoading, setHouseholdDisplayNameLoading] = useState(false);
+  const [householdDisplayNameError, setHouseholdDisplayNameError] = useState(false);
+  const [deleteState, setDeleteState] = useState<'idle' | 'pending' | 'success' | 'error'>('idle');
 
   useEffect(() => {
     if (accessToken === null) {
@@ -257,6 +266,51 @@ export default function AccountPage() {
         return;
       }
       setExportState('error');
+    }
+  }
+
+  // Slice 7-S11 — account deletion. The confirmation dialog requires the parent
+  // to type the household display_name, fetched lazily from the kitchen-map
+  // projection the first time the dialog opens (the user profile carries the
+  // caregiver's name, not the household label).
+  async function handleOpenDeleteDialog() {
+    setShowDeleteDialog(true);
+    setDeleteConfirmInput('');
+    setDeleteState('idle');
+    if (householdDisplayName !== null || householdId === null) return;
+    setHouseholdDisplayNameError(false);
+    setHouseholdDisplayNameLoading(true);
+    try {
+      const map = await hkFetch<KitchenMap>(`/v1/households/${householdId}/kitchen-map`, {
+        method: 'GET',
+      });
+      setHouseholdDisplayName(map.household.display_name ?? null);
+    } catch {
+      setHouseholdDisplayName(null);
+      setHouseholdDisplayNameError(true);
+    } finally {
+      setHouseholdDisplayNameLoading(false);
+    }
+  }
+
+  async function handleDeleteAccount() {
+    if (householdId === null || householdDisplayName === null) return;
+    setDeleteState('pending');
+    try {
+      await hkFetch<unknown>(`/v1/households/${householdId}/delete`, {
+        method: 'POST',
+        body: { confirmation_name: deleteConfirmInput },
+      });
+      setDeleteState('success');
+      await new Promise((resolve) => setTimeout(resolve, 2000));
+      await useAuthStore.getState().logout();
+      navigate('/auth/login', { replace: true });
+    } catch (err) {
+      if (err instanceof HkApiError && err.status === 401) {
+        navigate('/auth/login?next=/account', { replace: true });
+        return;
+      }
+      setDeleteState('error');
     }
   }
 
@@ -536,7 +590,107 @@ export default function AccountPage() {
             )}
           </section>
         )}
+
+        {profile.role === 'primary_parent' && (
+          <section className="space-y-3 border-t border-border pt-6">
+            <h2 className="font-serif text-xl text-fg">Delete account</h2>
+            <p className="text-sm text-fg-muted">
+              Permanently delete your household and all associated data. This cannot be undone.
+            </p>
+            <button
+              type="button"
+              onClick={() => void handleOpenDeleteDialog()}
+              className="rounded border border-border px-4 py-2 text-sm"
+            >
+              Delete my account
+            </button>
+          </section>
+        )}
       </div>
+
+      <Dialog
+        open={showDeleteDialog}
+        onClose={() => {
+          if (deleteState === 'pending' || deleteState === 'success') return;
+          setShowDeleteDialog(false);
+          setDeleteConfirmInput('');
+          setDeleteState('idle');
+        }}
+        titleId="delete-account-dialog-title"
+        descriptionId="delete-account-dialog-desc"
+      >
+        <div className="flex flex-col gap-4">
+          <h2 id="delete-account-dialog-title" className="font-serif text-xl text-fg">
+            Delete your account permanently?
+          </h2>
+          <p id="delete-account-dialog-desc" className="text-sm text-fg-muted">
+            All household data — plans, children, memory, Heart Notes — will be erased within 30
+            days. You will be logged out immediately and cannot log back in.
+          </p>
+
+          {householdDisplayNameLoading ? (
+            <p className="text-sm text-fg-muted">Loading…</p>
+          ) : householdDisplayName !== null ? (
+            <div className="space-y-1">
+              <label htmlFor="delete-confirm-input" className="block text-sm">
+                {`Type "${householdDisplayName}" to confirm`}
+              </label>
+              <input
+                id="delete-confirm-input"
+                type="text"
+                value={deleteConfirmInput}
+                onChange={(e) => setDeleteConfirmInput(e.target.value)}
+                disabled={deleteState === 'pending' || deleteState === 'success'}
+                className="w-full rounded border border-border px-3 py-2 disabled:opacity-50"
+                placeholder={householdDisplayName}
+                autoComplete="off"
+              />
+            </div>
+          ) : householdDisplayNameError ? (
+            <p className="text-sm text-fg-muted">
+              Could not load your household name. Please close and try again.
+            </p>
+          ) : null}
+
+          {deleteState === 'error' && (
+            <p role="alert" className="text-sm text-safety-red">
+              Something went wrong. Please try again.
+            </p>
+          )}
+
+          {deleteState === 'success' ? (
+            <p className="text-sm text-fg-muted">Account deletion scheduled. Logging you out…</p>
+          ) : (
+            <div className="flex justify-end gap-3">
+              <button
+                type="button"
+                onClick={() => {
+                  setShowDeleteDialog(false);
+                  setDeleteConfirmInput('');
+                  setDeleteState('idle');
+                }}
+                disabled={deleteState === 'pending'}
+                className="rounded border border-border px-4 py-2 text-sm disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => void handleDeleteAccount()}
+                disabled={
+                  deleteState === 'pending' ||
+                  householdDisplayName === null ||
+                  deleteConfirmInput.trim().toLowerCase() !==
+                    householdDisplayName.trim().toLowerCase()
+                }
+                className="rounded border border-border px-4 py-2 text-sm disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {deleteState === 'pending' ? 'Deleting…' : 'Delete forever'}
+              </button>
+            </div>
+          )}
+        </div>
+      </Dialog>
     </main>
   );
 }
