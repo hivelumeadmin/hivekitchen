@@ -1,5 +1,13 @@
 # Deferred Work Log
 
+## Deferred from: code review of 7-s13-payload-scrubbing-primitive (2026-06-05)
+
+- **D-1: Shallow scrub — no caller enforcement for nested PII** — `scrubForSharing` is shallow-only by design; a future sharing route that passes a nested child object (e.g. `{ child: { name, declared_allergens } }`) silently passes all nested PII through. The spec delegates this to callers ("provide a pre-flattened payload"), but no mechanism enforces it. Add a call-site pre-flatten requirement (comment, lint rule, or wrapper type) when the first sharing route is built. [`apps/api/src/modules/compliance/payload-scrubber.ts`]
+- **D-2: No test for shallow-only boundary behavior** — the test suite has no case confirming that a nested object whose child key matches a sensitive field name is preserved intact (not recursively scrubbed). Spec defines exactly 5 cases; this boundary test is out of scope for 7-S13. Add when a sharing route story builds on this primitive. [`apps/api/src/modules/compliance/payload-scrubber.test.ts`]
+- **D-3: Case-sensitive Set matching — camelCase/mixed-case variants bypass scrubbing** — `Set.has('childName')` is false; any serializer or ORM that outputs camelCase field names would silently pass sensitive data through. Add a normalization step (e.g. `key.toLowerCase()` or a camelCase-to-snake_case transform) before the membership check if a camelCase sharing surface is ever built. [`apps/api/src/modules/compliance/payload-scrubber.ts`]
+- **D-4: Array-of-records input unguarded** — `Record<string, unknown>` excludes arrays at the TypeScript level, but a caller-side cast or `JSON.parse` path can bypass the type check; the function would return an object with numeric indices, not a scrubbed array. Add an overload or array-mapping helper when the first array-shaped sharing route is built. [`apps/api/src/modules/compliance/payload-scrubber.ts`]
+- **D-5: Null input causes runtime TypeError** — `Object.entries(null)` throws `TypeError: Cannot convert undefined or null to object`; TypeScript's type excludes null but untyped call paths (agent tool output, route body) can still pass it. Add a `if (payload == null) return {}` guard if untyped call paths emerge. [`apps/api/src/modules/compliance/payload-scrubber.ts`]
+
 ## Deferred from: code review of 7-s12-state-residency-override-scaffold (2026-06-05)
 
 - **D-1: Non-existent `householdId` silently returns `[]`** — `maybeSingle()` returns `{data:null}` when household not found; code falls through to `stateResidency=null → return []`, masking a bad ID at the call site. No 404 behavior. Add a `if (!hRow) throw new NotFoundError(...)` guard when Epic 8 wires the first caller. [`apps/api/src/modules/compliance/compliance.repository.ts`]
