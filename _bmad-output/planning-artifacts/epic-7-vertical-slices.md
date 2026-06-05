@@ -60,7 +60,7 @@ Between the walls, S6–S10 and S12–S13 are parallelizable across developers.
 **Demo:** Navigate to `/app/memory`. See a list of authored sentences — *"Layla loves dal-rice rotations and Tuesday is a no-meat day. Ayaan won't eat anything green that wasn't on the plate the day before."* Each sentence has an always-visible `⋯` affordance on the right.
 
 **Layers:**
-- **UI:** New route `/app/memory`. List of `<VisibleMemorySentence>` components. Inter 16pt, warm-neutral-800 (which is now `text-fg` after γ).
+- **UI:** New route `/app/memory`. List of `<VisibleMemorySentence>` components. `font-sans text-base text-fg`.
 - **API:** `GET /v1/households/:id/memory` reads `brief_state.memory_prose` snapshot (already projected by Story 3.6, populated by 5-S7's `memory.note` writes).
 - **DB:** read-only.
 

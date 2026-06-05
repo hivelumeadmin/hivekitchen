@@ -20,6 +20,7 @@ interface Readonly_TextFieldProps {
   /** Optional trailing element (e.g. visibility toggle button). */
   readonly trailing?: React.ReactNode;
   readonly className?: string;
+  readonly maxLength?: number;
   /** Error message rendered beneath the input in safety-red. */
   readonly error?: string;
 }
@@ -54,6 +55,7 @@ export function TextField({
   icon,
   trailing,
   className = '',
+  maxLength,
   error,
 }: TextFieldProps) {
   const sizedIcon = icon
@@ -90,6 +92,7 @@ export function TextField({
           autoComplete={autoComplete}
           required={required}
           disabled={disabled}
+          maxLength={maxLength}
           aria-invalid={error ? true : undefined}
           aria-describedby={error ? `${id}-error` : undefined}
           className={`w-full rounded-lg border bg-surface py-3 ${inputPadLeft} ${inputPadRight} text-[15px] text-fg placeholder:text-fg-muted/60 transition-colors focus:outline-none focus:ring-1 disabled:cursor-not-allowed disabled:opacity-50 ${

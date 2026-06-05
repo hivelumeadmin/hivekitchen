@@ -200,7 +200,7 @@ export default function ChildFlavorPassportPage() {
           <button
             type="button"
             onClick={() => setShowResetModal(false)}
-            className="px-4 py-2 font-sans text-sm text-fg-muted transition-colors hover:text-fg"
+            className="px-4 py-2 font-sans text-sm text-fg-muted hover:underline"
           >
             Cancel
           </button>

@@ -39,6 +39,7 @@ export default function AccountPage() {
   useLumiContext({ surface: 'general' });
   const navigate = useNavigate();
   const accessToken = useAuthStore((s) => s.accessToken);
+  const householdId = useAuthStore((s) => s.user?.current_household_id ?? null);
   const setAcknowledgmentState = useComplianceStore((s) => s.setAcknowledgmentState);
   const didLoad = useRef(false);
   const resetInProgress = useRef(false);
@@ -70,6 +71,8 @@ export default function AccountPage() {
 
   const [downloading, setDownloading] = useState<'json' | 'pdf' | null>(null);
   const [downloadError, setDownloadError] = useState<string | null>(null);
+
+  const [exportState, setExportState] = useState<'idle' | 'pending' | 'success' | 'error'>('idle');
 
   useEffect(() => {
     if (accessToken === null) {
@@ -237,6 +240,23 @@ export default function AccountPage() {
       setDownloadError('Could not download your allergy log. Please try again later.');
     } finally {
       setDownloading(null);
+    }
+  }
+
+  // Slice 7-S10 — request a full data-portability export. The POST returns 202
+  // (the snapshot is composed asynchronously and emailed as a signed link); the
+  // success copy replaces the button. No polling, no redirect.
+  async function handleExport() {
+    setExportState('pending');
+    try {
+      await hkFetch<unknown>(`/v1/households/${householdId ?? ''}/export`, { method: 'POST' });
+      setExportState('success');
+    } catch (err) {
+      if (err instanceof HkApiError && err.status === 401) {
+        navigate('/auth/login?next=/account', { replace: true });
+        return;
+      }
+      setExportState('error');
     }
   }
 
@@ -482,6 +502,37 @@ export default function AccountPage() {
             </div>
             {downloadError && (
               <p role="alert" className="text-sm text-safety-red">{downloadError}</p>
+            )}
+          </section>
+        )}
+
+        {profile.role === 'primary_parent' && (
+          <section className="space-y-3 border-t border-border pt-6">
+            <h2 className="font-serif text-xl text-fg">Data portability</h2>
+            <p className="text-sm text-fg-muted">
+              Download a copy of everything HiveKitchen has stored for your household.
+              Encrypted fields are decrypted to plain text in the export.
+            </p>
+            {exportState === 'success' ? (
+              <p className="text-sm text-fg-muted">
+                We&apos;re preparing your export. You&apos;ll receive an email with a download link within 72 hours.
+              </p>
+            ) : (
+              <>
+                <button
+                  type="button"
+                  onClick={() => void handleExport()}
+                  disabled={exportState === 'pending'}
+                  className="rounded border border-border px-4 py-2 text-sm disabled:opacity-50"
+                >
+                  {exportState === 'pending' ? 'Exporting…' : 'Export my data'}
+                </button>
+                {exportState === 'error' && (
+                  <p role="alert" className="text-sm text-safety-red">
+                    Something went wrong. Please try again.
+                  </p>
+                )}
+              </>
             )}
           </section>
         )}

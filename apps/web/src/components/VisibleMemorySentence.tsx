@@ -4,6 +4,7 @@ import { EditMemoryResponseSchema, ForgetMemoryResponseSchema } from '@hivekitch
 import type { MemoryNode } from '@hivekitchen/types';
 import { hkFetch } from '@/lib/fetch.js';
 import { ProvenancePopover } from './ProvenancePopover.js';
+import { TextField } from './TextField.js';
 
 interface Props {
   node: MemoryNode;
@@ -124,19 +125,13 @@ export function VisibleMemorySentence({ node, onNodeUpdated, showHelper }: Props
         <p className="font-sans text-sm text-fg-muted">
           Lumi will stop using this. You can undo this for 30 days.
         </p>
-        <input
-          type="text"
+        <TextField
+          id={`forget-reason-${node.id}`}
+          label="Reason (optional)"
+          placeholder="Why are you forgetting this? (optional)"
           value={forgetReason}
           onChange={(e) => setForgetReason(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === 'Escape') {
-              e.preventDefault();
-              cancelForget();
-            }
-          }}
-          placeholder="Why are you forgetting this? (optional)"
           maxLength={500}
-          className="w-full rounded-lg border border-border bg-surface px-3 py-2 font-sans text-sm text-fg placeholder:text-fg-muted focus:outline-none focus:ring-2 focus:ring-foliage"
         />
         {forgetError && (
           <p role="alert" className="font-sans text-sm text-fg-muted">

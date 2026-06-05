@@ -61,6 +61,7 @@ import {
   MemorySourceCountsSchema,
   ConsentHistoryEventSchema,
   ConsentHistoryResponseSchema,
+  DataExportResponseSchema,
   SurfaceKind,
   PresenceEvent,
   ErrorCode,
@@ -385,6 +386,9 @@ export type MemorySourceCounts = z.infer<typeof MemorySourceCountsSchema>;
 // Consent history (Story 7-S9 — chronological audit_log read for FR72)
 export type ConsentHistoryEvent = z.infer<typeof ConsentHistoryEventSchema>;
 export type ConsentHistoryResponse = z.infer<typeof ConsentHistoryResponseSchema>;
+
+// Data portability export (Story 7-S10 — FR71 / NFR-PRIV-6 / AR-22)
+export type DataExportResponse = z.infer<typeof DataExportResponseSchema>;
 
 // Presence
 export type SurfaceKind = z.infer<typeof SurfaceKind>;

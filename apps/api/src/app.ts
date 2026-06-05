@@ -40,6 +40,7 @@ import { catalogSeedJobPlugin } from './jobs/catalog-seed.job.js';
 import { catalogRecoveryJobPlugin } from './jobs/catalog-recovery.job.js';
 import { heartNoteDeliveryJobPlugin } from './jobs/heart-note-delivery.job.js';
 import { memoryForgetJobPlugin } from './jobs/memory-forget.job.js';
+import { dataExportJobPlugin } from './jobs/data-export.job.js';
 import { healthRoutes } from './modules/internal/health.routes.js';
 import { eventsRoutes } from './routes/v1/events/events.routes.js';
 import { authRoutes } from './modules/auth/auth.routes.js';
@@ -141,6 +142,11 @@ export async function buildApp(opts: BuildAppOptions) {
   // soft-forgotten more than 30 days ago (the soft→hard promotion / feature
   // MVP wall). Depends on supabase + bullmq + auditService (auditHook above).
   await app.register(memoryForgetJobPlugin);
+  // Slice 7-S10 — on-demand data-portability export worker (no scheduler). The
+  // POST /v1/households/:id/export route enqueues; this worker composes the
+  // snapshot, uploads to Supabase Storage, and emails a signed URL. Depends on
+  // supabase + bullmq + sendgrid + auditService (auditHook above).
+  await app.register(dataExportJobPlugin);
   await app.register(catalogSeedJobPlugin);
 
   await app.register(cookie);

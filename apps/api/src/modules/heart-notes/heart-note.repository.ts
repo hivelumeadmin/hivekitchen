@@ -171,6 +171,23 @@ export class HeartNoteRepository extends BaseRepository {
     return rows.map((row) => ({ ...row, content: decryptField<string>(row.content, dek) }));
   }
 
+  // Slice 7-S10 — full unfiltered list for the data-portability export. Unlike
+  // listByHousehold (the UI "All Notes" list, capped at 50), this returns every
+  // note for the household so the export is complete. All rows in a household
+  // share one DEK, so fetch it once and decrypt content over the result.
+  async findAllForHousehold(householdId: string): Promise<HeartNoteRow[]> {
+    const { data, error } = await this.client
+      .from('heart_notes')
+      .select(HEART_NOTE_COLUMNS)
+      .eq('household_id', householdId)
+      .order('created_at', { ascending: false });
+    if (error) throw error;
+    const rows = (data as HeartNoteRow[] | null) ?? [];
+    if (rows.length === 0) return [];
+    const dek = await getHouseholdDek(this.client, this.kek, householdId);
+    return rows.map((row) => ({ ...row, content: decryptField<string>(row.content, dek) }));
+  }
+
   // Slice 4-S6 — bulk-flip 'scheduled' rows for a given date to 'delivered'.
   // Never reads or decrypts content. Returns the number of rows updated.
   async deliverScheduled(isoDate: string): Promise<number> {

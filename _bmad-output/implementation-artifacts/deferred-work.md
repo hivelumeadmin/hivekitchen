@@ -1,5 +1,13 @@
 # Deferred Work Log
 
+## Deferred from: code review of 7-s10-json-data-export (2026-06-05)
+
+- **D-1: Unbounded export payload size** — no size guard before `JSON.stringify(snapshot)` + Supabase Storage upload; a large household could produce a payload exceeding the 50 MB bucket limit and exhaust all 3 BullMQ retry attempts with no user notification. Pre-existing beta-scale design constraint; no spec requirement for a guard. [`apps/api/src/jobs/data-export.job.ts`]
+- **D-2: Email re-sent on BullMQ retry** — if the job fails after storage upload succeeds (e.g. getUserById transient error or after P1 fix — skip email on no-email, audit write fails), a retry re-uploads the same file and re-sends email. User may receive 2–3 emails. Known limitation of the on-demand job pattern; no dedup mechanism specified in AC5. [`apps/api/src/jobs/data-export.job.ts`]
+- **D-3: DEK-null throws in `findAllForHousehold` if household DEK row deleted** — if `household_keys` row for the household is deleted independently of the KEK env var, `getHouseholdDek` returns null and `decryptField` throws on the first encrypted note, causing 3× job retries with no user notification. Same exposure as existing `listByHousehold`. Not introduced by this story. [`apps/api/src/modules/heart-notes/heart-note.repository.ts`]
+- **D-4: HMAC signature verification complexity** — `signature = HMAC-SHA256(JSON.stringify(snapshot), JWT_SECRET)` but the stored file is `JSON.stringify({data: snapshot, signature}, null, 2)`. A verifier must extract `.data` and re-serialize with `JSON.stringify` to reproduce the signed bytes — key ordering and whitespace must match exactly. No verification procedure is specified in the spec; latent trap if verification tooling is ever built. [`apps/api/src/jobs/data-export.job.ts`]
+- **D-5: Dead `(household ?? {})` null-coalesce** — `getHousehold` calls `.single()` which throws on zero rows; the `?? {}` fallback is unreachable. Harmless dead code but slightly misleading about whether `household` can be null. [`apps/api/src/jobs/data-export.job.ts:69`]
+
 ## Deferred from: code review of 7-s9-consent-history-view (2026-06-05)
 
 - **D-1: `account.created`/`account.deleted` not verified as included types in repo filter test** — `findConsentEventsByHousehold` test "returns only the five consent event types" proves non-consent-type exclusion but never seeds `account.created`/`account.deleted` rows as included examples. Coverage gap; `.in(CONSENT_EVENT_TYPES)` is correct by inspection. [`apps/api/src/audit/audit.repository.test.ts` — findConsentEventsByHousehold describe block]

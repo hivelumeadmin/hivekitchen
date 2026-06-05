@@ -67,6 +67,7 @@ export const AUDIT_EVENT_TYPES = [
   'account.created',
   'account.updated',
   'account.deleted',
+  'account.exported',   // Story 7-S10 — data portability export
   // auth
   'auth.login',
   'auth.logout',

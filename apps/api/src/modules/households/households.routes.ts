@@ -1,4 +1,5 @@
 import { Buffer } from 'node:buffer';
+import { randomUUID } from 'node:crypto';
 import fp from 'fastify-plugin';
 import type { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
@@ -17,6 +18,7 @@ import {
   UpdateSovereigntyModeResponseSchema,
   ParentalDashboardResponseSchema,
   ConsentHistoryResponseSchema,
+  DataExportResponseSchema,
 } from '@hivekitchen/contracts';
 import type {
   TileRetryRequest,
@@ -37,6 +39,7 @@ import { MemoryRepository } from '../memory/memory.repository.js';
 import { CulturalPriorRepository } from '../cultural-priors/cultural-prior.repository.js';
 import { ComplianceRepository } from '../compliance/compliance.repository.js';
 import { ParentalDashboardService } from './parental-dashboard.service.js';
+import { DATA_EXPORT_QUEUE, type DataExportJobData } from '../../jobs/data-export.job.js';
 
 // Story 2.14: anxiety-leakage telemetry primitive. The Plan Tile component
 // (Epic 3) emits a tile-retry beacon every time the parent re-edits the same
@@ -267,6 +270,49 @@ const householdsRoutesPlugin: FastifyPluginAsync = async (fastify) => {
       }
       const events = await auditService.getConsentHistory(householdId);
       return { events };
+    },
+  );
+
+  // Story 7-S10 — POST /v1/households/:householdId/export
+  // Data portability: queues a BullMQ job to compose a full JSON snapshot and
+  // email a signed 30-day Supabase Storage URL. Primary Parent only (AADC
+  // right-to-portability; secondary_caregiver cannot initiate an export).
+  // Returns 202 immediately — export runs asynchronously in the background.
+  fastify.post(
+    '/v1/households/:householdId/export',
+    {
+      preHandler: authorize(['primary_parent']),
+      schema: {
+        params: z.object({ householdId: z.string().uuid() }),
+        response: { 202: DataExportResponseSchema },
+      },
+    },
+    async (request, reply) => {
+      const { householdId } = request.params as { householdId: string };
+      if (householdId !== request.user.household_id) {
+        throw new ForbiddenError('Cannot export another household');
+      }
+      const exportQueue = fastify.bullmq.getQueue(DATA_EXPORT_QUEUE);
+      await exportQueue.add(
+        'compose-export',
+        {
+          household_id: householdId,
+          user_id: request.user.id,
+          request_id: randomUUID(),
+        } satisfies DataExportJobData,
+        {
+          attempts: 3,
+          backoff: { type: 'exponential' as const, delay: 60_000 },
+          removeOnComplete: { count: 10 },
+          removeOnFail: { count: 10 },
+        },
+      );
+      reply.status(202);
+      return {
+        status: 'queued' as const,
+        message:
+          "We're preparing your export. You'll receive an email with a download link within 72 hours.",
+      };
     },
   );
 
