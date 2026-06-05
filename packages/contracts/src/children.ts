@@ -101,3 +101,10 @@ export const SetBagCompositionResponseSchema = z.object({ child: ChildResponseSc
 export const ListChildrenResponseSchema = z.object({
   children: z.array(ChildResponseSchema),
 });
+
+// Story 7-S7 — response for the annual flavor-journey reset.
+export const ResetFlavorJourneyResponseSchema = z.object({
+  child_id: z.string().uuid(),
+  reset_at: z.string().datetime({ offset: true }),
+});
+export type ResetFlavorJourneyResponse = z.infer<typeof ResetFlavorJourneyResponseSchema>;

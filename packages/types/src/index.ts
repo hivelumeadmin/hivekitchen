@@ -55,6 +55,12 @@ import {
   MemoryRecallInputSchema,
   MemoryRecallNodeSchema,
   MemoryRecallOutputSchema,
+  EditMemoryRequestSchema,
+  ForgetMemoryRequestSchema,
+  ParentalDashboardResponseSchema,
+  MemorySourceCountsSchema,
+  ConsentHistoryEventSchema,
+  ConsentHistoryResponseSchema,
   SurfaceKind,
   PresenceEvent,
   ErrorCode,
@@ -93,6 +99,7 @@ import {
   BagCompositionSchema,
   SetBagCompositionBodySchema,
   SetBagCompositionResponseSchema,
+  ResetFlavorJourneyResponseSchema,
   SlotScopeSchema,
   SchoolPolicySchema,
   UpdateSchoolPolicyInputSchema,
@@ -365,6 +372,20 @@ export type MemoryRecallInput = z.infer<typeof MemoryRecallInputSchema>;
 export type MemoryRecallNode = z.infer<typeof MemoryRecallNodeSchema>;
 export type MemoryRecallOutput = z.infer<typeof MemoryRecallOutputSchema>;
 
+// Memory (Story 7-S3 — edit a sentence)
+export type EditMemoryRequest = z.infer<typeof EditMemoryRequestSchema>;
+
+// Memory (Story 7-S4 — soft-forget a sentence)
+export type ForgetMemoryRequest = z.infer<typeof ForgetMemoryRequestSchema>;
+
+// Parental review dashboard (Story 7-S8 — read-only aggregation panel)
+export type ParentalDashboardResponse = z.infer<typeof ParentalDashboardResponseSchema>;
+export type MemorySourceCounts = z.infer<typeof MemorySourceCountsSchema>;
+
+// Consent history (Story 7-S9 — chronological audit_log read for FR72)
+export type ConsentHistoryEvent = z.infer<typeof ConsentHistoryEventSchema>;
+export type ConsentHistoryResponse = z.infer<typeof ConsentHistoryResponseSchema>;
+
 // Presence
 export type SurfaceKind = z.infer<typeof SurfaceKind>;
 export type PresenceEvent = z.infer<typeof PresenceEvent>;
@@ -425,6 +446,8 @@ export type TextureNeeds = z.infer<typeof TextureNeedsSchema>;
 export type SpiceTolerance = z.infer<typeof SpiceToleranceSchema>;
 export type SetBagCompositionBody = z.infer<typeof SetBagCompositionBodySchema>;
 export type SetBagCompositionResponse = z.infer<typeof SetBagCompositionResponseSchema>;
+// Story 7-S7 — annual flavor-journey reset response.
+export type ResetFlavorJourneyResponse = z.infer<typeof ResetFlavorJourneyResponseSchema>;
 
 // School policies (Story 3.16 — per-slot policy update + plan propagation)
 export type SlotScope = z.infer<typeof SlotScopeSchema>;

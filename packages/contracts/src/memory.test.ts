@@ -12,6 +12,10 @@ import {
   MemoryRecallOutputSchema,
   GetMemoryResponseSchema,
   GetProvenanceResponseSchema,
+  EditMemoryRequestSchema,
+  EditMemoryResponseSchema,
+  ForgetMemoryRequestSchema,
+  ForgetMemoryResponseSchema,
 } from './memory.js';
 
 const UUID1 = '00000000-0000-4000-8000-000000000001';
@@ -255,6 +259,24 @@ describe('MemoryNodeSchema and MemoryProvenanceSchema', () => {
       subject_child_id: null,
       prose_text: 'Declared allergy: peanut',
       soft_forget_at: null,
+      forget_reason: null,
+      hard_forgotten: false,
+      created_at: DT,
+      updated_at: DT,
+    });
+    expect(r.success).toBe(true);
+  });
+
+  it('accepts a node with a non-null forget_reason', () => {
+    const r = MemoryNodeSchema.safeParse({
+      id: UUID1,
+      household_id: UUID2,
+      node_type: 'allergy',
+      facet: 'peanut',
+      subject_child_id: null,
+      prose_text: 'Declared allergy: peanut',
+      soft_forget_at: DT,
+      forget_reason: 'no longer relevant',
       hard_forgotten: false,
       created_at: DT,
       updated_at: DT,
@@ -286,6 +308,7 @@ describe('GetMemoryResponseSchema', () => {
     subject_child_id: null,
     prose_text: 'Declared allergy: peanut',
     soft_forget_at: null,
+    forget_reason: null,
     hard_forgotten: false,
     created_at: DT,
     updated_at: DT,
@@ -333,5 +356,94 @@ describe('GetProvenanceResponseSchema', () => {
 
   it('rejects a payload missing the provenance field', () => {
     expect(GetProvenanceResponseSchema.safeParse({}).success).toBe(false);
+  });
+});
+
+describe('EditMemoryRequestSchema', () => {
+  it('accepts a valid edit request', () => {
+    expect(
+      EditMemoryRequestSchema.safeParse({ prose_text: 'x', reason: 'parent_edit' }).success,
+    ).toBe(true);
+  });
+
+  it('rejects an empty prose_text', () => {
+    expect(
+      EditMemoryRequestSchema.safeParse({ prose_text: '', reason: 'parent_edit' }).success,
+    ).toBe(false);
+  });
+
+  it('rejects a prose_text over 2000 chars', () => {
+    expect(
+      EditMemoryRequestSchema.safeParse({ prose_text: 'x'.repeat(2001), reason: 'parent_edit' })
+        .success,
+    ).toBe(false);
+  });
+
+  it('rejects a reason other than parent_edit', () => {
+    expect(EditMemoryRequestSchema.safeParse({ prose_text: 'x', reason: 'other' }).success).toBe(
+      false,
+    );
+  });
+});
+
+describe('EditMemoryResponseSchema', () => {
+  const node = {
+    id: UUID1,
+    household_id: UUID2,
+    node_type: 'preference' as const,
+    facet: 'avoids spicy',
+    subject_child_id: null,
+    prose_text: 'Layla avoids spicy peppers.',
+    soft_forget_at: null,
+    forget_reason: null,
+    hard_forgotten: false,
+    created_at: DT,
+    updated_at: DT,
+  };
+
+  it('parses a payload wrapping a valid MemoryNode', () => {
+    expect(EditMemoryResponseSchema.safeParse({ node }).success).toBe(true);
+  });
+
+  it('rejects a payload missing the node field', () => {
+    expect(EditMemoryResponseSchema.safeParse({}).success).toBe(false);
+  });
+});
+
+describe('ForgetMemoryRequestSchema', () => {
+  it('accepts an empty body (no reason)', () => {
+    expect(ForgetMemoryRequestSchema.safeParse({}).success).toBe(true);
+  });
+
+  it('accepts a reason', () => {
+    expect(ForgetMemoryRequestSchema.safeParse({ reason: 'no longer relevant' }).success).toBe(true);
+  });
+
+  it('rejects a reason over 500 chars', () => {
+    expect(ForgetMemoryRequestSchema.safeParse({ reason: 'x'.repeat(501) }).success).toBe(false);
+  });
+});
+
+describe('ForgetMemoryResponseSchema', () => {
+  const node = {
+    id: UUID1,
+    household_id: UUID2,
+    node_type: 'preference' as const,
+    facet: 'avoids spicy',
+    subject_child_id: null,
+    prose_text: 'Layla avoids spicy peppers.',
+    soft_forget_at: DT,
+    forget_reason: 'too spicy',
+    hard_forgotten: false,
+    created_at: DT,
+    updated_at: DT,
+  };
+
+  it('parses a payload wrapping a valid MemoryNode', () => {
+    expect(ForgetMemoryResponseSchema.safeParse({ node }).success).toBe(true);
+  });
+
+  it('rejects a payload missing the node field', () => {
+    expect(ForgetMemoryResponseSchema.safeParse({}).success).toBe(false);
   });
 });

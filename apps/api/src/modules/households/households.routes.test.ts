@@ -7,6 +7,10 @@ import { ZodError } from 'zod';
 import { authenticateHook } from '../../middleware/authenticate.hook.js';
 import { isDomainError } from '../../common/errors.js';
 import { householdsRoutes } from './households.routes.js';
+import {
+  ConsentHistoryResponseSchema,
+  ParentalDashboardResponseSchema,
+} from '@hivekitchen/contracts';
 
 const SAMPLE_USER_ID = '11111111-1111-4111-8111-111111111111';
 const SAMPLE_HOUSEHOLD_ID = '22222222-2222-4222-8222-222222222222';
@@ -1331,5 +1335,470 @@ describe('PATCH /v1/households/:id/sovereignty-mode (Story 3.29)', () => {
 
     expect(res.statusCode).toBe(400);
     expect(state.sovereigntyMode).toBe('unified');
+  });
+});
+
+// ===========================================================================
+// Story 7-S8 — GET /v1/households/:householdId/dashboard
+// ===========================================================================
+
+interface DashboardChildRow {
+  id: string;
+  household_id: string;
+  name: string;
+  age_band: string;
+  school_policy_notes: string | null;
+  appetite_level: string;
+  texture_needs: string;
+  spice_tolerance: string;
+  bag_composition_pattern: string;
+  created_at: string;
+}
+
+interface DashboardSeed {
+  children?: DashboardChildRow[];
+  culturalPriors?: Array<Record<string, unknown>>;
+  // memory_nodes rows with embedded provenance for the counts-by-source feed.
+  memoryNodes?: Array<{
+    subject_child_id: string | null;
+    memory_provenance: Array<{ source_type: string }> | null;
+  }>;
+  vpcConsents?: Array<Record<string, unknown>>;
+}
+
+function makeDashboardChild(overrides: Partial<DashboardChildRow> = {}): DashboardChildRow {
+  return {
+    id: '00000000-0000-4000-8000-0000000000c1',
+    household_id: SAMPLE_HOUSEHOLD_ID,
+    name: 'Layla',
+    age_band: 'child',
+    school_policy_notes: null,
+    appetite_level: 'normal',
+    texture_needs: 'normal',
+    spice_tolerance: 'mild',
+    bag_composition_pattern: 'main_only',
+    created_at: '2026-01-01T00:00:00.000Z',
+    ...overrides,
+  };
+}
+
+// Thenable chain: eq/is/order/limit all return the chain, and awaiting the
+// chain at any point resolves with the seeded rows. This models every read the
+// dashboard performs (children, household_allergens, cultural identifiers,
+// dietary_preferences, cultural_priors, memory_nodes embed, vpc_consents)
+// without re-implementing each PostgREST verb's terminal position.
+function tableChain(rows: unknown[]) {
+  const chain: Record<string, unknown> = {};
+  const passthrough = () => chain;
+  chain.eq = passthrough;
+  chain.is = passthrough;
+  chain.order = passthrough;
+  chain.limit = passthrough;
+  chain.then = (resolve: (v: { data: unknown[]; error: null }) => unknown) =>
+    resolve({ data: rows, error: null });
+  return chain;
+}
+
+function buildDashboardMockSupabase(seed: DashboardSeed) {
+  return {
+    from(table: string) {
+      switch (table) {
+        case 'children':
+          return { select: () => tableChain(seed.children ?? []) };
+        case 'household_allergens':
+          return { select: () => tableChain([]) };
+        case 'household_cultural_identifiers':
+          return { select: () => tableChain([]) };
+        case 'dietary_preferences':
+          return { select: () => tableChain([]) };
+        case 'cultural_priors':
+          return { select: () => tableChain(seed.culturalPriors ?? []) };
+        case 'memory_nodes':
+          return { select: () => tableChain(seed.memoryNodes ?? []) };
+        case 'vpc_consents':
+          return { select: () => tableChain(seed.vpcConsents ?? []) };
+        default:
+          throw new Error(`unexpected table: ${table}`);
+      }
+    },
+  };
+}
+
+async function buildDashboardApp(seed: DashboardSeed): Promise<FastifyInstance> {
+  const app = Fastify({ logger: false, genReqId: () => randomUUID() });
+  app.setValidatorCompiler(validatorCompiler);
+  app.setSerializerCompiler(serializerCompiler);
+
+  const env = {
+    NODE_ENV: 'development' as const,
+    JWT_SECRET,
+    ENVELOPE_ENCRYPTION_MASTER_KEY: '',
+  };
+  app.decorate('env', env as unknown as FastifyInstance['env']);
+  app.decorate(
+    'supabase',
+    buildDashboardMockSupabase(seed) as unknown as FastifyInstance['supabase'],
+  );
+
+  await app.register(jwt, { secret: JWT_SECRET, sign: { expiresIn: '15m' } });
+  await app.register(authenticateHook);
+
+  app.setErrorHandler((err, request, reply) => {
+    if (isDomainError(err)) {
+      void reply.status(err.status).type('application/problem+json').send({
+        type: err.type,
+        status: err.status,
+        title: err.title,
+        detail: err.detail,
+        instance: request.id,
+      });
+      return;
+    }
+    if (err instanceof ZodError) {
+      void reply.status(400).send({ type: '/errors/validation', status: 400 });
+      return;
+    }
+    const obj = err as { validation?: unknown; cause?: unknown };
+    if (obj.cause instanceof ZodError) {
+      void reply.status(400).send({ type: '/errors/validation', status: 400 });
+      return;
+    }
+    if (Array.isArray(obj.validation) && obj.validation.length > 0) {
+      void reply.status(400).send({ type: '/errors/validation', status: 400 });
+      return;
+    }
+    void reply.status(500).send({ type: '/errors/internal', status: 500 });
+  });
+
+  await app.register(householdsRoutes);
+  await app.ready();
+  return app;
+}
+
+describe('GET /v1/households/:householdId/dashboard (7-S8)', () => {
+  let app: FastifyInstance;
+
+  afterEach(async () => {
+    if (app) await app.close();
+  });
+
+  it('200 — body matches the schema; seeded child + provenance land in the right buckets', async () => {
+    const child = makeDashboardChild({ name: 'Layla' });
+    app = await buildDashboardApp({
+      children: [child],
+      culturalPriors: [
+        {
+          id: '00000000-0000-4000-8000-0000000000a1',
+          household_id: SAMPLE_HOUSEHOLD_ID,
+          key: 'bengali',
+          label: 'Bengali',
+          tier: 'L2',
+          state: 'active',
+          presence: 1,
+          confidence: 0.9,
+          opted_in_at: null,
+          opted_out_at: null,
+          last_signal_at: '2026-01-01T00:00:00.000Z',
+          created_at: '2026-01-01T00:00:00.000Z',
+          updated_at: '2026-01-01T00:00:00.000Z',
+        },
+      ],
+      memoryNodes: [
+        { subject_child_id: child.id, memory_provenance: [{ source_type: 'onboarding' }] },
+        { subject_child_id: null, memory_provenance: [{ source_type: 'turn' }, { source_type: 'turn' }] },
+      ],
+      vpcConsents: [
+        {
+          id: '00000000-0000-4000-8000-0000000000v1',
+          household_id: SAMPLE_HOUSEHOLD_ID,
+          mechanism: 'signed_declaration',
+          signed_at: '2026-06-01T00:00:00.000Z',
+          signed_by_user_id: SAMPLE_USER_ID,
+          document_version: 'v1',
+          created_at: '2026-06-01T00:00:00.000Z',
+        },
+      ],
+    });
+    const token = signPrimary(app);
+
+    const res = await app.inject({
+      method: 'GET',
+      url: `/v1/households/${SAMPLE_HOUSEHOLD_ID}/dashboard`,
+      headers: { authorization: `Bearer ${token}` },
+    });
+
+    expect(res.statusCode).toBe(200);
+    const parsed = ParentalDashboardResponseSchema.safeParse(res.json());
+    expect(parsed.success).toBe(true);
+    const body = res.json() as ReturnType<typeof ParentalDashboardResponseSchema.parse>;
+    expect(body.children).toHaveLength(1);
+    expect(body.children[0]?.name).toBe('Layla');
+    expect(body.children[0]?.memory_node_counts.onboarding).toBe(1);
+    expect(body.household.general_memory_node_counts.turn).toBe(2);
+    expect(body.household.voice_retention_days).toBe(90);
+    expect(body.household.cultural_priors).toHaveLength(1);
+    expect(body.household.recent_vpc_events).toHaveLength(1);
+  });
+
+  it('200 with children: [] when the household has no children (AC#7)', async () => {
+    app = await buildDashboardApp({});
+    const token = signPrimary(app);
+
+    const res = await app.inject({
+      method: 'GET',
+      url: `/v1/households/${SAMPLE_HOUSEHOLD_ID}/dashboard`,
+      headers: { authorization: `Bearer ${token}` },
+    });
+
+    expect(res.statusCode).toBe(200);
+    const body = res.json() as ReturnType<typeof ParentalDashboardResponseSchema.parse>;
+    expect(body.children).toEqual([]);
+    expect(body.household.cultural_priors).toEqual([]);
+    expect(body.household.recent_vpc_events).toEqual([]);
+  });
+
+  it('accepts secondary_caregiver tokens', async () => {
+    app = await buildDashboardApp({});
+    const token = signSecondary(app);
+
+    const res = await app.inject({
+      method: 'GET',
+      url: `/v1/households/${SAMPLE_HOUSEHOLD_ID}/dashboard`,
+      headers: { authorization: `Bearer ${token}` },
+    });
+
+    expect(res.statusCode).toBe(200);
+  });
+
+  it('403 when :householdId is not the caller’s household', async () => {
+    app = await buildDashboardApp({});
+    const token = signPrimary(app, SAMPLE_HOUSEHOLD_ID);
+
+    const res = await app.inject({
+      method: 'GET',
+      url: `/v1/households/${OTHER_HOUSEHOLD_ID}/dashboard`,
+      headers: { authorization: `Bearer ${token}` },
+    });
+
+    expect(res.statusCode).toBe(403);
+  });
+
+  it('401 without a token', async () => {
+    app = await buildDashboardApp({});
+
+    const res = await app.inject({
+      method: 'GET',
+      url: `/v1/households/${SAMPLE_HOUSEHOLD_ID}/dashboard`,
+    });
+
+    expect(res.statusCode).toBe(401);
+  });
+
+  it('400 when :householdId is not a valid UUID', async () => {
+    app = await buildDashboardApp({});
+    const token = signPrimary(app);
+
+    const res = await app.inject({
+      method: 'GET',
+      url: `/v1/households/not-a-uuid/dashboard`,
+      headers: { authorization: `Bearer ${token}` },
+    });
+
+    expect(res.statusCode).toBe(400);
+  });
+});
+
+// ===========================================================================
+// Story 7-S9 — GET /v1/households/:householdId/consent-history
+// ===========================================================================
+
+interface ConsentEventRow {
+  id: string;
+  event_type: string;
+  metadata: Record<string, unknown>;
+  created_at: string;
+}
+
+// Thenable chain for the audit_log read the consent-history repo performs:
+// select(...).eq('household_id', ...).in('event_type', ...).order('created_at',
+// { ascending: false }). The mock returns the seeded rows verbatim (the real
+// .in()/.order() filtering is exercised in audit.repository.test.ts); rows are
+// seeded pre-sorted so the route's pass-through ordering is asserted here.
+function consentTableChain(rows: ConsentEventRow[]) {
+  const chain: Record<string, unknown> = {};
+  const passthrough = () => chain;
+  chain.eq = passthrough;
+  chain.in = passthrough;
+  chain.order = () => Promise.resolve({ data: rows, error: null });
+  return chain;
+}
+
+function buildConsentMockSupabase(rows: ConsentEventRow[]) {
+  return {
+    from(table: string) {
+      if (table === 'audit_log') return { select: () => consentTableChain(rows) };
+      throw new Error(`unexpected table: ${table}`);
+    },
+  };
+}
+
+async function buildConsentApp(rows: ConsentEventRow[]): Promise<FastifyInstance> {
+  const app = Fastify({ logger: false, genReqId: () => randomUUID() });
+  app.setValidatorCompiler(validatorCompiler);
+  app.setSerializerCompiler(serializerCompiler);
+
+  const env = {
+    NODE_ENV: 'development' as const,
+    JWT_SECRET,
+    ENVELOPE_ENCRYPTION_MASTER_KEY: '',
+  };
+  app.decorate('env', env as unknown as FastifyInstance['env']);
+  app.decorate(
+    'supabase',
+    buildConsentMockSupabase(rows) as unknown as FastifyInstance['supabase'],
+  );
+
+  await app.register(jwt, { secret: JWT_SECRET, sign: { expiresIn: '15m' } });
+  await app.register(authenticateHook);
+
+  app.setErrorHandler((err, request, reply) => {
+    if (isDomainError(err)) {
+      void reply.status(err.status).type('application/problem+json').send({
+        type: err.type,
+        status: err.status,
+        title: err.title,
+        detail: err.detail,
+        instance: request.id,
+      });
+      return;
+    }
+    if (err instanceof ZodError) {
+      void reply.status(400).send({ type: '/errors/validation', status: 400 });
+      return;
+    }
+    const obj = err as { validation?: unknown; cause?: unknown };
+    if (obj.cause instanceof ZodError) {
+      void reply.status(400).send({ type: '/errors/validation', status: 400 });
+      return;
+    }
+    if (Array.isArray(obj.validation) && obj.validation.length > 0) {
+      void reply.status(400).send({ type: '/errors/validation', status: 400 });
+      return;
+    }
+    void reply.status(500).send({ type: '/errors/internal', status: 500 });
+  });
+
+  await app.register(householdsRoutes);
+  await app.ready();
+  return app;
+}
+
+function consentEvent(overrides: Partial<ConsentEventRow> = {}): ConsentEventRow {
+  return {
+    id: '44444444-4444-4444-8444-444444444444',
+    event_type: 'vpc.consented',
+    metadata: { mechanism: 'signed_declaration', document_version: 'v1.0' },
+    created_at: '2026-06-01T00:00:00.000Z',
+    ...overrides,
+  };
+}
+
+describe('GET /v1/households/:householdId/consent-history (7-S9)', () => {
+  let app: FastifyInstance;
+
+  afterEach(async () => {
+    if (app) await app.close();
+  });
+
+  it('200 — body parses against the schema; seeded events land newest-first', async () => {
+    const newer = consentEvent({
+      id: '44444444-4444-4444-8444-444444444444',
+      event_type: 'vpc.consented',
+      created_at: '2026-06-02T00:00:00.000Z',
+    });
+    const older = consentEvent({
+      id: '55555555-5555-4555-8555-555555555555',
+      event_type: 'account.created',
+      metadata: {},
+      created_at: '2026-06-01T00:00:00.000Z',
+    });
+    app = await buildConsentApp([newer, older]);
+    const token = signPrimary(app);
+
+    const res = await app.inject({
+      method: 'GET',
+      url: `/v1/households/${SAMPLE_HOUSEHOLD_ID}/consent-history`,
+      headers: { authorization: `Bearer ${token}` },
+    });
+
+    expect(res.statusCode).toBe(200);
+    const parsed = ConsentHistoryResponseSchema.safeParse(res.json());
+    expect(parsed.success).toBe(true);
+    const body = res.json() as ReturnType<typeof ConsentHistoryResponseSchema.parse>;
+    expect(body.events.map((e) => e.id)).toEqual([newer.id, older.id]);
+  });
+
+  it('200 with { events: [] } when the household has no matching audit rows (AC#7)', async () => {
+    app = await buildConsentApp([]);
+    const token = signPrimary(app);
+
+    const res = await app.inject({
+      method: 'GET',
+      url: `/v1/households/${SAMPLE_HOUSEHOLD_ID}/consent-history`,
+      headers: { authorization: `Bearer ${token}` },
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual({ events: [] });
+  });
+
+  it('accepts secondary_caregiver tokens', async () => {
+    app = await buildConsentApp([]);
+    const token = signSecondary(app);
+
+    const res = await app.inject({
+      method: 'GET',
+      url: `/v1/households/${SAMPLE_HOUSEHOLD_ID}/consent-history`,
+      headers: { authorization: `Bearer ${token}` },
+    });
+
+    expect(res.statusCode).toBe(200);
+  });
+
+  it('403 when :householdId is not the caller’s household', async () => {
+    app = await buildConsentApp([consentEvent()]);
+    const token = signPrimary(app, SAMPLE_HOUSEHOLD_ID);
+
+    const res = await app.inject({
+      method: 'GET',
+      url: `/v1/households/${OTHER_HOUSEHOLD_ID}/consent-history`,
+      headers: { authorization: `Bearer ${token}` },
+    });
+
+    expect(res.statusCode).toBe(403);
+  });
+
+  it('401 without a token', async () => {
+    app = await buildConsentApp([]);
+
+    const res = await app.inject({
+      method: 'GET',
+      url: `/v1/households/${SAMPLE_HOUSEHOLD_ID}/consent-history`,
+    });
+
+    expect(res.statusCode).toBe(401);
+  });
+
+  it('400 when :householdId is not a valid UUID', async () => {
+    app = await buildConsentApp([]);
+    const token = signPrimary(app);
+
+    const res = await app.inject({
+      method: 'GET',
+      url: `/v1/households/not-a-uuid/consent-history`,
+      headers: { authorization: `Bearer ${token}` },
+    });
+
+    expect(res.statusCode).toBe(400);
   });
 });

@@ -16,6 +16,7 @@ function sampleNode(overrides: Record<string, unknown> = {}) {
     subject_child_id: null,
     prose_text: 'Layla avoids spicy peppers.',
     soft_forget_at: null,
+    forget_reason: null,
     hard_forgotten: false,
     created_at: '2026-04-30T00:00:00.000Z',
     updated_at: '2026-04-30T00:00:00.000Z',
@@ -98,20 +99,23 @@ test.describe('Story 7-S2: Provenance Chips', () => {
     await expect(region).toHaveAttribute('id', controls!);
   });
 
-  // AC8 — three disabled action pills (Edit / Forget / Adjust) render when ready.
-  test('renders three disabled action pills when the popover is ready (AC8)', async ({ page }) => {
+  // AC8 — action pills render when ready. Story 7-S3 enabled the Edit pill and
+  // Story 7-S4 enabled the Forget pill on the live memory page (Forget opens the
+  // inline confirmation). Only Adjust stays disabled.
+  test('renders the action pills when ready — Edit + Forget enabled, Adjust disabled (AC8, 7-S4)', async ({
+    page,
+  }) => {
     await landOnMemory(page);
     await mockProvenance(page, { provenance: [sampleProvenance()] });
 
     await page.getByRole('button', { name: 'More options' }).click();
 
-    for (const action of ['Edit', 'Forget', 'Adjust']) {
-      const pill = page.getByRole('button', {
-        name: `${action} (available in a future update)`,
-      });
-      await expect(pill).toBeVisible();
-      await expect(pill).toBeDisabled();
-    }
+    await expect(page.getByRole('button', { name: 'Edit this memory' })).toBeEnabled();
+    await expect(page.getByRole('button', { name: 'Forget this memory' })).toBeEnabled();
+
+    const adjust = page.getByRole('button', { name: 'Adjust (available in a future update)' });
+    await expect(adjust).toBeVisible();
+    await expect(adjust).toBeDisabled();
   });
 
   // AC7 — a loading indicator shows while the provenance fetch is in-flight.

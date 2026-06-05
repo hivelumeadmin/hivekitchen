@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, waitFor, cleanup } from '@testing-library/react';
+import { render, screen, waitFor, cleanup, fireEvent } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import type { MemoryNode } from '@hivekitchen/types';
 
@@ -34,6 +34,7 @@ import { useAuthStore } from '@/stores/auth.store.js';
 import MemoryRoute from './memory.js';
 
 const HOUSEHOLD_ID = '22222222-2222-4222-8222-222222222222';
+const NODE_ID = '00000000-0000-4000-8000-00000000000a';
 
 function makeNode(overrides: Partial<MemoryNode> = {}): MemoryNode {
   return {
@@ -44,6 +45,7 @@ function makeNode(overrides: Partial<MemoryNode> = {}): MemoryNode {
     subject_child_id: null,
     prose_text: 'Layla avoids spicy peppers.',
     soft_forget_at: null,
+    forget_reason: null,
     hard_forgotten: false,
     created_at: '2026-04-30T00:00:00.000Z',
     updated_at: '2026-04-30T00:00:00.000Z',
@@ -82,6 +84,7 @@ describe('MemoryRoute', () => {
   afterEach(() => {
     cleanup();
     useAuthStore.getState().clearSession();
+    localStorage.removeItem('memory_helper_seen_at');
   });
 
   it('registers the general Lumi surface context on mount (AC8)', () => {
@@ -148,5 +151,85 @@ describe('MemoryRoute', () => {
         "Lumi couldn't load your memory right now. Try refreshing.",
       );
     });
+  });
+
+  // Story 7-S3 — after editing a sentence the row renders the updated text
+  // inline, because memory.tsx lifts the saved node into its `nodes` state.
+  it('reflects the updated text inline after a successful edit (7-S3 AC2)', async () => {
+    const node = makeNode({ id: NODE_ID, prose_text: 'Layla avoids spicy peppers.' });
+    const updated = { ...node, prose_text: 'Layla now likes mild spice.' };
+    hkFetchMock.mockImplementation((path: string, init?: { method?: string }) => {
+      if (path === `/v1/households/${HOUSEHOLD_ID}/memory`) {
+        return Promise.resolve({ nodes: [node] });
+      }
+      if (path === `/v1/memory/${NODE_ID}/provenance`) {
+        return Promise.resolve({ provenance: [] });
+      }
+      if (path === `/v1/memory/${NODE_ID}` && init?.method === 'PATCH') {
+        return Promise.resolve({ node: updated });
+      }
+      return Promise.reject(new Error(`unexpected ${init?.method ?? 'GET'} ${path}`));
+    });
+    renderRoute();
+
+    await waitFor(() => expect(screen.getByText('Layla avoids spicy peppers.')).toBeDefined());
+
+    fireEvent.click(screen.getByRole('button', { name: 'More options' }));
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Edit this memory' })).toBeDefined(),
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Edit this memory' }));
+    fireEvent.change(screen.getByRole('textbox'), {
+      target: { value: 'Layla now likes mild spice.' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+
+    await waitFor(() => expect(screen.getByText('Layla now likes mild spice.')).toBeDefined());
+  });
+
+  // Story 7-S4 — a soft-forgotten node in the response renders the tombstone
+  // copy rather than prose text (the GET endpoint now returns both states).
+  it('renders the tombstone copy for a soft-forgotten node (7-S4 AC10)', async () => {
+    hkFetchMock.mockResolvedValue({
+      nodes: [
+        makeNode({
+          id: NODE_ID,
+          prose_text: 'Layla avoids spicy peppers.',
+          soft_forget_at: '2026-06-05T00:00:00.000Z',
+          forget_reason: 'too spicy',
+        }),
+      ],
+    });
+    renderRoute();
+
+    await waitFor(() =>
+      expect(screen.getByText("Lumi won't use this anymore — too spicy")).toBeDefined(),
+    );
+    expect(screen.queryByText('Layla avoids spicy peppers.')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'More options' })).toBeNull();
+  });
+
+  // 7-S6 — first-time helper.
+  const HELPER_TEXT = 'Tap ⋯ to see where this came from or ask Lumi to forget it';
+
+  it('shows the helper tooltip on the first node when localStorage has no seen-at (7-S6 AC1)', async () => {
+    localStorage.removeItem('memory_helper_seen_at');
+    hkFetchMock.mockResolvedValue({ nodes: [makeNode({ id: NODE_ID })] });
+    renderRoute();
+
+    await waitFor(() => {
+      expect(screen.getByText(HELPER_TEXT)).toBeDefined();
+    });
+  });
+
+  it('does NOT show the helper tooltip when localStorage already has memory_helper_seen_at (7-S6 AC4)', async () => {
+    localStorage.setItem('memory_helper_seen_at', '2026-01-01T00:00:00.000Z');
+    hkFetchMock.mockResolvedValue({ nodes: [makeNode({ id: NODE_ID })] });
+    renderRoute();
+
+    await waitFor(() => {
+      expect(screen.getByText('Layla avoids spicy peppers.')).toBeDefined();
+    });
+    expect(screen.queryByText(HELPER_TEXT)).toBeNull();
   });
 });

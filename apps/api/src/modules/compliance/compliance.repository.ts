@@ -40,6 +40,22 @@ export class ComplianceRepository extends BaseRepository {
     return (data as VpcConsentRow | null) ?? null;
   }
 
+  // Story 7-S8 — recent VPC consent rows for the parental dashboard, newest-first.
+  // Read-only projection; the full chronological consent history is Story 7-S9.
+  async findRecentConsentsByHousehold(
+    householdId: string,
+    limit: number,
+  ): Promise<VpcConsentRow[]> {
+    const { data, error } = await this.client
+      .from('vpc_consents')
+      .select(CONSENT_COLUMNS)
+      .eq('household_id', householdId)
+      .order('signed_at', { ascending: false })
+      .limit(limit);
+    if (error) throw error;
+    return (data as VpcConsentRow[] | null) ?? [];
+  }
+
   async insertConsent(input: {
     household_id: string;
     mechanism: string;

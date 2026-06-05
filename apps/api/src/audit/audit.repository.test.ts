@@ -131,3 +131,65 @@ describe('AuditRepository.findAllergyEventsByHousehold', () => {
     await expect(repo.findAllergyEventsByHousehold(HOUSEHOLD_A)).rejects.toThrow('db down');
   });
 });
+
+describe('AuditRepository.findConsentEventsByHousehold (7-S9)', () => {
+  it('returns the household consent rows ordered newest-first by created_at', async () => {
+    const rows = [
+      row({ id: 'c1', event_type: 'account.created', created_at: '2026-06-01T00:00:00.000Z' }),
+      row({ id: 'c3', event_type: 'vpc.consented', created_at: '2026-06-03T00:00:00.000Z' }),
+      row({
+        id: 'c2',
+        event_type: 'parental_notice.acknowledged',
+        created_at: '2026-06-02T00:00:00.000Z',
+      }),
+    ];
+    const repo = new AuditRepository(buildMockClient(rows) as unknown as SupabaseClient);
+
+    const result = await repo.findConsentEventsByHousehold(HOUSEHOLD_A);
+
+    expect(result.map((r) => r.id)).toEqual(['c3', 'c2', 'c1']);
+  });
+
+  it('returns only the five consent event types, excluding others from the household', async () => {
+    const rows = [
+      row({ id: 'consent', event_type: 'vpc.consented' }),
+      row({ id: 'notice', event_type: 'parental_notice.acknowledged' }),
+      row({ id: 'acct', event_type: 'account.updated' }),
+      row({ id: 'allergy', event_type: 'allergy.guardrail_rejection' }),
+      row({ id: 'plan', event_type: 'plan.generated' }),
+    ];
+    const repo = new AuditRepository(buildMockClient(rows) as unknown as SupabaseClient);
+
+    const result = await repo.findConsentEventsByHousehold(HOUSEHOLD_A);
+
+    expect(result.map((r) => r.id).sort()).toEqual(['acct', 'consent', 'notice']);
+  });
+
+  it('scopes to the household, excluding consent events from another household', async () => {
+    const rows = [
+      row({ id: 'mine', household_id: HOUSEHOLD_A, event_type: 'vpc.consented' }),
+      row({ id: 'theirs', household_id: HOUSEHOLD_B, event_type: 'vpc.consented' }),
+    ];
+    const repo = new AuditRepository(buildMockClient(rows) as unknown as SupabaseClient);
+
+    const result = await repo.findConsentEventsByHousehold(HOUSEHOLD_A);
+
+    expect(result.map((r) => r.id)).toEqual(['mine']);
+  });
+
+  it('returns [] for a household with no consent events', async () => {
+    const repo = new AuditRepository(buildMockClient([]) as unknown as SupabaseClient);
+
+    const result = await repo.findConsentEventsByHousehold(HOUSEHOLD_A);
+
+    expect(result).toEqual([]);
+  });
+
+  it('throws when the query returns an error', async () => {
+    const repo = new AuditRepository(
+      buildMockClient([], new Error('db down')) as unknown as SupabaseClient,
+    );
+
+    await expect(repo.findConsentEventsByHousehold(HOUSEHOLD_A)).rejects.toThrow('db down');
+  });
+});

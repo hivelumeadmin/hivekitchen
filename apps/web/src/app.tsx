@@ -45,6 +45,8 @@ import GroceryListRoute from './routes/(app)/grocery-list.js';
 import KitchenInspirationRoute from './routes/(app)/kitchen-inspiration.js';
 import KitchenProfileRoute from './routes/(app)/kitchen-profile.js';
 import MemoryRoute from './routes/(app)/memory.js';
+import MemoryDashboardRoute from './routes/(app)/memory-dashboard.js';
+import ConsentHistoryRoute from './routes/(app)/consent-history.js';
 import LunchLinkRoute from './routes/(app)/lunch-link.js';
 import ChildFlavorPassportPage from './routes/(app)/child-flavor-passport.js';
 import LunchPassportRoute from './routes/(app)/lunch-passport.js';
@@ -98,6 +100,8 @@ const router = createBrowserRouter([
       { path: '/app/inspiration', element: <KitchenInspirationRoute /> },
       { path: '/app/kitchen-profile', element: <KitchenProfileRoute /> },
       { path: '/app/memory', element: <MemoryRoute /> },
+      { path: '/app/memory/dashboard', element: <MemoryDashboardRoute /> },
+      { path: '/app/memory/consent-history', element: <ConsentHistoryRoute /> },
       // Lunch Link — child-scope surface. AppLayout's useMatch('/lunch/*')
       // suppresses the parent LumiOrb/LumiPanel for these routes.
       { path: '/lunch/:linkId', element: <LunchLinkRoute /> },

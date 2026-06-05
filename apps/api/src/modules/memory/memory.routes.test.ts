@@ -15,6 +15,19 @@ const JWT_SECRET = 'a'.repeat(32);
 
 async function buildTestApp(
   getProvenance: (nodeId: string, householdId: string) => Promise<unknown[] | null>,
+  editProse?: (
+    nodeId: string,
+    householdId: string,
+    userId: string,
+    proseText: string,
+    reason: 'parent_edit',
+  ) => Promise<unknown | null>,
+  softForget?: (
+    nodeId: string,
+    householdId: string,
+    userId: string,
+    reason: string | null,
+  ) => Promise<unknown | null>,
 ): Promise<FastifyInstance> {
   const app = Fastify({ logger: false, genReqId: () => randomUUID() });
   app.setValidatorCompiler(validatorCompiler);
@@ -54,6 +67,10 @@ async function buildTestApp(
 
   app.decorate('memoryService', {
     getProvenance: getProvenance as FastifyInstance['memoryService']['getProvenance'],
+    editProse: (editProse ??
+      (async () => null)) as FastifyInstance['memoryService']['editProse'],
+    softForget: (softForget ??
+      (async () => null)) as FastifyInstance['memoryService']['softForget'],
   } as unknown as FastifyInstance['memoryService']);
 
   await app.register(memoryRoutes);
@@ -148,6 +165,242 @@ describe('GET /v1/memory/:nodeId/provenance', () => {
       method: 'GET',
       url: '/v1/memory/not-a-uuid/provenance',
       headers: { authorization: `Bearer ${token}` },
+    });
+
+    expect(res.statusCode).toBe(400);
+  });
+});
+
+function sampleNode(overrides: Record<string, unknown> = {}) {
+  return {
+    id: SAMPLE_NODE_ID,
+    household_id: SAMPLE_HOUSEHOLD_ID,
+    node_type: 'preference',
+    facet: 'avoids spicy',
+    subject_child_id: null,
+    prose_text: 'Layla avoids spicy peppers.',
+    soft_forget_at: null,
+    forget_reason: null,
+    hard_forgotten: false,
+    created_at: '2026-04-30T00:00:00.000Z',
+    updated_at: '2026-04-30T00:00:00.000Z',
+    ...overrides,
+  };
+}
+
+describe('PATCH /v1/memory/:nodeId', () => {
+  let app: FastifyInstance;
+
+  afterEach(async () => {
+    if (app) await app.close();
+  });
+
+  it('returns 200 with the updated node and passes args through from the JWT + body', async () => {
+    const updated = sampleNode({ prose_text: 'corrected text' });
+    const editProse = vi.fn(async () => updated);
+    app = await buildTestApp(async () => [], editProse);
+    const token = signPrimary(app);
+
+    const res = await app.inject({
+      method: 'PATCH',
+      url: `/v1/memory/${SAMPLE_NODE_ID}`,
+      headers: { authorization: `Bearer ${token}` },
+      payload: { prose_text: 'corrected text', reason: 'parent_edit' },
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual({ node: updated });
+    expect(editProse).toHaveBeenCalledWith(
+      SAMPLE_NODE_ID,
+      SAMPLE_HOUSEHOLD_ID,
+      SAMPLE_USER_ID,
+      'corrected text',
+      'parent_edit',
+    );
+  });
+
+  it('returns 404 when editProse returns null (missing or cross-household)', async () => {
+    app = await buildTestApp(async () => [], async () => null);
+    const token = signPrimary(app);
+
+    const res = await app.inject({
+      method: 'PATCH',
+      url: `/v1/memory/${SAMPLE_NODE_ID}`,
+      headers: { authorization: `Bearer ${token}` },
+      payload: { prose_text: 'x', reason: 'parent_edit' },
+    });
+
+    expect(res.statusCode).toBe(404);
+  });
+
+  it('returns 401 when no token is provided', async () => {
+    app = await buildTestApp(async () => [], async () => sampleNode());
+
+    const res = await app.inject({
+      method: 'PATCH',
+      url: `/v1/memory/${SAMPLE_NODE_ID}`,
+      payload: { prose_text: 'x', reason: 'parent_edit' },
+    });
+
+    expect(res.statusCode).toBe(401);
+  });
+
+  it('returns 400 when nodeId is not a valid UUID', async () => {
+    app = await buildTestApp(async () => [], async () => sampleNode());
+    const token = signPrimary(app);
+
+    const res = await app.inject({
+      method: 'PATCH',
+      url: '/v1/memory/not-a-uuid',
+      headers: { authorization: `Bearer ${token}` },
+      payload: { prose_text: 'x', reason: 'parent_edit' },
+    });
+
+    expect(res.statusCode).toBe(400);
+  });
+
+  it('returns 400 when prose_text is empty', async () => {
+    app = await buildTestApp(async () => [], async () => sampleNode());
+    const token = signPrimary(app);
+
+    const res = await app.inject({
+      method: 'PATCH',
+      url: `/v1/memory/${SAMPLE_NODE_ID}`,
+      headers: { authorization: `Bearer ${token}` },
+      payload: { prose_text: '', reason: 'parent_edit' },
+    });
+
+    expect(res.statusCode).toBe(400);
+  });
+
+  it('returns 400 when reason is not parent_edit', async () => {
+    app = await buildTestApp(async () => [], async () => sampleNode());
+    const token = signPrimary(app);
+
+    const res = await app.inject({
+      method: 'PATCH',
+      url: `/v1/memory/${SAMPLE_NODE_ID}`,
+      headers: { authorization: `Bearer ${token}` },
+      payload: { prose_text: 'x', reason: 'other' },
+    });
+
+    expect(res.statusCode).toBe(400);
+  });
+
+  it('returns 400 when prose_text exceeds 2000 characters', async () => {
+    app = await buildTestApp(async () => [], async () => sampleNode());
+    const token = signPrimary(app);
+
+    const res = await app.inject({
+      method: 'PATCH',
+      url: `/v1/memory/${SAMPLE_NODE_ID}`,
+      headers: { authorization: `Bearer ${token}` },
+      payload: { prose_text: 'x'.repeat(2001), reason: 'parent_edit' },
+    });
+
+    expect(res.statusCode).toBe(400);
+  });
+});
+
+describe('PATCH /v1/memory/:nodeId/forget', () => {
+  let app: FastifyInstance;
+
+  afterEach(async () => {
+    if (app) await app.close();
+  });
+
+  it('returns 200 with the forgotten node and passes (nodeId, householdId, userId, null) for an empty body', async () => {
+    const forgotten = sampleNode({ soft_forget_at: '2026-06-05T00:00:00.000Z', forget_reason: null });
+    const softForget = vi.fn(async () => forgotten);
+    app = await buildTestApp(async () => [], undefined, softForget);
+    const token = signPrimary(app);
+
+    const res = await app.inject({
+      method: 'PATCH',
+      url: `/v1/memory/${SAMPLE_NODE_ID}/forget`,
+      headers: { authorization: `Bearer ${token}` },
+      payload: {},
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual({ node: forgotten });
+    expect(softForget).toHaveBeenCalledWith(SAMPLE_NODE_ID, SAMPLE_HOUSEHOLD_ID, SAMPLE_USER_ID, null);
+  });
+
+  it('passes the reason through when the body carries one', async () => {
+    const forgotten = sampleNode({
+      soft_forget_at: '2026-06-05T00:00:00.000Z',
+      forget_reason: 'some reason',
+    });
+    const softForget = vi.fn(async () => forgotten);
+    app = await buildTestApp(async () => [], undefined, softForget);
+    const token = signPrimary(app);
+
+    const res = await app.inject({
+      method: 'PATCH',
+      url: `/v1/memory/${SAMPLE_NODE_ID}/forget`,
+      headers: { authorization: `Bearer ${token}` },
+      payload: { reason: 'some reason' },
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(softForget).toHaveBeenCalledWith(
+      SAMPLE_NODE_ID,
+      SAMPLE_HOUSEHOLD_ID,
+      SAMPLE_USER_ID,
+      'some reason',
+    );
+  });
+
+  it('returns 404 when softForget returns null (missing, cross-household, or already forgotten)', async () => {
+    app = await buildTestApp(async () => [], undefined, async () => null);
+    const token = signPrimary(app);
+
+    const res = await app.inject({
+      method: 'PATCH',
+      url: `/v1/memory/${SAMPLE_NODE_ID}/forget`,
+      headers: { authorization: `Bearer ${token}` },
+      payload: {},
+    });
+
+    expect(res.statusCode).toBe(404);
+  });
+
+  it('returns 401 when no token is provided', async () => {
+    app = await buildTestApp(async () => [], undefined, async () => sampleNode());
+
+    const res = await app.inject({
+      method: 'PATCH',
+      url: `/v1/memory/${SAMPLE_NODE_ID}/forget`,
+      payload: {},
+    });
+
+    expect(res.statusCode).toBe(401);
+  });
+
+  it('returns 400 when nodeId is not a valid UUID', async () => {
+    app = await buildTestApp(async () => [], undefined, async () => sampleNode());
+    const token = signPrimary(app);
+
+    const res = await app.inject({
+      method: 'PATCH',
+      url: '/v1/memory/not-a-uuid/forget',
+      headers: { authorization: `Bearer ${token}` },
+      payload: {},
+    });
+
+    expect(res.statusCode).toBe(400);
+  });
+
+  it('returns 400 when reason exceeds 500 characters', async () => {
+    app = await buildTestApp(async () => [], undefined, async () => sampleNode());
+    const token = signPrimary(app);
+
+    const res = await app.inject({
+      method: 'PATCH',
+      url: `/v1/memory/${SAMPLE_NODE_ID}/forget`,
+      headers: { authorization: `Bearer ${token}` },
+      payload: { reason: 'x'.repeat(501) },
     });
 
     expect(res.statusCode).toBe(400);

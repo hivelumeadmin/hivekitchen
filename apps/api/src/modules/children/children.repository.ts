@@ -180,6 +180,35 @@ export class ChildrenRepository extends BaseRepository {
     };
   }
 
+  // Story 7-S7 — read the last reset timestamp for the 365-day cooldown check.
+  // Returns null when the column is NULL or the child does not exist in this
+  // household. The route performs a subsequent findById for the 404 guard so
+  // this method only needs to return the scalar.
+  async getFlavorJourneyResetAt(childId: string, householdId: string): Promise<string | null> {
+    const { data, error } = await this.client
+      .from('children')
+      .select('flavor_journey_reset_at')
+      .eq('id', childId)
+      .eq('household_id', householdId)
+      .maybeSingle();
+    if (error) throw error;
+    return (data as { flavor_journey_reset_at: string | null } | null)?.flavor_journey_reset_at ?? null;
+  }
+
+  // Story 7-S7 — stamp the reset timestamp after the cascade completes.
+  async setFlavorJourneyResetAt(
+    childId: string,
+    householdId: string,
+    resetAt: string,
+  ): Promise<void> {
+    const { error } = await this.client
+      .from('children')
+      .update({ flavor_journey_reset_at: resetAt })
+      .eq('id', childId)
+      .eq('household_id', householdId);
+    if (error) throw error;
+  }
+
   async findByHouseholdId(householdId: string): Promise<DecryptedChildRow[]> {
     const { data, error } = await this.client
       .from('children')

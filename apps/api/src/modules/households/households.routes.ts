@@ -15,6 +15,8 @@ import {
   HouseholdProfileResponseSchema,
   UpdateSovereigntyModeInputSchema,
   UpdateSovereigntyModeResponseSchema,
+  ParentalDashboardResponseSchema,
+  ConsentHistoryResponseSchema,
 } from '@hivekitchen/contracts';
 import type {
   TileRetryRequest,
@@ -29,6 +31,12 @@ import { authorize } from '../../middleware/authorize.hook.js';
 import { HouseholdsRepository } from './households.repository.js';
 import { HouseholdsService } from './households.service.js';
 import { ExtraLibraryRepository } from './extra-library.repository.js';
+import { ChildAllergensRepository } from '../children/child-allergens.repository.js';
+import { ChildrenRepository } from '../children/children.repository.js';
+import { MemoryRepository } from '../memory/memory.repository.js';
+import { CulturalPriorRepository } from '../cultural-priors/cultural-prior.repository.js';
+import { ComplianceRepository } from '../compliance/compliance.repository.js';
+import { ParentalDashboardService } from './parental-dashboard.service.js';
 
 // Story 2.14: anxiety-leakage telemetry primitive. The Plan Tile component
 // (Epic 3) emits a tile-retry beacon every time the parent re-edits the same
@@ -53,6 +61,22 @@ const householdsRoutesPlugin: FastifyPluginAsync = async (fastify) => {
   const auditService = new AuditService(new AuditRepository(fastify.supabase));
   // Story 3.21 — household-scoped Extra library.
   const extraLibraryRepository = new ExtraLibraryRepository(fastify.supabase);
+
+  // Story 7-S8 — parental review dashboard service. Composes four existing
+  // reads; no new persisted data. The ChildrenRepository wiring is copied
+  // verbatim from children.routes.ts (it needs the ChildAllergensRepository).
+  const childAllergensRepository = new ChildAllergensRepository(fastify.supabase, kek);
+  const parentalDashboardService = new ParentalDashboardService({
+    childrenRepository: new ChildrenRepository(
+      fastify.supabase,
+      kek,
+      fastify.log,
+      childAllergensRepository,
+    ),
+    memoryRepository: new MemoryRepository(fastify.supabase),
+    culturalPriorRepository: new CulturalPriorRepository(fastify.supabase),
+    complianceRepository: new ComplianceRepository(fastify.supabase),
+  });
 
   // Both primary_parent and secondary_caregiver may be editing tiles, and
   // both should contribute to the per-user retry count.
@@ -198,6 +222,51 @@ const householdsRoutesPlugin: FastifyPluginAsync = async (fastify) => {
       }
       const nodes = await fastify.memoryService.findActive(householdId);
       return { nodes };
+    },
+  );
+
+  // Story 7-S8 — GET /v1/households/:householdId/dashboard
+  // Parental review dashboard: per-child + household-level data-collection summary.
+  // Read-only aggregation of existing data. 403 on cross-household read (no oracle),
+  // matching the sibling /memory route.
+  fastify.get(
+    '/v1/households/:householdId/dashboard',
+    {
+      preHandler: requireParentOrCaregiver,
+      schema: {
+        params: z.object({ householdId: z.string().uuid() }),
+        response: { 200: ParentalDashboardResponseSchema },
+      },
+    },
+    async (request) => {
+      const { householdId } = request.params as { householdId: string };
+      if (householdId !== request.user.household_id) {
+        throw new ForbiddenError('Cannot access another household dashboard');
+      }
+      return parentalDashboardService.getDashboard(householdId);
+    },
+  );
+
+  // Story 7-S9 — GET /v1/households/:householdId/consent-history
+  // Full chronological consent history: vpc.consented + parental_notice.acknowledged
+  // + account.* audit events, newest-first. Read-only; 403 on cross-household (no
+  // oracle), matching the sibling /memory and /dashboard routes.
+  fastify.get(
+    '/v1/households/:householdId/consent-history',
+    {
+      preHandler: requireParentOrCaregiver,
+      schema: {
+        params: z.object({ householdId: z.string().uuid() }),
+        response: { 200: ConsentHistoryResponseSchema },
+      },
+    },
+    async (request) => {
+      const { householdId } = request.params as { householdId: string };
+      if (householdId !== request.user.household_id) {
+        throw new ForbiddenError('Cannot access another household consent history');
+      }
+      const events = await auditService.getConsentHistory(householdId);
+      return { events };
     },
   );
 

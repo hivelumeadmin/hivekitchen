@@ -169,6 +169,101 @@ export class MemoryService {
     return this.repository.findProvenanceByNodeId(nodeId);
   }
 
+  // Story 7-S3 — edit a memory sentence scoped to the caller's household.
+  // Returns null when the node is absent or cross-household (route → 404).
+  // Provenance + audit are best-effort: the prose update is the committed
+  // effect, metadata writes must not fail the edit (matches seedFromOnboarding).
+  async editProse(
+    nodeId: string,
+    householdId: string,
+    userId: string,
+    proseText: string,
+    reason: 'parent_edit',
+  ): Promise<MemoryNodeRow | null> {
+    const existing = await this.repository.findNodeByIdForHousehold(nodeId, householdId);
+    if (!existing) return null;
+    if (existing.soft_forget_at !== null) return null; // D3 close — tombstoned node → 404
+
+    const updated = await this.repository.updateNodeProse(nodeId, householdId, proseText);
+    if (!updated) return null;
+
+    try {
+      await this.repository.insertProvenance({
+        memory_node_id: nodeId,
+        source_type: 'user_edit',
+        source_ref: { reason },
+        captured_by: userId,
+        confidence: 1.0,
+      });
+    } catch (err) {
+      this.logger.warn(
+        { err, module: 'memory', action: 'memory.edit_provenance_insert_failed', memory_node_id: nodeId },
+        'user_edit provenance insert failed — prose updated, provenance skipped',
+      );
+    }
+
+    if (this.audit) {
+      try {
+        await this.audit.write({
+          event_type: 'memory.updated',
+          household_id: householdId,
+          user_id: userId,
+          request_id: randomUUID(),
+          metadata: { node_id: nodeId, node_type: updated.node_type, reason },
+        });
+      } catch (err) {
+        this.logger.warn(
+          { err, module: 'memory', action: 'memory.audit_write_failed', memory_node_id: nodeId },
+          'memory.updated audit write failed — best-effort, continuing',
+        );
+      }
+    }
+
+    return updated;
+  }
+
+  // Story 7-S4 — soft-forget a memory sentence scoped to the caller's household.
+  // Returns null when the node is absent, cross-household, OR already
+  // soft-forgotten (all → route 404). Audit is best-effort: a failure does
+  // NOT fail the forget (matches seedFromOnboarding + editProse patterns).
+  async softForget(
+    nodeId: string,
+    householdId: string,
+    userId: string,
+    reason: string | null,
+  ): Promise<MemoryNodeRow | null> {
+    const existing = await this.repository.findNodeByIdForHousehold(nodeId, householdId);
+    if (!existing) return null;
+    if (existing.soft_forget_at !== null) return null; // already forgotten → 404
+
+    const softForgetAt = new Date().toISOString();
+    const updated = await this.repository.softForgetNode(nodeId, householdId, softForgetAt, reason);
+    if (!updated) return null;
+
+    if (this.audit) {
+      try {
+        await this.audit.write({
+          event_type: 'memory.forgotten',
+          household_id: householdId,
+          user_id: userId,
+          request_id: randomUUID(),
+          metadata: {
+            node_id: nodeId,
+            node_type: updated.node_type,
+            reason: reason ?? null,
+          },
+        });
+      } catch (err) {
+        this.logger.warn(
+          { err, module: 'memory', action: 'memory.audit_write_failed', memory_node_id: nodeId },
+          'memory.forgotten audit write failed — best-effort, continuing',
+        );
+      }
+    }
+
+    return updated;
+  }
+
   async recall(input: MemoryRecallInput): Promise<MemoryRecallOutput> {
     const rows = await this.repository.findNodes({
       household_id: input.household_id,

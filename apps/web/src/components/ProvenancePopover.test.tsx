@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, waitFor, cleanup, fireEvent } from '@testing-library/react';
+import { render, screen, waitFor, cleanup, fireEvent, act } from '@testing-library/react';
 
 const hkFetchMock = vi.fn();
 vi.mock('@/lib/fetch.js', () => ({
@@ -93,6 +93,46 @@ describe('ProvenancePopover', () => {
     expect(editBtn.hasAttribute('disabled')).toBe(true);
     expect(forgetBtn.hasAttribute('disabled')).toBe(true);
     expect(adjustBtn.hasAttribute('disabled')).toBe(true);
+  });
+
+  it('enables the Edit pill and fires onEdit + closes the popover when onEdit is provided (AC1)', async () => {
+    const onEdit = vi.fn();
+    hkFetchMock.mockResolvedValue(sampleProvenancePayload());
+    render(<ProvenancePopover nodeId={NODE_ID} onEdit={onEdit} />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'More options' }));
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'Edit this memory' })).toBeDefined();
+    });
+
+    const editBtn = screen.getByRole('button', { name: 'Edit this memory' });
+    expect(editBtn.hasAttribute('disabled')).toBe(false);
+
+    fireEvent.click(editBtn);
+
+    expect(onEdit).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole('region')).toBeNull();
+  });
+
+  it('enables the Forget pill and fires onForget + closes the popover when onForget is provided (AC1)', async () => {
+    const onForget = vi.fn();
+    hkFetchMock.mockResolvedValue(sampleProvenancePayload());
+    render(<ProvenancePopover nodeId={NODE_ID} onForget={onForget} />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'More options' }));
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'Forget this memory' })).toBeDefined();
+    });
+
+    const forgetBtn = screen.getByRole('button', { name: 'Forget this memory' });
+    expect(forgetBtn.hasAttribute('disabled')).toBe(false);
+
+    fireEvent.click(forgetBtn);
+
+    expect(onForget).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole('region')).toBeNull();
   });
 
   it('fetches the provenance endpoint only once across multiple open/close cycles', async () => {
@@ -224,5 +264,58 @@ describe('ProvenancePopover', () => {
 
     const region = screen.getByRole('region');
     expect(button.getAttribute('aria-controls')).toBe(region.getAttribute('id'));
+  });
+
+  describe('helper pulse (7-S6)', () => {
+    const HELPER_TEXT = 'Tap ⋯ to see where this came from or ask Lumi to forget it';
+
+    beforeEach(() => {
+      localStorage.removeItem('memory_helper_seen_at');
+    });
+
+    afterEach(() => {
+      vi.useRealTimers();
+      localStorage.removeItem('memory_helper_seen_at');
+    });
+
+    it('shows the helper tooltip when showHelper=true (AC1)', () => {
+      render(<ProvenancePopover nodeId={NODE_ID} showHelper />);
+      expect(screen.getByText(HELPER_TEXT)).toBeDefined();
+    });
+
+    it('does NOT show the helper tooltip when showHelper is absent (AC4)', () => {
+      render(<ProvenancePopover nodeId={NODE_ID} />);
+      expect(screen.queryByText(HELPER_TEXT)).toBeNull();
+    });
+
+    it('auto-dismisses the helper after 4s and writes to localStorage (AC2)', () => {
+      vi.useFakeTimers();
+      render(<ProvenancePopover nodeId={NODE_ID} showHelper />);
+
+      expect(screen.getByText(HELPER_TEXT)).toBeDefined();
+
+      act(() => {
+        vi.advanceTimersByTime(4000);
+      });
+
+      expect(screen.queryByText(HELPER_TEXT)).toBeNull();
+      expect(localStorage.getItem('memory_helper_seen_at')).not.toBeNull();
+    });
+
+    it('dismisses the helper on pointerdown and writes to localStorage (AC3)', () => {
+      render(<ProvenancePopover nodeId={NODE_ID} showHelper />);
+
+      expect(screen.getByText(HELPER_TEXT)).toBeDefined();
+
+      fireEvent(document.body, new Event('pointerdown', { bubbles: true }));
+
+      expect(screen.queryByText(HELPER_TEXT)).toBeNull();
+      expect(localStorage.getItem('memory_helper_seen_at')).not.toBeNull();
+    });
+
+    it('does NOT show the helper when showHelper=false (AC4)', () => {
+      render(<ProvenancePopover nodeId={NODE_ID} showHelper={false} />);
+      expect(screen.queryByText(HELPER_TEXT)).toBeNull();
+    });
   });
 });

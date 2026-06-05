@@ -21,6 +21,17 @@ export default function MemoryRoute() {
   const accessToken = useAuthStore((s) => s.accessToken);
   const householdId = useAuthStore((s) => s.user?.current_household_id ?? null);
   const didLoad = useRef(false);
+  // 7-S6 — read once at construction; stable for the component's lifetime.
+  // try/catch guards against SecurityError in private-browsing or restricted storage environments.
+  const showHelper = useRef(
+    (() => {
+      try {
+        return !localStorage.getItem('memory_helper_seen_at');
+      } catch {
+        return false;
+      }
+    })()
+  ).current;
 
   const [loadState, setLoadState] = useState<LoadState>('loading');
   const [nodes, setNodes] = useState<MemoryNode[]>([]);
@@ -76,8 +87,13 @@ export default function MemoryRoute() {
         <p className="mt-8 font-sans text-base text-fg-muted leading-relaxed">{EMPTY_COPY}</p>
       ) : (
         <div className="mt-8">
-          {nodes.map((node) => (
-            <VisibleMemorySentence key={node.id} node={node} />
+          {nodes.map((node, index) => (
+            <VisibleMemorySentence
+              key={node.id}
+              node={node}
+              showHelper={index === 0 && showHelper}
+              onNodeUpdated={(u) => setNodes((prev) => prev.map((n) => (n.id === u.id ? u : n)))}
+            />
           ))}
         </div>
       )}

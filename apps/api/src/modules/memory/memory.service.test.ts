@@ -24,6 +24,7 @@ function makeNodeRow(overrides: Partial<MemoryNodeRow> = {}): MemoryNodeRow {
     subject_child_id: null,
     prose_text: 'x',
     soft_forget_at: null,
+    forget_reason: null,
     hard_forgotten: false,
     created_at: '2026-04-30T00:00:00.000Z',
     updated_at: '2026-04-30T00:00:00.000Z',
@@ -367,5 +368,271 @@ describe('MemoryService.getProvenance', () => {
 
     expect(result).toBeNull();
     expect(findProvenanceByNodeId).not.toHaveBeenCalled();
+  });
+});
+
+describe('MemoryService.editProse', () => {
+  it('updates prose and returns the updated node when the node belongs to the household', async () => {
+    const existing = makeNodeRow({ prose_text: 'old' });
+    const updated = makeNodeRow({ prose_text: 'new text' });
+    const findNodeByIdForHousehold = vi.fn().mockResolvedValue(existing);
+    const updateNodeProse = vi.fn().mockResolvedValue(updated);
+    const insertProvenance = vi.fn().mockResolvedValue(makeProvenanceRow());
+    const repository = {
+      findNodeByIdForHousehold,
+      updateNodeProse,
+      insertProvenance,
+    } as unknown as MemoryRepository;
+    const service = new MemoryService({ repository, logger: buildLogger() });
+
+    const result = await service.editProse(NODE_ID, HOUSEHOLD_ID, USER_ID, 'new text', 'parent_edit');
+
+    expect(result).toBe(updated);
+    expect(findNodeByIdForHousehold).toHaveBeenCalledWith(NODE_ID, HOUSEHOLD_ID);
+    expect(updateNodeProse).toHaveBeenCalledWith(NODE_ID, HOUSEHOLD_ID, 'new text');
+  });
+
+  it('returns null without updating when the node is absent or cross-household', async () => {
+    const findNodeByIdForHousehold = vi.fn().mockResolvedValue(null);
+    const updateNodeProse = vi.fn();
+    const insertProvenance = vi.fn();
+    const repository = {
+      findNodeByIdForHousehold,
+      updateNodeProse,
+      insertProvenance,
+    } as unknown as MemoryRepository;
+    const service = new MemoryService({ repository, logger: buildLogger() });
+
+    const result = await service.editProse(NODE_ID, HOUSEHOLD_ID, USER_ID, 'x', 'parent_edit');
+
+    expect(result).toBeNull();
+    expect(updateNodeProse).not.toHaveBeenCalled();
+    expect(insertProvenance).not.toHaveBeenCalled();
+  });
+
+  it('returns null without updating when the node is already soft-forgotten (D3 — tombstoned node → 404)', async () => {
+    const findNodeByIdForHousehold = vi
+      .fn()
+      .mockResolvedValue(makeNodeRow({ soft_forget_at: '2026-05-01T00:00:00.000Z' }));
+    const updateNodeProse = vi.fn();
+    const insertProvenance = vi.fn();
+    const repository = {
+      findNodeByIdForHousehold,
+      updateNodeProse,
+      insertProvenance,
+    } as unknown as MemoryRepository;
+    const service = new MemoryService({ repository, logger: buildLogger() });
+
+    const result = await service.editProse(NODE_ID, HOUSEHOLD_ID, USER_ID, 'x', 'parent_edit');
+
+    expect(result).toBeNull();
+    expect(updateNodeProse).not.toHaveBeenCalled();
+    expect(insertProvenance).not.toHaveBeenCalled();
+  });
+
+  it('returns null when updateNodeProse returns null (TOCTOU race — node deleted between pre-check and update)', async () => {
+    const findNodeByIdForHousehold = vi.fn().mockResolvedValue(makeNodeRow());
+    const updateNodeProse = vi.fn().mockResolvedValue(null);
+    const insertProvenance = vi.fn();
+    const repository = {
+      findNodeByIdForHousehold,
+      updateNodeProse,
+      insertProvenance,
+    } as unknown as MemoryRepository;
+    const service = new MemoryService({ repository, logger: buildLogger() });
+
+    const result = await service.editProse(NODE_ID, HOUSEHOLD_ID, USER_ID, 'x', 'parent_edit');
+
+    expect(result).toBeNull();
+    expect(insertProvenance).not.toHaveBeenCalled();
+  });
+
+  it('inserts a user_edit provenance row with confidence 1.0 and captured_by=userId', async () => {
+    const findNodeByIdForHousehold = vi.fn().mockResolvedValue(makeNodeRow());
+    const updateNodeProse = vi.fn().mockResolvedValue(makeNodeRow({ prose_text: 'new' }));
+    const insertProvenance = vi.fn().mockResolvedValue(makeProvenanceRow());
+    const repository = {
+      findNodeByIdForHousehold,
+      updateNodeProse,
+      insertProvenance,
+    } as unknown as MemoryRepository;
+    const service = new MemoryService({ repository, logger: buildLogger() });
+
+    await service.editProse(NODE_ID, HOUSEHOLD_ID, USER_ID, 'new', 'parent_edit');
+
+    expect(insertProvenance).toHaveBeenCalledWith({
+      memory_node_id: NODE_ID,
+      source_type: 'user_edit',
+      source_ref: { reason: 'parent_edit' },
+      captured_by: USER_ID,
+      confidence: 1.0,
+    });
+  });
+
+  it('does not reject when the provenance insert throws — still returns the updated node', async () => {
+    const updated = makeNodeRow({ prose_text: 'new' });
+    const findNodeByIdForHousehold = vi.fn().mockResolvedValue(makeNodeRow());
+    const updateNodeProse = vi.fn().mockResolvedValue(updated);
+    const insertProvenance = vi.fn().mockRejectedValue(new Error('provenance write failed'));
+    const repository = {
+      findNodeByIdForHousehold,
+      updateNodeProse,
+      insertProvenance,
+    } as unknown as MemoryRepository;
+    const service = new MemoryService({ repository, logger: buildLogger() });
+
+    const result = await service.editProse(NODE_ID, HOUSEHOLD_ID, USER_ID, 'new', 'parent_edit');
+
+    expect(result).toBe(updated);
+    expect(insertProvenance).toHaveBeenCalledTimes(1);
+  });
+
+  it('writes a memory.updated audit event when audit is configured', async () => {
+    const updated = makeNodeRow({ prose_text: 'new', node_type: 'rhythm' });
+    const findNodeByIdForHousehold = vi.fn().mockResolvedValue(makeNodeRow());
+    const updateNodeProse = vi.fn().mockResolvedValue(updated);
+    const insertProvenance = vi.fn().mockResolvedValue(makeProvenanceRow());
+    const audit = { write: vi.fn().mockResolvedValue(undefined) } as unknown as AuditService;
+    const repository = {
+      findNodeByIdForHousehold,
+      updateNodeProse,
+      insertProvenance,
+    } as unknown as MemoryRepository;
+    const service = new MemoryService({ repository, logger: buildLogger(), audit });
+
+    await service.editProse(NODE_ID, HOUSEHOLD_ID, USER_ID, 'new', 'parent_edit');
+
+    expect(audit.write).toHaveBeenCalledWith(
+      expect.objectContaining({
+        event_type: 'memory.updated',
+        household_id: HOUSEHOLD_ID,
+        user_id: USER_ID,
+        metadata: expect.objectContaining({
+          node_id: NODE_ID,
+          node_type: 'rhythm',
+          reason: 'parent_edit',
+        }),
+      }),
+    );
+  });
+
+  it('does not propagate an audit-write failure to the caller', async () => {
+    const updated = makeNodeRow({ prose_text: 'new' });
+    const findNodeByIdForHousehold = vi.fn().mockResolvedValue(makeNodeRow());
+    const updateNodeProse = vi.fn().mockResolvedValue(updated);
+    const insertProvenance = vi.fn().mockResolvedValue(makeProvenanceRow());
+    const audit = { write: vi.fn().mockRejectedValue(new Error('audit down')) } as unknown as AuditService;
+    const repository = {
+      findNodeByIdForHousehold,
+      updateNodeProse,
+      insertProvenance,
+    } as unknown as MemoryRepository;
+    const service = new MemoryService({ repository, logger: buildLogger(), audit });
+
+    const result = await service.editProse(NODE_ID, HOUSEHOLD_ID, USER_ID, 'new', 'parent_edit');
+
+    expect(result).toBe(updated);
+    expect(audit.write).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('MemoryService.softForget', () => {
+  it('soft-forgets the node and returns the updated row when found and not yet forgotten', async () => {
+    const existing = makeNodeRow({ soft_forget_at: null });
+    const updated = makeNodeRow({ soft_forget_at: '2026-06-05T00:00:00.000Z', forget_reason: 'too spicy' });
+    const findNodeByIdForHousehold = vi.fn().mockResolvedValue(existing);
+    const softForgetNode = vi.fn().mockResolvedValue(updated);
+    const repository = { findNodeByIdForHousehold, softForgetNode } as unknown as MemoryRepository;
+    const service = new MemoryService({ repository, logger: buildLogger() });
+
+    const result = await service.softForget(NODE_ID, HOUSEHOLD_ID, USER_ID, 'too spicy');
+
+    expect(result).toBe(updated);
+    expect(findNodeByIdForHousehold).toHaveBeenCalledWith(NODE_ID, HOUSEHOLD_ID);
+    expect(softForgetNode).toHaveBeenCalledWith(
+      NODE_ID,
+      HOUSEHOLD_ID,
+      expect.stringMatching(/^\d{4}-\d{2}-\d{2}T/),
+      'too spicy',
+    );
+  });
+
+  it('returns null without updating when the node is absent or cross-household', async () => {
+    const findNodeByIdForHousehold = vi.fn().mockResolvedValue(null);
+    const softForgetNode = vi.fn();
+    const repository = { findNodeByIdForHousehold, softForgetNode } as unknown as MemoryRepository;
+    const service = new MemoryService({ repository, logger: buildLogger() });
+
+    const result = await service.softForget(NODE_ID, HOUSEHOLD_ID, USER_ID, null);
+
+    expect(result).toBeNull();
+    expect(softForgetNode).not.toHaveBeenCalled();
+  });
+
+  it('returns null without updating when the node is already soft-forgotten', async () => {
+    const existing = makeNodeRow({ soft_forget_at: '2026-05-01T00:00:00.000Z' });
+    const findNodeByIdForHousehold = vi.fn().mockResolvedValue(existing);
+    const softForgetNode = vi.fn();
+    const repository = { findNodeByIdForHousehold, softForgetNode } as unknown as MemoryRepository;
+    const service = new MemoryService({ repository, logger: buildLogger() });
+
+    const result = await service.softForget(NODE_ID, HOUSEHOLD_ID, USER_ID, null);
+
+    expect(result).toBeNull();
+    expect(softForgetNode).not.toHaveBeenCalled();
+  });
+
+  it('returns null when softForgetNode returns null (TOCTOU — forgotten between pre-check and update)', async () => {
+    const findNodeByIdForHousehold = vi.fn().mockResolvedValue(makeNodeRow({ soft_forget_at: null }));
+    const softForgetNode = vi.fn().mockResolvedValue(null);
+    const repository = { findNodeByIdForHousehold, softForgetNode } as unknown as MemoryRepository;
+    const service = new MemoryService({ repository, logger: buildLogger() });
+
+    const result = await service.softForget(NODE_ID, HOUSEHOLD_ID, USER_ID, null);
+
+    expect(result).toBeNull();
+  });
+
+  it('writes a memory.forgotten audit event with node_id, node_type, and reason', async () => {
+    const existing = makeNodeRow({ soft_forget_at: null });
+    const updated = makeNodeRow({
+      soft_forget_at: '2026-06-05T00:00:00.000Z',
+      node_type: 'rhythm',
+      forget_reason: 'changed our routine',
+    });
+    const findNodeByIdForHousehold = vi.fn().mockResolvedValue(existing);
+    const softForgetNode = vi.fn().mockResolvedValue(updated);
+    const audit = { write: vi.fn().mockResolvedValue(undefined) } as unknown as AuditService;
+    const repository = { findNodeByIdForHousehold, softForgetNode } as unknown as MemoryRepository;
+    const service = new MemoryService({ repository, logger: buildLogger(), audit });
+
+    await service.softForget(NODE_ID, HOUSEHOLD_ID, USER_ID, 'changed our routine');
+
+    expect(audit.write).toHaveBeenCalledWith(
+      expect.objectContaining({
+        event_type: 'memory.forgotten',
+        household_id: HOUSEHOLD_ID,
+        user_id: USER_ID,
+        metadata: expect.objectContaining({
+          node_id: NODE_ID,
+          node_type: 'rhythm',
+          reason: 'changed our routine',
+        }),
+      }),
+    );
+  });
+
+  it('does not propagate an audit-write failure to the caller', async () => {
+    const updated = makeNodeRow({ soft_forget_at: '2026-06-05T00:00:00.000Z' });
+    const findNodeByIdForHousehold = vi.fn().mockResolvedValue(makeNodeRow({ soft_forget_at: null }));
+    const softForgetNode = vi.fn().mockResolvedValue(updated);
+    const audit = { write: vi.fn().mockRejectedValue(new Error('audit down')) } as unknown as AuditService;
+    const repository = { findNodeByIdForHousehold, softForgetNode } as unknown as MemoryRepository;
+    const service = new MemoryService({ repository, logger: buildLogger(), audit });
+
+    const result = await service.softForget(NODE_ID, HOUSEHOLD_ID, USER_ID, null);
+
+    expect(result).toBe(updated);
+    expect(audit.write).toHaveBeenCalledTimes(1);
   });
 });

@@ -39,6 +39,7 @@ import { dayOverrideRevertJobPlugin } from './jobs/day-override-revert.job.js';
 import { catalogSeedJobPlugin } from './jobs/catalog-seed.job.js';
 import { catalogRecoveryJobPlugin } from './jobs/catalog-recovery.job.js';
 import { heartNoteDeliveryJobPlugin } from './jobs/heart-note-delivery.job.js';
+import { memoryForgetJobPlugin } from './jobs/memory-forget.job.js';
 import { healthRoutes } from './modules/internal/health.routes.js';
 import { eventsRoutes } from './routes/v1/events/events.routes.js';
 import { authRoutes } from './modules/auth/auth.routes.js';
@@ -136,6 +137,10 @@ export async function buildApp(opts: BuildAppOptions) {
   // delivered. Independent of catalog jobs; ordered after recovery to keep
   // the (recovery → seed) catalog pair contiguous in the registration list.
   await app.register(heartNoteDeliveryJobPlugin);
+  // Slice 7-S5 — nightly 03:00 UTC sweep that hard-deletes memory_nodes
+  // soft-forgotten more than 30 days ago (the soft→hard promotion / feature
+  // MVP wall). Depends on supabase + bullmq + auditService (auditHook above).
+  await app.register(memoryForgetJobPlugin);
   await app.register(catalogSeedJobPlugin);
 
   await app.register(cookie);

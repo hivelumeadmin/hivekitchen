@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import type { AuditRepository } from './audit.repository.js';
 import { AuditService } from './audit.service.js';
-import type { AuditWriteInput } from './audit.types.js';
+import type { AuditWriteInput, ConsentAuditRow } from './audit.types.js';
 
 describe('AuditService', () => {
   it('calls repository.insert with the full input', async () => {
@@ -56,5 +56,26 @@ describe('AuditService', () => {
 
     await service.write(input);
     expect(insert).toHaveBeenCalledWith(input);
+  });
+
+  it('getConsentHistory delegates to repository.findConsentEventsByHousehold', async () => {
+    const rows: ConsentAuditRow[] = [
+      {
+        id: '00000000-0000-4000-8000-000000000001',
+        event_type: 'vpc.consented',
+        metadata: { mechanism: 'signed_declaration' },
+        created_at: '2026-06-01T00:00:00.000Z',
+      },
+    ];
+    const findConsentEventsByHousehold = vi
+      .fn<(householdId: string) => Promise<ConsentAuditRow[]>>()
+      .mockResolvedValue(rows);
+    const repo = { findConsentEventsByHousehold } as unknown as AuditRepository;
+    const service = new AuditService(repo);
+
+    const result = await service.getConsentHistory('hh-uuid');
+
+    expect(findConsentEventsByHousehold).toHaveBeenCalledWith('hh-uuid');
+    expect(result).toEqual(rows);
   });
 });

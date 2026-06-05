@@ -5,6 +5,8 @@ export * from './thread.js';
 export * from './voice.js';
 export * from './events.js';
 export * from './memory.js';
+export * from './parental-dashboard.js';
+export * from './consent-history.js';
 export * from './presence.js';
 export * from './errors.js';
 export * from './users.js';

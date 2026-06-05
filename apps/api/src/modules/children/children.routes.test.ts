@@ -39,6 +39,8 @@ interface ChildRowDb {
     | 'main_plus_extra'
     | 'main_plus_snack_plus_extra';
   extra_rules: { pins: string[]; bans: string[] };
+  // Story 7-S7 — annual flavor-journey reset cooldown timestamp (NULL = never).
+  flavor_journey_reset_at?: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -137,6 +139,7 @@ function buildMockSupabase(state: MockDbState) {
         return householdCulturalIdentifiersTable(state);
       if (table === 'dietary_preferences') return dietaryPreferencesTable(state);
       if (table === 'child_preferences') return childPreferencesTable(state);
+      if (table === 'memory_nodes') return memoryNodesTable();
       throw new Error(`unexpected table: ${table}`);
     },
     rpc(_fnName: string) {
@@ -538,6 +541,40 @@ function childPreferencesTable(state: MockDbState) {
         },
         in() {
           return Promise.resolve({ data: state.childPreferences, error: null });
+        },
+      };
+      return chain;
+    },
+    // Story 7-S7 — deleteByChild: .delete().eq().eq().select('recipe_id').
+    delete() {
+      const chain = {
+        eq() {
+          return chain;
+        },
+        select() {
+          return Promise.resolve({ data: [], error: null });
+        },
+      };
+      return chain;
+    },
+  };
+}
+
+// Story 7-S7 — memory_nodes mock for the reset cascade. The route's
+// FlavorJourneyResetService bulk soft-forgets via
+// .update().eq().eq().is().select('id').
+function memoryNodesTable() {
+  return {
+    update() {
+      const chain = {
+        eq() {
+          return chain;
+        },
+        is() {
+          return chain;
+        },
+        select() {
+          return Promise.resolve({ data: [], error: null });
         },
       };
       return chain;
@@ -2145,6 +2182,133 @@ describe('GET /v1/children/:childId/flavor-passport', () => {
     const res = await app.inject({
       method: 'GET',
       url: `/v1/children/not-a-uuid/flavor-passport`,
+      headers: { authorization: `Bearer ${token}` },
+    });
+
+    expect(res.statusCode).toBe(400);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Story 7-S7 — annual flavor-journey reset
+
+describe('POST /v1/children/:childId/reset-flavor-journey (7-S7)', () => {
+  let app: FastifyInstance;
+
+  afterEach(async () => {
+    if (app) await app.close();
+  });
+
+  async function createChild(token: string): Promise<string> {
+    const res = await app.inject({
+      method: 'POST',
+      url: `/v1/households/${SAMPLE_HOUSEHOLD_ID}/children`,
+      headers: { authorization: `Bearer ${token}` },
+      payload: VALID_BODY,
+    });
+    expect(res.statusCode).toBe(201);
+    return (JSON.parse(res.body) as { child: { id: string } }).child.id;
+  }
+
+  it('200 on success — response shape matches ResetFlavorJourneyResponseSchema', async () => {
+    const state = emptyState({ acked: [SAMPLE_USER_ID] });
+    const auditWrite = vi.fn().mockResolvedValue(undefined);
+    app = await buildTestApp({ state, auditWriteSpy: auditWrite });
+    const token = signPrimaryParentToken(app);
+    const childId = await createChild(token);
+
+    const res = await app.inject({
+      method: 'POST',
+      url: `/v1/children/${childId}/reset-flavor-journey`,
+      headers: { authorization: `Bearer ${token}` },
+    });
+
+    expect(res.statusCode).toBe(200);
+    const body = JSON.parse(res.body) as { child_id: string; reset_at: string };
+    expect(body.child_id).toBe(childId);
+    // reset_at is an ISO-8601 timestamp.
+    expect(Number.isNaN(Date.parse(body.reset_at))).toBe(false);
+    expect(auditWrite).toHaveBeenCalledWith(
+      expect.objectContaining({
+        event_type: 'child.flavor_journey_reset',
+        household_id: SAMPLE_HOUSEHOLD_ID,
+        metadata: { child_id: childId },
+      }),
+    );
+  });
+
+  it('404 when the child does not belong to the caller household (no oracle)', async () => {
+    const state = emptyState({ acked: [SAMPLE_USER_ID] });
+    app = await buildTestApp({ state });
+    const token = signPrimaryParentToken(app);
+
+    const res = await app.inject({
+      method: 'POST',
+      url: `/v1/children/${randomUUID()}/reset-flavor-journey`,
+      headers: { authorization: `Bearer ${token}` },
+    });
+
+    expect(res.statusCode).toBe(404);
+    expect((JSON.parse(res.body) as { type: string }).type).toBe('/errors/not-found');
+  });
+
+  it('409 when within the 365-day cooldown — detail carries the last reset date', async () => {
+    const state = emptyState({ acked: [SAMPLE_USER_ID] });
+    app = await buildTestApp({ state });
+    const token = signPrimaryParentToken(app);
+    const childId = await createChild(token);
+
+    // Seed a recent reset directly on the stored row so the cooldown is active.
+    const lastReset = new Date(Date.now() - 10 * 24 * 60 * 60 * 1000).toISOString();
+    const stored = state.children.find((c) => c.id === childId)!;
+    stored.flavor_journey_reset_at = lastReset;
+
+    const res = await app.inject({
+      method: 'POST',
+      url: `/v1/children/${childId}/reset-flavor-journey`,
+      headers: { authorization: `Bearer ${token}` },
+    });
+
+    expect(res.statusCode).toBe(409);
+    const body = JSON.parse(res.body) as { type: string; detail: string };
+    expect(body.type).toBe('/errors/conflict');
+    expect(body.detail).toContain(lastReset);
+  });
+
+  it('401 when unauthenticated', async () => {
+    const state = emptyState();
+    app = await buildTestApp({ state });
+
+    const res = await app.inject({
+      method: 'POST',
+      url: `/v1/children/${randomUUID()}/reset-flavor-journey`,
+    });
+
+    expect(res.statusCode).toBe(401);
+  });
+
+  it('403 when caller is a secondary_caregiver (primary parent only)', async () => {
+    const state = emptyState({ acked: [SAMPLE_USER_ID] });
+    app = await buildTestApp({ state });
+    const token = signSecondaryCaregiverToken(app);
+
+    const res = await app.inject({
+      method: 'POST',
+      url: `/v1/children/${randomUUID()}/reset-flavor-journey`,
+      headers: { authorization: `Bearer ${token}` },
+    });
+
+    expect(res.statusCode).toBe(403);
+  });
+
+  it('400 when childId is not a UUID', async () => {
+    const state = emptyState({ acked: [SAMPLE_USER_ID] });
+    app = await buildTestApp({ state });
+    const token = signPrimaryParentToken(app);
+
+    const res = await app.inject({
+      method: 'POST',
+      url: `/v1/children/not-a-uuid/reset-flavor-journey`,
       headers: { authorization: `Bearer ${token}` },
     });
 

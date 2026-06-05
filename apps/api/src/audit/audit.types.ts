@@ -32,6 +32,7 @@ export const AUDIT_EVENT_TYPES = [
   'memory.forgotten',
   'memory.updated',
   'memory.seeded',
+  'memory.hard_forgotten', // Story 7-S5 — nightly promotion job tombstone
   // heart_note
   'heart_note.created',
   'heart_note.updated',
@@ -97,6 +98,7 @@ export const AUDIT_EVENT_TYPES = [
   'child.add',
   'child.bag_updated',
   'child.extra_rules_updated',
+  'child.flavor_journey_reset', // Story 7-S7
   // households
   'household.extra_library_item_created',
   'household.extra_library_item_archived',
@@ -139,6 +141,15 @@ export interface AuditWriteInput {
 export type AllergyAuditRow = {
   id: string;
   event_type: 'allergy.guardrail_rejection' | 'allergy.uncertainty' | 'allergy.check_overridden';
+  metadata: Record<string, unknown>;
+  created_at: string;
+};
+
+// Slice 7-S9 — read-side row shape for the consent history view.
+// Covers vpc.consented + parental_notice.acknowledged + account.* events.
+export type ConsentAuditRow = {
+  id: string;
+  event_type: string;
   metadata: Record<string, unknown>;
   created_at: string;
 };

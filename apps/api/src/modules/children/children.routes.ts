@@ -21,6 +21,7 @@ import {
   LunchLinkPauseResponseSchema,
   ChildSignalOutputSchema,
   FlavorPassportResponseSchema,
+  ResetFlavorJourneyResponseSchema,
 } from '@hivekitchen/contracts';
 import type {
   AddChildBody,
@@ -30,7 +31,7 @@ import type {
   LunchLinkPauseInput,
 } from '@hivekitchen/types';
 import { authorize } from '../../middleware/authorize.hook.js';
-import { ForbiddenError, NotFoundError } from '../../common/errors.js';
+import { ConflictError, ForbiddenError, NotFoundError } from '../../common/errors.js';
 import { ComplianceRepository } from '../compliance/compliance.repository.js';
 import { ComplianceService } from '../compliance/compliance.service.js';
 import { ChildAllergensRepository } from './child-allergens.repository.js';
@@ -38,6 +39,8 @@ import { ChildrenRepository } from './children.repository.js';
 import { ChildrenService } from './children.service.js';
 import { ChildPreferencesRepository } from '../child-preferences/child-preferences.repository.js';
 import { loadChildSignal } from '../child-preferences/child-signal.assembler.js';
+import { MemoryRepository } from '../memory/memory.repository.js';
+import { FlavorJourneyResetService } from './flavor-journey-reset.service.js';
 import { FlavorPassportRepository } from '../flavor-passport/flavor-passport.repository.js';
 import { FlavorPassportService } from '../flavor-passport/flavor-passport.service.js';
 import { SchoolPoliciesRepository } from './school-policies.repository.js';
@@ -93,6 +96,15 @@ const childrenRoutesPlugin: FastifyPluginAsync = async (fastify) => {
   const flavorPassportService = new FlavorPassportService(
     new FlavorPassportRepository(fastify.supabase, fastify.log),
   );
+
+  // Story 7-S7 — flavor-journey reset service.
+  const flavorJourneyResetService = new FlavorJourneyResetService({
+    childrenRepository,
+    memoryRepository: new MemoryRepository(fastify.supabase),
+    childPreferencesRepository,
+    logger: fastify.log,
+    audit: fastify.auditService,
+  });
 
   // Story 3.28 — lunch link suppression. Decorated by plansHook; children-routes
   // depends on it so plansHook must be registered before childrenRoutes.
@@ -459,6 +471,44 @@ const childrenRoutesPlugin: FastifyPluginAsync = async (fastify) => {
         date: body.date,
         suppressed: session?.suppressed_at != null,
         suppressed_at: session?.suppressed_at ?? null,
+      });
+    },
+  );
+
+  // Story 7-S7 — POST /v1/children/:childId/reset-flavor-journey
+  // Primary Parent only — irreversible annual action.
+  // 409 when called within 365 days of the previous reset.
+  // 404 when childId does not belong to the caller's household (no oracle).
+  fastify.post(
+    '/v1/children/:childId/reset-flavor-journey',
+    {
+      preHandler: requirePrimaryParent,
+      schema: {
+        params: z.object({ childId: z.string().uuid() }),
+        response: { 200: ResetFlavorJourneyResponseSchema },
+      },
+    },
+    async (request, reply) => {
+      const { childId } = request.params as { childId: string };
+      const householdId = request.user.household_id;
+
+      const outcome = await flavorJourneyResetService.reset(
+        childId,
+        householdId,
+        request.user.id,
+        request.id,
+      );
+
+      if (outcome.type === 'not_found') throw new NotFoundError(`child not found: ${childId}`);
+      if (outcome.type === 'cooldown_active') {
+        throw new ConflictError(
+          `flavor journey was already reset on ${outcome.last_reset_at}`,
+        );
+      }
+
+      return reply.status(200).send({
+        child_id: outcome.child_id,
+        reset_at: outcome.reset_at,
       });
     },
   );

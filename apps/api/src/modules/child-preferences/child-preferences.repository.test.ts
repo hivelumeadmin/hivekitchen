@@ -27,7 +27,7 @@ function buildChainClient(terminalResult: unknown): {
     steps.push({ op, args });
     return builder;
   };
-  for (const op of ['select', 'upsert', 'eq', 'gte', 'insert', 'update', 'order', 'in', 'is']) {
+  for (const op of ['select', 'upsert', 'eq', 'gte', 'insert', 'update', 'order', 'in', 'is', 'delete']) {
     builder[op] = passthrough(op);
   }
   builder.then = (resolve: (v: unknown) => unknown) => resolve(terminalResult);
@@ -194,5 +194,48 @@ describe('ChildPreferencesRepository.getVariantEligibleChildIds', () => {
     const { client } = buildChainClient({ data: [], error: null });
     const repo = new ChildPreferencesRepository(client);
     expect(await repo.getVariantEligibleChildIds(HOUSEHOLD_ID, '2026-05-04', 3)).toEqual([]);
+  });
+});
+
+// Story 7-S7 — deleteByChild (annual flavor-journey reset cascade)
+
+describe('ChildPreferencesRepository.deleteByChild', () => {
+  it('deletes all preferences for the child filtered by child_id AND household_id', async () => {
+    const { client, steps } = buildChainClient({
+      data: [{ recipe_id: RECIPE_X }, { recipe_id: RECIPE_Y }],
+      error: null,
+    });
+    const repo = new ChildPreferencesRepository(client);
+
+    await repo.deleteByChild(CHILD_A, HOUSEHOLD_ID);
+
+    expect(steps.find((s) => s.op === 'from')?.args).toEqual(['child_preferences']);
+    expect(steps.some((s) => s.op === 'delete')).toBe(true);
+    expect(steps.some((s) => s.op === 'eq' && s.args[0] === 'child_id' && s.args[1] === CHILD_A)).toBe(true);
+    expect(steps.some((s) => s.op === 'eq' && s.args[0] === 'household_id' && s.args[1] === HOUSEHOLD_ID)).toBe(true);
+  });
+
+  it('returns the count of deleted rows', async () => {
+    const { client } = buildChainClient({
+      data: [{ recipe_id: RECIPE_X }, { recipe_id: RECIPE_Y }],
+      error: null,
+    });
+    const repo = new ChildPreferencesRepository(client);
+
+    expect(await repo.deleteByChild(CHILD_A, HOUSEHOLD_ID)).toBe(2);
+  });
+
+  it('returns 0 when the child has no preference rows', async () => {
+    const { client } = buildChainClient({ data: [], error: null });
+    const repo = new ChildPreferencesRepository(client);
+
+    expect(await repo.deleteByChild(CHILD_A, HOUSEHOLD_ID)).toBe(0);
+  });
+
+  it('throws when the delete errors', async () => {
+    const { client } = buildChainClient({ data: null, error: new Error('boom') });
+    const repo = new ChildPreferencesRepository(client);
+
+    await expect(repo.deleteByChild(CHILD_A, HOUSEHOLD_ID)).rejects.toThrow(/boom/);
   });
 });
