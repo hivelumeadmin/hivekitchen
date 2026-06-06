@@ -54,7 +54,11 @@ export function userProfile(overrides: UserProfileOverrides = {}) {
     preferred_language: 'en',
     role: 'primary_parent',
     auth_providers: ['email'],
-    notification_prefs: { weekly_plan_ready: true, grocery_list_ready: true },
+    notification_prefs: {
+      weekly_plan_ready: true,
+      grocery_list_ready: true,
+      proactive_lumi_nudges: true,
+    },
     cultural_language: 'default',
     parental_notice_acknowledged_at: ackAt,
     parental_notice_acknowledged_version: 'v1',

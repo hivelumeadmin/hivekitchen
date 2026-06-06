@@ -263,7 +263,11 @@ describe('GET /v1/users/me', () => {
     expect(body.email).toBe('parent@example.com');
     expect(body.role).toBe('primary_parent');
     expect(body.auth_providers).toEqual(['email']);
-    expect(body.notification_prefs).toEqual({ weekly_plan_ready: true, grocery_list_ready: true });
+    expect(body.notification_prefs).toEqual({
+      weekly_plan_ready: true,
+      grocery_list_ready: true,
+      proactive_lumi_nudges: true,
+    });
     expect(body.cultural_language).toBe('default');
     // AC7: both fields must be present in the profile response
     expect(body.parental_notice_acknowledged_at).toBeNull();
@@ -475,7 +479,11 @@ describe('PATCH /v1/users/me/notifications', () => {
     expect(supabaseMock._updateProfileSpy).toHaveBeenCalledTimes(1);
     expect(supabaseMock._updateArgCaptor).toHaveBeenCalledWith(
       expect.objectContaining({
-        notification_prefs: { weekly_plan_ready: true, grocery_list_ready: false },
+        notification_prefs: {
+          weekly_plan_ready: true,
+          grocery_list_ready: false,
+          proactive_lumi_nudges: true,
+        },
       }),
     );
     // Verify the merge happened: the update payload sent both fields, preserving grocery_list_ready=false.

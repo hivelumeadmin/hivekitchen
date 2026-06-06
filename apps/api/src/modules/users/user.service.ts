@@ -120,12 +120,20 @@ export class UserService {
 
     // Merge over existing prefs so a single-field PATCH does not clobber the other field.
     // Defaults (true) apply only when the column has never been written for this user.
-    const merged: { weekly_plan_ready: boolean; grocery_list_ready: boolean } = {
+    const merged: {
+      weekly_plan_ready: boolean;
+      grocery_list_ready: boolean;
+      proactive_lumi_nudges: boolean;
+    } = {
       weekly_plan_ready: currentRow.notification_prefs?.weekly_plan_ready ?? true,
       grocery_list_ready: currentRow.notification_prefs?.grocery_list_ready ?? true,
+      proactive_lumi_nudges: currentRow.notification_prefs?.proactive_lumi_nudges ?? true,
     };
     if (input.weekly_plan_ready !== undefined) merged.weekly_plan_ready = input.weekly_plan_ready;
     if (input.grocery_list_ready !== undefined) merged.grocery_list_ready = input.grocery_list_ready;
+    if (input.proactive_lumi_nudges !== undefined) {
+      merged.proactive_lumi_nudges = input.proactive_lumi_nudges;
+    }
 
     const row = await this.repository.updateUserProfile(userId, { notification_prefs: merged });
     const auth_providers = await this.fetchAuthProviders(userId);
@@ -205,6 +213,7 @@ function toUserProfile(
     notification_prefs: {
       weekly_plan_ready: row.notification_prefs?.weekly_plan_ready ?? true,
       grocery_list_ready: row.notification_prefs?.grocery_list_ready ?? true,
+      proactive_lumi_nudges: row.notification_prefs?.proactive_lumi_nudges ?? true,
     },
     cultural_language: CulturalLanguageSchema.parse(row.cultural_language),
     parental_notice_acknowledged_at: row.parental_notice_acknowledged_at,

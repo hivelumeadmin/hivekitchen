@@ -1,6 +1,7 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, cleanup } from '@testing-library/react';
 import { useLumiStore } from '@/stores/lumi.store.js';
+import { VoiceSessionContext } from '@/contexts/VoiceSessionContext.js';
 import type { Turn } from '@hivekitchen/types';
 import { LumiOrb } from './LumiOrb.js';
 
@@ -93,5 +94,33 @@ describe('LumiOrb', () => {
 
     const orb = screen.getByRole('button');
     expect(orb.className).not.toContain('animate-pulse');
+  });
+
+  // ── Voice-mode click behavior (Story 12-S10) ──────────────────────────────
+
+  it('when voiceStatus is active, clicking orb calls endSession (not closePanel)', () => {
+    const endSession = vi.fn().mockResolvedValue(undefined);
+    useLumiStore.getState().openPanel();
+    useLumiStore.getState().setVoiceStatus('active');
+
+    render(
+      <VoiceSessionContext.Provider value={{ startSession: async () => {}, endSession }}>
+        <LumiOrb />
+      </VoiceSessionContext.Provider>,
+    );
+
+    fireEvent.click(screen.getByRole('button'));
+
+    expect(endSession).toHaveBeenCalledTimes(1);
+    // Panel should NOT have been closed (endSession handles session teardown)
+    expect(useLumiStore.getState().isPanelOpen).toBe(true);
+  });
+
+  it('when voiceStatus is idle and panel is closed, clicking orb calls openPanel (unchanged)', () => {
+    render(<LumiOrb />);
+
+    fireEvent.click(screen.getByRole('button', { name: /open lumi/i }));
+
+    expect(useLumiStore.getState().isPanelOpen).toBe(true);
   });
 });

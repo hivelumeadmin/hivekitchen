@@ -129,6 +129,7 @@ import {
   VoiceTalkSessionCreateSchema,
   VoiceTalkSessionResponseSchema,
   LumiNudgeEventSchema,
+  NudgeTriggerSchema,
   RecipeSearchInputSchema,
   RecipeSearchOutputSchema,
   RecipePreviewSchema,
@@ -492,6 +493,8 @@ export type LumiThreadTurnsResponse = z.infer<typeof LumiThreadTurnsResponseSche
 export type VoiceTalkSessionCreate = z.infer<typeof VoiceTalkSessionCreateSchema>;
 export type VoiceTalkSessionResponse = z.infer<typeof VoiceTalkSessionResponseSchema>;
 export type LumiNudgeEvent = z.infer<typeof LumiNudgeEventSchema>;
+// Story 12-S11 — proactive-nudge trigger class (job data + DB traceability).
+export type NudgeTrigger = z.infer<typeof NudgeTriggerSchema>;
 
 // Agent tools (Story 3.4 — recipe / pantry / plan / cultural lookup)
 export type RecipeSearchInput = z.infer<typeof RecipeSearchInputSchema>;

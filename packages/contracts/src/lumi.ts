@@ -76,6 +76,18 @@ export const VoiceTalkSessionResponseSchema = z.object({
   voice_id: VoiceCredentialSchema,
 });
 
+// NudgeTrigger — the event class that produced a proactive Lumi nudge (Story
+// 12-S11). Carried on the lumi-nudge job data and stamped (DB-only) on the
+// resulting thread_turns row. plan_completed is the only trigger wired at MVP;
+// the remaining three are reserved for post-S12 hooks (meal rating, allergen
+// flag, evening check-in).
+export const NudgeTriggerSchema = z.enum([
+  'plan_completed',
+  'meal_rating_received',
+  'allergen_flagged',
+  'evening_checkin_completed',
+]);
+
 // LumiNudgeEvent — SSE payload for proactive Lumi nudges (Story 12.11).
 export const LumiNudgeEventSchema = z.object({
   type: z.literal('lumi.nudge'),
@@ -92,3 +104,4 @@ export type LumiTurnResponse = z.infer<typeof LumiTurnResponseSchema>;
 export type VoiceTalkSessionCreate = z.infer<typeof VoiceTalkSessionCreateSchema>;
 export type VoiceTalkSessionResponse = z.infer<typeof VoiceTalkSessionResponseSchema>;
 export type LumiNudgeEvent = z.infer<typeof LumiNudgeEventSchema>;
+export type NudgeTrigger = z.infer<typeof NudgeTriggerSchema>;

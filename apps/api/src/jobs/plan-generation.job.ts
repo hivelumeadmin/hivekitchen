@@ -28,6 +28,7 @@ import {
   loadVariantEligibleChildrenForHousehold,
 } from './planner-context.loader.js';
 import { trySurgicalSwap } from './swap-retry.helper.js';
+import { NUDGE_QUEUE, type LumiNudgeJobData } from './lumi-nudge.job.js';
 
 export { deriveWeekId };
 
@@ -110,6 +111,22 @@ export function buildCommitInputTree(
     main_assignments: output.main_assignments,
     days: output.days,
   };
+}
+
+// Story 12-S11 — short human-readable plan summary for the proactive nudge's
+// `# Proactive Nudge` prompt block. main_assignments carry only sequence +
+// recipe_id at the contract layer; canonical_name may be present on resolved
+// rows, so read it defensively and fall back to "a new meal". Trimmed to 200
+// chars to keep the agent context bounded.
+export function buildPlanNudgeContext(output: PlanComposeTreeOutput, weekOf: string): string {
+  const mains = (output.main_assignments ?? [])
+    .slice(0, 3)
+    .map((a) => (a as { canonical_name?: string }).canonical_name ?? 'a new meal')
+    .join(', ');
+  return (mains.length > 0 ? `Week of ${weekOf}. Mains: ${mains}` : `Week of ${weekOf}.`).slice(
+    0,
+    200,
+  );
 }
 
 const planGenerationPlugin: FastifyPluginAsync = async (fastify) => {
@@ -463,6 +480,24 @@ const planGenerationPlugin: FastifyPluginAsync = async (fastify) => {
         { module: 'plan-generation', action: 'generate.complete', household_id, week_of, weekId },
         'plan-generation job completed — brief_state updated',
       );
+
+      // Story 12-S11 — proactive nudge: fire-and-forget enqueue after plan commit.
+      // The nudge job generates a Lumi turn in the household's brief-surface thread.
+      // Failure must not affect plan delivery — enqueue is best-effort.
+      try {
+        const planContext = buildPlanNudgeContext(lastAttemptComposeOutput, week_of);
+        await fastify.bullmq.getQueue(NUDGE_QUEUE).add('plan_completed', {
+          household_id,
+          trigger: 'plan_completed' as const,
+          surface: 'brief',
+          plan_context: planContext,
+        } satisfies LumiNudgeJobData);
+      } catch (err) {
+        fastify.log.warn(
+          { err, module: 'plan-generation', action: 'lumi.nudge_enqueue_failed', household_id },
+          'lumi nudge enqueue failed — plan is committed, nudge silently skipped',
+        );
+      }
 
       // Story 5.2 will wire the real SSE plan.updated emission via Redis
       // pub/sub. For now, log the intent so an integration test can assert

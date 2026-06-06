@@ -7,6 +7,8 @@ import { AuthUserSchema } from './auth.js';
 export const NotificationPrefsSchema = z.object({
   weekly_plan_ready: z.boolean(),
   grocery_list_ready: z.boolean(),
+  // Story 12-S12 — opt-out gate for proactive Lumi nudges (orb breathing + SSE).
+  proactive_lumi_nudges: z.boolean(),
 });
 
 // PATCH /v1/users/me/notifications request — at least one field required.
@@ -15,9 +17,13 @@ export const UpdateNotificationPrefsRequestSchema = z
   .object({
     weekly_plan_ready: z.boolean().optional(),
     grocery_list_ready: z.boolean().optional(),
+    proactive_lumi_nudges: z.boolean().optional(),
   })
   .refine(
-    (d) => d.weekly_plan_ready !== undefined || d.grocery_list_ready !== undefined,
+    (d) =>
+      d.weekly_plan_ready !== undefined ||
+      d.grocery_list_ready !== undefined ||
+      d.proactive_lumi_nudges !== undefined,
     { message: 'At least one field required' },
   );
 

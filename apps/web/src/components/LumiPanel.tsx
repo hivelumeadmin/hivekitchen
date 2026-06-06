@@ -3,6 +3,7 @@ import { LumiThreadTurnsResponseSchema, LumiTurnResponseSchema } from '@hivekitc
 import type { LumiSurface, Turn } from '@hivekitchen/types';
 import { hkFetch } from '@/lib/fetch.js';
 import { useLumiStore } from '@/stores/lumi.store.js';
+import { useVoiceSessionContext } from '@/contexts/VoiceSessionContext.js';
 
 const MAX_VISIBLE_TURNS = 8;
 
@@ -12,12 +13,17 @@ export function LumiPanel() {
   const turns = useLumiStore((s) => s.turns);
   const isHydrating = useLumiStore((s) => s.isHydrating);
   const voiceError = useLumiStore((s) => s.voiceError);
+  const voiceStatus = useLumiStore((s) => s.voiceStatus);
   const surface = useLumiStore((s) => s.surface);
   const contextSignal = useLumiStore((s) => s.contextSignal);
+  const proactiveNudges = useLumiStore((s) => s.proactiveNudges);
+
+  const { startSession, endSession } = useVoiceSessionContext();
 
   const [draft, setDraft] = useState('');
   const [isSending, setIsSending] = useState(false);
   const [sendError, setSendError] = useState<string | null>(null);
+  const [nudgeToggleSaving, setNudgeToggleSaving] = useState(false);
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
@@ -26,6 +32,12 @@ export function LumiPanel() {
 
     setIsSending(true);
     setSendError(null);
+    // Clear any lingering voice notice (Premium fallback / connection error)
+    // now that the user is acting in text. Direct setState avoids setVoiceError's
+    // voiceStatus side effect.
+    if (useLumiStore.getState().voiceError !== null) {
+      useLumiStore.setState({ voiceError: null });
+    }
 
     try {
       const raw = await hkFetch<unknown>('/v1/lumi/turns', {
@@ -95,6 +107,36 @@ export function LumiPanel() {
     useLumiStore.getState().closePanel();
   }
 
+  // Optimistically flip the proactive-nudge opt-out, then persist. Revert the
+  // local store value if the PATCH fails so the label reflects reality.
+  async function handleNudgeToggle() {
+    if (nudgeToggleSaving) return;
+    const next = !proactiveNudges;
+    setNudgeToggleSaving(true);
+    useLumiStore.getState().setProactiveNudges(next);
+    try {
+      await hkFetch<unknown>('/v1/users/me/notifications', {
+        method: 'PATCH',
+        body: { proactive_lumi_nudges: next },
+      });
+    } catch {
+      useLumiStore.getState().setProactiveNudges(!next);
+    } finally {
+      setNudgeToggleSaving(false);
+    }
+  }
+
+  function handleVoiceClick() {
+    if (voiceStatus === 'active') {
+      void endSession();
+    } else if (voiceStatus === 'connecting') {
+      // no-op while connecting
+    } else {
+      // idle or error — attempt to start (error state clears on setTalkSession)
+      void startSession(contextSignal ?? { surface });
+    }
+  }
+
   return (
     <aside
       id="lumi-panel"
@@ -103,15 +145,60 @@ export function LumiPanel() {
     >
       <header className="flex items-center justify-between px-4 pt-3 pb-2">
         <p className="font-serif text-sm text-fg">Lumi</p>
-        <button
-          type="button"
-          onClick={handleClose}
-          aria-label="Close Lumi panel"
-          className="text-fg-muted hover:text-fg transition-colors motion-reduce:transition-none focus:outline-none focus:ring-2 focus:ring-foliage rounded"
-        >
-          <span aria-hidden="true">×</span>
-        </button>
+        <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1 rounded border border-border bg-surface-2 p-0.5">
+            <button
+              type="button"
+              onClick={() => useLumiStore.getState().openPanel('text')}
+              aria-label="Text mode"
+              className={[
+                'font-sans text-xs px-2 py-0.5 rounded transition-colors motion-reduce:transition-none',
+                !isVoiceMode
+                  ? 'bg-surface text-fg shadow-sm'
+                  : 'text-fg-muted hover:text-fg',
+              ].join(' ')}
+            >
+              Text
+            </button>
+            <button
+              type="button"
+              onClick={handleVoiceClick}
+              aria-label="Voice mode"
+              disabled={voiceStatus === 'connecting'}
+              className={[
+                'font-sans text-xs px-2 py-0.5 rounded transition-colors motion-reduce:transition-none',
+                isVoiceMode
+                  ? 'bg-surface text-fg shadow-sm'
+                  : 'text-fg-muted hover:text-fg',
+                voiceStatus === 'connecting' ? 'opacity-50 cursor-not-allowed' : '',
+              ]
+                .filter(Boolean)
+                .join(' ')}
+            >
+              Voice
+            </button>
+          </div>
+          <button
+            type="button"
+            onClick={handleClose}
+            aria-label="Close Lumi panel"
+            className="text-fg-muted hover:text-fg transition-colors motion-reduce:transition-none focus:outline-none focus:ring-2 focus:ring-foliage rounded"
+          >
+            <span aria-hidden="true">×</span>
+          </button>
+        </div>
       </header>
+
+      {voiceStatus === 'connecting' && (
+        <p className="px-4 pb-1 font-sans text-xs text-fg-muted italic">
+          Connecting to Lumi voice…
+        </p>
+      )}
+      {voiceStatus === 'active' && (
+        <p className="px-4 pb-1 font-sans text-xs text-fg-muted italic">
+          Listening…
+        </p>
+      )}
 
       <div className="px-4 pb-3 max-h-72 overflow-y-auto flex flex-col gap-2">
         {showLoading ? (
@@ -133,7 +220,7 @@ export function LumiPanel() {
         </p>
       )}
 
-      {isVoiceMode && voiceError !== null && (
+      {voiceError !== null && (
         <p role="alert" className="px-4 pb-2 font-sans text-xs text-lumi-terracotta">
           {voiceError}
         </p>
@@ -161,6 +248,17 @@ export function LumiPanel() {
           </p>
         )}
       </form>
+
+      <div className="flex justify-end border-t border-border px-4 py-2">
+        <button
+          type="button"
+          onClick={() => void handleNudgeToggle()}
+          disabled={nudgeToggleSaving}
+          className="font-sans text-xs text-fg-muted hover:text-fg transition-colors motion-reduce:transition-none disabled:opacity-50 focus:outline-none focus:ring-2 focus:ring-foliage rounded"
+        >
+          {proactiveNudges ? 'Pause nudges' : 'Resume nudges'}
+        </button>
+      </div>
     </aside>
   );
 }

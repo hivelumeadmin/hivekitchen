@@ -8,6 +8,7 @@ import {
   VoiceTalkSessionCreateSchema,
   VoiceTalkSessionResponseSchema,
   LumiNudgeEventSchema,
+  NudgeTriggerSchema,
 } from './lumi.js';
 
 const UUID1 = '00000000-0000-4000-8000-000000000001';
@@ -460,5 +461,22 @@ describe('LumiNudgeEventSchema', () => {
         surface: 'planning',
       }).success,
     ).toBe(false);
+  });
+});
+
+describe('NudgeTriggerSchema', () => {
+  it('accepts each of the 4 known trigger values', () => {
+    for (const trigger of [
+      'plan_completed',
+      'meal_rating_received',
+      'allergen_flagged',
+      'evening_checkin_completed',
+    ] as const) {
+      expect(NudgeTriggerSchema.safeParse(trigger).success).toBe(true);
+    }
+  });
+
+  it('rejects an unknown trigger string', () => {
+    expect(NudgeTriggerSchema.safeParse('account_deleted').success).toBe(false);
   });
 });

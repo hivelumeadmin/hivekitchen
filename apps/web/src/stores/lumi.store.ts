@@ -21,6 +21,11 @@ interface LumiState {
   panelMode: PanelMode;
 
   pendingNudge: Turn | null;
+  // Story 12-S12 — mirror of users.notification_prefs.proactive_lumi_nudges so
+  // the in-panel "Pause/Resume nudges" toggle can render + optimistically update
+  // without a new store. Hydrated from /v1/users/me wherever it is read (account
+  // page); defaults to opted-in.
+  proactiveNudges: boolean;
 }
 
 interface LumiActions {
@@ -35,6 +40,7 @@ interface LumiActions {
   setVoiceError: (msg: string | null) => void;
   endTalkSession: () => void;
   setNudge: (turn: Turn | null) => void;
+  setProactiveNudges: (value: boolean) => void;
   reset: () => void;
 }
 
@@ -55,6 +61,7 @@ const INITIAL_STATE: LumiState = {
   panelMode: 'text',
 
   pendingNudge: null,
+  proactiveNudges: true,
 };
 
 export const useLumiStore = create<LumiState & LumiActions>()((set) => ({
@@ -81,6 +88,9 @@ export const useLumiStore = create<LumiState & LumiActions>()((set) => ({
     set((state) => ({
       isPanelOpen: true,
       panelMode: mode ?? state.panelMode,
+      // Opening the panel acknowledges any waiting nudge — the orb (driven by
+      // pendingNudge !== null) reverts to calm. (Story 12-S12 AC#10.)
+      pendingNudge: null,
     })),
 
   closePanel: () => set({ isPanelOpen: false }),
@@ -116,6 +126,8 @@ export const useLumiStore = create<LumiState & LumiActions>()((set) => ({
     }),
 
   setNudge: (turn) => set({ pendingNudge: turn }),
+
+  setProactiveNudges: (value) => set({ proactiveNudges: value }),
 
   reset: () => set({ ...INITIAL_STATE }),
 }));

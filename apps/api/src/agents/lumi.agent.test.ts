@@ -187,6 +187,68 @@ describe('LumiAgent.respond — fallback', () => {
   });
 });
 
+describe('LumiAgent.generateNudge', () => {
+  const NUDGE_INPUT = {
+    trigger: 'plan_completed' as const,
+    surface: 'brief' as const,
+    householdSnapshot: '',
+  };
+
+  it('returns the mocked completion content', async () => {
+    const { openai, create } = buildFakeOpenAI('Your week is ready, with dal-rice on Monday.');
+    const agent = new LumiAgent(openai);
+
+    const reply = await agent.generateNudge(NUDGE_INPUT);
+
+    expect(reply).toBe('Your week is ready, with dal-rice on Monday.');
+    expect(create).toHaveBeenCalledTimes(1);
+  });
+
+  it('injects the household snapshot and plan context into the system prompt', async () => {
+    const { openai, create } = buildFakeOpenAI('ok');
+    const agent = new LumiAgent(openai);
+    const snapshot = 'Family: The Garcias\n- Sofia (child) — allergens: peanut';
+
+    await agent.generateNudge({
+      ...NUDGE_INPUT,
+      householdSnapshot: snapshot,
+      planContext: 'Week of 2026-10-14. Mains: Dal-rice, Khichdi, Pasta',
+    });
+
+    const sys = systemMessageOf(create);
+    expect(sys).toContain('# Household Snapshot');
+    expect(sys).toContain(snapshot);
+    expect(sys).toContain('# Proactive Nudge');
+    expect(sys).toContain('Trigger: plan_completed');
+    expect(sys).toContain('Plan context: Week of 2026-10-14. Mains: Dal-rice, Khichdi, Pasta');
+  });
+
+  it('sends a synthetic user turn and a 150-token cap', async () => {
+    const { openai, create } = buildFakeOpenAI('ok');
+    const agent = new LumiAgent(openai);
+
+    await agent.generateNudge(NUDGE_INPUT);
+
+    const args = create.mock.calls[0][0] as CreateArgs;
+    expect(args.max_tokens).toBe(150);
+    expect(args.messages).toHaveLength(2);
+    expect(args.messages[0].role).toBe('system');
+    expect(args.messages[1]).toEqual({
+      role: 'user',
+      content: "What's your proactive message?",
+    });
+  });
+
+  it('returns the fallback reply when OpenAI returns null content', async () => {
+    const { openai } = buildFakeOpenAI(null);
+    const agent = new LumiAgent(openai);
+
+    const reply = await agent.generateNudge(NUDGE_INPUT);
+
+    expect(reply).toBe('Let me think about that for a moment.');
+  });
+});
+
 describe('surface prompt smoke — all surfaces return non-empty prompts', () => {
   const surfaces: LumiSurface[] = [
     'planning',

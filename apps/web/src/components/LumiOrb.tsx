@@ -1,9 +1,11 @@
 import { useLumiStore } from '@/stores/lumi.store.js';
+import { useVoiceSessionContext } from '@/contexts/VoiceSessionContext.js';
 
 export function LumiOrb() {
   const isPanelOpen = useLumiStore((s) => s.isPanelOpen);
   const voiceStatus = useLumiStore((s) => s.voiceStatus);
   const pendingNudge = useLumiStore((s) => s.pendingNudge);
+  const { endSession } = useVoiceSessionContext();
 
   const isVoiceActive = voiceStatus === 'active';
   const hasNudge = pendingNudge !== null;
@@ -17,6 +19,10 @@ export function LumiOrb() {
   const ariaLabel = isPanelOpen ? 'Lumi is open' : 'Open Lumi';
 
   function handleClick() {
+    if (isVoiceActive) {
+      void endSession();
+      return;
+    }
     if (isPanelOpen) {
       useLumiStore.getState().closePanel();
       return;

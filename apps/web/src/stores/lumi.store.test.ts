@@ -152,6 +152,16 @@ describe('useLumiStore', () => {
     expect(useLumiStore.getState().voiceError).toBeNull();
   });
 
+  it('openPanel clears a pending nudge so the orb stops breathing (AC #10)', () => {
+    const { setNudge, openPanel } = useLumiStore.getState();
+    setNudge(turn('nudge'));
+    expect(useLumiStore.getState().pendingNudge).not.toBeNull();
+
+    openPanel();
+
+    expect(useLumiStore.getState().pendingNudge).toBeNull();
+  });
+
   it('openPanel preserves prior panelMode when invoked without an argument', () => {
     const { openPanel, closePanel } = useLumiStore.getState();
     openPanel('voice');

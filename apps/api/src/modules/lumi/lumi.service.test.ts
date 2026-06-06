@@ -3,10 +3,14 @@ import type { Turn } from '@hivekitchen/types';
 
 // Mock the LumiAgent so submitTextTurn's call into it is observable without an
 // OpenAI round-trip. `respondMock` is hoisted so the factory can close over it.
-const { respondMock } = vi.hoisted(() => ({ respondMock: vi.fn() }));
+const { respondMock, generateNudgeMock } = vi.hoisted(() => ({
+  respondMock: vi.fn(),
+  generateNudgeMock: vi.fn(),
+}));
 vi.mock('../../agents/lumi.agent.js', () => ({
   LumiAgent: class FakeLumiAgent {
     respond = respondMock;
+    generateNudge = generateNudgeMock;
   },
 }));
 
@@ -44,10 +48,11 @@ function buildDeps(overrides: {
   };
   const openai = { chat: { completions: { create: vi.fn() } } };
   const logger = { error: vi.fn(), warn: vi.fn(), info: vi.fn() };
+  const redis = { set: vi.fn(), del: vi.fn() };
 
   const deps = {
     repository,
-    redis: { set: vi.fn(), del: vi.fn() },
+    redis,
     logger,
     elevenLabsApiKey: 'k',
     voiceId: 'v',
@@ -57,7 +62,7 @@ function buildDeps(overrides: {
   } as unknown as LumiServiceDeps;
 
   const service = new LumiService(deps);
-  return { service, repository, childrenRepository, householdAllergensRepository };
+  return { service, repository, childrenRepository, householdAllergensRepository, redis, logger };
 }
 
 // fetchHouseholdSnapshot is private; reach it via a typed cast for unit scope.
@@ -69,6 +74,8 @@ function snapshotOf(service: LumiService): (id: string) => Promise<string> {
 beforeEach(() => {
   respondMock.mockReset();
   respondMock.mockResolvedValue('Mocked Lumi reply.');
+  generateNudgeMock.mockReset();
+  generateNudgeMock.mockResolvedValue('Your week is ready — dal-rice on Monday.');
 });
 
 describe('LumiService.fetchHouseholdSnapshot', () => {
@@ -195,5 +202,69 @@ describe('LumiService.submitTextTurn — agent dispatch', () => {
     expect(result.lumi_turn.body).toEqual({ type: 'message', content: 'Here is Tuesday.' });
     // user turn inserted before lumi turn
     expect(repository.insertTurn).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('LumiService.persistNudge', () => {
+  it('resolves the thread, generates the nudge, and persists it with nudgeTrigger', async () => {
+    const { service, repository } = buildDeps({ activeThread: { id: 'thread-1' } });
+
+    await service.persistNudge({
+      householdId: 'hh1',
+      trigger: 'plan_completed',
+      surface: 'brief',
+      planContext: 'Week of 2026-10-14. Mains: Dal-rice',
+    });
+
+    expect(repository.findActiveAmbientThread).toHaveBeenCalledWith('hh1', 'brief');
+    expect(generateNudgeMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        trigger: 'plan_completed',
+        surface: 'brief',
+        planContext: 'Week of 2026-10-14. Mains: Dal-rice',
+      }),
+    );
+    expect(repository.insertTurn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        threadId: 'thread-1',
+        role: 'lumi',
+        body: { type: 'message', content: 'Your week is ready — dal-rice on Monday.' },
+        modality: 'text',
+        nudgeTrigger: 'plan_completed',
+      }),
+    );
+  });
+
+  it('sets the Redis rate-limit gate with SET NX EX 1800 after persisting', async () => {
+    const { service, redis } = buildDeps({ activeThread: { id: 'thread-1' } });
+
+    await service.persistNudge({ householdId: 'hh1', trigger: 'plan_completed', surface: 'brief' });
+
+    expect(redis.set).toHaveBeenCalledWith('lumi:nudge:household:hh1', '1', 'EX', 1800, 'NX');
+  });
+
+  it('does not throw when the Redis gate SET fails (logs a warning, returns the turn)', async () => {
+    const { service, redis, logger } = buildDeps({ activeThread: { id: 'thread-1' } });
+    redis.set.mockRejectedValueOnce(new Error('redis down'));
+
+    const turn = await service.persistNudge({
+      householdId: 'hh1',
+      trigger: 'plan_completed',
+      surface: 'brief',
+    });
+
+    expect(turn.role).toBe('lumi');
+    expect(logger.warn).toHaveBeenCalled();
+  });
+
+  it('lazy-creates the ambient thread when none exists', async () => {
+    const { service, repository } = buildDeps({ activeThread: null });
+
+    await service.persistNudge({ householdId: 'hh1', trigger: 'plan_completed', surface: 'brief' });
+
+    expect(repository.createAmbientThread).toHaveBeenCalledWith('hh1', 'brief', 'text');
+    expect(repository.insertTurn).toHaveBeenCalledWith(
+      expect.objectContaining({ threadId: 'new-thread', nudgeTrigger: 'plan_completed' }),
+    );
   });
 });

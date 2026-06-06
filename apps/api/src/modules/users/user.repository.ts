@@ -6,7 +6,11 @@ export interface UserProfileRow {
   display_name: string | null;
   preferred_language: string;
   role: 'primary_parent' | 'secondary_caregiver' | 'guest_author' | 'ops';
-  notification_prefs: { weekly_plan_ready?: boolean; grocery_list_ready?: boolean };
+  notification_prefs: {
+    weekly_plan_ready?: boolean;
+    grocery_list_ready?: boolean;
+    proactive_lumi_nudges?: boolean;
+  };
   cultural_language: string;
   parental_notice_acknowledged_at: string | null;
   parental_notice_acknowledged_version: string | null;
@@ -18,7 +22,11 @@ export type UpdateUserProfileInput = Partial<{
   display_name: string | null;
   email: string;
   preferred_language: string;
-  notification_prefs: { weekly_plan_ready?: boolean; grocery_list_ready?: boolean };
+  notification_prefs: {
+    weekly_plan_ready?: boolean;
+    grocery_list_ready?: boolean;
+    proactive_lumi_nudges?: boolean;
+  };
   cultural_language: string;
 }>;
 
@@ -74,6 +82,21 @@ export class UserRepository extends BaseRepository {
       .filter('body->>event', 'eq', 'onboarding.summary');
     if (summaryError) throw summaryError;
     return (summaryCount ?? 0) === 0;
+  }
+
+  // Story 12-S12 — the nudge worker reads the primary parent's notification_prefs
+  // to honour the proactive-nudge opt-out. Households have exactly one
+  // primary_parent; `current_household_id` is the users→household link column
+  // (confirmed in account-deletion.job.ts and kitchen-map.repository.ts).
+  async findPrimaryParentForHousehold(householdId: string): Promise<UserProfileRow | null> {
+    const { data, error } = await this.client
+      .from('users')
+      .select(PROFILE_COLUMNS)
+      .eq('current_household_id', householdId)
+      .eq('role', 'primary_parent')
+      .maybeSingle();
+    if (error) throw error;
+    return (data as UserProfileRow | null) ?? null;
   }
 
   async updateUserProfile(id: string, input: UpdateUserProfileInput): Promise<UserProfileRow> {

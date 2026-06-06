@@ -1,4 +1,4 @@
-import type { Turn, TurnBody } from '@hivekitchen/types';
+import type { NudgeTrigger, Turn, TurnBody } from '@hivekitchen/types';
 import { BaseRepository } from '../../repository/base.repository.js';
 import { ForbiddenError } from '../../common/errors.js';
 import {
@@ -132,6 +132,10 @@ export class LumiRepository extends BaseRepository {
     role: 'user' | 'lumi' | 'system';
     body: TurnBody;
     modality: 'text' | 'voice';
+    // Story 12-S11 — proactive-nudge traceability. Stored in
+    // thread_turns.nudge_trigger; write-only (NOT in TURN_COLUMNS / the Turn
+    // contract). Omitted from the insert payload when undefined.
+    nudgeTrigger?: NudgeTrigger;
   }): Promise<Turn> {
     const MAX_ATTEMPTS = 3;
     let lastErr: unknown = new Error(
@@ -147,6 +151,9 @@ export class LumiRepository extends BaseRepository {
           role: input.role,
           body: input.body,
           modality: input.modality,
+          ...(input.nudgeTrigger !== undefined
+            ? { nudge_trigger: input.nudgeTrigger }
+            : {}),
         })
         .select(TURN_COLUMNS)
         .single();

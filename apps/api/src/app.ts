@@ -29,6 +29,7 @@ import { sendgridPlugin } from './plugins/sendgrid.plugin.js';
 import { twilioPlugin } from './plugins/twilio.plugin.js';
 import { ioredisPlugin } from './plugins/ioredis.plugin.js';
 import { bullmqPlugin } from './plugins/bullmq.plugin.js';
+import { sseDispatcherPlugin } from './plugins/sse-dispatcher.plugin.js';
 import { vocabularyPlugin } from './modules/vocabulary/vocabulary.plugin.js';
 import { kitchenMapPlugin } from './modules/kitchen-map/kitchen-map.plugin.js';
 import { kitchenMapRoutes } from './modules/kitchen-map/kitchen-map.routes.js';
@@ -42,6 +43,7 @@ import { heartNoteDeliveryJobPlugin } from './jobs/heart-note-delivery.job.js';
 import { memoryForgetJobPlugin } from './jobs/memory-forget.job.js';
 import { dataExportJobPlugin } from './jobs/data-export.job.js';
 import { accountDeletionJobPlugin } from './jobs/account-deletion.job.js';
+import { lumiNudgeJobPlugin } from './jobs/lumi-nudge.job.js';
 import { healthRoutes } from './modules/internal/health.routes.js';
 import { eventsRoutes } from './routes/v1/events/events.routes.js';
 import { authRoutes } from './modules/auth/auth.routes.js';
@@ -111,6 +113,10 @@ export async function buildApp(opts: BuildAppOptions) {
   await app.register(twilioPlugin);
   await app.register(ioredisPlugin);
   await app.register(bullmqPlugin);
+  // Slice 12-S12 — in-process SSE fan-out registry. Must register before both
+  // eventsRoutes (which registers live connections) and lumiNudgeJobPlugin
+  // (whose worker emits to it). Depends on nothing but Fastify itself.
+  await app.register(sseDispatcherPlugin);
 
   // Slice A0.5 — vocabulary tables loaded into memory at startup; kitchen-map
   // service decorates fastify with the projection read-through cache. Both
@@ -153,6 +159,11 @@ export async function buildApp(opts: BuildAppOptions) {
   // Staggered 1h after memory-forget (03:00 UTC). Depends on supabase + bullmq
   // + auditService (auditHook above).
   await app.register(accountDeletionJobPlugin);
+  // Slice 12-S11 — on-demand proactive-nudge worker (no scheduler). The
+  // plan-generation job enqueues a `lumi-nudge` job after each plan commit; this
+  // worker generates a Lumi turn and persists it. Depends on supabase + redis +
+  // openai + bullmq + env.
+  await app.register(lumiNudgeJobPlugin);
   await app.register(catalogSeedJobPlugin);
 
   await app.register(cookie);

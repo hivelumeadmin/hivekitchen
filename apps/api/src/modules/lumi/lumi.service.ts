@@ -1,7 +1,7 @@
 import type { FastifyBaseLogger } from 'fastify';
 import type Redis from 'ioredis';
 import type OpenAI from 'openai';
-import type { LumiSurface, LumiContextSignal, Turn } from '@hivekitchen/types';
+import type { LumiSurface, LumiContextSignal, NudgeTrigger, Turn } from '@hivekitchen/types';
 import { ForbiddenError, UpstreamError, ValidationError } from '../../common/errors.js';
 import { LumiAgent } from '../../agents/lumi.agent.js';
 import type { ChildrenRepository } from '../children/children.repository.js';
@@ -209,6 +209,70 @@ export class LumiService {
     });
 
     return { thread_id: thread.id, user_turn: userTurn, lumi_turn: lumiTurn };
+  }
+
+  // Story 12-S11 — proactive nudge. Fetches the household snapshot, lazy-resolves
+  // the surface ambient thread, asks the agent for a one-shot warm message,
+  // persists it as a `lumi` turn (stamped with nudgeTrigger for traceability),
+  // and sets a 30-min Redis rate-limit gate (SET NX — never resets a live
+  // window; S12 reads it to suppress the orb SSE). Persistence is unconditional;
+  // the rate-limit gate is best-effort. This method MAY throw — the caller
+  // (lumi-nudge job) is fire-and-forget and wraps it in its own try/catch.
+  async persistNudge(input: {
+    householdId: string;
+    trigger: NudgeTrigger;
+    surface: LumiSurface;
+    planContext?: string;
+  }): Promise<Turn> {
+    const householdSnapshot = await this.fetchHouseholdSnapshot(input.householdId);
+
+    const existing = await this.repository.findActiveAmbientThread(
+      input.householdId,
+      input.surface,
+    );
+    const thread =
+      existing ??
+      (await this.repository.createAmbientThread(input.householdId, input.surface, 'text'));
+
+    const agent = new LumiAgent(this.openai);
+    const nudgeText = await agent.generateNudge({
+      trigger: input.trigger,
+      surface: input.surface,
+      householdSnapshot,
+      planContext: input.planContext,
+    });
+
+    const turn = await this.repository.insertTurn({
+      threadId: thread.id,
+      role: 'lumi',
+      body: { type: 'message', content: nudgeText },
+      modality: 'text',
+      nudgeTrigger: input.trigger,
+    });
+
+    // SET NX EX 1800 — set only if not already set, so a live rate-limit window
+    // is never reset. ioredis returns null on the NX no-op; we don't branch on it.
+    try {
+      await this.redis.set(
+        `lumi:nudge:household:${input.householdId}`,
+        '1',
+        'EX',
+        1800,
+        'NX',
+      );
+    } catch (err) {
+      this.logger.warn(
+        {
+          err,
+          module: 'lumi',
+          action: 'lumi.nudge_redis_gate_failed',
+          household_id: input.householdId,
+        },
+        'redis nudge gate SET failed — non-fatal, S12 SSE will skip rate-limit check',
+      );
+    }
+
+    return turn;
   }
 
   // Story 12-S9 — assemble the `# Household Snapshot` block the agent injects

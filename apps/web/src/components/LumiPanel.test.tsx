@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, waitFor, cleanup } from '@testing-library/react';
 import type { Turn } from '@hivekitchen/types';
 import { useLumiStore } from '@/stores/lumi.store.js';
+import { VoiceSessionContext } from '@/contexts/VoiceSessionContext.js';
 import { LumiPanel } from './LumiPanel.js';
 
 const THREAD_ID = '11111111-1111-4111-8111-111111111111';
@@ -299,6 +300,101 @@ describe('LumiPanel', () => {
 
     resolveFetch(jsonResponse(makeTurnResponse()));
     await waitFor(() => expect(input.disabled).toBe(false));
+  });
+
+  // ── Voice mode UI (Story 12-S10) ──────────────────────────────────────────
+
+  it('mode toggle renders "Text" and "Voice" buttons when panel is open', () => {
+    useLumiStore.getState().openPanel();
+    render(<LumiPanel />);
+
+    expect(screen.getByRole('button', { name: /text mode/i })).toBeDefined();
+    expect(screen.getByRole('button', { name: /voice mode/i })).toBeDefined();
+  });
+
+  it('clicking Voice when idle calls startSession via context', async () => {
+    const startSession = vi.fn().mockResolvedValue(undefined);
+    useLumiStore.setState({ isPanelOpen: true, surface: 'planning' });
+
+    render(
+      <VoiceSessionContext.Provider value={{ startSession, endSession: async () => {} }}>
+        <LumiPanel />
+      </VoiceSessionContext.Provider>,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: /voice mode/i }));
+
+    expect(startSession).toHaveBeenCalledTimes(1);
+    expect(startSession).toHaveBeenCalledWith(expect.objectContaining({ surface: 'planning' }));
+  });
+
+  it('Premium fallback copy appears when session creation returns 403 (onError sets voiceError)', () => {
+    useLumiStore.getState().openPanel();
+    useLumiStore.getState().setVoiceError(
+      "Voice chat is part of Premium. We've got you in text — same Lumi.",
+    );
+    render(<LumiPanel />);
+
+    const alert = screen.getByRole('alert');
+    expect(alert.textContent).toContain('Premium');
+  });
+
+  it('"Listening…" hint renders when voiceStatus is active', () => {
+    useLumiStore.setState({ isPanelOpen: true, voiceStatus: 'active' });
+    render(<LumiPanel />);
+
+    expect(screen.getByText(/listening/i)).toBeDefined();
+  });
+
+  it('"Connecting…" hint renders when voiceStatus is connecting', () => {
+    useLumiStore.setState({ isPanelOpen: true, voiceStatus: 'connecting' });
+    render(<LumiPanel />);
+
+    expect(screen.getByText(/connecting to lumi voice/i)).toBeDefined();
+  });
+
+  // ── Proactive-nudge opt-out toggle (Story 12-S12) ─────────────────────────
+
+  it('renders "Pause nudges" when proactiveNudges is true', () => {
+    useLumiStore.setState({ isPanelOpen: true, proactiveNudges: true });
+    render(<LumiPanel />);
+
+    expect(screen.getByRole('button', { name: /pause nudges/i })).toBeDefined();
+  });
+
+  it('renders "Resume nudges" when proactiveNudges is false', () => {
+    useLumiStore.setState({ isPanelOpen: true, proactiveNudges: false });
+    render(<LumiPanel />);
+
+    expect(screen.getByRole('button', { name: /resume nudges/i })).toBeDefined();
+  });
+
+  it('clicking the toggle PATCHes notifications with the flipped value and updates the store', async () => {
+    useLumiStore.setState({ isPanelOpen: true, proactiveNudges: true });
+    const fetchSpy = vi.fn().mockResolvedValue(jsonResponse({}));
+    globalThis.fetch = fetchSpy as unknown as typeof fetch;
+
+    render(<LumiPanel />);
+    fireEvent.click(screen.getByRole('button', { name: /pause nudges/i }));
+
+    await waitFor(() => expect(fetchSpy).toHaveBeenCalled());
+    const [url, init] = fetchSpy.mock.calls[0] as [string, RequestInit];
+    expect(String(url)).toContain('/v1/users/me/notifications');
+    expect(init.method).toBe('PATCH');
+    expect(JSON.parse(init.body as string)).toEqual({ proactive_lumi_nudges: false });
+    expect(useLumiStore.getState().proactiveNudges).toBe(false);
+  });
+
+  it('reverts the optimistic toggle when the PATCH fails', async () => {
+    useLumiStore.setState({ isPanelOpen: true, proactiveNudges: true });
+    globalThis.fetch = vi
+      .fn()
+      .mockResolvedValue(jsonResponse({ type: '/errors/upstream', status: 502 }, 502)) as unknown as typeof fetch;
+
+    render(<LumiPanel />);
+    fireEvent.click(screen.getByRole('button', { name: /pause nudges/i }));
+
+    await waitFor(() => expect(useLumiStore.getState().proactiveNudges).toBe(true));
   });
 });
 

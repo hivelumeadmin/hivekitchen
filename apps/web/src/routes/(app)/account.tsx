@@ -13,6 +13,7 @@ import { hkFetch, hkFetchBlob, HkApiError } from '@/lib/fetch.js';
 import { useLumiContext } from '@/hooks/useLumiContext.js';
 import { useAuthStore } from '@/stores/auth.store.js';
 import { useComplianceStore } from '@/stores/compliance.store.js';
+import { useLumiStore } from '@/stores/lumi.store.js';
 import { ParentalNoticeView } from '@/features/compliance/ParentalNoticeView.js';
 import { PageHeader } from '@/components/PageHeader.js';
 import { Dialog } from '@/components/Dialog.js';
@@ -63,6 +64,7 @@ export default function AccountPage() {
   const [notifPrefs, setNotifPrefs] = useState<NotificationPrefs>({
     weekly_plan_ready: true,
     grocery_list_ready: true,
+    proactive_lumi_nudges: true,
   });
   const [notifSavingField, setNotifSavingField] = useState<keyof NotificationPrefs | null>(null);
   const [notifError, setNotifError] = useState<string | null>(null);
@@ -100,6 +102,9 @@ export default function AccountPage() {
         setPreferredLanguage(result.preferred_language);
         setEmailDraft(result.email);
         setNotifPrefs(result.notification_prefs);
+        // Story 12-S12 — keep the in-panel nudge toggle (lumi store) in sync with
+        // the canonical value loaded here.
+        useLumiStore.getState().setProactiveNudges(result.notification_prefs.proactive_lumi_nudges);
         setCulturalLanguage(result.cultural_language);
         setAcknowledgmentState(
           result.parental_notice_acknowledged_at,
@@ -190,6 +195,7 @@ export default function AccountPage() {
       });
       setProfile(updated);
       setNotifPrefs(updated.notification_prefs);
+      useLumiStore.getState().setProactiveNudges(updated.notification_prefs.proactive_lumi_nudges);
     } catch {
       setNotifPrefs(previous);
       setNotifError('Could not update notification preference. Please try again.');
@@ -459,6 +465,18 @@ export default function AccountPage() {
               checked={notifPrefs.grocery_list_ready}
               onChange={(e) =>
                 void handleNotificationToggle('grocery_list_ready', e.target.checked)
+              }
+              disabled={notifSavingField !== null}
+              className="h-4 w-4"
+            />
+          </label>
+          <label className="flex items-center justify-between gap-3 py-1">
+            <span className="text-sm">Lumi proactive nudges</span>
+            <input
+              type="checkbox"
+              checked={notifPrefs.proactive_lumi_nudges}
+              onChange={(e) =>
+                void handleNotificationToggle('proactive_lumi_nudges', e.target.checked)
               }
               disabled={notifSavingField !== null}
               className="h-4 w-4"

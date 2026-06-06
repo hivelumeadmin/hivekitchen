@@ -68,9 +68,14 @@ export const eventsRoutes: FastifyPluginAsync = async (fastify) => {
       // Initial heartbeat — keeps the connection alive before real events land.
       reply.raw.write(':ping\n\n');
 
+      // Story 12-S12 — register this live connection so background workers (the
+      // lumi-nudge job) can fan out events to every open tab for the household.
+      fastify.sseDispatcher.register(payload.hh, reply.raw);
+
       // An unhandled 'error' event on the raw stream crashes Node's EventEmitter.
       reply.raw.on('error', (err) => {
         fastify.log.warn({ err, module: 'events', clientId }, 'SSE stream error');
+        fastify.sseDispatcher.unregister(payload.hh, reply.raw);
       });
 
       // Heartbeat every 20s (architecture §5.1 Cloudflare tolerance).
@@ -85,6 +90,7 @@ export const eventsRoutes: FastifyPluginAsync = async (fastify) => {
 
       request.raw.on('close', () => {
         clearInterval(heartbeatInterval);
+        fastify.sseDispatcher.unregister(payload.hh, reply.raw);
         fastify.log.info(
           { module: 'events', action: 'sse.disconnect', clientId },
           'SSE client disconnected',

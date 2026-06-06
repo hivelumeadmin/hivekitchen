@@ -19,7 +19,11 @@ describe('UserProfileSchema', () => {
     preferred_language: 'en',
     role: 'primary_parent' as const,
     auth_providers: ['email'],
-    notification_prefs: { weekly_plan_ready: true, grocery_list_ready: true },
+    notification_prefs: {
+      weekly_plan_ready: true,
+      grocery_list_ready: true,
+      proactive_lumi_nudges: true,
+    },
     cultural_language: 'default' as const,
     parental_notice_acknowledged_at: null,
     parental_notice_acknowledged_version: null,
@@ -192,20 +196,32 @@ describe('PasswordResetCompleteRequestSchema', () => {
 });
 
 describe('NotificationPrefsSchema', () => {
-  it('accepts { weekly_plan_ready: true, grocery_list_ready: false }', () => {
+  it('accepts all three flags present', () => {
     expect(
-      NotificationPrefsSchema.safeParse({ weekly_plan_ready: true, grocery_list_ready: false }).success,
+      NotificationPrefsSchema.safeParse({
+        weekly_plan_ready: true,
+        grocery_list_ready: false,
+        proactive_lumi_nudges: false,
+      }).success,
     ).toBe(true);
   });
 
-  it('rejects when either field is missing', () => {
+  it('rejects when any field is missing (including proactive_lumi_nudges)', () => {
     expect(NotificationPrefsSchema.safeParse({ weekly_plan_ready: true }).success).toBe(false);
     expect(NotificationPrefsSchema.safeParse({ grocery_list_ready: true }).success).toBe(false);
+    expect(
+      NotificationPrefsSchema.safeParse({ weekly_plan_ready: true, grocery_list_ready: true })
+        .success,
+    ).toBe(false);
   });
 
   it('rejects when a field is not boolean', () => {
     expect(
-      NotificationPrefsSchema.safeParse({ weekly_plan_ready: 'yes', grocery_list_ready: false }).success,
+      NotificationPrefsSchema.safeParse({
+        weekly_plan_ready: 'yes',
+        grocery_list_ready: false,
+        proactive_lumi_nudges: true,
+      }).success,
     ).toBe(false);
   });
 });
@@ -221,6 +237,9 @@ describe('UpdateNotificationPrefsRequestSchema', () => {
     ).toBe(true);
     expect(
       UpdateNotificationPrefsRequestSchema.safeParse({ grocery_list_ready: true }).success,
+    ).toBe(true);
+    expect(
+      UpdateNotificationPrefsRequestSchema.safeParse({ proactive_lumi_nudges: false }).success,
     ).toBe(true);
   });
 
