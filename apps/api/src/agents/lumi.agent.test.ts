@@ -1,14 +1,206 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
+import type OpenAI from 'openai';
+import type { LumiSurface, Turn } from '@hivekitchen/types';
 import { LumiAgent } from './lumi.agent.js';
+import { LUMI_BASE_PERSONA } from './prompts/lumi-base.prompt.js';
+import { getSurfacePrompt } from './prompts/surfaces/index.js';
 
-describe('LumiAgent (stub — Story 12-S8)', () => {
-  it('respond() resolves the fixed "Got it." reply for any message', async () => {
-    const agent = new LumiAgent();
+type CreateArgs = {
+  model: string;
+  messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>;
+  temperature: number;
+  max_tokens: number;
+};
 
-    const a = await agent.respond({ message: 'What did Maya have yesterday?' });
-    const b = await agent.respond({ message: '' });
-
-    expect(a).toBe('Got it.');
-    expect(b).toBe('Got it.');
+// Minimal fake OpenAI client. `create` records its args and resolves the given
+// content (or null to exercise the fallback path).
+function buildFakeOpenAI(content: string | null): {
+  openai: OpenAI;
+  create: ReturnType<typeof vi.fn>;
+} {
+  const create = vi.fn().mockResolvedValue({
+    choices: [{ message: { content } }],
   });
+  const openai = { chat: { completions: { create } } } as unknown as OpenAI;
+  return { openai, create };
+}
+
+function systemMessageOf(create: ReturnType<typeof vi.fn>): string {
+  const args = create.mock.calls[0][0] as CreateArgs;
+  const sys = args.messages.find((m) => m.role === 'system');
+  return sys?.content ?? '';
+}
+
+function buildTurn(seq: number, role: Turn['role'], content: string): Turn {
+  return {
+    id: `00000000-0000-4000-8000-${String(seq).padStart(12, '0')}`,
+    thread_id: '11111111-1111-4111-8111-111111111111',
+    server_seq: seq,
+    role,
+    body: { type: 'message', content },
+    modality: 'text',
+    created_at: '2026-06-05T00:00:00.000Z',
+  };
+}
+
+const BASE_INPUT = {
+  message: 'what should we have Tuesday?',
+  contextSignal: null,
+  conversationHistory: [] as Turn[],
+  householdSnapshot: '',
+  modality: 'text' as const,
+};
+
+describe('LumiAgent.respond — system prompt assembly', () => {
+  it('calls OpenAI with a system message containing the base persona', async () => {
+    const { openai, create } = buildFakeOpenAI('Mocked response.');
+    const agent = new LumiAgent(openai);
+
+    const reply = await agent.respond({ ...BASE_INPUT, surface: 'planning' });
+
+    expect(reply).toBe('Mocked response.');
+    expect(create).toHaveBeenCalledTimes(1);
+    expect(systemMessageOf(create)).toContain(LUMI_BASE_PERSONA.trim());
+  });
+
+  it('includes the planning surface prompt for surface=planning', async () => {
+    const { openai, create } = buildFakeOpenAI('ok');
+    const agent = new LumiAgent(openai);
+
+    await agent.respond({ ...BASE_INPUT, surface: 'planning' });
+
+    expect(systemMessageOf(create)).toContain(getSurfacePrompt('planning').trim());
+  });
+
+  it('includes the grocery-list surface prompt — and NOT the planning one — for surface=grocery-list', async () => {
+    const { openai, create } = buildFakeOpenAI('ok');
+    const agent = new LumiAgent(openai);
+
+    await agent.respond({ ...BASE_INPUT, surface: 'grocery-list' });
+
+    const sys = systemMessageOf(create);
+    expect(sys).toContain(getSurfacePrompt('grocery-list').trim());
+    expect(sys).not.toContain(getSurfacePrompt('planning').trim());
+  });
+
+  it('injects the household snapshot block when a snapshot is provided', async () => {
+    const { openai, create } = buildFakeOpenAI('ok');
+    const agent = new LumiAgent(openai);
+    const snapshot = 'Family: The Garcias\n- Sofia (child) — allergens: peanut';
+
+    await agent.respond({ ...BASE_INPUT, surface: 'planning', householdSnapshot: snapshot });
+
+    const sys = systemMessageOf(create);
+    expect(sys).toContain('# Household Snapshot');
+    expect(sys).toContain(snapshot);
+  });
+
+  it('omits the snapshot block when the snapshot is empty', async () => {
+    const { openai, create } = buildFakeOpenAI('ok');
+    const agent = new LumiAgent(openai);
+
+    await agent.respond({ ...BASE_INPUT, surface: 'planning', householdSnapshot: '' });
+
+    expect(systemMessageOf(create)).not.toContain('# Household Snapshot');
+  });
+
+  it('adds Current Surface and Recent Actions blocks from the context signal', async () => {
+    const { openai, create } = buildFakeOpenAI('ok');
+    const agent = new LumiAgent(openai);
+
+    await agent.respond({
+      ...BASE_INPUT,
+      surface: 'meal-detail',
+      contextSignal: {
+        surface: 'meal-detail',
+        entity_type: 'meal',
+        entity_summary: 'Tuesday — chicken rice bowl',
+        recent_actions: ['swapped Monday Main', 'cleared peanut'],
+      },
+    });
+
+    const sys = systemMessageOf(create);
+    expect(sys).toContain('# Current Surface');
+    expect(sys).toContain('Surface: meal-detail');
+    expect(sys).toContain('Viewing: meal — Tuesday — chicken rice bowl');
+    expect(sys).toContain('# Recent Actions');
+    expect(sys).toContain('- swapped Monday Main');
+    expect(sys).toContain('- cleared peanut');
+  });
+});
+
+describe('LumiAgent.respond — conversation history', () => {
+  it('threads prior user/lumi turns before the current user message', async () => {
+    const { openai, create } = buildFakeOpenAI('ok');
+    const agent = new LumiAgent(openai);
+    const history = [buildTurn(1, 'user', 'hi Lumi'), buildTurn(2, 'lumi', 'hello!')];
+
+    await agent.respond({
+      ...BASE_INPUT,
+      surface: 'planning',
+      conversationHistory: history,
+      message: 'what about Tuesday?',
+    });
+
+    const args = create.mock.calls[0][0] as CreateArgs;
+    // system + 2 history (user, assistant) + current user = 4 messages.
+    // (The story text says "5"; the snippet's own breakdown — system + 2 + current
+    // — sums to 4, which is what buildMessages actually produces.)
+    expect(args.messages).toHaveLength(4);
+    expect(args.messages[0].role).toBe('system');
+    expect(args.messages[1]).toEqual({ role: 'user', content: 'hi Lumi' });
+    expect(args.messages[2]).toEqual({ role: 'assistant', content: 'hello!' });
+    expect(args.messages[3]).toEqual({ role: 'user', content: 'what about Tuesday?' });
+  });
+
+  it('skips system-role turns in the conversation history', async () => {
+    const { openai, create } = buildFakeOpenAI('ok');
+    const agent = new LumiAgent(openai);
+    const history = [
+      buildTurn(1, 'system', 'session started'),
+      buildTurn(2, 'user', 'hi'),
+      buildTurn(3, 'lumi', 'hey'),
+    ];
+
+    await agent.respond({
+      ...BASE_INPUT,
+      surface: 'planning',
+      conversationHistory: history,
+      message: 'still there?',
+    });
+
+    const args = create.mock.calls[0][0] as CreateArgs;
+    // system + user + assistant + current = 4 (the system-role turn is dropped).
+    expect(args.messages).toHaveLength(4);
+    expect(args.messages.some((m) => m.content === 'session started')).toBe(false);
+  });
+});
+
+describe('LumiAgent.respond — fallback', () => {
+  it('returns the fallback reply when OpenAI returns null content', async () => {
+    const { openai } = buildFakeOpenAI(null);
+    const agent = new LumiAgent(openai);
+
+    const reply = await agent.respond({ ...BASE_INPUT, surface: 'planning' });
+
+    expect(reply).toBe('Let me think about that for a moment.');
+  });
+});
+
+describe('surface prompt smoke — all surfaces return non-empty prompts', () => {
+  const surfaces: LumiSurface[] = [
+    'planning',
+    'meal-detail',
+    'child-profile',
+    'grocery-list',
+    'evening-check-in',
+    'heart-note',
+    'general',
+  ];
+
+  for (const surface of surfaces) {
+    it(`getSurfacePrompt('${surface}') returns a non-empty string`, () => {
+      expect(getSurfacePrompt(surface).trim().length).toBeGreaterThan(0);
+    });
+  }
 });

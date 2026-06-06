@@ -18,6 +18,7 @@ const SAMPLE_TALK_SESSION_ID = '66666666-6666-4666-8666-666666666666';
 const JWT_SECRET = 'a'.repeat(32);
 const ELEVENLABS_API_KEY = 'el-test-key';
 const VOICE_ID = 'lumi-voice-id';
+const MOCKED_LUMI_REPLY = 'Mocked Lumi reply.';
 
 interface TurnFixture {
   id: string;
@@ -215,6 +216,26 @@ function buildMockSupabase(opts: SupabaseMockOpts) {
         };
       }
 
+      // Story 12-S9 — POST /turns assembles a household snapshot, reading
+      // children + household_allergens. Both return empty here (the snapshot
+      // path is exercised in lumi.service.test.ts); the routes only need them
+      // to not throw "unexpected table".
+      if (table === 'children') {
+        return {
+          select: () => ({
+            eq: vi.fn().mockResolvedValue({ data: [], error: null }),
+          }),
+        };
+      }
+
+      if (table === 'household_allergens') {
+        return {
+          select: () => ({
+            eq: vi.fn().mockResolvedValue({ data: [], error: null }),
+          }),
+        };
+      }
+
       if (table === 'voice_sessions') {
         return {
           insert: vi.fn().mockImplementation((row: Record<string, unknown>) => {
@@ -293,6 +314,20 @@ async function buildTestApp(opts: {
   app.decorate('supabase', opts.supabase as unknown as FastifyInstance['supabase']);
   const redis = opts.redis ?? buildMockRedis();
   app.decorate('redis', redis as unknown as FastifyInstance['redis']);
+
+  // Story 12-S9 — POST /turns now dispatches the real LumiAgent, which calls
+  // fastify.openai. Decorate a fake client so no network call is made; the
+  // canned content is what the Lumi turn body should carry.
+  const openai = {
+    chat: {
+      completions: {
+        create: vi
+          .fn()
+          .mockResolvedValue({ choices: [{ message: { content: MOCKED_LUMI_REPLY } }] }),
+      },
+    },
+  };
+  app.decorate('openai', openai as unknown as FastifyInstance['openai']);
 
   await app.register(jwt, { secret: JWT_SECRET, sign: { expiresIn: '15m' } });
   await app.register(authenticateHook);
@@ -573,7 +608,7 @@ describe('POST /v1/lumi/turns', () => {
     expect(threadInserts[0]).toMatchObject({ household_id: SAMPLE_HOUSEHOLD_ID, type: 'planning', modality: 'text' });
   });
 
-  it('the Lumi turn body content is the stub reply "Got it."', async () => {
+  it('the Lumi turn body content is the agent reply from OpenAI (12-S9 real dispatch)', async () => {
     app = await buildTestApp({
       supabase: buildMockSupabase({ activeAmbientThread: null }),
     });
@@ -588,7 +623,7 @@ describe('POST /v1/lumi/turns', () => {
 
     expect(res.statusCode).toBe(201);
     const body = JSON.parse(res.body) as { lumi_turn: TurnFixture };
-    expect(body.lumi_turn.body).toEqual({ type: 'message', content: 'Got it.' });
+    expect(body.lumi_turn.body).toEqual({ type: 'message', content: MOCKED_LUMI_REPLY });
   });
 
   it('reuses an existing ambient thread — no new thread inserted', async () => {
@@ -603,6 +638,9 @@ describe('POST /v1/lumi/turns', () => {
           modality: 'voice',
           created_at: '2026-04-30T00:00:00.000Z',
         },
+        // 12-S9: reusing a thread now triggers getThreadTurns (history fetch),
+        // which runs an ownership check against the threads table.
+        threadOwnershipRow: { id: SAMPLE_THREAD_ID, household_id: SAMPLE_HOUSEHOLD_ID },
         capturedAmbientThreadInsert: (row) => threadInserts.push(row),
       }),
     });

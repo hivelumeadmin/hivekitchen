@@ -1,8 +1,11 @@
 import type { FastifyBaseLogger } from 'fastify';
 import type Redis from 'ioredis';
+import type OpenAI from 'openai';
 import type { LumiSurface, LumiContextSignal, Turn } from '@hivekitchen/types';
 import { ForbiddenError, UpstreamError, ValidationError } from '../../common/errors.js';
 import { LumiAgent } from '../../agents/lumi.agent.js';
+import type { ChildrenRepository } from '../children/children.repository.js';
+import type { HouseholdAllergensRepository } from '../households/household-allergens.repository.js';
 import type { LumiRepository, TalkSessionRow } from './lumi.repository.js';
 
 export interface LumiServiceDeps {
@@ -11,6 +14,9 @@ export interface LumiServiceDeps {
   logger: FastifyBaseLogger;
   elevenLabsApiKey: string;
   voiceId: string;
+  openai: OpenAI; // NEW — real LumiAgent dispatch
+  childrenRepository: ChildrenRepository; // NEW — for household snapshot
+  householdAllergensRepository: HouseholdAllergensRepository; // NEW — canonical allergen table
 }
 
 export interface CreateTalkSessionInput {
@@ -47,6 +53,9 @@ export class LumiService {
   private readonly logger: FastifyBaseLogger;
   private readonly elevenLabsApiKey: string;
   private readonly voiceId: string;
+  private readonly openai: OpenAI;
+  private readonly childrenRepository: ChildrenRepository;
+  private readonly householdAllergensRepository: HouseholdAllergensRepository;
 
   constructor(deps: LumiServiceDeps) {
     this.repository = deps.repository;
@@ -54,6 +63,9 @@ export class LumiService {
     this.logger = deps.logger;
     this.elevenLabsApiKey = deps.elevenLabsApiKey;
     this.voiceId = deps.voiceId;
+    this.openai = deps.openai;
+    this.childrenRepository = deps.childrenRepository;
+    this.householdAllergensRepository = deps.householdAllergensRepository;
   }
 
   async createTalkSession(input: CreateTalkSessionInput): Promise<CreateTalkSessionResult> {
@@ -141,11 +153,12 @@ export class LumiService {
     };
   }
 
-  // Ambient text turn (Story 12-S8). Lazy-resolves the per-surface ambient
-  // thread, persists the user turn, asks the (stubbed) LumiAgent for a reply,
-  // persists that, and returns both. The thread row is modality-agnostic
+  // Ambient text turn (Story 12-S8 stub; 12-S9 real dispatch). Lazy-resolves the
+  // per-surface ambient thread, fetches conversation history + the household
+  // snapshot, asks the real LumiAgent (gpt-4o) for a reply, persists the user
+  // turn and the reply, and returns both. The thread row is modality-agnostic
   // (ADR-002 Decision 3) — created with `modality='text'` here but shared with
-  // any voice turns on the same surface. Real LLM dispatch lands in 12-S9.
+  // any voice turns on the same surface.
   async submitTextTurn(input: {
     householdId: string;
     message: string;
@@ -162,6 +175,15 @@ export class LumiService {
       existing ??
       (await this.repository.createAmbientThread(input.householdId, surface, 'text'));
 
+    // Fetch prior turns BEFORE inserting the new user turn so the current
+    // message is not duplicated (it travels separately as `message`). A
+    // brand-new thread has no history.
+    const priorTurns =
+      existing !== null
+        ? await this.repository.getThreadTurns(thread.id, input.householdId)
+        : [];
+    const householdSnapshot = await this.fetchHouseholdSnapshot(input.householdId);
+
     const userTurn = await this.repository.insertTurn({
       threadId: thread.id,
       role: 'user',
@@ -169,8 +191,15 @@ export class LumiService {
       modality: 'text',
     });
 
-    const agent = new LumiAgent();
-    const lumiText = await agent.respond({ message: input.message });
+    const agent = new LumiAgent(this.openai);
+    const lumiText = await agent.respond({
+      message: input.message,
+      surface,
+      contextSignal: input.contextSignal,
+      conversationHistory: priorTurns,
+      householdSnapshot,
+      modality: 'text',
+    });
 
     const lumiTurn = await this.repository.insertTurn({
       threadId: thread.id,
@@ -180,6 +209,41 @@ export class LumiService {
     });
 
     return { thread_id: thread.id, user_turn: userTurn, lumi_turn: lumiTurn };
+  }
+
+  // Story 12-S9 — assemble the `# Household Snapshot` block the agent injects
+  // into its system prompt. The API owns this read; the agent never touches the
+  // DB (ADR-002). Display name + each child's first name, age band, and active
+  // allergens, in a readable single-block format.
+  private async fetchHouseholdSnapshot(householdId: string): Promise<string> {
+    const [displayName, children, allergenRows] = await Promise.all([
+      this.repository.getHouseholdDisplayName(householdId),
+      this.childrenRepository.findByHouseholdId(householdId),
+      this.householdAllergensRepository.findByHouseholdId(householdId),
+    ]);
+
+    const kitchenAllergens: string[] = [];
+    const allergensByChild = new Map<string, string[]>();
+    for (const { child_id, allergen } of allergenRows) {
+      if (child_id === null) {
+        kitchenAllergens.push(allergen);
+      } else {
+        const list = allergensByChild.get(child_id) ?? [];
+        list.push(allergen);
+        allergensByChild.set(child_id, list);
+      }
+    }
+
+    const lines: string[] = [];
+    if (displayName !== null) lines.push(`Family: ${displayName}`);
+    if (kitchenAllergens.length > 0) lines.push(`Kitchen allergens: ${kitchenAllergens.join(', ')}`);
+    for (const child of children) {
+      const allergens = allergensByChild.get(child.id) ?? [];
+      const allergenStr =
+        allergens.length > 0 ? `allergens: ${allergens.join(', ')}` : 'no known allergens';
+      lines.push(`- ${child.name} (${child.age_band}) — ${allergenStr}`);
+    }
+    return lines.join('\n');
   }
 
   async closeTalkSession(input: {

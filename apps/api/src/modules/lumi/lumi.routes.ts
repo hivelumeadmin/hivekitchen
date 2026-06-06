@@ -1,3 +1,4 @@
+import { Buffer } from 'node:buffer';
 import type { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
 import {
@@ -8,6 +9,9 @@ import {
   VoiceTalkSessionResponseSchema,
 } from '@hivekitchen/contracts';
 import type { LumiTurnRequest } from '@hivekitchen/types';
+import { ChildAllergensRepository } from '../children/child-allergens.repository.js';
+import { ChildrenRepository } from '../children/children.repository.js';
+import { HouseholdAllergensRepository } from '../households/household-allergens.repository.js';
 import { LumiRepository } from './lumi.repository.js';
 import { LumiService } from './lumi.service.js';
 
@@ -24,12 +28,29 @@ const TalkSessionParamsSchema = z.object({
 // also drop the prefix scoping we depend on here.
 export const lumiRoutes: FastifyPluginAsync = async (fastify) => {
   const repository = new LumiRepository(fastify.supabase);
+
+  // Children names are envelope-encrypted; the KEK decrypts them in
+  // ChildrenRepository.findByHouseholdId (null KEK = dev mode, no encryption).
+  const kekHex = fastify.env.ENVELOPE_ENCRYPTION_MASTER_KEY;
+  const kek = kekHex ? Buffer.from(kekHex, 'hex') : null;
+  const childAllergensRepository = new ChildAllergensRepository(fastify.supabase, kek);
+  const childrenRepository = new ChildrenRepository(
+    fastify.supabase,
+    kek,
+    fastify.log,
+    childAllergensRepository,
+  );
+  const householdAllergensRepository = new HouseholdAllergensRepository(fastify.supabase, kek);
+
   const service = new LumiService({
     repository,
     redis: fastify.redis,
     logger: fastify.log,
     elevenLabsApiKey: fastify.env.ELEVENLABS_API_KEY,
     voiceId: fastify.env.ELEVENLABS_VOICE_ID,
+    openai: fastify.openai,
+    childrenRepository,
+    householdAllergensRepository,
   });
 
   fastify.get(

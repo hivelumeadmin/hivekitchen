@@ -68,6 +68,21 @@ describe('getOnboardingSystemPrompt("text") — v2', () => {
     expect(prompt.toLowerCase()).toContain('end of your response');
   });
 
+  // ---- Story 12-S9 / D2 patch: Lumi identity guard --------
+  // Onboarding uses a standalone identity sentence ("You are Lumi, a warm family lunch
+  // companion."), NOT the full LUMI_BASE_PERSONA. The full persona says "You know this
+  // family — their children by name, their allergen constraints..." which is wrong during
+  // onboarding (Lumi is still discovering the family). These guards verify the identity
+  // sentence and load-bearing content survive edits.
+
+  it('contains the Lumi identity sentence (12-S9/D2)', () => {
+    expect(prompt).toContain('You are Lumi');
+  });
+
+  it('keeps the moment-advance directive (12-S9)', () => {
+    expect(prompt).toContain('[NEXT_MOMENT:');
+  });
+
   // ---- Slice 2.5-s7: elevation directive --------------------------------
 
   it('teaches the [CHIP_PROMPT:elevation:<tag_key>:<tag_label>] directive (Slice 2.5-s7)', () => {
@@ -103,6 +118,10 @@ describe('getOnboardingSystemPrompt("voice") — unchanged', () => {
 
   it('still includes the SESSION_COMPLETE sentinel rule', () => {
     expect(prompt).toContain('[SESSION_COMPLETE]');
+  });
+
+  it('contains the Lumi identity sentence (12-S9/D2)', () => {
+    expect(prompt).toContain('You are Lumi');
   });
 
   it('does not carry the Slice 2.5-s7 elevation CHIP_PROMPT directive', () => {

@@ -54,6 +54,17 @@ export class LumiRepository extends BaseRepository {
     return rows.map(mapRowToTurn);
   }
 
+  // Story 12-S9 — household display name for the agent's Household Snapshot.
+  async getHouseholdDisplayName(householdId: string): Promise<string | null> {
+    const { data, error } = await this.client
+      .from('households')
+      .select('display_name')
+      .eq('id', householdId)
+      .maybeSingle();
+    if (error) throw error;
+    return (data as { display_name: string | null } | null)?.display_name ?? null;
+  }
+
   async getHouseholdTier(householdId: string): Promise<HouseholdTier | null> {
     const { data, error } = await this.client
       .from('households')
