@@ -183,7 +183,7 @@ describe('LumiAgent.respond — fallback', () => {
 
     const reply = await agent.respond({ ...BASE_INPUT, surface: 'planning' });
 
-    expect(reply).toBe('Let me think about that for a moment.');
+    expect(reply).toBe('Let me think that through.');
   });
 });
 
@@ -245,7 +245,7 @@ describe('LumiAgent.generateNudge', () => {
 
     const reply = await agent.generateNudge(NUDGE_INPUT);
 
-    expect(reply).toBe('Let me think about that for a moment.');
+    expect(reply).toBe('Let me think that through.');
   });
 });
 

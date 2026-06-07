@@ -2,6 +2,17 @@
 
 Status: done
 
+> ⚠️ **SUPERSEDED by Story 2.6b (2026-06-07).** This story's transport was the
+> ElevenLabs Conversational AI ("ConvAI") **Agent + Custom-LLM** model:
+> `POST /v1/voice/token` (signed URL), `POST /v1/voice/llm` (ElevenLabs calls HK
+> per turn), and the inbound `POST /v1/webhooks/elevenlabs` webhook. **All three
+> endpoints were removed.** Story **2.6b** ("Voice Pipeline v2 — HK-Owned
+> WebSocket, ElevenLabs STT + TTS") replaced this entirely: HiveKitchen owns the
+> voice WebSocket and calls ElevenLabs Scribe STT (REST) + TTS directly, with the
+> OpenAI OnboardingAgent generating replies. The `threads` / `thread_turns` /
+> `voice_sessions` data model from this story remains; the API surface does not.
+> Retained for historical context only — do not implement from it.
+
 ## Story
 
 As a Primary Parent,

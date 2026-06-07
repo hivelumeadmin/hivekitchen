@@ -7,6 +7,7 @@ import type { LumiNudgeEvent, LumiSurface, NudgeTrigger } from '@hivekitchen/typ
 import { ChildAllergensRepository } from '../modules/children/child-allergens.repository.js';
 import { ChildrenRepository } from '../modules/children/children.repository.js';
 import { HouseholdAllergensRepository } from '../modules/households/household-allergens.repository.js';
+import { VoiceTranscriptRepository } from '../modules/voice/voice-transcript.repository.js';
 import { LumiRepository } from '../modules/lumi/lumi.repository.js';
 import { LumiService } from '../modules/lumi/lumi.service.js';
 import { UserRepository } from '../modules/users/user.repository.js';
@@ -101,6 +102,7 @@ const lumiNudgePlugin: FastifyPluginAsync = async (fastify) => {
     childAllergensRepository,
   );
   const householdAllergensRepository = new HouseholdAllergensRepository(fastify.supabase, kek);
+  const voiceTranscriptRepository = new VoiceTranscriptRepository(fastify.supabase);
   const repository = new LumiRepository(fastify.supabase);
   const userRepository = new UserRepository(fastify.supabase);
   const lumiService = new LumiService({
@@ -112,6 +114,7 @@ const lumiNudgePlugin: FastifyPluginAsync = async (fastify) => {
     openai: fastify.openai,
     childrenRepository,
     householdAllergensRepository,
+    voiceTranscriptRepository,
   });
 
   fastify.bullmq.getWorker(

@@ -140,6 +140,27 @@ describe('useLumiStore', () => {
     expect(s.isPanelOpen).toBe(true);
   });
 
+  it('setLumiThinking toggles the non-verbal pulse flag (5-S6)', () => {
+    const { setLumiThinking } = useLumiStore.getState();
+    expect(useLumiStore.getState().lumiThinking).toBe(false);
+
+    setLumiThinking(true);
+    expect(useLumiStore.getState().lumiThinking).toBe(true);
+
+    setLumiThinking(false);
+    expect(useLumiStore.getState().lumiThinking).toBe(false);
+  });
+
+  it('endTalkSession clears a hanging lumiThinking pulse (5-S6)', () => {
+    const { setTalkSession, setLumiThinking, endTalkSession } = useLumiStore.getState();
+    setTalkSession('44444444-4444-4444-8444-444444444444');
+    setLumiThinking(true);
+
+    endTalkSession();
+
+    expect(useLumiStore.getState().lumiThinking).toBe(false);
+  });
+
   it('setVoiceError flips status to error; clearing reverts to idle', () => {
     const { setVoiceError } = useLumiStore.getState();
 

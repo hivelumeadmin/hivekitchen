@@ -28,7 +28,7 @@ const LUMI_MAX_TOKENS = 400;
 const LUMI_NUDGE_MAX_TOKENS = 150;
 const LUMI_TEMPERATURE = 0.7;
 
-const LUMI_FALLBACK_REPLY = 'Let me think about that for a moment.';
+const LUMI_FALLBACK_REPLY = 'Let me think that through.';
 
 type ChatMessage = { role: 'system' | 'user' | 'assistant'; content: string };
 

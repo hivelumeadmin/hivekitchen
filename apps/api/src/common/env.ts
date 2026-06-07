@@ -65,10 +65,6 @@ const EnvSchema = z
 
     ELEVENLABS_API_KEY: z.string().min(1),
     ELEVENLABS_VOICE_ID: z.string().min(1),
-    // ConvAI agent ID — used by Epic 2 voice onboarding (2-s21+). Optional
-    // until 2-s21 ships; omitting it will not block boot. Slice 2-S20 narration
-    // uses the TTS WebSocket directly and does not require this var.
-    ELEVENLABS_AGENT_ID: optionalEmptyAsUndefined(z.string().min(1)),
     // Model used by the browser-direct TTS WebSocket (slice 2-S20). Flash
     // v2.5 is the low-latency English/multilingual default. Override per
     // environment if a different model is preferred.

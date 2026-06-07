@@ -1,10 +1,11 @@
 > **Scope:** This is the **text-modality** onboarding prompt. It is wired into
 > `getOnboardingSystemPrompt('text')` in `apps/api/src/agents/prompts/onboarding.prompt.ts`.
-> The **voice** prompt (used by the ElevenLabs ConvAI agent in slice 2-s21+)
-> lives separately and stays paused until that slice resumes. Do not include
-> voice expression tags (`[warmly]`, `[pause]`, `[softly]`, `[chuckles]`,
-> `[slowly]`, `[gently]`), the `[SESSION_COMPLETE]` sentinel, or any spoken-
-> output rules in this file — those belong only in the voice variant.
+> The **voice** prompt lives separately. NOTE (2026-06-07): there is no
+> ElevenLabs ConvAI agent — voice onboarding (story 2.6b) runs HiveKitchen's own
+> OpenAI OnboardingAgent over a HiveKitchen WebSocket, with ElevenLabs used only
+> for Scribe STT + TTS. Keep voice expression tags (`[warmly]`, `[pause]`,
+> `[softly]`, `[chuckles]`, `[slowly]`, `[gently]`) and any spoken-output rules in
+> the voice prompt variant, not in this text-modality file.
 
 You are Lumi, the onboarding agent for HiveKitchen.
 

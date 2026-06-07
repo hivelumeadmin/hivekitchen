@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, fireEvent, waitFor, cleanup } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, cleanup, act } from '@testing-library/react';
 import type { Turn } from '@hivekitchen/types';
 import { useLumiStore } from '@/stores/lumi.store.js';
 import { VoiceSessionContext } from '@/contexts/VoiceSessionContext.js';
@@ -395,6 +395,52 @@ describe('LumiPanel', () => {
     fireEvent.click(screen.getByRole('button', { name: /pause nudges/i }));
 
     await waitFor(() => expect(useLumiStore.getState().proactiveNudges).toBe(true));
+  });
+
+  // ── Voice captions (Story 5-S5) ───────────────────────────────────────────
+
+  it('renders the CaptionRibbon when voiceStatus is active and captions are present', () => {
+    useLumiStore.setState({
+      isPanelOpen: true,
+      voiceStatus: 'active',
+      captionTranscript: 'pasta please',
+      captionLumiReply: 'On it — pasta Tuesday.',
+    });
+    render(<LumiPanel />);
+
+    expect(screen.getByRole('region', { name: /voice captions/i })).toBeDefined();
+    expect(screen.getByText('pasta please')).toBeDefined();
+    expect(screen.getByText('On it — pasta Tuesday.')).toBeDefined();
+  });
+
+  it('does not render the CaptionRibbon when voiceStatus is idle', () => {
+    useLumiStore.setState({
+      isPanelOpen: true,
+      voiceStatus: 'idle',
+      captionTranscript: 'pasta please',
+    });
+    render(<LumiPanel />);
+
+    expect(screen.queryByRole('region', { name: /voice captions/i })).toBeNull();
+  });
+
+  it('clears captions and unmounts the ribbon when the voice session ends', () => {
+    useLumiStore.setState({
+      isPanelOpen: true,
+      voiceStatus: 'active',
+      captionTranscript: 'pasta please',
+      captionLumiReply: 'On it.',
+    });
+    render(<LumiPanel />);
+    expect(screen.getByRole('region', { name: /voice captions/i })).toBeDefined();
+
+    act(() => {
+      useLumiStore.getState().endTalkSession();
+    });
+
+    expect(useLumiStore.getState().captionTranscript).toBe('');
+    expect(useLumiStore.getState().captionLumiReply).toBe('');
+    expect(screen.queryByRole('region', { name: /voice captions/i })).toBeNull();
   });
 });
 

@@ -1,11 +1,15 @@
+import type { Buffer } from 'node:buffer';
 import type { FastifyBaseLogger } from 'fastify';
+import type { WebSocket } from '@fastify/websocket';
 import type Redis from 'ioredis';
 import type OpenAI from 'openai';
 import type { LumiSurface, LumiContextSignal, NudgeTrigger, Turn } from '@hivekitchen/types';
-import { ForbiddenError, UpstreamError, ValidationError } from '../../common/errors.js';
+import { ForbiddenError, ValidationError } from '../../common/errors.js';
 import { LumiAgent } from '../../agents/lumi.agent.js';
+import { transcribeWav, streamTtsToWs } from '../voice/elevenlabs-audio.js';
 import type { ChildrenRepository } from '../children/children.repository.js';
 import type { HouseholdAllergensRepository } from '../households/household-allergens.repository.js';
+import type { VoiceTranscriptRepository } from '../voice/voice-transcript.repository.js';
 import type { LumiRepository, TalkSessionRow } from './lumi.repository.js';
 
 export interface LumiServiceDeps {
@@ -17,6 +21,7 @@ export interface LumiServiceDeps {
   openai: OpenAI; // NEW — real LumiAgent dispatch
   childrenRepository: ChildrenRepository; // NEW — for household snapshot
   householdAllergensRepository: HouseholdAllergensRepository; // NEW — canonical allergen table
+  voiceTranscriptRepository: VoiceTranscriptRepository; // 5-S5 — voice transcript persistence
 }
 
 export interface CreateTalkSessionInput {
@@ -28,12 +33,30 @@ export interface CreateTalkSessionInput {
 
 export interface CreateTalkSessionResult {
   talk_session_id: string;
-  stt_token: string;
-  tts_token: string;
-  voice_id: string;
+}
+
+// Story 5-S5b — per-connection state for an ambient Lumi voice WebSocket
+// (GET /v1/lumi/voice/ws). One object lives in the route handler's closure for
+// the life of the socket; the service mutates it. `contextSignal` is set from
+// the browser's `context` frame; `isProcessing` is the single-flight guard
+// (mirrors the onboarding VoiceService turn loop); `seq` numbers the frames.
+export interface LumiVoiceWsState {
+  householdId: string;
+  contextSignal: LumiContextSignal | null;
+  isProcessing: boolean;
+  seq: number;
 }
 
 const TALK_SESSION_TTL_SECONDS = 20;
+
+// 60s × 16kHz × 2B ≈ 1.9 MB — mirrors the onboarding voice cap (2.6b).
+const MAX_AUDIO_BYTES = 2 * 1024 * 1024;
+
+// Non-fatal voice error copy — a single STT/agent/TTS miss never tears the
+// session down (12-S10 TRANSCRIPT_FAILED behaviour); the user just speaks again.
+const STT_FAILED_COPY = 'Could not hear that — try again';
+const AGENT_FAILED_COPY = "I'm having a little trouble — could you say that again?";
+const TTS_FAILED_COPY = 'Voice unavailable — please read the response instead';
 
 // 'onboarding' is a valid LumiSurface (see lumi.ts contract comment) but the
 // onboarding voice flow has its own dedicated route at POST /v1/voice/sessions
@@ -56,6 +79,7 @@ export class LumiService {
   private readonly openai: OpenAI;
   private readonly childrenRepository: ChildrenRepository;
   private readonly householdAllergensRepository: HouseholdAllergensRepository;
+  private readonly voiceTranscriptRepository: VoiceTranscriptRepository;
 
   constructor(deps: LumiServiceDeps) {
     this.repository = deps.repository;
@@ -66,6 +90,7 @@ export class LumiService {
     this.openai = deps.openai;
     this.childrenRepository = deps.childrenRepository;
     this.householdAllergensRepository = deps.householdAllergensRepository;
+    this.voiceTranscriptRepository = deps.voiceTranscriptRepository;
   }
 
   async createTalkSession(input: CreateTalkSessionInput): Promise<CreateTalkSessionResult> {
@@ -98,31 +123,14 @@ export class LumiService {
       existing ??
       (await this.repository.createAmbientThread(input.householdId, surface, 'voice'));
 
-    // Issue ElevenLabs credentials BEFORE persisting the session row so a token
-    // failure leaves no orphaned voice_sessions row (AC #10 — atomic creation).
-    const { sttToken, ttsToken } = await this.issueElevenLabsCredentials();
-
-    let session: TalkSessionRow;
-    try {
-      session = await this.repository.createTalkSession({
-        userId: input.userId,
-        householdId: input.householdId,
-        threadId: thread.id,
-      });
-    } catch (err) {
-      // ElevenLabs credentials were already minted — log but do not surface
-      // the leak (the tokens are short-lived and unused).
-      this.logger.error(
-        {
-          err,
-          module: 'lumi',
-          action: 'lumi.talk_session_persist_failed',
-          household_id: input.householdId,
-        },
-        'voice_sessions insert failed after issuing ElevenLabs credentials — credentials will expire unused',
-      );
-      throw err;
-    }
+    // Story 5-S5b — no ElevenLabs credential pre-mint any more. The session is
+    // just a bound id: the browser opens HiveKitchen's own /v1/lumi/voice/ws
+    // with its JWT + this id, and the server owns Scribe STT + TTS.
+    const session: TalkSessionRow = await this.repository.createTalkSession({
+      userId: input.userId,
+      householdId: input.householdId,
+      threadId: thread.id,
+    });
 
     // Best-effort 20s inactivity sentinel. Auto-close consumer arrives in
     // Story 12.8; for now this is just a TTL stamp.
@@ -145,12 +153,138 @@ export class LumiService {
       );
     }
 
-    return {
-      talk_session_id: session.id,
-      stt_token: sttToken,
-      tts_token: ttsToken,
-      voice_id: this.voiceId,
-    };
+    return { talk_session_id: session.id };
+  }
+
+  // Story 5-S5b — process one complete voice utterance arriving over the ambient
+  // Lumi WebSocket. Mirrors the onboarding VoiceService turn loop but drives the
+  // LumiAgent (via submitTextTurn) instead of the OnboardingAgent. STT is raw
+  // ElevenLabs Scribe (REST); the reply is synthesized via ElevenLabs TTS and
+  // streamed back as binary frames; persistence (thread_turns + voice_transcript)
+  // is exactly the 5-S5 path because it flows through submitTextTurn.
+  //
+  // Non-fatal by design: a single STT/agent/TTS failure emits an `error` frame
+  // and returns without closing the socket — the user simply speaks again. The
+  // `state.isProcessing` single-flight guard drops any frame that arrives while
+  // a turn is in flight (matches the onboarding guard).
+  async processVoiceUtterance(
+    state: LumiVoiceWsState,
+    wav: Buffer,
+    ws: WebSocket,
+  ): Promise<void> {
+    if (state.contextSignal === null) {
+      this.logger.warn(
+        { module: 'lumi', action: 'lumi.voice.utterance_before_context' },
+        'audio frame arrived before the context frame — dropping',
+      );
+      return;
+    }
+
+    if (state.isProcessing) {
+      this.logger.warn(
+        { module: 'lumi', action: 'lumi.voice.turn_dropped_concurrent' },
+        'binary frame dropped — turn already in flight',
+      );
+      return;
+    }
+
+    if (wav.length > MAX_AUDIO_BYTES) {
+      this.logger.warn(
+        { module: 'lumi', action: 'lumi.voice.audio_too_large', bytes: wav.length },
+        'audio frame exceeds size limit — dropping',
+      );
+      this.sendJson(ws, { type: 'error', code: 'audio_too_large', message: 'Audio clip too long — please speak in shorter segments' });
+      return;
+    }
+
+    const contextSignal = state.contextSignal;
+    state.isProcessing = true;
+    const seq = ++state.seq;
+
+    try {
+      let transcript: string;
+      try {
+        transcript = await transcribeWav(this.elevenLabsApiKey, wav);
+      } catch (err) {
+        this.logger.warn(
+          { err, module: 'lumi', action: 'lumi.voice.stt_failed' },
+          'ElevenLabs STT failed — sending non-fatal error frame',
+        );
+        this.sendJson(ws, { type: 'error', code: 'stt_failed', message: STT_FAILED_COPY });
+        return;
+      }
+
+      if (transcript.trim().length === 0) {
+        // Scribe heard nothing intelligible — treat like a soft miss.
+        this.sendJson(ws, { type: 'error', code: 'stt_failed', message: STT_FAILED_COPY });
+        return;
+      }
+
+      this.sendJson(ws, { type: 'transcript', seq, text: transcript });
+      // Slice 5-S6 — non-verbal "thinking" signal for the real STT→reply gap.
+      // No speech is emitted in this gap; the client renders a calm orb pulse.
+      // Today this fires on every turn (LumiAgent.respond does not tool-call, so
+      // estimated tool latency is ~0). TODO(5-S6-D / Epic 12 phase 2): when a
+      // tool-calling conversational orchestrator lands, gate this on
+      // classifyLatency(plannedTools).mode === 'thinking-pulse'.
+      this.sendJson(ws, { type: 'lumi.thinking', seq });
+
+      let result: Awaited<ReturnType<typeof this.submitTextTurn>>;
+      try {
+        result = await this.submitTextTurn({
+          householdId: state.householdId,
+          message: transcript,
+          contextSignal,
+          modality: 'voice',
+        });
+      } catch (err) {
+        this.logger.warn(
+          { err, module: 'lumi', action: 'lumi.voice.agent_failed' },
+          'LumiAgent turn failed — sending non-fatal error frame',
+        );
+        this.sendJson(ws, { type: 'error', code: 'agent_failed', message: AGENT_FAILED_COPY });
+        return;
+      }
+
+      const reply =
+        result.lumi_turn.body.type === 'message' ? result.lumi_turn.body.content : '';
+
+      this.sendJson(ws, { type: 'response.start', seq });
+
+      if (reply.trim().length === 0) {
+        // Empty agent reply — skip TTS, close the turn immediately with no audio.
+        this.sendJson(ws, { type: 'response.end', seq, text: reply });
+        return;
+      }
+
+      try {
+        await streamTtsToWs(this.elevenLabsApiKey, this.voiceId, reply, ws);
+      } catch (err) {
+        this.logger.warn(
+          { err, module: 'lumi', action: 'lumi.voice.tts_failed' },
+          'ElevenLabs TTS streaming failed — sending reply text + non-fatal error frame',
+        );
+        // Close the open turn so the client can show the reply, then report.
+        this.sendJson(ws, { type: 'response.end', seq, text: reply });
+        this.sendJson(ws, { type: 'error', code: 'tts_failed', message: TTS_FAILED_COPY });
+        return;
+      }
+
+      this.sendJson(ws, { type: 'response.end', seq, text: reply });
+    } finally {
+      state.isProcessing = false;
+    }
+  }
+
+  private sendJson(ws: WebSocket, payload: object): void {
+    try {
+      ws.send(JSON.stringify(payload));
+    } catch (err) {
+      this.logger.warn(
+        { err, module: 'lumi', action: 'lumi.voice.ws_send_failed' },
+        'voice WebSocket send failed (client likely disconnected)',
+      );
+    }
   }
 
   // Ambient text turn (Story 12-S8 stub; 12-S9 real dispatch). Lazy-resolves the
@@ -163,8 +297,12 @@ export class LumiService {
     householdId: string;
     message: string;
     contextSignal: LumiContextSignal;
+    // 5-S5 — voice turns pass 'voice'; text turns omit it (defaults to 'text').
+    // Stamps thread_turns.modality and gates voice_transcripts persistence.
+    modality?: 'text' | 'voice';
   }): Promise<{ thread_id: string; user_turn: Turn; lumi_turn: Turn }> {
     const surface = input.contextSignal.surface;
+    const modality = input.modality ?? 'text';
     assertAmbientSurface(surface);
 
     const existing = await this.repository.findActiveAmbientThread(
@@ -188,7 +326,7 @@ export class LumiService {
       threadId: thread.id,
       role: 'user',
       body: { type: 'message', content: input.message },
-      modality: 'text',
+      modality,
     });
 
     const agent = new LumiAgent(this.openai);
@@ -198,15 +336,39 @@ export class LumiService {
       contextSignal: input.contextSignal,
       conversationHistory: priorTurns,
       householdSnapshot,
-      modality: 'text',
+      modality,
     });
 
     const lumiTurn = await this.repository.insertTurn({
       threadId: thread.id,
       role: 'lumi',
       body: { type: 'message', content: lumiText },
-      modality: 'text',
+      modality,
     });
+
+    // 5-S5 — persist the user's speech transcript, anchored to the Lumi turn.
+    // Best-effort: a transcript write failure must never block the voice turn
+    // from returning (the caption is already shown client-side; losing the
+    // persistence is a degraded-mode issue, not a fatal error).
+    if (modality === 'voice') {
+      try {
+        await this.voiceTranscriptRepository.insertTranscript(
+          thread.id,
+          lumiTurn.id,
+          input.message,
+        );
+      } catch (err) {
+        this.logger.warn(
+          {
+            err,
+            module: 'lumi',
+            action: 'lumi.voice_transcript_persist_failed',
+            thread_id: thread.id,
+          },
+          'voice transcript persist failed — best-effort, continuing',
+        );
+      }
+    }
 
     return { thread_id: thread.id, user_turn: userTurn, lumi_turn: lumiTurn };
   }
@@ -345,41 +507,4 @@ export class LumiService {
     }
   }
 
-  // The architecture spec says "the API calls ElevenLabs to obtain a single-use
-  // STT token and a single-use TTS token." ElevenLabs's public API does not
-  // currently expose dedicated single-use STT-stream or TTS-stream tokens; the
-  // closest documented mechanism is the Conversational AI signed URL endpoint.
-  // We make two distinct fetch calls so:
-  //   * AC #1 ("API calls ElevenLabs to obtain a single-use STT token AND a
-  //     single-use TTS token") is met structurally;
-  //   * AC #10 (atomic on token failure) is exercised by a single failing call.
-  // Story 12.8 owns the actual browser-direct WS transport and may revise the
-  // exact endpoint(s) called here.
-  private async issueElevenLabsCredentials(): Promise<{
-    sttToken: string;
-    ttsToken: string;
-  }> {
-    const url = `https://api.elevenlabs.io/v1/convai/conversation/get_signed_url?agent_id=${encodeURIComponent(this.voiceId)}`;
-    const headers = { 'xi-api-key': this.elevenLabsApiKey };
-
-    const sttRes = await fetch(url, { method: 'GET', headers });
-    if (!sttRes.ok) {
-      throw new UpstreamError(`ElevenLabs STT credential issuance failed: HTTP ${sttRes.status}`);
-    }
-    const sttJson = (await sttRes.json()) as { signed_url?: unknown };
-    if (typeof sttJson.signed_url !== 'string' || sttJson.signed_url.length === 0) {
-      throw new UpstreamError('ElevenLabs STT credential issuance returned no signed_url');
-    }
-
-    const ttsRes = await fetch(url, { method: 'GET', headers });
-    if (!ttsRes.ok) {
-      throw new UpstreamError(`ElevenLabs TTS credential issuance failed: HTTP ${ttsRes.status}`);
-    }
-    const ttsJson = (await ttsRes.json()) as { signed_url?: unknown };
-    if (typeof ttsJson.signed_url !== 'string' || ttsJson.signed_url.length === 0) {
-      throw new UpstreamError('ElevenLabs TTS credential issuance returned no signed_url');
-    }
-
-    return { sttToken: sttJson.signed_url, ttsToken: ttsJson.signed_url };
-  }
 }

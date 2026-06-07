@@ -87,6 +87,29 @@ describe('LumiOrb', () => {
     expect(overlay!.className).toContain('animate-ping');
   });
 
+  // ── Non-verbal thinking pulse (Story 5-S6) ────────────────────────────────
+
+  it('renders a distinct thinking pulse when lumiThinking is true (AC#7)', () => {
+    useLumiStore.getState().setLumiThinking(true);
+    const { container } = render(<LumiOrb />);
+
+    const pulse = container.querySelector('[data-testid="lumi-thinking-pulse"]');
+    expect(pulse).not.toBeNull();
+    // Distinct from the voice-active animate-ping — a calmer animate-pulse.
+    expect(pulse!.className).toContain('animate-pulse');
+    expect(pulse!.className).not.toContain('animate-ping');
+    // Static under reduced motion + decorative (AC#7).
+    expect(pulse!.className).toContain('motion-reduce:animate-none');
+    expect(pulse!.getAttribute('aria-hidden')).toBe('true');
+  });
+
+  it('does not render the thinking pulse when lumiThinking is false (cleared after response.end, AC#8)', () => {
+    useLumiStore.getState().setLumiThinking(false);
+    const { container } = render(<LumiOrb />);
+
+    expect(container.querySelector('[data-testid="lumi-thinking-pulse"]')).toBeNull();
+  });
+
   it('suppresses the breathing animation when the panel is open (AC4)', () => {
     useLumiStore.getState().setNudge(fakeTurn);
     useLumiStore.getState().openPanel();

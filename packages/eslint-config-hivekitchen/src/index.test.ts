@@ -25,6 +25,11 @@ describe('baseConfig', () => {
     expect(rules.has('hivekitchen/logical-properties-only')).toBe(true);
     expect(rules.has('@typescript-eslint/consistent-type-imports')).toBe(true);
   });
+
+  it('enables the no-assistant-filler doctrine rule (covers apps/api + apps/web via baseConfig)', () => {
+    const rules = allRules(baseConfig());
+    expect(rules.has('hivekitchen/no-assistant-filler')).toBe(true);
+  });
 });
 
 describe('webConfig', () => {

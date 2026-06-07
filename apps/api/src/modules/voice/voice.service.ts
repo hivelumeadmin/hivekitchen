@@ -3,6 +3,7 @@ import type { FastifyBaseLogger } from 'fastify';
 import type { WebSocket } from '@fastify/websocket';
 import { ConflictError, UpstreamError } from '../../common/errors.js';
 import { stripExpressionTags } from '../../common/strip-expression-tags.js';
+import { transcribeWav, streamTtsToWs } from './elevenlabs-audio.js';
 import type { OnboardingAgent, LlmMessage } from '../../agents/onboarding.agent.js';
 import type { CulturalPriorService } from '../cultural-priors/cultural-prior.service.js';
 import type { MemoryService } from '../memory/memory.service.js';
@@ -41,10 +42,6 @@ export interface VoiceServiceDeps {
   culturalPriorService: CulturalPriorService;
   elevenLabsApiKey: string;
   voiceId: string;
-  // ElevenLabs ConvAI agent ID used by Epic 2 voice onboarding (2-s21+).
-  // Optional until 2-s21 ships. Distinct from `voiceId`, which is a TTS
-  // voice identifier used by the narration path (2-s20).
-  agentId?: string;
   // Slice 2-S20 — model used by the browser-direct TTS WebSocket. Wired
   // through env (ELEVENLABS_TTS_MODEL_ID, default `eleven_flash_v2_5`).
   ttsModelId: string;
@@ -69,7 +66,6 @@ export class VoiceService {
   private readonly culturalPriorService: CulturalPriorService;
   private readonly elevenLabsApiKey: string;
   private readonly voiceId: string;
-  private readonly agentId: string | undefined;
   private readonly ttsModelId: string;
   private readonly logger: FastifyBaseLogger;
   private readonly memoryService?: MemoryService;
@@ -81,7 +77,6 @@ export class VoiceService {
     this.culturalPriorService = deps.culturalPriorService;
     this.elevenLabsApiKey = deps.elevenLabsApiKey;
     this.voiceId = deps.voiceId;
-    this.agentId = deps.agentId;
     this.ttsModelId = deps.ttsModelId;
     this.logger = deps.logger;
     this.memoryService = deps.memoryService;
@@ -637,28 +632,8 @@ export class VoiceService {
   }
 
   private async transcribe(audioBuffer: Buffer): Promise<string> {
-    const form = new FormData();
-    const blob = new Blob([new Uint8Array(audioBuffer)], { type: 'audio/wav' });
-    form.append('audio', blob, 'utterance.wav');
-    form.append('model_id', 'scribe_v1');
-
-    const res = await fetch('https://api.elevenlabs.io/v1/speech-to-text', {
-      method: 'POST',
-      headers: { 'xi-api-key': this.elevenLabsApiKey },
-      body: form,
-    });
-
-    if (!res.ok) {
-      throw new UpstreamError(
-        `ElevenLabs STT failed: HTTP ${res.status}`,
-      );
-    }
-
-    const json = (await res.json()) as { text?: unknown };
-    if (typeof json.text !== 'string') {
-      throw new UpstreamError('ElevenLabs STT returned no transcript text');
-    }
-    return json.text;
+    // Shared with the ambient Lumi voice path (Story 5-S5b) — one Scribe impl.
+    return transcribeWav(this.elevenLabsApiKey, audioBuffer);
   }
 
   // Slice 2-S20 — browser-direct TTS via single-use token.
@@ -671,11 +646,11 @@ export class VoiceService {
   // single-use (consumed on connect), so the long-lived xi-api-key stays
   // server-side.
   //
-  // Why TTS WS (not ConvAI signed URL): for one-shot narration we don't need
-  // a conversational agent — TTS is cheaper (character billing vs minute
-  // billing), simpler (no first_message override hack, no agent_response
-  // close detection), and the voice is selected by voice_id rather than by
-  // a dashboard-configured agent.
+  // Why the TTS WebSocket: for one-shot narration we don't need a hosted
+  // conversational agent — TTS is cheaper (character billing vs minute
+  // billing), simpler (no first_message override hack, no response-close
+  // detection), and the voice is selected by voice_id rather than by a
+  // dashboard-configured agent.
   async issueTtsToken(): Promise<{ token: string; voice_id: string; model_id: string }> {
     const url = 'https://api.elevenlabs.io/v1/single-use-token/tts_websocket';
     let res: Response;
@@ -716,44 +691,8 @@ export class VoiceService {
   }
 
   private async streamTts(text: string, ws: WebSocket): Promise<void> {
-    const res = await fetch(
-      `https://api.elevenlabs.io/v1/text-to-speech/${this.voiceId}/stream`,
-      {
-        method: 'POST',
-        headers: {
-          'xi-api-key': this.elevenLabsApiKey,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          text,
-          model_id: 'eleven_v3',
-          output_format: 'mp3_44100_128',
-          voice_settings: {
-            stability: 0.5,
-            similarity_boost: 0.8,
-            style: 0.6,
-            use_speaker_boost: true,
-          },
-        }),
-      },
-    );
-
-    if (!res.ok || res.body === null) {
-      throw new UpstreamError(`ElevenLabs TTS failed: HTTP ${res.status}`);
-    }
-
-    const reader = res.body.getReader();
-    try {
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        if (value && value.byteLength > 0) {
-          ws.send(Buffer.from(value));
-        }
-      }
-    } finally {
-      reader.cancel().catch(() => { /* noop */ });
-    }
+    // Shared with the ambient Lumi voice path (Story 5-S5b) — one TTS impl.
+    return streamTtsToWs(this.elevenLabsApiKey, this.voiceId, text, ws);
   }
 
   private sendText(ws: WebSocket, payload: object): void {

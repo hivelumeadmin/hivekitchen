@@ -2,6 +2,17 @@
 
 Status: done
 
+> ⚠️ **CREDENTIAL MECHANISM SUPERSEDED 2026-06-07.** As-built, this story's
+> `issueElevenLabsCredentials()` calls the ElevenLabs Conversational AI ("ConvAI")
+> **Agent** signed-URL endpoint (`get_signed_url?agent_id=<voice_id>`) as a
+> pragmatic placeholder. The product is off the ElevenLabs Agent: STT must be raw
+> Scribe (REST `/v1/speech-to-text`) and TTS raw `/v1/text-to-speech/...`, matching
+> story 2.6b. The session lifecycle (POST/DELETE) is unchanged; only token/credential
+> issuance changes. **MIGRATION COMPLETED by slice 5-S5b (2026-06-07):**
+> `issueElevenLabsCredentials` is deleted and the POST response reshaped to
+> `{ talk_session_id }` only — the browser now opens HiveKitchen's own
+> `GET /v1/lumi/voice/ws` with its JWT + session id; no ElevenLabs token is minted.
+
 ## Story
 
 As a Premium-tier Primary Parent,

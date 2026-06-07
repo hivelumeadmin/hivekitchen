@@ -68,8 +68,9 @@ interface TtsTokenResponse {
 export function AudioPanel({ caption, text }: AudioPanelProps) {
   const wsRef = useRef<WebSocket | null>(null);
   const audioCtxRef = useRef<AudioContext | null>(null);
-  // Sample rate of the inbound PCM stream — ConvAI defaults to 16 kHz pcm_16000.
-  // If we override `output_format` in the init message we must update this.
+  // Sample rate of the inbound PCM stream — the narration TTS WebSocket emits
+  // 16 kHz pcm_16000. If we override `output_format` in the init message we
+  // must update this.
   const sampleRateRef = useRef<number>(16000);
   // Time pointer for scheduling chunk playback contiguously via Web Audio API.
   const nextPlayTimeRef = useRef<number>(0);

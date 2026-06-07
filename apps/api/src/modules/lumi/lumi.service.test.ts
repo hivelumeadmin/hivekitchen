@@ -1,11 +1,15 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { Buffer } from 'node:buffer';
+import type { WebSocket } from '@fastify/websocket';
 import type { Turn } from '@hivekitchen/types';
 
 // Mock the LumiAgent so submitTextTurn's call into it is observable without an
 // OpenAI round-trip. `respondMock` is hoisted so the factory can close over it.
-const { respondMock, generateNudgeMock } = vi.hoisted(() => ({
+const { respondMock, generateNudgeMock, transcribeWavMock, streamTtsToWsMock } = vi.hoisted(() => ({
   respondMock: vi.fn(),
   generateNudgeMock: vi.fn(),
+  transcribeWavMock: vi.fn(),
+  streamTtsToWsMock: vi.fn(),
 }));
 vi.mock('../../agents/lumi.agent.js', () => ({
   LumiAgent: class FakeLumiAgent {
@@ -13,8 +17,29 @@ vi.mock('../../agents/lumi.agent.js', () => ({
     generateNudge = generateNudgeMock;
   },
 }));
+// Story 5-S5b — the ambient voice path uses raw Scribe STT + TTS (no hosted
+// ElevenLabs agent). Mock the shared helpers so processVoiceUtterance is
+// observable without a network round-trip.
+vi.mock('../voice/elevenlabs-audio.js', () => ({
+  transcribeWav: transcribeWavMock,
+  streamTtsToWs: streamTtsToWsMock,
+}));
 
-import { LumiService, type LumiServiceDeps } from './lumi.service.js';
+import { LumiService, type LumiServiceDeps, type LumiVoiceWsState } from './lumi.service.js';
+
+function makeMockWs(): { send: ReturnType<typeof vi.fn> } & WebSocket {
+  return { send: vi.fn(), close: vi.fn(), readyState: 1 } as unknown as {
+    send: ReturnType<typeof vi.fn>;
+  } & WebSocket;
+}
+
+function sentFrames(ws: { send: ReturnType<typeof vi.fn> }): Array<{ type: string; code?: string; text?: string }> {
+  return ws.send.mock.calls
+    .map((c: unknown[]) => {
+      try { return JSON.parse(c[0] as string); } catch { return null; }
+    })
+    .filter(Boolean) as Array<{ type: string; code?: string; text?: string }>;
+}
 
 function buildDeps(overrides: {
   displayName?: string | null;
@@ -49,6 +74,7 @@ function buildDeps(overrides: {
   const openai = { chat: { completions: { create: vi.fn() } } };
   const logger = { error: vi.fn(), warn: vi.fn(), info: vi.fn() };
   const redis = { set: vi.fn(), del: vi.fn() };
+  const voiceTranscriptRepository = { insertTranscript: vi.fn().mockResolvedValue(undefined) };
 
   const deps = {
     repository,
@@ -59,10 +85,19 @@ function buildDeps(overrides: {
     openai,
     childrenRepository,
     householdAllergensRepository,
+    voiceTranscriptRepository,
   } as unknown as LumiServiceDeps;
 
   const service = new LumiService(deps);
-  return { service, repository, childrenRepository, householdAllergensRepository, redis, logger };
+  return {
+    service,
+    repository,
+    childrenRepository,
+    householdAllergensRepository,
+    redis,
+    logger,
+    voiceTranscriptRepository,
+  };
 }
 
 // fetchHouseholdSnapshot is private; reach it via a typed cast for unit scope.
@@ -76,7 +111,20 @@ beforeEach(() => {
   respondMock.mockResolvedValue('Mocked Lumi reply.');
   generateNudgeMock.mockReset();
   generateNudgeMock.mockResolvedValue('Your week is ready — dal-rice on Monday.');
+  transcribeWavMock.mockReset();
+  transcribeWavMock.mockResolvedValue('pasta on Tuesday please');
+  streamTtsToWsMock.mockReset();
+  streamTtsToWsMock.mockResolvedValue(undefined);
 });
+
+function makeVoiceState(): LumiVoiceWsState {
+  return {
+    householdId: 'hh1',
+    contextSignal: { surface: 'planning' },
+    isProcessing: false,
+    seq: 0,
+  };
+}
 
 describe('LumiService.fetchHouseholdSnapshot', () => {
   it('assembles family name, child name + age band, and allergens', async () => {
@@ -205,6 +253,74 @@ describe('LumiService.submitTextTurn — agent dispatch', () => {
   });
 });
 
+describe('LumiService.submitTextTurn — voice modality (Story 5-S5)', () => {
+  it('persists a voice transcript anchored to the Lumi turn when modality is voice', async () => {
+    const { service, voiceTranscriptRepository } = buildDeps({ activeThread: null });
+
+    const result = await service.submitTextTurn({
+      householdId: 'hh1',
+      message: 'pasta on Tuesday please',
+      contextSignal: { surface: 'planning' },
+      modality: 'voice',
+    });
+
+    expect(voiceTranscriptRepository.insertTranscript).toHaveBeenCalledTimes(1);
+    expect(voiceTranscriptRepository.insertTranscript).toHaveBeenCalledWith(
+      result.thread_id,
+      result.lumi_turn.id,
+      'pasta on Tuesday please',
+    );
+  });
+
+  it('stamps thread_turns with modality "voice" on both turns', async () => {
+    const { service, repository } = buildDeps({ activeThread: null });
+
+    await service.submitTextTurn({
+      householdId: 'hh1',
+      message: 'hi',
+      contextSignal: { surface: 'planning' },
+      modality: 'voice',
+    });
+
+    expect(repository.insertTurn).toHaveBeenCalledWith(
+      expect.objectContaining({ role: 'user', modality: 'voice' }),
+    );
+    expect(repository.insertTurn).toHaveBeenCalledWith(
+      expect.objectContaining({ role: 'lumi', modality: 'voice' }),
+    );
+  });
+
+  it('does NOT persist a voice transcript for a text turn', async () => {
+    const { service, voiceTranscriptRepository, repository } = buildDeps({ activeThread: null });
+
+    await service.submitTextTurn({
+      householdId: 'hh1',
+      message: 'hi',
+      contextSignal: { surface: 'planning' },
+    });
+
+    expect(voiceTranscriptRepository.insertTranscript).not.toHaveBeenCalled();
+    expect(repository.insertTurn).toHaveBeenCalledWith(
+      expect.objectContaining({ role: 'user', modality: 'text' }),
+    );
+  });
+
+  it('still returns success when the transcript write fails (best-effort)', async () => {
+    const { service, voiceTranscriptRepository, logger } = buildDeps({ activeThread: null });
+    voiceTranscriptRepository.insertTranscript.mockRejectedValueOnce(new Error('db down'));
+
+    const result = await service.submitTextTurn({
+      householdId: 'hh1',
+      message: 'hi',
+      contextSignal: { surface: 'planning' },
+      modality: 'voice',
+    });
+
+    expect(result.lumi_turn.role).toBe('lumi');
+    expect(logger.warn).toHaveBeenCalled();
+  });
+});
+
 describe('LumiService.persistNudge', () => {
   it('resolves the thread, generates the nudge, and persists it with nudgeTrigger', async () => {
     const { service, repository } = buildDeps({ activeThread: { id: 'thread-1' } });
@@ -266,5 +382,165 @@ describe('LumiService.persistNudge', () => {
     expect(repository.insertTurn).toHaveBeenCalledWith(
       expect.objectContaining({ threadId: 'new-thread', nudgeTrigger: 'plan_completed' }),
     );
+  });
+});
+
+describe('LumiService.processVoiceUtterance — ambient voice (Story 5-S5b)', () => {
+  it('transcribes via Scribe, runs the LumiAgent turn, and streams TTS — raw, no hosted agent', async () => {
+    const { service } = buildDeps({ activeThread: null });
+    const ws = makeMockWs();
+
+    await service.processVoiceUtterance(makeVoiceState(), Buffer.from('wav-bytes'), ws);
+
+    // STT path is raw Scribe (transcribeWav), called with the API key + buffer.
+    expect(transcribeWavMock).toHaveBeenCalledTimes(1);
+    expect(transcribeWavMock.mock.calls[0][0]).toBe('k');
+    // Reply synthesized via the shared TTS helper with the LumiAgent reply text.
+    expect(streamTtsToWsMock).toHaveBeenCalledTimes(1);
+    expect(streamTtsToWsMock.mock.calls[0][2]).toBe('Mocked Lumi reply.');
+
+    const frames = sentFrames(ws);
+    // Slice 5-S6 — lumi.thinking fires in the STT→reply gap, after transcript,
+    // before response.start. No speech is emitted in that gap.
+    expect(frames.map((f) => f.type)).toEqual([
+      'transcript',
+      'lumi.thinking',
+      'response.start',
+      'response.end',
+    ]);
+    expect(frames.find((f) => f.type === 'transcript')!.text).toBe('pasta on Tuesday please');
+    expect(frames.find((f) => f.type === 'response.end')!.text).toBe('Mocked Lumi reply.');
+  });
+
+  it('emits lumi.thinking in the STT→reply gap with the turn seq, no speech (5-S6 AC#6)', async () => {
+    const { service } = buildDeps({ activeThread: null });
+    const ws = makeMockWs();
+
+    await service.processVoiceUtterance(makeVoiceState(), Buffer.from('wav'), ws);
+
+    const frames = sentFrames(ws);
+    const thinkingIdx = frames.findIndex((f) => f.type === 'lumi.thinking');
+    const startIdx = frames.findIndex((f) => f.type === 'response.start');
+    // Fired after transcript, before response.start.
+    expect(thinkingIdx).toBe(1);
+    expect(thinkingIdx).toBeLessThan(startIdx);
+    // Carries the per-turn seq, matching the rest of the turn's frames.
+    const thinking = frames[thinkingIdx] as { type: string; seq: number };
+    const start = frames[startIdx] as { type: string; seq: number };
+    expect(thinking.seq).toBe(start.seq);
+  });
+
+  it('does NOT emit lumi.thinking when STT fails (no reply gap to bridge)', async () => {
+    const { service } = buildDeps({ activeThread: null });
+    const ws = makeMockWs();
+    transcribeWavMock.mockRejectedValueOnce(new Error('scribe down'));
+
+    await service.processVoiceUtterance(makeVoiceState(), Buffer.from('wav'), ws);
+
+    const frames = sentFrames(ws);
+    expect(frames.find((f) => f.type === 'lumi.thinking')).toBeUndefined();
+  });
+
+  it('persists the turn through submitTextTurn with modality "voice" (5-S5 path)', async () => {
+    const { service, repository, voiceTranscriptRepository } = buildDeps({ activeThread: null });
+    const ws = makeMockWs();
+
+    await service.processVoiceUtterance(makeVoiceState(), Buffer.from('wav'), ws);
+
+    expect(repository.insertTurn).toHaveBeenCalledWith(
+      expect.objectContaining({ role: 'user', modality: 'voice' }),
+    );
+    expect(repository.insertTurn).toHaveBeenCalledWith(
+      expect.objectContaining({ role: 'lumi', modality: 'voice' }),
+    );
+    expect(voiceTranscriptRepository.insertTranscript).toHaveBeenCalledTimes(1);
+  });
+
+  it('drops a concurrent frame while a turn is already in flight (single-flight guard)', async () => {
+    const { service } = buildDeps({ activeThread: null });
+    const ws = makeMockWs();
+    const state = makeVoiceState();
+
+    // First call hangs at STT so isProcessing stays true.
+    let releaseStt: (text: string) => void = () => {};
+    transcribeWavMock.mockImplementationOnce(
+      () => new Promise<string>((resolve) => { releaseStt = resolve; }),
+    );
+
+    const first = service.processVoiceUtterance(state, Buffer.from('a'), ws);
+    // Second arrives mid-flight → dropped before any STT call.
+    await service.processVoiceUtterance(state, Buffer.from('b'), ws);
+
+    releaseStt('hello');
+    await first;
+
+    expect(transcribeWavMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('emits a non-fatal stt_failed error frame without closing the session on STT failure', async () => {
+    const { service } = buildDeps({ activeThread: null });
+    const ws = makeMockWs();
+    transcribeWavMock.mockRejectedValueOnce(new Error('scribe down'));
+
+    await service.processVoiceUtterance(makeVoiceState(), Buffer.from('wav'), ws);
+
+    const frames = sentFrames(ws);
+    const errorFrame = frames.find((f) => f.type === 'error');
+    expect(errorFrame).toBeDefined();
+    expect(errorFrame!.code).toBe('stt_failed');
+    // Non-fatal: no turn ran, no TTS, session not torn down here.
+    expect(streamTtsToWsMock).not.toHaveBeenCalled();
+    expect((ws as unknown as { close: ReturnType<typeof vi.fn> }).close).not.toHaveBeenCalled();
+  });
+
+  it('resets isProcessing after a turn so the next utterance can run', async () => {
+    const { service } = buildDeps({ activeThread: null });
+    const ws = makeMockWs();
+    const state = makeVoiceState();
+
+    await service.processVoiceUtterance(state, Buffer.from('a'), ws);
+    expect(state.isProcessing).toBe(false);
+    await service.processVoiceUtterance(state, Buffer.from('b'), ws);
+
+    expect(transcribeWavMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('drops the frame when no context frame has been received yet', async () => {
+    const { service } = buildDeps({ activeThread: null });
+    const ws = makeMockWs();
+    const state: LumiVoiceWsState = { ...makeVoiceState(), contextSignal: null };
+
+    await service.processVoiceUtterance(state, Buffer.from('wav'), ws);
+
+    expect(transcribeWavMock).not.toHaveBeenCalled();
+    expect(ws.send).not.toHaveBeenCalled();
+  });
+
+  it('emits audio_too_large (not stt_failed) when the WAV exceeds MAX_AUDIO_BYTES (P1)', async () => {
+    const { service } = buildDeps({ activeThread: null });
+    const ws = makeMockWs();
+    const oversized = Buffer.alloc(2 * 1024 * 1024 + 1);
+
+    await service.processVoiceUtterance(makeVoiceState(), oversized, ws);
+
+    const frames = sentFrames(ws);
+    const errorFrame = frames.find((f) => f.type === 'error');
+    expect(errorFrame).toBeDefined();
+    expect(errorFrame!.code).toBe('audio_too_large');
+    expect(transcribeWavMock).not.toHaveBeenCalled();
+  });
+
+  it('sends response.end without calling TTS when the agent returns an empty reply (P3)', async () => {
+    const { service } = buildDeps({ activeThread: null });
+    const ws = makeMockWs();
+    // Agent returns a non-message body type → reply extracts as ''.
+    respondMock.mockResolvedValueOnce('');
+
+    await service.processVoiceUtterance(makeVoiceState(), Buffer.from('wav'), ws);
+
+    expect(streamTtsToWsMock).not.toHaveBeenCalled();
+    const frames = sentFrames(ws);
+    expect(frames.map((f) => f.type)).toContain('response.end');
+    expect(frames.find((f) => f.type === 'error')).toBeUndefined();
   });
 });

@@ -31,7 +31,7 @@ Epic 5 is now genuinely about household coordination: presence, caregiver invite
 | 5-S2 | Send Caregiver invite to partner → they redeem the link → both on `/app` with shared household data | 5.5 |
 | 5-S3 | Two parents on `/app`. Tap Tuesday tile → "Devon packs Tuesday" assignment → Brief updates instantly for both tabs | 5.1 (schema), 5.6 **MVP wall** |
 | 5-S4 | Drop the SSE socket in dev tools → another tab assigns a packer → reconnect → no missed turn (gap detected, `thread.resync` fires) | 5.1 (server_seq + resync), 5.17 (anomaly beacon) |
-| 5-S5 | Hold mic in LumiPanel → speak → Lumi voice reply with synchronized captions visible | 5.7 (voice path), 5.8 (HMAC webhook), 5.9 (captions) |
+| 5-S5 | Hold mic in LumiPanel → speak → Lumi voice reply with synchronized captions visible | 5.7 (voice path), ~~5.8 (HMAC webhook)~~ **DROPPED off-Agent — no ElevenLabs webhook; STT is raw Scribe REST**, 5.9 (captions) |
 | 5-S6 | Long-tool query → Lumi acknowledges first, completes async via thread SSE; no "Let me pull that up" copy in codebase (CI-enforced) | 5.8 (early-ack), 5.10 (filler-phrase lint) |
 | 5-S7 | Mention "Diwali in 3 weeks" → Visible Memory peek shows the inferred cultural-calendar note with provenance link | 5.11 |
 | 5-S8 | After 3 inferences cross threshold → Brief footer shows "I've noticed [X]" callout with [Yes] [Tell more] [Not for us] | 5.12 |
@@ -144,8 +144,8 @@ Above the wall, most slices are parallelizable. The exceptions are S4 (depends o
 
 **Layers:**
 - **UI:** `<VoiceOverlay>` with caption ribbon; mic in LumiPanel.
-- **API:** `POST /v1/voice/token` for ElevenLabs session; `POST /v1/webhooks/elevenlabs` validates HMAC.
-- **Agent:** Orchestrator handles voice turn same as text (response goes back through TTS).
+- **API:** _(updated 2026-06-07 — off-Agent)_ `POST /v1/voice/sessions` creates the session; the browser opens HiveKitchen's own WS `GET /v1/voice/ws` and streams WAV utterances; the API calls ElevenLabs Scribe STT (REST, synchronous) + TTS. **No `POST /v1/voice/token`, no `POST /v1/webhooks/elevenlabs`, no HMAC** — those are the deprecated ConvAI/Agent model. Mirror story 2.6b.
+- **Agent:** HiveKitchen's OpenAI LumiAgent generates the reply (same as text); the reply text goes to ElevenLabs TTS.
 - **DB:** `voice_transcripts(thread_id, turn_id, transcript, retention_until)`.
 
 **Cross-epic dependency:** 12-S10 (tap-to-talk voice infrastructure) ships in parallel. This slice provides the captions/transcript persistence layer that 12-S10 consumes.
@@ -160,7 +160,9 @@ Above the wall, most slices are parallelizable. The exceptions are S4 (depends o
 
 ## Slice 5-S6 — Latency doctrine (early-ack + filler-phrase lint)
 
-**Demo:** Trigger a query where estimated tool latency exceeds 6000ms → Lumi voice says "one sec." → continuation arrives via thread SSE within expected_within_ms. Separately: open a PR adding `"Let me pull that up..."` → CI fails on `no-assistant-filler` lint rule.
+> **FOLDED INTO EPIC 12 (domain), 2026-06-07.** Tracked as Epic-12-domain (its only live consumer is the ambient-voice thinking-gap, an Epic 12 surface). The `5-s6` key/file are retained for the in-flight ready-for-dev story; physical renumber to `12-sNN` available on request. **Scope reconciled to codebase:** §3.5's full early-ack continuation transport (sync-vs-async split delivering the answer later over SSE) is **DEFERRED** — no real-time conversational path tool-calls today (`LumiAgent.respond`/`OnboardingAgent.respond` are single-shot, no tools; only the background `planWeek` job tool-calls), so the `>6000ms` branch has no live trigger. The slice ships: the `no-assistant-filler` ESLint rule, the tested `classifyLatency` latency-doctrine primitive, and the live non-verbal `lumi.thinking` orb pulse on the real STT→reply gap. See `_bmad-output/implementation-artifacts/5-s6-latency-doctrine-early-ack-filler-phrase-lint.md`.
+
+**Demo (as-shipped):** Open a PR adding `"Let me pull that up..."` → CI fails on the `no-assistant-filler` lint rule. In a voice session, the LumiOrb shows a calm non-verbal "thinking" pulse during the STT→reply gap (no speech filler). *(Original spec demo — "estimated tool latency >6000ms → 'one sec.' → continuation over SSE" — is the deferred Deliverable D.)*
 
 **Layers:**
 - **API:** Orchestrator sums `maxLatencyMs` of expected tool chain; ≤6000ms → sync; >6000ms → early-ack + async continuation. ESLint rule blocks filler-phrase literals across `apps/*/src/`.
@@ -287,7 +289,7 @@ Above the wall, most slices are parallelizable. The exceptions are S4 (depends o
 **Demo:** Standard tier account sends voice turns totalling 10:01min in a week → 11th turn fails with copy "You've used this week's voice time. Text still works." Text turns continue unlimited.
 
 **Layers:**
-- **API:** `voice_usage(user_id, week_start, ms_consumed)`; `POST /v1/voice/token` checks tier cap.
+- **API:** `voice_usage(user_id, week_start, ms_consumed)`; the tier cap is checked at session creation (`POST /v1/voice/sessions`) — there is no `POST /v1/voice/token` (off-Agent, 2026-06-07).
 
 **Cross-epic dependency:** Full FR104 tier logic ships in Epic 8/10. This slice has a placeholder counter for beta.
 

@@ -22,9 +22,16 @@ import { noCrossScopeComponent } from './rules/no-cross-scope-component.js';
 import { noDialogOutsideAllowlist } from './rules/no-dialog-outside-allowlist.js';
 import { logicalPropertiesOnly } from './rules/logical-properties-only.js';
 import { noHeartNoteFrequencyReference } from './rules/no-heart-note-frequency-reference.js';
+import { noAssistantFiller } from './rules/no-assistant-filler.js';
 
 export type { ScopeClass, ScopeRestrictions } from './rules/no-cross-scope-component.js';
-export { noCrossScopeComponent, noDialogOutsideAllowlist, logicalPropertiesOnly, noHeartNoteFrequencyReference };
+export {
+  noCrossScopeComponent,
+  noDialogOutsideAllowlist,
+  logicalPropertiesOnly,
+  noHeartNoteFrequencyReference,
+  noAssistantFiller,
+};
 
 export interface ScopeAllowlistOptions {
   [scope: string]: { forbiddenComponents: string[] };
@@ -48,6 +55,7 @@ const hivekitchenPlugin = {
     'no-dialog-outside-allowlist': noDialogOutsideAllowlist,
     'logical-properties-only': logicalPropertiesOnly,
     'no-heart-note-frequency-reference': noHeartNoteFrequencyReference,
+    'no-assistant-filler': noAssistantFiller,
   },
 };
 
@@ -64,6 +72,7 @@ export function baseConfig(): Linter.Config[] {
       rules: {
         'hivekitchen/logical-properties-only': 'error',
         'hivekitchen/no-heart-note-frequency-reference': 'error',
+        'hivekitchen/no-assistant-filler': 'error',
         '@typescript-eslint/consistent-type-imports': 'error',
         '@typescript-eslint/no-explicit-any': 'error',
         eqeqeq: ['error', 'always'],

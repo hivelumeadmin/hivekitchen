@@ -7,6 +7,7 @@ import {
   LumiTurnResponseSchema,
   VoiceTalkSessionCreateSchema,
   VoiceTalkSessionResponseSchema,
+  LumiVoiceClientMessageSchema,
   LumiNudgeEventSchema,
   NudgeTriggerSchema,
 } from './lumi.js';
@@ -247,6 +248,36 @@ describe('LumiTurnRequestSchema', () => {
   it('rejects missing context_signal', () => {
     expect(LumiTurnRequestSchema.safeParse({ message: 'hi' }).success).toBe(false);
   });
+
+  // Story 5-S5 — optional modality discriminator.
+  it('accepts modality: "voice"', () => {
+    expect(
+      LumiTurnRequestSchema.safeParse({
+        message: 'hi',
+        context_signal: { surface: 'general' },
+        modality: 'voice',
+      }).success,
+    ).toBe(true);
+  });
+
+  it('accepts a request without modality (backward-compat default to text)', () => {
+    const result = LumiTurnRequestSchema.safeParse({
+      message: 'hi',
+      context_signal: { surface: 'general' },
+    });
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data.modality).toBeUndefined();
+  });
+
+  it('rejects an unknown modality value', () => {
+    expect(
+      LumiTurnRequestSchema.safeParse({
+        message: 'hi',
+        context_signal: { surface: 'general' },
+        modality: 'invalid',
+      }).success,
+    ).toBe(false);
+  });
 });
 
 describe('LumiThreadTurnsResponseSchema', () => {
@@ -345,81 +376,54 @@ describe('VoiceTalkSessionCreateSchema', () => {
   });
 });
 
+// Story 5-S5b — response reshaped to { talk_session_id } only. The browser
+// opens HiveKitchen's own /v1/lumi/voice/ws with its JWT + this id; no
+// ElevenLabs token crosses the wire any more.
 describe('VoiceTalkSessionResponseSchema', () => {
-  it('accepts a valid response', () => {
-    const result = VoiceTalkSessionResponseSchema.safeParse({
-      talk_session_id: UUID1,
-      stt_token: 'stt-abc',
-      tts_token: 'tts-xyz',
-      voice_id: 'voice-lumi',
-    });
+  it('accepts a response with just talk_session_id', () => {
+    const result = VoiceTalkSessionResponseSchema.safeParse({ talk_session_id: UUID1 });
     expect(result.success).toBe(true);
-  });
-
-  it('rejects empty stt_token', () => {
-    expect(
-      VoiceTalkSessionResponseSchema.safeParse({
-        talk_session_id: UUID1,
-        stt_token: '',
-        tts_token: 'tts-xyz',
-        voice_id: 'voice-lumi',
-      }).success,
-    ).toBe(false);
-  });
-
-  it('rejects whitespace-only stt_token', () => {
-    expect(
-      VoiceTalkSessionResponseSchema.safeParse({
-        talk_session_id: UUID1,
-        stt_token: '   ',
-        tts_token: 'tts-xyz',
-        voice_id: 'voice-lumi',
-      }).success,
-    ).toBe(false);
-  });
-
-  it('rejects token containing internal whitespace', () => {
-    expect(
-      VoiceTalkSessionResponseSchema.safeParse({
-        talk_session_id: UUID1,
-        stt_token: 'stt token',
-        tts_token: 'tts-xyz',
-        voice_id: 'voice-lumi',
-      }).success,
-    ).toBe(false);
-  });
-
-  it('rejects token longer than 2048 chars', () => {
-    expect(
-      VoiceTalkSessionResponseSchema.safeParse({
-        talk_session_id: UUID1,
-        stt_token: 'x'.repeat(2049),
-        tts_token: 'tts-xyz',
-        voice_id: 'voice-lumi',
-      }).success,
-    ).toBe(false);
-  });
-
-  it('accepts token exactly at cap of 2048 chars', () => {
-    expect(
-      VoiceTalkSessionResponseSchema.safeParse({
-        talk_session_id: UUID1,
-        stt_token: 'x'.repeat(2048),
-        tts_token: 'tts-xyz',
-        voice_id: 'voice-lumi',
-      }).success,
-    ).toBe(true);
   });
 
   it('rejects non-uuid talk_session_id', () => {
     expect(
-      VoiceTalkSessionResponseSchema.safeParse({
-        talk_session_id: 'not-a-uuid',
-        stt_token: 'stt-abc',
-        tts_token: 'tts-xyz',
-        voice_id: 'voice-lumi',
+      VoiceTalkSessionResponseSchema.safeParse({ talk_session_id: 'not-a-uuid' }).success,
+    ).toBe(false);
+  });
+
+  it('rejects a missing talk_session_id', () => {
+    expect(VoiceTalkSessionResponseSchema.safeParse({}).success).toBe(false);
+  });
+});
+
+describe('LumiVoiceClientMessageSchema', () => {
+  it('accepts a context frame carrying a LumiContextSignal', () => {
+    const result = LumiVoiceClientMessageSchema.safeParse({
+      type: 'context',
+      context_signal: { surface: 'planning' },
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('accepts a ping frame', () => {
+    expect(LumiVoiceClientMessageSchema.safeParse({ type: 'ping' }).success).toBe(true);
+  });
+
+  it('rejects a context frame with an invalid surface', () => {
+    expect(
+      LumiVoiceClientMessageSchema.safeParse({
+        type: 'context',
+        context_signal: { surface: 'dashboard' },
       }).success,
     ).toBe(false);
+  });
+
+  it('rejects a context frame missing context_signal', () => {
+    expect(LumiVoiceClientMessageSchema.safeParse({ type: 'context' }).success).toBe(false);
+  });
+
+  it('rejects an unknown frame type', () => {
+    expect(LumiVoiceClientMessageSchema.safeParse({ type: 'user_audio' }).success).toBe(false);
   });
 });
 

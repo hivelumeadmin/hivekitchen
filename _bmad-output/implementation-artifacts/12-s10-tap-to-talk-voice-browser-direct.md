@@ -2,6 +2,18 @@
 
 Status: review
 
+> ⚠️ **PARTIALLY SUPERSEDED 2026-06-07 — off the ElevenLabs Agent.** This story's
+> STT path mints ElevenLabs Conversational AI ("ConvAI") **Agent** signed URLs
+> (`lumi.service.ts → issueElevenLabsCredentials()` → `get_signed_url?agent_id=`)
+> and its Dev Notes carry a USER-SIDE GATE requiring a dashboard-configured ConvAI
+> agent. That model is deprecated. The ambient Lumi voice path must use raw
+> ElevenLabs Scribe STT (REST) + TTS, matching the onboarding reference (story
+> 2.6b). **MIGRATION COMPLETED by slice 5-S5b (2026-06-07):** `issueElevenLabsCredentials`
+> is deleted, ambient voice now runs raw Scribe STT + TTS over HiveKitchen's own
+> `GET /v1/lumi/voice/ws`, and the dashboard-ConvAI-agent USER-SIDE GATE is gone
+> (no `get_signed_url` / `agent_id` / `ELEVENLABS_AGENT_ID` remains). The
+> tap-to-talk UX/contracts in this story stand; only the STT/TTS transport changed.
+
 ## Story
 
 As a Premium-tier parent using HiveKitchen,

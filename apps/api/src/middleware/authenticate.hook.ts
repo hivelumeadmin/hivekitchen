@@ -3,12 +3,13 @@ import type { FastifyPluginAsync } from 'fastify';
 import { UnauthorizedError } from '../common/errors.js';
 
 const SKIP_PREFIXES = ['/v1/internal/', '/v1/webhooks/', '/v1/auth/'];
-// /v1/voice/ws cannot send an Authorization header (browsers do not allow
-// custom headers on WebSocket upgrades) — JWT is validated inside the WS
-// handler from the ?token= query param instead.
+// /v1/voice/ws (onboarding) and /v1/lumi/voice/ws (ambient Lumi, Story 5-S5b)
+// cannot send an Authorization header (browsers do not allow custom headers on
+// WebSocket upgrades) — JWT is validated inside the WS handler from the ?token=
+// query param instead.
 // /v1/events is the SSE channel; native EventSource also cannot send
 // custom headers — JWT is validated inside the route from the ?token= param.
-const SKIP_EXACT = new Set(['/v1/voice/ws', '/v1/events']);
+const SKIP_EXACT = new Set(['/v1/voice/ws', '/v1/lumi/voice/ws', '/v1/events']);
 // Slice 4-S3 — GET /v1/lunch-link/:token is the child-facing public endpoint.
 // Only GET is skipped here; POST /v1/lunch-link/generate stays auth-gated.
 const LUNCH_LINK_PUBLIC_RE = /^\/v1\/lunch-link\/[^/]+$/;

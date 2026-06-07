@@ -37,7 +37,6 @@ const voiceRoutesPlugin: FastifyPluginAsync = async (fastify) => {
     culturalPriorService,
     elevenLabsApiKey: fastify.env.ELEVENLABS_API_KEY,
     voiceId: fastify.env.ELEVENLABS_VOICE_ID,
-    agentId: fastify.env.ELEVENLABS_AGENT_ID,
     ttsModelId: fastify.env.ELEVENLABS_TTS_MODEL_ID,
     logger: fastify.log,
     memoryService: fastify.memoryService,

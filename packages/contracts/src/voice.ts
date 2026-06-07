@@ -46,6 +46,15 @@ export const WsTranscriptSchema = z.object({
   text: z.string().min(1),
 });
 
+// Slice 5-S6 — non-verbal "thinking" signal. The server emits this in the
+// STT→reply gap (after `transcript`, before reply generation) so the client can
+// show a calm orb pulse while Lumi works. Carries no spoken text — the doctrine
+// is that Lumi waits like a person thinking, not a chatbot performing (AR-14).
+export const WsLumiThinkingSchema = z.object({
+  type: z.literal('lumi.thinking'),
+  seq: z.number().int().min(1),
+});
+
 export const WsResponseStartSchema = z.object({
   type: z.literal('response.start'),
   seq: z.number().int().min(1),
@@ -54,7 +63,7 @@ export const WsResponseStartSchema = z.object({
 export const WsResponseEndSchema = z.object({
   type: z.literal('response.end'),
   seq: z.number().int().min(1),
-  text: z.string().min(1),
+  text: z.string(),
 });
 
 export const WsSessionSummarySchema = z.object({
@@ -67,11 +76,25 @@ export const WsSessionSummarySchema = z.object({
   cultural_priors_detected: z.boolean(),
 });
 
+// Slice 5-S6 (Deliverable D — DEFERRED). The early-ack continuation transport
+// is NOT built yet (no real-time tool-calling conversational orchestrator
+// exists to trigger the >6000ms branch — see story 5-S6 WALL). This frame
+// shape lands now so the future wiring (Epic 12 phase 2+) is purely additive:
+// the server would emit `text` (EARLY_ACK_COPY, spoken first), then deliver the
+// real answer later. NO server currently emits this.
+export const WsResponseEarlyAckSchema = z.object({
+  type: z.literal('response.early_ack'),
+  seq: z.number().int().min(1),
+  text: z.string(), // EARLY_ACK_COPY — spoken first
+  expected_within_ms: z.number().int().positive(),
+});
+
 export const WsErrorCodeSchema = z.enum([
   'stt_failed',
   'agent_failed',
   'tts_failed',
   'summary_failed',
+  'audio_too_large',
 ]);
 
 export const WsErrorSchema = z.object({
@@ -83,8 +106,10 @@ export const WsErrorSchema = z.object({
 export const WsServerMessageSchema = z.discriminatedUnion('type', [
   WsSessionReadySchema,
   WsTranscriptSchema,
+  WsLumiThinkingSchema,
   WsResponseStartSchema,
   WsResponseEndSchema,
+  WsResponseEarlyAckSchema,
   WsSessionSummarySchema,
   WsErrorSchema,
 ]);
@@ -98,7 +123,9 @@ export type WsClientMessage = z.infer<typeof WsClientMessageSchema>;
 export type WsServerMessage = z.infer<typeof WsServerMessageSchema>;
 export type WsSessionReady = z.infer<typeof WsSessionReadySchema>;
 export type WsTranscript = z.infer<typeof WsTranscriptSchema>;
+export type WsLumiThinking = z.infer<typeof WsLumiThinkingSchema>;
 export type WsResponseStart = z.infer<typeof WsResponseStartSchema>;
 export type WsResponseEnd = z.infer<typeof WsResponseEndSchema>;
+export type WsResponseEarlyAck = z.infer<typeof WsResponseEarlyAckSchema>;
 export type WsSessionSummary = z.infer<typeof WsSessionSummarySchema>;
 export type WsError = z.infer<typeof WsErrorSchema>;

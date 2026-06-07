@@ -34,7 +34,7 @@ The architecture is governed by four principles that must be preserved as the sy
 
 **Supabase** serves two purposes: it is the primary relational database (PostgreSQL) and it is the authentication provider. These two concerns are handled by separate modules inside the backend even though they share the same underlying Supabase project. The repository module holds all database interaction. The auth module holds all identity and session logic. They share a Supabase client plugin but nothing else.
 
-**ElevenLabs** is integrated for text-to-speech output, supporting the multimodal seamless switching UX principle. It is encapsulated as a plugin and accessed exclusively through a service interface. Routes and agents never call the ElevenLabs SDK directly.
+**ElevenLabs** is integrated for both speech-to-text (Scribe `scribe_v1`, REST) and text-to-speech (`/v1/text-to-speech/...`), supporting the multimodal seamless switching UX principle. It is two stateless audio services only — there is **no ElevenLabs Conversational AI Agent** and no inbound ElevenLabs webhook (updated 2026-06-07; canonical model in `docs/Technical Architecture.md → ElevenLabs Integration` and story 2.6b). Access is mediated through the Voice service; routes and agents never call the audio APIs directly.
 
 **Pino** is the structured logger. Every log entry is a JSON object. No `console.log` appears anywhere in production code. Log levels (`trace`, `debug`, `info`, `warn`, `error`, `fatal`) are used consistently and semantically. Pino's child logger pattern is used to attach request-scoped context (request ID, user ID, session ID, agent run ID) to all log entries produced during a single request lifecycle.
 

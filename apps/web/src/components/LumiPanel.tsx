@@ -4,6 +4,7 @@ import type { LumiSurface, Turn } from '@hivekitchen/types';
 import { hkFetch } from '@/lib/fetch.js';
 import { useLumiStore } from '@/stores/lumi.store.js';
 import { useVoiceSessionContext } from '@/contexts/VoiceSessionContext.js';
+import { CaptionRibbon } from './CaptionRibbon.js';
 
 const MAX_VISIBLE_TURNS = 8;
 
@@ -14,6 +15,8 @@ export function LumiPanel() {
   const isHydrating = useLumiStore((s) => s.isHydrating);
   const voiceError = useLumiStore((s) => s.voiceError);
   const voiceStatus = useLumiStore((s) => s.voiceStatus);
+  const captionTranscript = useLumiStore((s) => s.captionTranscript);
+  const captionLumiReply = useLumiStore((s) => s.captionLumiReply);
   const surface = useLumiStore((s) => s.surface);
   const contextSignal = useLumiStore((s) => s.contextSignal);
   const proactiveNudges = useLumiStore((s) => s.proactiveNudges);
@@ -198,6 +201,11 @@ export function LumiPanel() {
         <p className="px-4 pb-1 font-sans text-xs text-fg-muted italic">
           Listening…
         </p>
+      )}
+      {voiceStatus === 'active' && (
+        <div className="px-4 pb-2">
+          <CaptionRibbon userTranscript={captionTranscript} lumiCaption={captionLumiReply} />
+        </div>
       )}
 
       <div className="px-4 pb-3 max-h-72 overflow-y-auto flex flex-col gap-2">

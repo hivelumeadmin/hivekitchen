@@ -151,7 +151,7 @@ Same shape as VT-2-T3 but Apple. Verify `auth_providers` contains `'apple'`.
 **Demo path:**
 1. Complete VT-2-T1 through step 7
 2. Tap "Start with voice"
-3. Voice session initializes: `POST /v1/voice/token` → ElevenLabs WebSocket opens
+3. Voice session initializes: `POST /v1/voice/sessions` → browser opens HiveKitchen's WS `GET /v1/voice/ws` (no `POST /v1/voice/token`, no ElevenLabs Agent — corrected 2026-06-07)
 4. Lumi speaks the first signal question ("Who's in your family?")
 5. User speaks response → STT transcript appears in UI
 6. Repeat for second + third signal questions

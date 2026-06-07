@@ -90,7 +90,7 @@
 
 **Layers:**
 - **UI:** `OnboardingVoice` component currently exists as a scaffold (Story 2-6). This slice wires it to the real STT/TTS pipeline. Renders a conversation thread inline. Includes mic-button state (idle / listening / processing / Lumi-speaking).
-- **API:** Voice session lifecycle (`POST/DELETE /v1/voice/sessions`) already shipped in Story 2-6b. ElevenLabs HMAC webhook handler exists. Orchestrator integration verified working.
+- **API:** Voice session lifecycle (`POST/DELETE /v1/voice/sessions`) already shipped in Story 2-6b. The browser opens HiveKitchen's own voice WebSocket; the API calls ElevenLabs Scribe STT (REST) + TTS directly. **There is NO ElevenLabs HMAC webhook** — story 2.6b removed `POST /v1/webhooks/elevenlabs` (corrected 2026-06-07). Orchestrator integration verified working.
 - **Agent:** `OnboardingAgent.respond({turns, householdSnapshot})` invoked per turn. At this slice the agent just responds; the data-extraction tool calls are `2-s22`'s scope.
 - **DB:** `voice_transcripts` rows written per turn (Story 5-16's retention spec applies).
 
@@ -248,7 +248,7 @@ to make the ratchet meaningful.
 | Slice | Depends on | Status |
 |---|---|---|
 | 2-s20 | ElevenLabs API + voice_id env config in `.env.local` | ⚠️ blocked on env wiring; surfaces the dev-env gap |
-| 2-s21 | Story 2-6b voice WS backend + ElevenLabs HMAC webhook | ✅ shipped — needs verification |
+| 2-s21 | Story 2-6b voice WS backend (HiveKitchen-owned WS + ElevenLabs Scribe STT/TTS; no ElevenLabs webhook) | ✅ shipped — needs verification |
 | 2-s22 | Story 2-13 memory primitives + Story 2-11 cultural inference | ✅ shipped — needs tool registration |
 | 2-s23 | Story 2-8 COPPA-soft-VPC + Story 2-9 parental notice + 2-s19 is_onboarded routing | ✅ all shipped |
 | 2-s24 | Story 2-7 text path scaffold + 2-s22 agent tools | ⚠️ depends on 2-s22 |

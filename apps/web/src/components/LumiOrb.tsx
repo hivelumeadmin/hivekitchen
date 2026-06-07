@@ -5,6 +5,7 @@ export function LumiOrb() {
   const isPanelOpen = useLumiStore((s) => s.isPanelOpen);
   const voiceStatus = useLumiStore((s) => s.voiceStatus);
   const pendingNudge = useLumiStore((s) => s.pendingNudge);
+  const lumiThinking = useLumiStore((s) => s.lumiThinking);
   const { endSession } = useVoiceSessionContext();
 
   const isVoiceActive = voiceStatus === 'active';
@@ -53,6 +54,16 @@ export function LumiOrb() {
         <span
           aria-hidden="true"
           className="absolute inset-0 rounded-full bg-lumi-terracotta-400 opacity-75 animate-ping motion-reduce:animate-none"
+        />
+      )}
+      {/* Slice 5-S6 — non-verbal "thinking" pulse during the STT→reply gap. A
+          calmer, slower animate-pulse (distinct from the voice-active ping);
+          static under reduced-motion. Decorative → aria-hidden. */}
+      {lumiThinking && (
+        <span
+          data-testid="lumi-thinking-pulse"
+          aria-hidden="true"
+          className="absolute -inset-1 rounded-full bg-foliage/40 animate-pulse motion-reduce:animate-none"
         />
       )}
     </button>

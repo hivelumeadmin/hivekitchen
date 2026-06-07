@@ -24,8 +24,11 @@ export default function AppScopeLayout() {
   // changes and both LumiOrb and LumiPanel can access startSession/endSession
   // via VoiceSessionContext without prop-drilling.
   const { startSession, endSession } = useLumiVoiceSession({
-    onTranscript: () => { /* turns appended inside hook via store */ },
-    onLumiReply: () => { /* turns appended inside hook via store */ },
+    // Turns are appended to the thread inside the hook via the store; here we
+    // mirror the latest user/Lumi text into the caption state so <CaptionRibbon>
+    // can show synchronized captions while Lumi speaks (Story 5-S5).
+    onTranscript: (text) => { useLumiStore.getState().setCaptionTranscript(text); },
+    onLumiReply: (text) => { useLumiStore.getState().setCaptionLumiReply(text); },
     onError: (msg) => { useLumiStore.getState().setVoiceError(msg); },
   });
 

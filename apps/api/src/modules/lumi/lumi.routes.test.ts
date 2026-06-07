@@ -411,24 +411,6 @@ function signToken(
   return app.jwt.sign({ sub: userId, hh: householdId, role });
 }
 
-// Helper: install a fetch mock on globalThis. Returns the `fetch` spy.
-function mockFetch(impl: (url: string) => Promise<Response>): ReturnType<typeof vi.fn> {
-  const spy = vi.fn().mockImplementation((input: string | URL) => impl(String(input)));
-  globalThis.fetch = spy as unknown as typeof globalThis.fetch;
-  return spy;
-}
-
-function ok(json: unknown): Response {
-  return new Response(JSON.stringify(json), {
-    status: 200,
-    headers: { 'Content-Type': 'application/json' },
-  });
-}
-
-function fail(status: number): Response {
-  return new Response('boom', { status });
-}
-
 const VALID_CONTEXT_SIGNAL_PLANNING = {
   surface: 'planning' as const,
 };
@@ -842,18 +824,18 @@ describe('POST /v1/lumi/voice/sessions', () => {
     globalThis.fetch = realFetch;
   });
 
-  it('happy path — Premium parent: creates session, returns token pair, sets Redis sentinel', async () => {
-    const fetchSpy = mockFetch(async () =>
-      ok({ signed_url: `https://api.elevenlabs.io/wss/${randomUUID()}` }),
-    );
-    const insertedThreadCapture: Record<string, unknown>[] = [];
+  // Story 5-S5b — no ElevenLabs credential pre-mint any more. The response is
+  // just { talk_session_id }; the browser opens HiveKitchen's own
+  // /v1/lumi/voice/ws with its JWT + this id.
+  it('happy path — Premium parent: creates session (no token mint), sets Redis sentinel', async () => {
+    const fetchSpy = vi.fn();
+    globalThis.fetch = fetchSpy as unknown as typeof globalThis.fetch;
     const insertedSessionCapture: Record<string, unknown>[] = [];
 
     app = await buildTestApp({
       supabase: buildMockSupabase({
         householdTier: 'premium',
         activeAmbientThread: null,
-        capturedAmbientThreadInsert: (row) => insertedThreadCapture.push(row),
         capturedTalkSessionInsert: (row) => insertedSessionCapture.push(row),
       }),
     });
@@ -867,18 +849,10 @@ describe('POST /v1/lumi/voice/sessions', () => {
     });
 
     expect(res.statusCode).toBe(201);
-    const body = JSON.parse(res.body) as {
-      talk_session_id: string;
-      stt_token: string;
-      tts_token: string;
-      voice_id: string;
-    };
-    expect(body.talk_session_id).toBe(SAMPLE_TALK_SESSION_ID);
-    expect(body.voice_id).toBe(VOICE_ID);
-    expect(body.stt_token.length).toBeGreaterThan(0);
-    expect(body.tts_token.length).toBeGreaterThan(0);
-    // Two ElevenLabs calls (STT + TTS) per AC #1
-    expect(fetchSpy).toHaveBeenCalledTimes(2);
+    const body = JSON.parse(res.body) as Record<string, unknown>;
+    expect(body).toEqual({ talk_session_id: SAMPLE_TALK_SESSION_ID });
+    // No ElevenLabs credential call happens at session creation any more.
+    expect(fetchSpy).not.toHaveBeenCalled();
     expect(insertedSessionCapture).toHaveLength(1);
     expect(insertedSessionCapture[0]).toMatchObject({
       user_id: SAMPLE_USER_ID,
@@ -894,7 +868,6 @@ describe('POST /v1/lumi/voice/sessions', () => {
   });
 
   it('lazy thread creation — no existing thread → new ambient thread inserted with type=surface', async () => {
-    mockFetch(async () => ok({ signed_url: 'wss://x' }));
     const insertedThreadCapture: Record<string, unknown>[] = [];
 
     app = await buildTestApp({
@@ -921,7 +894,6 @@ describe('POST /v1/lumi/voice/sessions', () => {
   });
 
   it('existing thread reuse — no new thread inserted when one is already active', async () => {
-    mockFetch(async () => ok({ signed_url: 'wss://x' }));
     const insertedThreadCapture: Record<string, unknown>[] = [];
     const insertedSessionCapture: Record<string, unknown>[] = [];
 
@@ -1005,62 +977,6 @@ describe('POST /v1/lumi/voice/sessions', () => {
     expect(res.statusCode).toBe(403);
     const body = JSON.parse(res.body) as { type: string };
     expect(body.type).toBe('/errors/forbidden');
-  });
-
-  it('ElevenLabs STT credential issuance fails → 502, no session row written', async () => {
-    let call = 0;
-    mockFetch(async () => {
-      call += 1;
-      return call === 1 ? fail(500) : ok({ signed_url: 'wss://tts' });
-    });
-    const sessionInserts: Record<string, unknown>[] = [];
-
-    app = await buildTestApp({
-      supabase: buildMockSupabase({
-        householdTier: 'premium',
-        activeAmbientThread: null,
-        capturedTalkSessionInsert: (row) => sessionInserts.push(row),
-      }),
-    });
-    const token = signToken(app);
-
-    const res = await app.inject({
-      method: 'POST',
-      url: '/v1/lumi/voice/sessions',
-      headers: { authorization: `Bearer ${token}` },
-      payload: { context_signal: VALID_CONTEXT_SIGNAL_PLANNING },
-    });
-
-    expect(res.statusCode).toBe(502);
-    expect(sessionInserts).toHaveLength(0);
-  });
-
-  it('ElevenLabs TTS credential issuance fails after STT succeeds → 502, no session row', async () => {
-    let call = 0;
-    mockFetch(async () => {
-      call += 1;
-      return call === 1 ? ok({ signed_url: 'wss://stt' }) : fail(503);
-    });
-    const sessionInserts: Record<string, unknown>[] = [];
-
-    app = await buildTestApp({
-      supabase: buildMockSupabase({
-        householdTier: 'premium',
-        activeAmbientThread: null,
-        capturedTalkSessionInsert: (row) => sessionInserts.push(row),
-      }),
-    });
-    const token = signToken(app);
-
-    const res = await app.inject({
-      method: 'POST',
-      url: '/v1/lumi/voice/sessions',
-      headers: { authorization: `Bearer ${token}` },
-      payload: { context_signal: VALID_CONTEXT_SIGNAL_PLANNING },
-    });
-
-    expect(res.statusCode).toBe(502);
-    expect(sessionInserts).toHaveLength(0);
   });
 
   it('unauthenticated POST → 401', async () => {

@@ -1,11 +1,16 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
 import { useLumiStore } from '@/stores/lumi.store.js';
+import { useAuthStore } from '@/stores/auth.store.js';
 import { useLumiVoiceSession } from './useLumiVoiceSession.js';
 
 // ── WebSocket mock ────────────────────────────────────────────────────────
+// Story 5-S5b — ambient Lumi voice now runs over a SINGLE HiveKitchen WebSocket
+// (GET /v1/lumi/voice/ws). No ElevenLabs browser-direct socket, no hosted agent.
 
 interface MockWs {
+  url: string;
+  binaryType: string;
   send: ReturnType<typeof vi.fn>;
   close: ReturnType<typeof vi.fn>;
   readyState: number;
@@ -15,8 +20,10 @@ interface MockWs {
   _emit: (type: string, ...args: unknown[]) => void;
 }
 
-function createMockWs(): MockWs {
+function createMockWs(url: string): MockWs {
   const ws: MockWs = {
+    url,
+    binaryType: 'blob',
     send: vi.fn(),
     close: vi.fn(),
     readyState: 0, // CONNECTING
@@ -33,22 +40,28 @@ function createMockWs(): MockWs {
   return ws;
 }
 
-// Track created WebSocket instances in order (0 = TTS, 1 = STT)
 let wsInstances: MockWs[] = [];
 
 // ── VAD mock ──────────────────────────────────────────────────────────────
+// Capture the config so tests can drive onSpeechEnd directly.
 
-const mockVad = {
-  start: vi.fn(),
-  pause: vi.fn(),
-  destroy: vi.fn(),
-  userSpeaking: false,
-  loading: false,
-  errored: false,
-};
+const vadState = vi.hoisted(() => ({
+  config: null as null | { onSpeechEnd?: (audio: Float32Array) => void },
+  vad: {
+    start: vi.fn(),
+    pause: vi.fn(),
+    destroy: vi.fn(),
+    userSpeaking: false,
+    loading: false,
+    errored: false,
+  },
+}));
 
 vi.mock('@ricky0123/vad-react', () => ({
-  useMicVAD: vi.fn(() => mockVad),
+  useMicVAD: vi.fn((config: { onSpeechEnd?: (audio: Float32Array) => void }) => {
+    vadState.config = config;
+    return vadState.vad;
+  }),
 }));
 
 // ── Helpers ───────────────────────────────────────────────────────────────
@@ -61,46 +74,14 @@ async function flush(n = 3) {
 // ── Fixtures ──────────────────────────────────────────────────────────────
 
 const SESSION_ID = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
-const THREAD_ID  = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
-const USER_TURN_ID  = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
-const LUMI_TURN_ID  = 'dddddddd-dddd-4ddd-8ddd-dddddddddddd';
 
 function makeSessionResponse() {
-  return {
-    talk_session_id: SESSION_ID,
-    stt_token: 'wss://stt.example.com/token',
-    tts_token: 'tts-tok',
-    voice_id: 'voice-abc',
-  };
-}
-
-function makeTurnResponse(userText = 'hello', lumiText = 'Got it.') {
-  return {
-    thread_id: THREAD_ID,
-    user_turn: {
-      id: USER_TURN_ID,
-      thread_id: THREAD_ID,
-      server_seq: 1,
-      created_at: '2026-06-05T00:00:00.000Z',
-      role: 'user',
-      body: { type: 'message', content: userText },
-    },
-    lumi_turn: {
-      id: LUMI_TURN_ID,
-      thread_id: THREAD_ID,
-      server_seq: 2,
-      created_at: '2026-06-05T00:00:01.000Z',
-      role: 'lumi',
-      body: { type: 'message', content: lumiText },
-    },
-  };
+  return { talk_session_id: SESSION_ID };
 }
 
 /**
- * Fake Response whose `.json()` returns an IMMEDIATELY resolved Promise.
- * Using the real `new Response(JSON.stringify(...))` causes jsdom's ReadableStream
- * consumption to take an indeterminate number of microtask ticks, which makes
- * microtask-counting flushes unreliable. This shim keeps test timing deterministic.
+ * Fake Response whose `.json()` returns an IMMEDIATELY resolved Promise so the
+ * microtask-counting flushes stay deterministic (see original 5-S5 harness).
  */
 function fakeJsonResponse(body: unknown, status = 200): Response {
   return {
@@ -111,7 +92,6 @@ function fakeJsonResponse(body: unknown, status = 200): Response {
 }
 
 function fake204Response(): Response {
-  // hkFetch short-circuits on 204 before calling .json(), so no json method needed.
   return { ok: true, status: 204 } as unknown as Response;
 }
 
@@ -123,14 +103,16 @@ const originalWebSocket = globalThis.WebSocket;
 describe('useLumiVoiceSession', () => {
   beforeEach(() => {
     useLumiStore.getState().reset();
-    mockVad.start.mockClear();
-    mockVad.pause.mockClear();
+    useAuthStore.setState({ accessToken: 'test-jwt' });
+    vadState.vad.start.mockClear();
+    vadState.vad.pause.mockClear();
+    vadState.config = null;
     wsInstances = [];
 
-    // Use `function` keyword so the mock works as a `new`-able constructor.
+    // `function` keyword so the mock works as a `new`-able constructor.
     // eslint-disable-next-line prefer-arrow-callback
-    globalThis.WebSocket = vi.fn().mockImplementation(function mockWebSocket() {
-      const ws = createMockWs();
+    globalThis.WebSocket = vi.fn().mockImplementation(function mockWebSocket(url: string) {
+      const ws = createMockWs(url);
       wsInstances.push(ws);
       return ws;
     }) as unknown as typeof WebSocket;
@@ -139,22 +121,12 @@ describe('useLumiVoiceSession', () => {
     // @ts-expect-error test-only constant
     globalThis.WebSocket.CONNECTING = 0;
 
-    // AudioContext is not available in jsdom — mock the minimal surface used
-    // by openTtsWs's 'open' handler and endSession's cleanup.
-    const audioCtxMock = {
-      resume: vi.fn().mockResolvedValue(undefined),
-      createBuffer: vi.fn().mockReturnValue({ copyToChannel: vi.fn(), duration: 0.1 }),
-      createBufferSource: vi.fn().mockReturnValue({
-        buffer: null, connect: vi.fn(), start: vi.fn(),
-      }),
-      currentTime: 0,
-      destination: {},
-      close: vi.fn().mockResolvedValue(undefined),
-    };
-    // eslint-disable-next-line prefer-arrow-callback
-    globalThis.AudioContext = vi.fn().mockImplementation(function mockAudioContext() {
-      return audioCtxMock;
-    }) as unknown as typeof AudioContext;
+    // MP3-Blob playback uses URL.createObjectURL + HTMLMediaElement.play, neither
+    // implemented in jsdom — stub the minimal surface.
+    globalThis.URL.createObjectURL = vi.fn(() => 'blob:mock');
+    globalThis.URL.revokeObjectURL = vi.fn();
+    vi.spyOn(window.HTMLMediaElement.prototype, 'play').mockResolvedValue(undefined);
+    vi.spyOn(window.HTMLMediaElement.prototype, 'pause').mockImplementation(() => {});
   });
 
   afterEach(() => {
@@ -166,38 +138,24 @@ describe('useLumiVoiceSession', () => {
 
   // ── Shared setup helpers ────────────────────────────────────────────────
 
-  /**
-   * Kicks off startSession and flushes enough microtask ticks for hkFetch to
-   * resolve and both WebSocket instances to be created. The hook suspends at
-   * Promise.all waiting for the 'open' events.
-   *
-   * Microtask budget with fakeJsonResponse (immediately-resolved .json()):
-   *   tick 1 → hkFetch's `await fetch(url)` resolves → hits `await res.json()`
-   *   tick 2 → res.json() resolves → startSession resumes, creates both WS,
-   *             hits `await Promise.all([...])`
-   */
   async function startSessionAndFlushToWsCreation(
     result: { current: ReturnType<typeof useLumiVoiceSession> },
     signal: Parameters<typeof result.current.startSession>[0] = { surface: 'planning' },
   ) {
     await act(async () => {
       void result.current.startSession(signal);
-      await flush(3); // 2 ticks needed + 1 spare
+      await flush(3);
     });
   }
 
-  /**
-   * Fires the 'open' event on all created WebSockets and flushes the resulting
-   * Promise.all resolution + post-connect code (setVoiceStatus, vad.start,
-   * resetInactivityTimer).
-   */
-  async function openAllWs() {
+  /** Fires 'open' on the single WS and flushes the resulting state transitions. */
+  async function openWs() {
     await act(async () => {
       for (const ws of wsInstances) {
         ws.readyState = 1; // OPEN
         ws._emit('open');
       }
-      await flush(3); // flush Promise.all resolve + setVoiceStatus + vad.start
+      await flush(3);
     });
   }
 
@@ -224,7 +182,7 @@ describe('useLumiVoiceSession', () => {
     });
   });
 
-  it('startSession with 403 response calls onError with Premium copy; no WS opened, no talkSessionId', async () => {
+  it('startSession with 403 calls onError with Premium copy; no WS opened, no talkSessionId', async () => {
     globalThis.fetch = vi.fn().mockResolvedValue(
       fakeJsonResponse({ type: '/errors/forbidden' }, 403),
     ) as unknown as typeof fetch;
@@ -245,7 +203,7 @@ describe('useLumiVoiceSession', () => {
     expect(useLumiStore.getState().talkSessionId).toBeNull();
   });
 
-  it('startSession on success opens both WS connections and transitions store connecting → active', async () => {
+  it('startSession opens ONE HK WS at /v1/lumi/voice/ws and transitions connecting → active', async () => {
     globalThis.fetch = vi.fn().mockResolvedValue(
       fakeJsonResponse(makeSessionResponse()),
     ) as unknown as typeof fetch;
@@ -256,17 +214,102 @@ describe('useLumiVoiceSession', () => {
 
     await startSessionAndFlushToWsCreation(result);
 
-    expect(wsInstances).toHaveLength(2);
+    expect(wsInstances).toHaveLength(1);
+    expect(wsInstances[0]!.url).toContain('/v1/lumi/voice/ws');
+    expect(wsInstances[0]!.url).toContain(`session_id=${SESSION_ID}`);
+    expect(wsInstances[0]!.url).toContain('token=test-jwt');
     expect(useLumiStore.getState().talkSessionId).toBe(SESSION_ID);
     expect(useLumiStore.getState().voiceStatus).toBe('connecting');
 
-    await openAllWs();
+    await openWs();
 
     expect(useLumiStore.getState().voiceStatus).toBe('active');
-    expect(mockVad.start).toHaveBeenCalledTimes(1);
+    expect(vadState.vad.start).toHaveBeenCalledTimes(1);
   });
 
-  it('endSession closes both WS connections, calls DELETE, and resets store', async () => {
+  it('sends the context frame on open, then ships a WAV ArrayBuffer on speech end', async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue(
+      fakeJsonResponse(makeSessionResponse()),
+    ) as unknown as typeof fetch;
+
+    const { result } = renderHook(() =>
+      useLumiVoiceSession({ onTranscript: vi.fn(), onLumiReply: vi.fn(), onError: vi.fn() }),
+    );
+
+    await startSessionAndFlushToWsCreation(result);
+    await openWs();
+
+    const ws = wsInstances[0]!;
+    // First send is the JSON context frame.
+    const firstSend = ws.send.mock.calls[0]![0] as string;
+    expect(JSON.parse(firstSend)).toEqual({
+      type: 'context',
+      context_signal: { surface: 'planning' },
+    });
+
+    // Drive a VAD utterance — a WAV ArrayBuffer goes up the same socket.
+    await act(async () => {
+      vadState.config?.onSpeechEnd?.(new Float32Array(320));
+    });
+    const lastArg = ws.send.mock.calls.at(-1)![0];
+    expect(lastArg).toBeInstanceOf(ArrayBuffer);
+  });
+
+  it('server transcript → onTranscript and response.end → onLumiReply (no client turn POST)', async () => {
+    const fetchSpy = vi.fn().mockResolvedValue(fakeJsonResponse(makeSessionResponse()));
+    globalThis.fetch = fetchSpy as unknown as typeof fetch;
+
+    const onTranscript = vi.fn();
+    const onLumiReply = vi.fn();
+    const { result } = renderHook(() =>
+      useLumiVoiceSession({ onTranscript, onLumiReply, onError: vi.fn() }),
+    );
+
+    await startSessionAndFlushToWsCreation(result);
+    await openWs();
+    expect(useLumiStore.getState().voiceStatus).toBe('active');
+
+    const ws = wsInstances[0]!;
+    await act(async () => {
+      ws._emit('message', { data: JSON.stringify({ type: 'transcript', seq: 1, text: 'hello' }) });
+      ws._emit('message', { data: JSON.stringify({ type: 'response.end', seq: 1, text: 'Got it.' }) });
+      await flush(3);
+    });
+
+    expect(onTranscript).toHaveBeenCalledWith('hello');
+    expect(onLumiReply).toHaveBeenCalledWith('Got it.');
+    // The turn is server-orchestrated — the client never POSTs /v1/lumi/turns.
+    const turnPosts = fetchSpy.mock.calls.filter((c: unknown[]) =>
+      String(c[0]).includes('/v1/lumi/turns'),
+    );
+    expect(turnPosts).toHaveLength(0);
+  });
+
+  it('a non-fatal error frame surfaces a notice but keeps the session active', async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue(
+      fakeJsonResponse(makeSessionResponse()),
+    ) as unknown as typeof fetch;
+
+    const { result } = renderHook(() =>
+      useLumiVoiceSession({ onTranscript: vi.fn(), onLumiReply: vi.fn(), onError: vi.fn() }),
+    );
+
+    await startSessionAndFlushToWsCreation(result);
+    await openWs();
+
+    const ws = wsInstances[0]!;
+    await act(async () => {
+      ws._emit('message', {
+        data: JSON.stringify({ type: 'error', code: 'stt_failed', message: 'Could not hear that' }),
+      });
+      await flush(2);
+    });
+
+    expect(useLumiStore.getState().voiceStatus).toBe('active');
+    expect(useLumiStore.getState().voiceError).toBe('Could not hear that');
+  });
+
+  it('endSession closes the WS, calls DELETE, and resets the store', async () => {
     useLumiStore.getState().setTalkSession(SESSION_ID);
     useLumiStore.getState().setVoiceStatus('active');
 
@@ -280,55 +323,23 @@ describe('useLumiVoiceSession', () => {
       await result.current.endSession();
     });
 
-    expect(mockVad.pause).toHaveBeenCalledTimes(1);
+    expect(vadState.vad.pause).toHaveBeenCalledTimes(1);
     const fetchSpy = globalThis.fetch as ReturnType<typeof vi.fn>;
     const deleteCalls = fetchSpy.mock.calls.filter((args: unknown[]) =>
       String(args[0]).includes(`/v1/lumi/voice/sessions/${SESSION_ID}`),
     );
     expect(deleteCalls).toHaveLength(1);
-    expect(deleteCalls[0][1].method).toBe('DELETE');
+    expect((deleteCalls[0]![1] as RequestInit).method).toBe('DELETE');
     expect(useLumiStore.getState().voiceStatus).toBe('idle');
     expect(useLumiStore.getState().talkSessionId).toBeNull();
   });
 
-  it('receiving a transcript triggers onTranscript → POST /v1/lumi/turns → onLumiReply', async () => {
-    const fetchSpy = vi.fn()
-      .mockResolvedValueOnce(fakeJsonResponse(makeSessionResponse()))
-      .mockResolvedValueOnce(fakeJsonResponse(makeTurnResponse('hello', 'Got it.')));
-    globalThis.fetch = fetchSpy as unknown as typeof fetch;
-
-    const onTranscript = vi.fn();
-    const onLumiReply = vi.fn();
-
-    const { result } = renderHook(() =>
-      useLumiVoiceSession({ onTranscript, onLumiReply, onError: vi.fn() }),
-    );
-
-    await startSessionAndFlushToWsCreation(result);
-    await openAllWs();
-    expect(useLumiStore.getState().voiceStatus).toBe('active');
-
-    const sttWs = wsInstances[1]!;
-    await act(async () => {
-      sttWs._emit('message', {
-        data: JSON.stringify({ type: 'user_transcript', user_transcript: 'hello' }),
-      } as MessageEvent);
-      // onTranscript fires synchronously inside handleTranscript (before its first await)
-      // onLumiReply fires after hkFetch resolves — 2 more ticks
-      await flush(5);
-    });
-
-    expect(onTranscript).toHaveBeenCalledWith('hello');
-    expect(onLumiReply).toHaveBeenCalledWith('Got it.');
-  });
-
-  it('20s inactivity timer fires endSession when no speech is detected', async () => {
-    // Only fake timer APIs — Promises/microtasks are unaffected so flush() still works.
+  it('20s inactivity fires endSession when no speech is detected', async () => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval'] });
 
     const fetchSpy = vi.fn()
-      .mockResolvedValueOnce(fakeJsonResponse(makeSessionResponse()))  // POST /voice/sessions
-      .mockResolvedValue(fake204Response());                            // DELETE /voice/sessions/:id
+      .mockResolvedValueOnce(fakeJsonResponse(makeSessionResponse()))
+      .mockResolvedValue(fake204Response());
     globalThis.fetch = fetchSpy as unknown as typeof fetch;
 
     const { result } = renderHook(() =>
@@ -336,13 +347,9 @@ describe('useLumiVoiceSession', () => {
     );
 
     await startSessionAndFlushToWsCreation(result);
-    await openAllWs();
+    await openWs();
     expect(useLumiStore.getState().voiceStatus).toBe('active');
 
-    // Advance past 20s: fires the inactivity timeout callback synchronously.
-    // endSession's async chain: AudioContext.close (1 tick) + DELETE fetch
-    // (1 tick for the already-resolved fetch mock + 204 short-circuit) +
-    // endTalkSession (sync). Under fake timers, Promise microtasks still flush.
     await act(async () => {
       vi.advanceTimersByTime(20_001);
       await flush(6);
@@ -352,35 +359,30 @@ describe('useLumiVoiceSession', () => {
     expect(useLumiStore.getState().talkSessionId).toBeNull();
   });
 
-  it('WS connect error triggers cleanup AND preserves error state (voiceStatus error, voiceError set, DELETE called)', async () => {
+  it('WS connect error triggers cleanup AND preserves error state + fires DELETE', async () => {
     const fetchSpy = vi.fn()
-      .mockResolvedValueOnce(fakeJsonResponse(makeSessionResponse()))  // POST /voice/sessions
-      .mockResolvedValue(fake204Response());                            // DELETE (best-effort)
+      .mockResolvedValueOnce(fakeJsonResponse(makeSessionResponse()))
+      .mockResolvedValue(fake204Response());
     globalThis.fetch = fetchSpy as unknown as typeof fetch;
 
     // Wire onError the way the layout does (→ setVoiceError) so we can assert
-    // the AC#8 store outcome the error path must leave behind.
+    // the store outcome the error path must leave behind.
     const onError = vi.fn((msg: string) => useLumiStore.getState().setVoiceError(msg));
     const { result } = renderHook(() =>
       useLumiVoiceSession({ onTranscript: vi.fn(), onLumiReply: vi.fn(), onError }),
     );
 
     await startSessionAndFlushToWsCreation(result);
-    expect(wsInstances).toHaveLength(2);
+    expect(wsInstances).toHaveLength(1);
 
-    // Fire error on TTS WS (index 0) before it opens — this rejects the
-    // openTtsWs promise, which causes endSession cleanup to run.
     await act(async () => {
       wsInstances[0]!._emit('error');
       await flush(6);
     });
 
     expect(onError).toHaveBeenCalledWith('Voice connection lost. Try again.');
-    // AC#8: error state must SURVIVE the endSession teardown, not be clobbered
-    // back to idle/null by endTalkSession.
     expect(useLumiStore.getState().voiceStatus).toBe('error');
     expect(useLumiStore.getState().voiceError).toBe('Voice connection lost. Try again.');
-    // The created talk session must be torn down server-side.
     const deleteCalls = fetchSpy.mock.calls.filter((args: unknown[]) =>
       String(args[0]).includes(`/v1/lumi/voice/sessions/${SESSION_ID}`),
     );

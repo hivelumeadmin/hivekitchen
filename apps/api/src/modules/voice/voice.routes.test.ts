@@ -120,7 +120,6 @@ async function buildTestApp(opts: {
     JWT_SECRET,
     ELEVENLABS_API_KEY: 'test-key',
     ELEVENLABS_VOICE_ID: VOICE_ID,
-    ELEVENLABS_AGENT_ID: 'test-agent-id',
     ELEVENLABS_TTS_MODEL_ID: 'eleven_flash_v2_5',
   };
   app.decorate('env', env as unknown as FastifyInstance['env']);

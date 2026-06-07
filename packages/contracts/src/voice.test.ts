@@ -6,8 +6,10 @@ import {
   WsServerMessageSchema,
   WsSessionReadySchema,
   WsTranscriptSchema,
+  WsLumiThinkingSchema,
   WsResponseStartSchema,
   WsResponseEndSchema,
+  WsResponseEarlyAckSchema,
   WsSessionSummarySchema,
   WsErrorSchema,
   WsErrorCodeSchema,
@@ -112,6 +114,21 @@ describe('WsServerMessageSchema variants', () => {
     ).toBe(true);
   });
 
+  it('accepts a lumi.thinking frame (Slice 5-S6)', () => {
+    expect(WsLumiThinkingSchema.safeParse({ type: 'lumi.thinking', seq: 1 }).success).toBe(true);
+  });
+
+  it('accepts a response.early_ack frame (Slice 5-S6 deferred-D contract)', () => {
+    expect(
+      WsResponseEarlyAckSchema.safeParse({
+        type: 'response.early_ack',
+        seq: 1,
+        text: 'one sec.',
+        expected_within_ms: 9000,
+      }).success,
+    ).toBe(true);
+  });
+
   it('rejects an unknown server message type via discriminated union', () => {
     expect(
       WsServerMessageSchema.safeParse({ type: 'unknown', code: 'x', message: 'y' }).success,
@@ -130,8 +147,23 @@ describe('WsServerMessageSchema — union routing', () => {
     ).toBe(true);
   });
 
+  it('routes lumi.thinking through the union (Slice 5-S6)', () => {
+    expect(WsServerMessageSchema.safeParse({ type: 'lumi.thinking', seq: 1 }).success).toBe(true);
+  });
+
   it('routes response.start through the union', () => {
     expect(WsServerMessageSchema.safeParse({ type: 'response.start', seq: 1 }).success).toBe(true);
+  });
+
+  it('routes response.early_ack through the union (Slice 5-S6 deferred-D contract)', () => {
+    expect(
+      WsServerMessageSchema.safeParse({
+        type: 'response.early_ack',
+        seq: 1,
+        text: 'one sec.',
+        expected_within_ms: 9000,
+      }).success,
+    ).toBe(true);
   });
 
   it('routes response.end through the union', () => {
@@ -163,7 +195,7 @@ describe('WsServerMessageSchema — union routing', () => {
 
 describe('WsErrorCodeSchema', () => {
   it('accepts all known error codes', () => {
-    for (const code of ['stt_failed', 'agent_failed', 'tts_failed', 'summary_failed'] as const) {
+    for (const code of ['stt_failed', 'agent_failed', 'tts_failed', 'summary_failed', 'audio_too_large'] as const) {
       expect(WsErrorCodeSchema.safeParse(code).success).toBe(true);
     }
   });
@@ -214,9 +246,13 @@ describe('text field — empty string validation', () => {
     ).toBe(false);
   });
 
-  it('rejects empty text on WsResponseEndSchema', () => {
+  // Empty text is allowed on WsResponseEndSchema (Story 5-S5b P3): the server
+  // sends text:'' when the LumiAgent returns an empty reply (skips TTS, closes
+  // the turn immediately). WsTranscriptSchema still rejects empty (a user
+  // speech transcript is never empty).
+  it('accepts empty text on WsResponseEndSchema (P3 empty-reply path)', () => {
     expect(
       WsResponseEndSchema.safeParse({ type: 'response.end', seq: 1, text: '' }).success,
-    ).toBe(false);
+    ).toBe(true);
   });
 });

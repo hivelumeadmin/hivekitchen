@@ -5,7 +5,7 @@
 **Audience:** You, walking through manually. I'll diagnose anything that breaks.
 
 **Pre-flight (verified 2026-05-12):**
-- ✅ `apps/api/.env.local` contains `ELEVENLABS_API_KEY`, `ELEVENLABS_VOICE_ID`, `ELEVENLABS_WEBHOOK_SECRET`, `ELEVENLABS_AGENT_ID`, `ELEVENLABS_CUSTOM_LLM_SECRET`, `OPENAI_API_KEY`
+- ✅ `apps/api/.env.local` contains `ELEVENLABS_API_KEY`, `ELEVENLABS_VOICE_ID`, `OPENAI_API_KEY` (updated 2026-06-07: `ELEVENLABS_WEBHOOK_SECRET`, `ELEVENLABS_AGENT_ID`, and `ELEVENLABS_CUSTOM_LLM_SECRET` are no longer used — off the ElevenLabs ConvAI Agent; ElevenLabs is raw Scribe STT + TTS only)
 - ✅ `apps/web/.env.local` contains `VITE_API_BASE_URL`, `VITE_API_WS_URL`, `VITE_SUPABASE_*`
 - ✅ Code paths exist: `OnboardingVoice.tsx`, `useVoiceSession.ts`, `voice.routes.ts` with `POST /v1/voice/sessions` + `GET /v1/voice/ws`, `OnboardingAgent`, `VoiceService` wired
 - ⚠️ Original VT-2-T6 doc said `POST /v1/voice/token` — that's stale. Actual route is `POST /v1/voice/sessions`. (Will update after this walk-through.)
