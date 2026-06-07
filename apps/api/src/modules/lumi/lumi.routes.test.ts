@@ -77,6 +77,7 @@ interface SupabaseMockOpts {
   talkSessionLookup?: TalkSessionRowFixture | null;
 
   // Spies
+  capturedGte?: (val: string) => void;
   capturedAmbientThreadInsert?: (row: Record<string, unknown>) => void;
   capturedTalkSessionInsert?: (row: Record<string, unknown>) => void;
   capturedTalkSessionUpdate?: (row: Record<string, unknown>) => void;
@@ -136,13 +137,32 @@ function buildMockSupabase(opts: SupabaseMockOpts) {
                 }),
               };
             }
-            return {
-              eq: () => ({
-                order: () => ({
-                  limit: vi.fn().mockResolvedValue({ data: turnsDescending, error: null }),
-                }),
-              }),
+            // TURN_COLUMNS read supports two shapes:
+            //   default:  .eq().order().limit()      (awaited at limit, descending)
+            //   from_seq: .eq().gte().order()        (awaited at order, ascending)
+            let fromSeqVal: number | undefined;
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const chain: any = {
+              eq: () => chain,
+              gte: (_col: string, val: string) => {
+                fromSeqVal = Number(val);
+                opts.capturedGte?.(val);
+                return chain;
+              },
+              order: () => chain,
+              limit: vi.fn().mockResolvedValue({ data: turnsDescending, error: null }),
+              then: (resolve: (v: { data: TurnFixture[]; error: null }) => unknown) => {
+                const rows =
+                  fromSeqVal === undefined
+                    ? turnsDescending
+                    : turnsDescending
+                        .filter((t) => t.server_seq >= fromSeqVal!)
+                        .slice()
+                        .sort((a, b) => a.server_seq - b.server_seq);
+                return resolve({ data: rows, error: null });
+              },
             };
+            return chain;
           },
         };
       }
@@ -563,6 +583,89 @@ describe('GET /v1/lumi/threads/:threadId/turns', () => {
     });
 
     expect(res.statusCode).toBe(401);
+  });
+
+  // Slice 5-S4 — from_seq gap-recovery query param.
+  it('from_seq=2 → returns only turns with server_seq ≥ 2, ascending, no cap', async () => {
+    const turnsDescending = [buildTurn(3, 'three'), buildTurn(2, 'two'), buildTurn(1, 'one')];
+    const gteValues: string[] = [];
+    app = await buildTestApp({
+      supabase: buildMockSupabase({
+        threadOwnershipRow: { id: SAMPLE_THREAD_ID, household_id: SAMPLE_HOUSEHOLD_ID },
+        turnsDescending,
+        capturedGte: (val) => gteValues.push(val),
+      }),
+    });
+    const token = signToken(app);
+
+    const res = await app.inject({
+      method: 'GET',
+      url: `/v1/lumi/threads/${SAMPLE_THREAD_ID}/turns?from_seq=2`,
+      headers: { authorization: `Bearer ${token}` },
+    });
+
+    expect(res.statusCode).toBe(200);
+    const body = JSON.parse(res.body) as { turns: TurnFixture[] };
+    expect(body.turns.map((t) => t.server_seq)).toEqual([2, 3]);
+    // bigint passed to supabase-js as a string, not a JS bigint.
+    expect(gteValues).toEqual(['2']);
+  });
+
+  it('from_seq=99 → empty array when no turns have that seq', async () => {
+    const turnsDescending = [buildTurn(2, 'two'), buildTurn(1, 'one')];
+    app = await buildTestApp({
+      supabase: buildMockSupabase({
+        threadOwnershipRow: { id: SAMPLE_THREAD_ID, household_id: SAMPLE_HOUSEHOLD_ID },
+        turnsDescending,
+      }),
+    });
+    const token = signToken(app);
+
+    const res = await app.inject({
+      method: 'GET',
+      url: `/v1/lumi/threads/${SAMPLE_THREAD_ID}/turns?from_seq=99`,
+      headers: { authorization: `Bearer ${token}` },
+    });
+
+    expect(res.statusCode).toBe(200);
+    const body = JSON.parse(res.body) as { turns: TurnFixture[] };
+    expect(body.turns).toEqual([]);
+  });
+
+  it('from_seq=abc → 400 (Zod regex rejects non-numeric)', async () => {
+    app = await buildTestApp({
+      supabase: buildMockSupabase({
+        threadOwnershipRow: { id: SAMPLE_THREAD_ID, household_id: SAMPLE_HOUSEHOLD_ID },
+      }),
+    });
+    const token = signToken(app);
+
+    const res = await app.inject({
+      method: 'GET',
+      url: `/v1/lumi/threads/${SAMPLE_THREAD_ID}/turns?from_seq=abc`,
+      headers: { authorization: `Bearer ${token}` },
+    });
+
+    expect(res.statusCode).toBe(400);
+    const body = JSON.parse(res.body) as { type: string };
+    expect(body.type).toBe('/errors/validation');
+  });
+
+  it('from_seq with cross-household thread → 403 (ownership check still applies)', async () => {
+    app = await buildTestApp({
+      supabase: buildMockSupabase({
+        threadOwnershipRow: { id: SAMPLE_THREAD_ID, household_id: OTHER_HOUSEHOLD_ID },
+      }),
+    });
+    const token = signToken(app, SAMPLE_HOUSEHOLD_ID);
+
+    const res = await app.inject({
+      method: 'GET',
+      url: `/v1/lumi/threads/${SAMPLE_THREAD_ID}/turns?from_seq=1`,
+      headers: { authorization: `Bearer ${token}` },
+    });
+
+    expect(res.statusCode).toBe(403);
   });
 });
 

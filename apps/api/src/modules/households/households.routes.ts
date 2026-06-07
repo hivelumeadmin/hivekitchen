@@ -374,7 +374,7 @@ const householdsRoutesPlugin: FastifyPluginAsync = async (fastify) => {
         if (!thread) {
           thread = await threadRepository.createThread(householdId, 'coordination', 'text');
         }
-        await threadRepository.appendTurnNext({
+        const turn = await threadRepository.appendTurnNext({
           threadId: thread.id,
           role: 'system',
           body: {
@@ -388,6 +388,28 @@ const householdsRoutesPlugin: FastifyPluginAsync = async (fastify) => {
           },
           modality: 'text',
         });
+        // Slice 5-S4 — emit thread.turn so open tabs track server_seq for gap
+        // detection. server_seq is stringified: PostgreSQL bigint comes back as
+        // a string from supabase-js and JSON.stringify drops a native bigint;
+        // SequenceId accepts a numeric string. Fires on both assign and clear
+        // (a cleared assignment is still a coordination event worth tracking).
+        fastify.sseDispatcher.emit(
+          householdId,
+          'message',
+          JSON.stringify({
+            type: 'thread.turn',
+            thread_id: thread.id,
+            turn: {
+              id: turn.id,
+              thread_id: turn.thread_id,
+              server_seq: String(turn.server_seq),
+              created_at: turn.created_at,
+              role: turn.role,
+              body: turn.body,
+              modality: turn.modality,
+            },
+          }),
+        );
       } catch (err) {
         fastify.log.warn({ err }, 'packer: failed to write coordination thread turn');
       }

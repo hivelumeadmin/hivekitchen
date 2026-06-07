@@ -1,7 +1,9 @@
 // apps/web/src/lib/realtime/sse.ts
 import type { QueryClient } from '@tanstack/react-query';
-import { InvalidationEvent } from '@hivekitchen/contracts';
+import { InvalidationEvent, LumiThreadTurnsResponseSchema } from '@hivekitchen/contracts';
+import type { Turn } from '@hivekitchen/types';
 import { useAuthStore } from '@/stores/auth.store.js';
+import { hkFetch } from '@/lib/fetch.js';
 import { QueryKeys } from './query-keys.js';
 import { reportThreadIntegrityAnomaly } from './thread-integrity.js';
 
@@ -88,6 +90,44 @@ export function createSseBridge(queryClient: QueryClient): SseBridge {
     }
   }
 
+  // Slice 5-S4 — gap recovery. When a thread.turn arrives with a forward gap
+  // (server_seq skipped ahead), fetch the missed turns and merge them into the
+  // thread cache. Best-effort: a failed fetch is non-fatal (the user can
+  // reload). hkFetch prepends the API base and attaches the auth token; we
+  // Zod-parse the response before merging since hkFetch returns it untyped.
+  async function fetchAndMergeMissedTurns(threadId: string, fromSeq: bigint): Promise<void> {
+    try {
+      const raw = await hkFetch<unknown>(
+        `/v1/lumi/threads/${threadId}/turns?from_seq=${fromSeq.toString()}`,
+        { method: 'GET' },
+      );
+      const response = LumiThreadTurnsResponseSchema.parse(raw);
+      if (response.turns.length === 0) return;
+      queryClient.setQueryData(QueryKeys.thread(threadId), (old: unknown) => {
+        const existing = (Array.isArray(old) ? old : []) as Turn[];
+        const existingIds = new Set(existing.map((t) => t.id));
+        const fresh = response.turns.filter((t) => !existingIds.has(t.id));
+        // Sort by server_seq ascending (bigint-safe; SequenceId yields number or
+        // bigint, both accepted by BigInt()). Dedup by id keeps the
+        // already-appended current turn from doubling up.
+        return [...existing, ...fresh].sort((a, b) => {
+          const sa = BigInt(a.server_seq);
+          const sb = BigInt(b.server_seq);
+          return sa < sb ? -1 : sa > sb ? 1 : 0;
+        });
+      });
+    } catch {
+      if (import.meta.env.DEV) {
+        console.warn(
+          '[sse] gap recovery fetch failed for thread',
+          threadId,
+          'from_seq',
+          fromSeq.toString(),
+        );
+      }
+    }
+  }
+
   function handleMessage(e: MessageEvent): void {
     // Guard against empty heartbeat data (:ping frames have no data).
     if (!e.data) return;
@@ -142,12 +182,19 @@ export function createSseBridge(queryClient: QueryClient): SseBridge {
 
         if (prevSeq !== undefined && receivedSeq !== prevSeq + 1n) {
           // Sequence anomaly (gap, duplicate, or out-of-order).
-          // Story 5.17 will replace the stub with a real beacon.
+          // Story 5.17/5.18 will replace the stub with a real beacon.
           reportThreadIntegrityAnomaly({
             thread_id: threadId,
             expected_seq: prevSeq + 1n,
             received_seq: receivedSeq,
           });
+          // Slice 5-S4 — only a FORWARD gap has missed turns to recover.
+          // Duplicates / out-of-order events have nothing to fetch. Fire-and-
+          // forget: the merge dedups by id, so the current turn appended below
+          // is not doubled when the fetch also returns it.
+          if (receivedSeq > prevSeq + 1n) {
+            void fetchAndMergeMissedTurns(threadId, prevSeq + 1n);
+          }
         }
         // Only advance the cursor on forward progress; out-of-order/duplicate
         // events must not regress the gap-detection baseline.
@@ -155,13 +202,15 @@ export function createSseBridge(queryClient: QueryClient): SseBridge {
           threadSeqs.set(threadId, receivedSeq);
         }
 
-        queryClient.setQueryData(
-          QueryKeys.thread(threadId),
-          (old: unknown) => {
-            if (!Array.isArray(old)) return [event.turn];
-            return [...old, event.turn];
-          },
-        );
+        if (prevSeq === undefined || receivedSeq > prevSeq) {
+          queryClient.setQueryData(
+            QueryKeys.thread(threadId),
+            (old: unknown) => {
+              if (!Array.isArray(old)) return [event.turn];
+              return [...old, event.turn];
+            },
+          );
+        }
         break;
       }
 

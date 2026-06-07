@@ -19,6 +19,12 @@ const ThreadTurnsParamsSchema = z.object({
   threadId: z.string().uuid(),
 });
 
+// Slice 5-S4 — optional gap-recovery cursor. Numeric-string only; BigInt() on
+// the handler side rejects nothing the regex already passed.
+const ThreadTurnsQuerySchema = z.object({
+  from_seq: z.string().regex(/^\d+$/).optional(),
+});
+
 const TalkSessionParamsSchema = z.object({
   id: z.string().uuid(),
 });
@@ -58,12 +64,15 @@ export const lumiRoutes: FastifyPluginAsync = async (fastify) => {
     {
       schema: {
         params: ThreadTurnsParamsSchema,
+        querystring: ThreadTurnsQuerySchema,
         response: { 200: LumiThreadTurnsResponseSchema },
       },
     },
     async (request) => {
       const { threadId } = request.params as z.infer<typeof ThreadTurnsParamsSchema>;
-      const turns = await repository.getThreadTurns(threadId, request.user.household_id);
+      const { from_seq } = request.query as z.infer<typeof ThreadTurnsQuerySchema>;
+      const fromSeq = from_seq !== undefined ? BigInt(from_seq) : undefined;
+      const turns = await repository.getThreadTurns(threadId, request.user.household_id, fromSeq);
       return { thread_id: threadId, turns };
     },
   );

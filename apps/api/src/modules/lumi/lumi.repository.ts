@@ -28,7 +28,11 @@ const TALK_SESSION_COLUMNS =
   'id, user_id, household_id, thread_id, status, started_at, ended_at';
 
 export class LumiRepository extends BaseRepository {
-  async getThreadTurns(threadId: string, householdId: string): Promise<Turn[]> {
+  async getThreadTurns(
+    threadId: string,
+    householdId: string,
+    fromSeq?: bigint,
+  ): Promise<Turn[]> {
     const { data: thread, error: threadError } = await this.client
       .from('threads')
       .select('id, household_id')
@@ -37,6 +41,21 @@ export class LumiRepository extends BaseRepository {
     if (threadError) throw threadError;
     if (!thread || (thread as { household_id: string }).household_id !== householdId) {
       throw new ForbiddenError('Thread not accessible');
+    }
+
+    // Slice 5-S4 — gap-recovery path: every turn at or after fromSeq, ascending,
+    // no cap. Used by the SSE bridge to refill turns missed while a tab was
+    // disconnected. fromSeq is passed as a string because supabase-js cannot
+    // serialize a JS bigint into a PostgREST query value.
+    if (fromSeq !== undefined) {
+      const { data, error } = await this.client
+        .from('thread_turns')
+        .select(TURN_COLUMNS)
+        .eq('thread_id', threadId)
+        .gte('server_seq', fromSeq.toString())
+        .order('server_seq', { ascending: true });
+      if (error) throw error;
+      return ((data as TurnRow[] | null) ?? []).map(mapRowToTurn);
     }
 
     // Newest 20 first, then reverse for ascending display order. The DB has no

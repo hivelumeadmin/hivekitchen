@@ -2467,6 +2467,7 @@ interface PackersState {
   threads: Array<{ id: string; type: string; status: string }>;
   threadTurns: Array<{ server_seq: number; role: string; body: unknown }>;
   emitted: Array<{ householdId: string; event: string; data: string }>;
+  simulateThreadInsertError?: boolean;
 }
 
 // Models day_assignments (upsert + select/eq/order), users (findByHousehold +
@@ -2607,15 +2608,26 @@ function buildPackersMockSupabase(state: PackersState) {
             };
             return chain;
           },
-          insert(payload: { server_seq: number; role: string; body: unknown }) {
+          insert(payload: {
+            thread_id: string;
+            server_seq: number;
+            role: string;
+            body: unknown;
+            modality: string;
+          }) {
             return {
               select: () => ({
                 single: async () => {
+                  if (state.simulateThreadInsertError) {
+                    return { data: null, error: { message: 'simulated insert error', code: '23505' } };
+                  }
                   const turn = {
                     id: randomUUID(),
+                    thread_id: payload.thread_id,
                     server_seq: payload.server_seq,
                     role: payload.role,
                     body: payload.body,
+                    modality: payload.modality,
                     created_at: new Date().toISOString(),
                   };
                   state.threadTurns.push({
@@ -2798,16 +2810,30 @@ describe('PATCH /v1/households/:id/days/:date/packer (5-S3)', () => {
     });
     expect(state.dayAssignments).toHaveLength(1);
     expect(state.dayAssignments[0]?.packer_user_id).toBe(SECONDARY_MEMBER.id);
-    expect(state.emitted).toHaveLength(1);
+    // Slice 5-S4 — two emissions on assign: packer.assigned (canvas refresh) and
+    // thread.turn (sequence tracking for gap detection).
+    expect(state.emitted).toHaveLength(2);
     const emittedPayload = JSON.parse(state.emitted[0]!.data) as { type: string; date: string; packer_id: string };
     expect(emittedPayload).toEqual({
       type: 'packer.assigned',
       date: '2026-06-16',
       packer_id: SECONDARY_MEMBER.id,
     });
+    const threadTurnPayload = JSON.parse(state.emitted[1]!.data) as {
+      type: string;
+      thread_id: string;
+      turn: { server_seq: string; role: string };
+    };
+    expect(threadTurnPayload.type).toBe('thread.turn');
+    // server_seq is stringified for JSON safety (bigint → numeric string).
+    expect(threadTurnPayload.turn.server_seq).toBe('1');
+    expect(threadTurnPayload.turn.role).toBe('system');
   });
 
-  it('200 — null clears the assignment and emits no SSE', async () => {
+  it('200 — null clears the assignment: no packer.assigned, but thread.turn still emitted', async () => {
+    // Slice 5-S4 — clearing an assignment is still a coordination event, so the
+    // thread write (and its thread.turn emission) fires. packer.assigned is
+    // suppressed because its contract packer_id is non-nullable.
     const state = freshPackersState([PRIMARY_MEMBER, SECONDARY_MEMBER]);
     app = await buildPackersApp(state);
     const token = signPrimary(app);
@@ -2826,7 +2852,15 @@ describe('PATCH /v1/households/:id/days/:date/packer (5-S3)', () => {
       packer_display_name: null,
     });
     expect(state.dayAssignments[0]?.packer_user_id).toBeNull();
-    expect(state.emitted).toHaveLength(0);
+    expect(state.emitted).toHaveLength(1);
+    const onlyPayload = JSON.parse(state.emitted[0]!.data) as {
+      type: string;
+      turn: { server_seq: string; role: string; modality: string };
+    };
+    expect(onlyPayload.type).toBe('thread.turn');
+    expect(/^\d+$/.test(onlyPayload.turn.server_seq)).toBe(true);
+    expect(onlyPayload.turn.role).toBe('system');
+    expect(onlyPayload.turn.modality).toBeDefined();
   });
 
   it('400 — invalid date format', async () => {
@@ -2883,5 +2917,47 @@ describe('PATCH /v1/households/:id/days/:date/packer (5-S3)', () => {
     });
 
     expect(res.statusCode).toBe(400);
+  });
+
+  it('200 — appendTurnNext failure on assign: only packer.assigned emitted, no thread.turn', async () => {
+    // Slice 5-S4 — the thread write is best-effort. When appendTurnNext throws,
+    // the route still returns 200 and still emits packer.assigned (which fired
+    // before the try-catch). thread.turn must NOT be emitted.
+    const state = freshPackersState([PRIMARY_MEMBER, SECONDARY_MEMBER]);
+    state.simulateThreadInsertError = true;
+    app = await buildPackersApp(state);
+    const token = signPrimary(app);
+
+    const res = await app.inject({
+      method: 'PATCH',
+      url: `/v1/households/${SAMPLE_HOUSEHOLD_ID}/days/2026-06-16/packer`,
+      headers: { authorization: `Bearer ${token}` },
+      payload: { packer_user_id: SECONDARY_MEMBER.id },
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(state.emitted).toHaveLength(1);
+    const emittedPayload = JSON.parse(state.emitted[0]!.data) as { type: string };
+    expect(emittedPayload.type).toBe('packer.assigned');
+  });
+
+  it('200 — appendTurnNext failure on clear: no events emitted', async () => {
+    // Slice 5-S4 — clearing an assignment with a failing thread write emits
+    // nothing: packer.assigned is suppressed (packer_id is null, non-nullable
+    // in contract) and thread.turn never fires because appendTurnNext threw.
+    const state = freshPackersState([PRIMARY_MEMBER]);
+    state.simulateThreadInsertError = true;
+    app = await buildPackersApp(state);
+    const token = signPrimary(app);
+
+    const res = await app.inject({
+      method: 'PATCH',
+      url: `/v1/households/${SAMPLE_HOUSEHOLD_ID}/days/2026-06-16/packer`,
+      headers: { authorization: `Bearer ${token}` },
+      payload: { packer_user_id: null },
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(state.emitted).toHaveLength(0);
   });
 });

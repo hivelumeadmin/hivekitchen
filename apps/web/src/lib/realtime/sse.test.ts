@@ -3,8 +3,12 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { QueryClient } from '@tanstack/react-query';
 import { createSseBridge } from './sse.js';
 import * as threadIntegrity from './thread-integrity.js';
+import { hkFetch } from '@/lib/fetch.js';
 import type { z } from 'zod';
 import type { InvalidationEvent } from '@hivekitchen/contracts';
+
+// Slice 5-S4 — gap recovery calls hkFetch. Mock it so no real network happens.
+vi.mock('@/lib/fetch.js', () => ({ hkFetch: vi.fn() }));
 
 // --- Fake EventSource implementation ---
 // We do NOT install eventsource-mock (an external package) for this unit test.
@@ -62,6 +66,7 @@ beforeEach(() => {
   vi.stubGlobal('crypto', { randomUUID: vi.fn().mockReturnValue('test-uuid') });
   // Mock import.meta.env
   vi.stubEnv('VITE_API_BASE_URL', 'http://localhost:3001');
+  vi.mocked(hkFetch).mockReset();
 });
 
 afterEach(() => {
@@ -388,6 +393,96 @@ describe('SseBridge — thread sequence integrity (AC #5)', () => {
       }),
     );
     expect(reportSpy).not.toHaveBeenCalled();
+  });
+});
+
+describe('SseBridge — gap recovery (5-S4)', () => {
+  const turnAt = (seq: number) => ({
+    id: `00000000-0000-4000-8000-00000000000${seq}`,
+    thread_id: UUID1,
+    server_seq: seq,
+    created_at: DT,
+    role: 'user' as const,
+    body: { type: 'message' as const, content: `t${seq}` },
+  });
+
+  it('no gap (prevSeq=1, receivedSeq=2) → does NOT fetch; turn appended', () => {
+    const qc = makeMockQueryClient();
+    createSseBridge(qc).connect();
+    const [es] = FakeEventSource.instances;
+
+    es.dispatch('message', makeMessageEvent({ type: 'thread.turn', thread_id: UUID1, turn: turnAt(1) }));
+    es.dispatch('message', makeMessageEvent({ type: 'thread.turn', thread_id: UUID1, turn: turnAt(2) }));
+
+    expect(vi.mocked(hkFetch)).not.toHaveBeenCalled();
+    expect(vi.mocked(qc.setQueryData)).toHaveBeenCalledTimes(2);
+  });
+
+  it('gap detected (prevSeq=1, receivedSeq=3) → fetches from_seq=2 and reports anomaly', () => {
+    const reportSpy = vi.spyOn(threadIntegrity, 'reportThreadIntegrityAnomaly');
+    vi.mocked(hkFetch).mockResolvedValue({ thread_id: UUID1, turns: [] });
+    const qc = makeMockQueryClient();
+    createSseBridge(qc).connect();
+    const [es] = FakeEventSource.instances;
+
+    es.dispatch('message', makeMessageEvent({ type: 'thread.turn', thread_id: UUID1, turn: turnAt(1) }));
+    es.dispatch('message', makeMessageEvent({ type: 'thread.turn', thread_id: UUID1, turn: turnAt(3) }));
+
+    expect(vi.mocked(hkFetch)).toHaveBeenCalledWith(
+      `/v1/lumi/threads/${UUID1}/turns?from_seq=2`,
+      { method: 'GET' },
+    );
+    expect(reportSpy).toHaveBeenCalledWith({
+      thread_id: UUID1,
+      expected_seq: 2n,
+      received_seq: 3n,
+    });
+  });
+
+  it('first event (no prevSeq) → no fetch; cursor seeded so next-in-seq is clean', () => {
+    const qc = makeMockQueryClient();
+    createSseBridge(qc).connect();
+    const [es] = FakeEventSource.instances;
+
+    es.dispatch('message', makeMessageEvent({ type: 'thread.turn', thread_id: UUID1, turn: turnAt(5) }));
+    es.dispatch('message', makeMessageEvent({ type: 'thread.turn', thread_id: UUID1, turn: turnAt(6) }));
+
+    expect(vi.mocked(hkFetch)).not.toHaveBeenCalled();
+  });
+
+  it('gap recovery merges missed turns into the cache in server_seq order', async () => {
+    // Stateful cache so we can inspect the merge result.
+    const store = new Map<string, unknown>();
+    const keyOf = (k: unknown): string => JSON.stringify(k);
+    const qc = {
+      invalidateQueries: vi.fn().mockResolvedValue(undefined),
+      setQueryData: vi.fn((key: unknown, updater: unknown) => {
+        const prev = store.get(keyOf(key));
+        const next =
+          typeof updater === 'function'
+            ? (updater as (o: unknown) => unknown)(prev)
+            : updater;
+        store.set(keyOf(key), next);
+        return next;
+      }),
+    } as unknown as QueryClient;
+
+    // from_seq=2 returns the missed turn (2) and the current turn (3).
+    vi.mocked(hkFetch).mockResolvedValue({
+      thread_id: UUID1,
+      turns: [turnAt(2), turnAt(3)],
+    });
+
+    createSseBridge(qc).connect();
+    const [es] = FakeEventSource.instances;
+
+    es.dispatch('message', makeMessageEvent({ type: 'thread.turn', thread_id: UUID1, turn: turnAt(1) }));
+    es.dispatch('message', makeMessageEvent({ type: 'thread.turn', thread_id: UUID1, turn: turnAt(3) }));
+
+    await vi.waitFor(() => {
+      const cache = store.get(keyOf(['thread', UUID1])) as Array<{ server_seq: number }>;
+      expect(cache.map((t) => Number(t.server_seq))).toEqual([1, 2, 3]);
+    });
   });
 });
 
