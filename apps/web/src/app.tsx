@@ -45,6 +45,7 @@ import GroceryListRoute from './routes/(app)/grocery-list.js';
 import KitchenInspirationRoute from './routes/(app)/kitchen-inspiration.js';
 import KitchenProfileRoute from './routes/(app)/kitchen-profile.js';
 import MemoryRoute from './routes/(app)/memory.js';
+import HouseholdSettingsRoute from './routes/(app)/household-settings.js';
 import MemoryDashboardRoute from './routes/(app)/memory-dashboard.js';
 import ConsentHistoryRoute from './routes/(app)/consent-history.js';
 import LunchLinkRoute from './routes/(app)/lunch-link.js';
@@ -100,6 +101,7 @@ const router = createBrowserRouter([
       { path: '/app/inspiration', element: <KitchenInspirationRoute /> },
       { path: '/app/kitchen-profile', element: <KitchenProfileRoute /> },
       { path: '/app/memory', element: <MemoryRoute /> },
+      { path: '/app/household/settings', element: <HouseholdSettingsRoute /> },
       { path: '/app/memory/dashboard', element: <MemoryDashboardRoute /> },
       { path: '/app/memory/consent-history', element: <ConsentHistoryRoute /> },
       // Lunch Link — child-scope surface. AppLayout's useMatch('/lunch/*')

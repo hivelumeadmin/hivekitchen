@@ -2,6 +2,7 @@ import { Buffer } from 'node:buffer';
 import type { JWT } from '@fastify/jwt';
 import { LinkExpiredError, UnauthorizedError } from '../../common/errors.js';
 import type { InviteRepository, InviteRole } from './invite.repository.js';
+import type { UserRepository, UserProfileRow } from '../users/user.repository.js';
 
 const INVITE_TTL_SECONDS = 14 * 24 * 60 * 60; // 1209600 = 14d
 
@@ -32,10 +33,19 @@ export interface RedeemInviteResult {
   invite_id: string;
 }
 
+export interface AcceptInviteResult {
+  updatedUser: UserProfileRow;
+  redeemResult: RedeemInviteResult;
+}
+
 export class InviteService {
   constructor(
     private readonly repository: InviteRepository,
     private readonly jwt: JWT,
+    // Slice 5-S2 — optional so existing redeem-only callers/tests that construct
+    // InviteService(repository, jwt) keep working; acceptInvite requires it.
+    private readonly userRepository: UserRepository | null = null,
+    private readonly log: { warn: (data: object, msg: string) => void } | null = null,
   ) {}
 
   async createInvite(input: CreateInviteInput): Promise<CreateInviteResult> {
@@ -92,6 +102,40 @@ export class InviteService {
       household_id: row.household_id,
       invite_id: row.id,
     };
+  }
+
+  // Slice 5-S2 — authenticated redemption. Reuses redeemInvite() for token
+  // validation + the race-safe mark-redeemed, then links the authenticated
+  // invitee's account to the inviting household. redeemInvite() throws
+  // LinkExpiredError (410) / UnauthorizedError (401) — let them propagate.
+  async acceptInvite(token: string, requestingUserId: string): Promise<AcceptInviteResult> {
+    if (this.userRepository === null) {
+      throw new Error('acceptInvite requires a UserRepository');
+    }
+    const redeemResult = await this.redeemInvite(token);
+    // P3 — only secondary_caregiver invites may be accepted via this endpoint.
+    // The invite is already consumed; this prevents privilege escalation via
+    // direct API calls that bypass the web client's role-based routing.
+    if (redeemResult.role !== 'secondary_caregiver') {
+      throw new UnauthorizedError('This invite cannot be accepted via this endpoint');
+    }
+    let updatedUser: UserProfileRow;
+    try {
+      updatedUser = await this.userRepository.setHouseholdMembership(
+        requestingUserId,
+        redeemResult.household_id,
+        'secondary_caregiver',
+      );
+    } catch (err) {
+      // P2 — the invite was consumed but account linkage failed. Log for ops
+      // visibility; the primary parent can re-invite.
+      this.log?.warn(
+        { err, requestingUserId, household_id: redeemResult.household_id },
+        'invite.accept: invite redeemed but setHouseholdMembership failed — user not linked',
+      );
+      throw err;
+    }
+    return { updatedUser, redeemResult };
   }
 }
 

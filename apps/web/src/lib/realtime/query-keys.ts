@@ -36,6 +36,13 @@ export const QueryKeys = {
   /** @example QueryKeys.packer('2026-04-24') → ['packer', '2026-04-24'] */
   packer: (date: string): ['packer', string] => ['packer', date],
 
+  /**
+   * Slice 5-S3 — household-level PackerOfTheDay assignments (one shared query
+   * for the whole Brief canvas). Distinct from the per-date `packer` key above.
+   * @example QueryKeys.packers('household-uuid') → ['packers', 'household-uuid']
+   */
+  packers: (householdId: string): ['packers', string] => ['packers', householdId],
+
   /** @example QueryKeys.pantry() → ['pantry'] */
   pantry: (): ['pantry'] => ['pantry'],
 

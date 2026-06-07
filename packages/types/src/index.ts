@@ -10,6 +10,10 @@ import {
   CreateInviteResponseSchema,
   RedeemInviteRequestSchema,
   RedeemInviteResponseSchema,
+  AcceptInviteRequestSchema,
+  AcceptInviteResponseSchema,
+  HouseholdMemberSchema,
+  HouseholdMembersResponseSchema,
   MealItem,
   DayPlan,
   WeeklyPlan,
@@ -65,6 +69,9 @@ import {
   DeleteHouseholdResponseSchema,
   SurfaceKind,
   PresenceEvent,
+  PresenceHeartbeatRequestSchema,
+  PresencePartnerSchema,
+  PresenceResponseSchema,
   ErrorCode,
   FieldError,
   ApiError,
@@ -296,6 +303,11 @@ import {
   PlanDayContextSlotParamSchema,
   PlanDayContextSlotRevertParamSchema,
   StateComplianceOverridesResponseSchema,
+  // Slice 5-S3 — PackerOfTheDay
+  DayAssignmentSchema,
+  DayAssignmentsResponseSchema,
+  AssignPackerRequestSchema,
+  AssignPackerResponseSchema,
 } from '@hivekitchen/contracts';
 
 // Auth
@@ -311,6 +323,12 @@ export type CreateInviteRequest = z.infer<typeof CreateInviteRequestSchema>;
 export type CreateInviteResponse = z.infer<typeof CreateInviteResponseSchema>;
 export type RedeemInviteRequest = z.infer<typeof RedeemInviteRequestSchema>;
 export type RedeemInviteResponse = z.infer<typeof RedeemInviteResponseSchema>;
+
+// Invites (Slice 5-S2 — authenticated caregiver redemption + household roster)
+export type AcceptInviteRequest = z.infer<typeof AcceptInviteRequestSchema>;
+export type AcceptInviteResponse = z.infer<typeof AcceptInviteResponseSchema>;
+export type HouseholdMember = z.infer<typeof HouseholdMemberSchema>;
+export type HouseholdMembersResponse = z.infer<typeof HouseholdMembersResponseSchema>;
 
 // Plans
 export type MealItem = z.infer<typeof MealItem>;
@@ -399,6 +417,9 @@ export type DeleteHouseholdResponse = z.infer<typeof DeleteHouseholdResponseSche
 // Presence
 export type SurfaceKind = z.infer<typeof SurfaceKind>;
 export type PresenceEvent = z.infer<typeof PresenceEvent>;
+export type PresenceHeartbeatRequest = z.infer<typeof PresenceHeartbeatRequestSchema>;
+export type PresencePartner = z.infer<typeof PresencePartnerSchema>;
+export type PresenceResponse = z.infer<typeof PresenceResponseSchema>;
 
 // Errors
 export type ErrorCode = z.infer<typeof ErrorCode>;
@@ -721,3 +742,9 @@ export type PlanDayContextSlotRevertParam = z.infer<typeof PlanDayContextSlotRev
 
 // State-residency compliance scaffold (Story 7-S12 — AR-21, NFR-COMP-3)
 export type StateComplianceOverridesResponse = z.infer<typeof StateComplianceOverridesResponseSchema>;
+
+// Slice 5-S3 — PackerOfTheDay (day_assignments read/write)
+export type DayAssignment = z.infer<typeof DayAssignmentSchema>;
+export type DayAssignmentsResponse = z.infer<typeof DayAssignmentsResponseSchema>;
+export type AssignPackerRequest = z.infer<typeof AssignPackerRequestSchema>;
+export type AssignPackerResponse = z.infer<typeof AssignPackerResponseSchema>;

@@ -165,9 +165,17 @@ export function createSseBridge(queryClient: QueryClient): SseBridge {
         break;
       }
 
-      case 'packer.assigned':
-        void queryClient.invalidateQueries({ queryKey: QueryKeys.packer(event.date) });
+      case 'packer.assigned': {
+        // Slice 5-S3 — the Brief renders one household-level packers query
+        // (QueryKeys.packers). The event payload carries only date + packer_id;
+        // the household is implicit (the SSE stream is household-scoped), so we
+        // resolve it from the auth store to invalidate the canvas query.
+        const householdId = useAuthStore.getState().user?.current_household_id;
+        if (householdId) {
+          void queryClient.invalidateQueries({ queryKey: QueryKeys.packers(householdId) });
+        }
         break;
+      }
 
       case 'pantry.delta':
         void queryClient.invalidateQueries({ queryKey: QueryKeys.pantry() });

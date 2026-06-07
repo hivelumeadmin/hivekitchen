@@ -62,6 +62,7 @@ import { heartNoteRoutes } from './modules/heart-notes/heart-note.routes.js';
 import { guestAuthorRoutes } from './modules/guest-author/guest-author.routes.js';
 import { lunchLinkRoutes } from './modules/lunch-link/lunch-link.routes.js';
 import { childRequestRoutes } from './modules/child-requests/child-request.routes.js';
+import { presenceRoutes } from './routes/v1/presence/presence.routes.js';
 
 const REQUEST_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -258,6 +259,7 @@ export async function buildApp(opts: BuildAppOptions) {
   await app.register(guestAuthorRoutes);
   await app.register(lunchLinkRoutes);
   await app.register(childRequestRoutes);
+  await app.register(presenceRoutes);
   await app.register(kitchenMapRoutes);
 
   return app;

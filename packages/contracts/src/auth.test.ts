@@ -9,7 +9,10 @@ import {
   CreateInviteResponseSchema,
   RedeemInviteRequestSchema,
   RedeemInviteResponseSchema,
+  AcceptInviteRequestSchema,
+  AcceptInviteResponseSchema,
 } from './auth.js';
+import { HouseholdMembersResponseSchema } from './household-members.js';
 
 describe('LoginRequestSchema', () => {
   it('accepts a valid email/password', () => {
@@ -264,6 +267,79 @@ describe('RedeemInviteResponseSchema', () => {
         role: 'admin',
         scope_target: '/app/household/settings',
         household_id: validHouseholdId,
+      }).success,
+    ).toBe(false);
+  });
+});
+
+describe('AcceptInviteRequestSchema (5-S2)', () => {
+  it('accepts a non-empty token string', () => {
+    expect(AcceptInviteRequestSchema.safeParse({ token: 'eyJabc' }).success).toBe(true);
+  });
+
+  it('rejects an empty token', () => {
+    expect(AcceptInviteRequestSchema.safeParse({ token: '' }).success).toBe(false);
+  });
+});
+
+describe('AcceptInviteResponseSchema (5-S2)', () => {
+  const validUser = {
+    id: '11111111-1111-4111-8111-111111111111',
+    email: 'partner@example.com',
+    display_name: 'Partner',
+    current_household_id: '22222222-2222-4222-8222-222222222222',
+    role: 'secondary_caregiver' as const,
+  };
+
+  const validResponse = {
+    access_token: 'header.payload.signature',
+    user: validUser,
+    household_id: '22222222-2222-4222-8222-222222222222',
+    scope_target: '/app',
+  };
+
+  it('parses a valid response shape', () => {
+    expect(AcceptInviteResponseSchema.safeParse(validResponse).success).toBe(true);
+  });
+
+  it('rejects a missing access_token', () => {
+    const { access_token: _omit, ...rest } = validResponse;
+    expect(AcceptInviteResponseSchema.safeParse(rest).success).toBe(false);
+  });
+
+  it('rejects a missing user', () => {
+    const { user: _omit, ...rest } = validResponse;
+    expect(AcceptInviteResponseSchema.safeParse(rest).success).toBe(false);
+  });
+});
+
+describe('HouseholdMembersResponseSchema (5-S2)', () => {
+  const validMember = {
+    user_id: '11111111-1111-4111-8111-111111111111',
+    display_name: 'Alex',
+    role: 'primary_parent' as const,
+  };
+
+  it('parses a member array', () => {
+    expect(HouseholdMembersResponseSchema.safeParse({ members: [validMember] }).success).toBe(true);
+  });
+
+  it('accepts an empty members array', () => {
+    expect(HouseholdMembersResponseSchema.safeParse({ members: [] }).success).toBe(true);
+  });
+
+  it('accepts a null display_name', () => {
+    expect(
+      HouseholdMembersResponseSchema.safeParse({
+        members: [{ ...validMember, display_name: null }],
+      }).success,
+    ).toBe(true);
+  });
+
+  it('rejects an invalid role', () => {
+    expect(
+      HouseholdMembersResponseSchema.safeParse({
+        members: [{ ...validMember, role: 'ops' }],
       }).success,
     ).toBe(false);
   });

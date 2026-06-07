@@ -71,3 +71,17 @@ export const RedeemInviteResponseSchema = z.object({
   scope_target: z.string().min(1),
   household_id: z.string().uuid(),
 });
+
+// ---- POST /v1/auth/invites/accept ----------------------------------------
+// Slice 5-S2 — authenticated redemption: the invitee's account is linked to the
+// inviting household and a fresh access_token (updated `hh` claim) is returned.
+export const AcceptInviteRequestSchema = z.object({
+  token: z.string().min(1),
+});
+
+export const AcceptInviteResponseSchema = z.object({
+  access_token: z.string(),
+  user: AuthUserSchema,
+  household_id: z.string().uuid(),
+  scope_target: z.string(),
+});

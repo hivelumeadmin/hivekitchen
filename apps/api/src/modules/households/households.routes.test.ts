@@ -2262,3 +2262,626 @@ describe('POST /v1/households/:householdId/delete (7-S11)', () => {
     expect(state.updateUserByIdCalls).toHaveLength(0);
   });
 });
+
+// ===========================================================================
+// Slice 5-S2 — GET /v1/households/:id/members (household roster)
+// ===========================================================================
+
+interface MemberRow {
+  id: string;
+  display_name: string | null;
+  role: 'primary_parent' | 'secondary_caregiver' | 'guest_author' | 'ops';
+}
+
+// Models the findByHousehold query: select → eq(current_household_id) →
+// in('role', [...]) → order('role'). The .in() filter is applied so the mock
+// reflects the guest_author exclusion the route relies on.
+function buildMembersMockSupabase(rows: MemberRow[], householdDisplayName: string | null = null) {
+  return {
+    from(table: string) {
+      if (table === 'users') {
+        let allowedRoles: string[] | null = null;
+        const chain: Record<string, unknown> = {};
+        chain.select = () => chain;
+        chain.eq = () => chain;
+        chain.in = (_col: string, vals: string[]) => {
+          allowedRoles = vals;
+          return chain;
+        };
+        chain.order = () => chain;
+        chain.then = (resolve: (v: { data: MemberRow[]; error: null }) => unknown) => {
+          const filtered = allowedRoles
+            ? rows.filter((r) => allowedRoles!.includes(r.role))
+            : rows;
+          return resolve({ data: filtered, error: null });
+        };
+        return chain;
+      }
+      if (table === 'households') {
+        return {
+          select: () => ({
+            eq: () => ({
+              single: () =>
+                Promise.resolve({ data: { display_name: householdDisplayName }, error: null }),
+            }),
+          }),
+        };
+      }
+      throw new Error(`unexpected table: ${table}`);
+    },
+  };
+}
+
+async function buildMembersApp(rows: MemberRow[], householdDisplayName: string | null = null): Promise<FastifyInstance> {
+  const app = Fastify({ logger: false, genReqId: () => randomUUID() });
+  app.setValidatorCompiler(validatorCompiler);
+  app.setSerializerCompiler(serializerCompiler);
+
+  const env = {
+    NODE_ENV: 'development' as const,
+    JWT_SECRET,
+    ENVELOPE_ENCRYPTION_MASTER_KEY: '',
+  };
+  app.decorate('env', env as unknown as FastifyInstance['env']);
+  app.decorate(
+    'supabase',
+    buildMembersMockSupabase(rows, householdDisplayName) as unknown as FastifyInstance['supabase'],
+  );
+
+  await app.register(jwt, { secret: JWT_SECRET, sign: { expiresIn: '15m' } });
+  await app.register(authenticateHook);
+
+  app.setErrorHandler((err, request, reply) => {
+    if (isDomainError(err)) {
+      void reply.status(err.status).type('application/problem+json').send({
+        type: err.type,
+        status: err.status,
+        title: err.title,
+        detail: err.detail,
+        instance: request.id,
+      });
+      return;
+    }
+    void reply.status(500).send({ type: '/errors/internal', status: 500 });
+  });
+
+  await app.register(householdsRoutes);
+  await app.ready();
+  return app;
+}
+
+describe('GET /v1/households/:id/members (5-S2)', () => {
+  let app: FastifyInstance;
+
+  afterEach(async () => {
+    if (app) await app.close();
+  });
+
+  const primary: MemberRow = {
+    id: SAMPLE_USER_ID,
+    display_name: 'Alex',
+    role: 'primary_parent',
+  };
+  const secondary: MemberRow = {
+    id: '55555555-5555-4555-8555-555555555555',
+    display_name: 'Sam',
+    role: 'secondary_caregiver',
+  };
+  const guest: MemberRow = {
+    id: '66666666-6666-4666-8666-666666666666',
+    display_name: 'Grandma',
+    role: 'guest_author',
+  };
+
+  it('200 — returns the member list for a valid household', async () => {
+    app = await buildMembersApp([primary, secondary]);
+    const token = signPrimary(app);
+
+    const res = await app.inject({
+      method: 'GET',
+      url: `/v1/households/${SAMPLE_HOUSEHOLD_ID}/members`,
+      headers: { authorization: `Bearer ${token}` },
+    });
+
+    expect(res.statusCode).toBe(200);
+    const body = res.json() as { members: Array<{ user_id: string; role: string }> };
+    expect(body.members).toHaveLength(2);
+    expect(body.members[0]).toMatchObject({ user_id: SAMPLE_USER_ID, role: 'primary_parent' });
+  });
+
+  it('200 — accepts a secondary_caregiver token', async () => {
+    app = await buildMembersApp([primary, secondary]);
+    const token = signSecondary(app);
+
+    const res = await app.inject({
+      method: 'GET',
+      url: `/v1/households/${SAMPLE_HOUSEHOLD_ID}/members`,
+      headers: { authorization: `Bearer ${token}` },
+    });
+
+    expect(res.statusCode).toBe(200);
+  });
+
+  it('filters out guest_author members', async () => {
+    app = await buildMembersApp([primary, secondary, guest]);
+    const token = signPrimary(app);
+
+    const res = await app.inject({
+      method: 'GET',
+      url: `/v1/households/${SAMPLE_HOUSEHOLD_ID}/members`,
+      headers: { authorization: `Bearer ${token}` },
+    });
+
+    expect(res.statusCode).toBe(200);
+    const body = res.json() as { members: Array<{ role: string }> };
+    expect(body.members.some((m) => m.role === 'guest_author')).toBe(false);
+    expect(body.members).toHaveLength(2);
+  });
+
+  it('401 without a token', async () => {
+    app = await buildMembersApp([primary]);
+
+    const res = await app.inject({
+      method: 'GET',
+      url: `/v1/households/${SAMPLE_HOUSEHOLD_ID}/members`,
+    });
+
+    expect(res.statusCode).toBe(401);
+  });
+
+  it('403 when accessing another household', async () => {
+    app = await buildMembersApp([primary]);
+    const token = signPrimary(app); // hh = SAMPLE_HOUSEHOLD_ID
+
+    const res = await app.inject({
+      method: 'GET',
+      url: `/v1/households/${OTHER_HOUSEHOLD_ID}/members`,
+      headers: { authorization: `Bearer ${token}` },
+    });
+
+    expect(res.statusCode).toBe(403);
+  });
+});
+
+// ===========================================================================
+// Slice 5-S3 — GET /v1/households/:id/packers + PATCH .../days/:date/packer
+// ===========================================================================
+
+interface PackerUserRow {
+  id: string;
+  display_name: string | null;
+  role: 'primary_parent' | 'secondary_caregiver' | 'guest_author' | 'ops';
+}
+
+interface DayAssignmentMockRow {
+  household_id: string;
+  date: string;
+  packer_user_id: string | null;
+  assigned_by: string;
+  assigned_at: string;
+}
+
+interface PackersState {
+  dayAssignments: DayAssignmentMockRow[];
+  users: PackerUserRow[];
+  threads: Array<{ id: string; type: string; status: string }>;
+  threadTurns: Array<{ server_seq: number; role: string; body: unknown }>;
+  emitted: Array<{ householdId: string; event: string; data: string }>;
+}
+
+// Models day_assignments (upsert + select/eq/order), users (findByHousehold +
+// findUserById), and the lazy coordination thread (threads + thread_turns).
+function buildPackersMockSupabase(state: PackersState) {
+  return {
+    from(table: string) {
+      if (table === 'day_assignments') {
+        return {
+          upsert(payload: {
+            household_id: string;
+            date: string;
+            packer_user_id: string | null;
+            assigned_by: string;
+          }) {
+            return {
+              select: () => ({
+                single: async () => {
+                  const row: DayAssignmentMockRow = {
+                    household_id: payload.household_id,
+                    date: payload.date,
+                    packer_user_id: payload.packer_user_id ?? null,
+                    assigned_by: payload.assigned_by,
+                    assigned_at: new Date().toISOString(),
+                  };
+                  const idx = state.dayAssignments.findIndex(
+                    (r) => r.household_id === row.household_id && r.date === row.date,
+                  );
+                  if (idx >= 0) state.dayAssignments[idx] = row;
+                  else state.dayAssignments.push(row);
+                  return { data: row, error: null };
+                },
+              }),
+            };
+          },
+          select() {
+            const filters: Record<string, unknown> = {};
+            const chain = {
+              eq(col: string, val: unknown) {
+                filters[col] = val;
+                return chain;
+              },
+              order() {
+                return chain;
+              },
+              then<T>(resolve: (v: { data: DayAssignmentMockRow[]; error: null }) => T): T {
+                const rows = state.dayAssignments
+                  .filter((r) => r.household_id === filters.household_id)
+                  .slice()
+                  .sort((a, b) => (a.date < b.date ? -1 : 1));
+                return resolve({ data: rows, error: null });
+              },
+            };
+            return chain;
+          },
+        };
+      }
+      if (table === 'users') {
+        return {
+          select() {
+            const filters: Record<string, unknown> = {};
+            let roleFilter: string[] | null = null;
+            const chain = {
+              eq(col: string, val: unknown) {
+                filters[col] = val;
+                return chain;
+              },
+              in(_col: string, vals: string[]) {
+                roleFilter = vals;
+                return chain;
+              },
+              order() {
+                return chain;
+              },
+              maybeSingle: async () => {
+                const u = state.users.find((x) => x.id === filters.id);
+                return { data: u ?? null, error: null };
+              },
+              then<T>(resolve: (v: { data: PackerUserRow[]; error: null }) => T): T {
+                const rows = roleFilter
+                  ? state.users.filter((x) => roleFilter!.includes(x.role))
+                  : state.users;
+                return resolve({ data: rows, error: null });
+              },
+            };
+            return chain;
+          },
+        };
+      }
+      if (table === 'threads') {
+        return {
+          select() {
+            const chain = {
+              eq: () => chain,
+              order: () => chain,
+              limit: () => chain,
+              maybeSingle: async () => {
+                const t = state.threads.find(
+                  (x) => x.type === 'coordination' && x.status === 'active',
+                );
+                return { data: t ?? null, error: null };
+              },
+            };
+            return chain;
+          },
+          insert(payload: { type: string; modality: string }) {
+            return {
+              select: () => ({
+                single: async () => {
+                  const t = {
+                    id: randomUUID(),
+                    household_id: SAMPLE_HOUSEHOLD_ID,
+                    type: payload.type,
+                    status: 'active',
+                    modality: payload.modality,
+                    created_at: new Date().toISOString(),
+                  };
+                  state.threads.push({ id: t.id, type: t.type, status: t.status });
+                  return { data: t, error: null };
+                },
+              }),
+            };
+          },
+        };
+      }
+      if (table === 'thread_turns') {
+        return {
+          select() {
+            const chain = {
+              eq: () => chain,
+              order: () => chain,
+              limit: () => chain,
+              maybeSingle: async () => {
+                if (state.threadTurns.length === 0) return { data: null, error: null };
+                const max = Math.max(...state.threadTurns.map((t) => t.server_seq));
+                return { data: { server_seq: max }, error: null };
+              },
+            };
+            return chain;
+          },
+          insert(payload: { server_seq: number; role: string; body: unknown }) {
+            return {
+              select: () => ({
+                single: async () => {
+                  const turn = {
+                    id: randomUUID(),
+                    server_seq: payload.server_seq,
+                    role: payload.role,
+                    body: payload.body,
+                    created_at: new Date().toISOString(),
+                  };
+                  state.threadTurns.push({
+                    server_seq: payload.server_seq,
+                    role: payload.role,
+                    body: payload.body,
+                  });
+                  return { data: turn, error: null };
+                },
+              }),
+            };
+          },
+        };
+      }
+      throw new Error(`unexpected table: ${table}`);
+    },
+  };
+}
+
+function freshPackersState(users: PackerUserRow[] = []): PackersState {
+  return { dayAssignments: [], users, threads: [], threadTurns: [], emitted: [] };
+}
+
+async function buildPackersApp(state: PackersState): Promise<FastifyInstance> {
+  const app = Fastify({ logger: false, genReqId: () => randomUUID() });
+  app.setValidatorCompiler(validatorCompiler);
+  app.setSerializerCompiler(serializerCompiler);
+
+  const env = { NODE_ENV: 'development' as const, JWT_SECRET, ENVELOPE_ENCRYPTION_MASTER_KEY: '' };
+  app.decorate('env', env as unknown as FastifyInstance['env']);
+  app.decorate(
+    'supabase',
+    buildPackersMockSupabase(state) as unknown as FastifyInstance['supabase'],
+  );
+  app.decorate('sseDispatcher', {
+    register: vi.fn(),
+    unregister: vi.fn(),
+    emit: (householdId: string, event: string, data: string) => {
+      state.emitted.push({ householdId, event, data });
+    },
+  } as unknown as FastifyInstance['sseDispatcher']);
+
+  await app.register(jwt, { secret: JWT_SECRET, sign: { expiresIn: '15m' } });
+  await app.register(authenticateHook);
+
+  app.setErrorHandler((err, request, reply) => {
+    if (isDomainError(err)) {
+      void reply.status(err.status).type('application/problem+json').send({
+        type: err.type,
+        status: err.status,
+        title: err.title,
+        detail: err.detail,
+        instance: request.id,
+      });
+      return;
+    }
+    if (err instanceof ZodError) {
+      void reply.status(400).send({ type: '/errors/validation', status: 400 });
+      return;
+    }
+    const obj = err as { validation?: unknown; cause?: unknown };
+    if (obj.cause instanceof ZodError) {
+      void reply.status(400).send({ type: '/errors/validation', status: 400 });
+      return;
+    }
+    if (Array.isArray(obj.validation) && obj.validation.length > 0) {
+      void reply.status(400).send({ type: '/errors/validation', status: 400 });
+      return;
+    }
+    void reply.status(500).send({ type: '/errors/internal', status: 500 });
+  });
+
+  await app.register(householdsRoutes);
+  await app.ready();
+  return app;
+}
+
+function signGuest(app: FastifyInstance): string {
+  return app.jwt.sign({ sub: SAMPLE_USER_ID, hh: SAMPLE_HOUSEHOLD_ID, role: 'guest_author' });
+}
+
+const PRIMARY_MEMBER: PackerUserRow = {
+  id: SAMPLE_USER_ID,
+  display_name: 'Alex',
+  role: 'primary_parent',
+};
+const SECONDARY_MEMBER: PackerUserRow = {
+  id: '55555555-5555-4555-8555-555555555555',
+  display_name: 'Devon',
+  role: 'secondary_caregiver',
+};
+
+describe('GET /v1/households/:id/packers (5-S3)', () => {
+  let app: FastifyInstance;
+  afterEach(async () => {
+    if (app) await app.close();
+  });
+
+  it('200 — empty array when no days are assigned', async () => {
+    app = await buildPackersApp(freshPackersState([PRIMARY_MEMBER, SECONDARY_MEMBER]));
+    const token = signPrimary(app);
+
+    const res = await app.inject({
+      method: 'GET',
+      url: `/v1/households/${SAMPLE_HOUSEHOLD_ID}/packers`,
+      headers: { authorization: `Bearer ${token}` },
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual({ assignments: [] });
+  });
+
+  it('200 — resolves packer_display_name from the roster', async () => {
+    const state = freshPackersState([PRIMARY_MEMBER, SECONDARY_MEMBER]);
+    state.dayAssignments.push({
+      household_id: SAMPLE_HOUSEHOLD_ID,
+      date: '2026-06-16',
+      packer_user_id: SECONDARY_MEMBER.id,
+      assigned_by: SAMPLE_USER_ID,
+      assigned_at: new Date().toISOString(),
+    });
+    app = await buildPackersApp(state);
+    const token = signPrimary(app);
+
+    const res = await app.inject({
+      method: 'GET',
+      url: `/v1/households/${SAMPLE_HOUSEHOLD_ID}/packers`,
+      headers: { authorization: `Bearer ${token}` },
+    });
+
+    expect(res.statusCode).toBe(200);
+    const body = res.json() as {
+      assignments: Array<{ date: string; packer_user_id: string | null; packer_display_name: string | null }>;
+    };
+    expect(body.assignments).toHaveLength(1);
+    expect(body.assignments[0]).toEqual({
+      date: '2026-06-16',
+      packer_user_id: SECONDARY_MEMBER.id,
+      packer_display_name: 'Devon',
+    });
+  });
+
+  it('403 — cross-household read', async () => {
+    app = await buildPackersApp(freshPackersState([PRIMARY_MEMBER]));
+    const token = signPrimary(app); // hh = SAMPLE_HOUSEHOLD_ID
+
+    const res = await app.inject({
+      method: 'GET',
+      url: `/v1/households/${OTHER_HOUSEHOLD_ID}/packers`,
+      headers: { authorization: `Bearer ${token}` },
+    });
+
+    expect(res.statusCode).toBe(403);
+  });
+});
+
+describe('PATCH /v1/households/:id/days/:date/packer (5-S3)', () => {
+  let app: FastifyInstance;
+  afterEach(async () => {
+    if (app) await app.close();
+  });
+
+  it('200 — upserts the row and emits packer.assigned SSE', async () => {
+    const state = freshPackersState([PRIMARY_MEMBER, SECONDARY_MEMBER]);
+    app = await buildPackersApp(state);
+    const token = signPrimary(app);
+
+    const res = await app.inject({
+      method: 'PATCH',
+      url: `/v1/households/${SAMPLE_HOUSEHOLD_ID}/days/2026-06-16/packer`,
+      headers: { authorization: `Bearer ${token}` },
+      payload: { packer_user_id: SECONDARY_MEMBER.id },
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual({
+      date: '2026-06-16',
+      packer_user_id: SECONDARY_MEMBER.id,
+      packer_display_name: 'Devon',
+    });
+    expect(state.dayAssignments).toHaveLength(1);
+    expect(state.dayAssignments[0]?.packer_user_id).toBe(SECONDARY_MEMBER.id);
+    expect(state.emitted).toHaveLength(1);
+    const emittedPayload = JSON.parse(state.emitted[0]!.data) as { type: string; date: string; packer_id: string };
+    expect(emittedPayload).toEqual({
+      type: 'packer.assigned',
+      date: '2026-06-16',
+      packer_id: SECONDARY_MEMBER.id,
+    });
+  });
+
+  it('200 — null clears the assignment and emits no SSE', async () => {
+    const state = freshPackersState([PRIMARY_MEMBER, SECONDARY_MEMBER]);
+    app = await buildPackersApp(state);
+    const token = signPrimary(app);
+
+    const res = await app.inject({
+      method: 'PATCH',
+      url: `/v1/households/${SAMPLE_HOUSEHOLD_ID}/days/2026-06-16/packer`,
+      headers: { authorization: `Bearer ${token}` },
+      payload: { packer_user_id: null },
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual({
+      date: '2026-06-16',
+      packer_user_id: null,
+      packer_display_name: null,
+    });
+    expect(state.dayAssignments[0]?.packer_user_id).toBeNull();
+    expect(state.emitted).toHaveLength(0);
+  });
+
+  it('400 — invalid date format', async () => {
+    app = await buildPackersApp(freshPackersState([PRIMARY_MEMBER]));
+    const token = signPrimary(app);
+
+    const res = await app.inject({
+      method: 'PATCH',
+      url: `/v1/households/${SAMPLE_HOUSEHOLD_ID}/days/not-a-date/packer`,
+      headers: { authorization: `Bearer ${token}` },
+      payload: { packer_user_id: null },
+    });
+
+    expect(res.statusCode).toBe(400);
+  });
+
+  it('403 — cross-household write', async () => {
+    app = await buildPackersApp(freshPackersState([PRIMARY_MEMBER]));
+    const token = signPrimary(app); // hh = SAMPLE_HOUSEHOLD_ID
+
+    const res = await app.inject({
+      method: 'PATCH',
+      url: `/v1/households/${OTHER_HOUSEHOLD_ID}/days/2026-06-16/packer`,
+      headers: { authorization: `Bearer ${token}` },
+      payload: { packer_user_id: null },
+    });
+
+    expect(res.statusCode).toBe(403);
+  });
+
+  it('403 — guest_author cannot assign', async () => {
+    app = await buildPackersApp(freshPackersState([PRIMARY_MEMBER]));
+    const token = signGuest(app);
+
+    const res = await app.inject({
+      method: 'PATCH',
+      url: `/v1/households/${SAMPLE_HOUSEHOLD_ID}/days/2026-06-16/packer`,
+      headers: { authorization: `Bearer ${token}` },
+      payload: { packer_user_id: null },
+    });
+
+    expect(res.statusCode).toBe(403);
+  });
+
+  it('400 — packer_user_id does not belong to the household', async () => {
+    app = await buildPackersApp(freshPackersState([PRIMARY_MEMBER, SECONDARY_MEMBER]));
+    const token = signPrimary(app);
+
+    const res = await app.inject({
+      method: 'PATCH',
+      url: `/v1/households/${SAMPLE_HOUSEHOLD_ID}/days/2026-06-16/packer`,
+      headers: { authorization: `Bearer ${token}` },
+      payload: { packer_user_id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa' },
+    });
+
+    expect(res.statusCode).toBe(400);
+  });
+});

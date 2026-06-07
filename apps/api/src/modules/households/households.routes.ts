@@ -21,11 +21,16 @@ import {
   DataExportResponseSchema,
   DeleteHouseholdRequestSchema,
   DeleteHouseholdResponseSchema,
+  HouseholdMembersResponseSchema,
+  DayAssignmentsResponseSchema,
+  AssignPackerRequestSchema,
+  AssignPackerResponseSchema,
 } from '@hivekitchen/contracts';
 import type {
   TileRetryRequest,
   HouseholdProfilePatchBody,
   UpdateSovereigntyModeInput,
+  AssignPackerRequest,
 } from '@hivekitchen/contracts';
 import type { CreateExtraLibraryItemInput } from '@hivekitchen/types';
 import { AuditRepository } from '../../audit/audit.repository.js';
@@ -35,8 +40,11 @@ import { authorize } from '../../middleware/authorize.hook.js';
 import { HouseholdsRepository } from './households.repository.js';
 import { HouseholdsService } from './households.service.js';
 import { ExtraLibraryRepository } from './extra-library.repository.js';
+import { DayAssignmentsRepository } from './day-assignments.repository.js';
+import { ThreadRepository } from '../threads/thread.repository.js';
 import { ChildAllergensRepository } from '../children/child-allergens.repository.js';
 import { ChildrenRepository } from '../children/children.repository.js';
+import { UserRepository } from '../users/user.repository.js';
 import { MemoryRepository } from '../memory/memory.repository.js';
 import { CulturalPriorRepository } from '../cultural-priors/cultural-prior.repository.js';
 import { ComplianceRepository } from '../compliance/compliance.repository.js';
@@ -66,6 +74,11 @@ const householdsRoutesPlugin: FastifyPluginAsync = async (fastify) => {
   const auditService = new AuditService(new AuditRepository(fastify.supabase));
   // Story 3.21 — household-scoped Extra library.
   const extraLibraryRepository = new ExtraLibraryRepository(fastify.supabase);
+  // Slice 5-S2 — household member roster read.
+  const userRepository = new UserRepository(fastify.supabase);
+  // Slice 5-S3 — PackerOfTheDay assignments + lazy coordination thread.
+  const dayAssignmentsRepo = new DayAssignmentsRepository(fastify.supabase);
+  const threadRepository = new ThreadRepository(fastify.supabase);
 
   // Story 7-S8 — parental review dashboard service. Composes four existing
   // reads; no new persisted data. The ChildrenRepository wiring is copied
@@ -227,6 +240,163 @@ const householdsRoutesPlugin: FastifyPluginAsync = async (fastify) => {
       }
       const nodes = await fastify.memoryService.findActive(householdId);
       return { nodes };
+    },
+  );
+
+  // Slice 5-S2 — GET /v1/households/:id/members — household roster (name +
+  // role). Both caregivers may read; guest_authors are filtered out in the
+  // repository query. 403 on cross-household read, matching sibling routes.
+  fastify.get(
+    '/v1/households/:id/members',
+    {
+      preHandler: requireParentOrCaregiver,
+      schema: {
+        params: HouseholdIdParamSchema,
+        response: { 200: HouseholdMembersResponseSchema },
+      },
+    },
+    async (request) => {
+      const { id: householdId } = request.params as { id: string };
+      if (householdId !== request.user.household_id) {
+        throw new ForbiddenError('Cannot access another household roster');
+      }
+      const rows = await userRepository.findByHousehold(householdId);
+      const { data: hhRow } = (await fastify.supabase
+        .from('households')
+        .select('display_name')
+        .eq('id', householdId)
+        .single()) as { data: { display_name: string | null } | null; error: unknown };
+      return {
+        household_display_name: hhRow?.display_name ?? null,
+        members: rows.map((row) => ({
+          user_id: row.id,
+          display_name: row.display_name,
+          role: row.role,
+        })),
+      };
+    },
+  );
+
+  // Slice 5-S3 — GET /v1/households/:id/packers — all day_assignments rows for
+  // the household, packer_display_name resolved from a single roster read
+  // (avoids N+1). Either caregiver may read; 403 on cross-household.
+  fastify.get(
+    '/v1/households/:id/packers',
+    {
+      preHandler: requireParentOrCaregiver,
+      schema: {
+        params: HouseholdIdParamSchema,
+        response: { 200: DayAssignmentsResponseSchema },
+      },
+    },
+    async (request) => {
+      const { id: householdId } = request.params as { id: string };
+      if (householdId !== request.user.household_id) {
+        throw new ForbiddenError('Cannot access another household packers');
+      }
+      const rows = await dayAssignmentsRepo.findByHousehold(householdId);
+      const members = await userRepository.findByHousehold(householdId);
+      const nameById = new Map(members.map((m) => [m.id, m.display_name]));
+      return {
+        assignments: rows.map((row) => ({
+          date: row.date,
+          packer_user_id: row.packer_user_id,
+          packer_display_name:
+            row.packer_user_id !== null ? nameById.get(row.packer_user_id) ?? null : null,
+        })),
+      };
+    },
+  );
+
+  // Slice 5-S3 — PATCH /v1/households/:id/days/:date/packer — assign (or clear,
+  // with packer_user_id=null) the packer for one day. Upserts the row, emits a
+  // `packer.assigned` SSE on assignment (not on clear — the contract's packer_id
+  // is non-nullable), and best-effort appends a system_event turn to the
+  // household's lazily-created coordination thread.
+  fastify.patch(
+    '/v1/households/:id/days/:date/packer',
+    {
+      preHandler: requireParentOrCaregiver,
+      schema: {
+        params: HouseholdIdParamSchema.extend({ date: z.string() }),
+        body: AssignPackerRequestSchema,
+        response: { 200: AssignPackerResponseSchema },
+      },
+    },
+    async (request) => {
+      const { id: householdId, date } = request.params as { id: string; date: string };
+      if (householdId !== request.user.household_id) {
+        throw new ForbiddenError('Cannot assign packers for another household');
+      }
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+        throw new ValidationError('date must be an ISO date (YYYY-MM-DD)');
+      }
+      const body = request.body as AssignPackerRequest;
+
+      // P1 fix: validate membership before upsert so a foreign UUID is never
+      // written to day_assignments. findByHousehold also resolves display_name,
+      // replacing the previous unscoped findUserById call.
+      let packerDisplayName: string | null = null;
+      if (body.packer_user_id) {
+        const members = await userRepository.findByHousehold(householdId);
+        const member = members.find((m) => m.id === body.packer_user_id);
+        if (!member) {
+          throw new ValidationError('packer_user_id must be a member of this household');
+        }
+        packerDisplayName = member.display_name ?? null;
+      }
+
+      const row = await dayAssignmentsRepo.upsert(
+        householdId,
+        date,
+        body.packer_user_id,
+        request.user.id,
+      );
+
+      // Emit only when assigning — the packer.assigned SSE contract carries a
+      // non-nullable packer_id, so an unassign has no event to send.
+      if (body.packer_user_id) {
+        fastify.sseDispatcher.emit(
+          householdId,
+          'message',
+          JSON.stringify({ type: 'packer.assigned', date, packer_id: body.packer_user_id }),
+        );
+      }
+
+      // Best-effort coordination-thread turn. A failure here must not fail the
+      // assignment — the row + SSE already landed.
+      try {
+        let thread = await threadRepository.findActiveThreadByHousehold(
+          householdId,
+          'coordination',
+          'text',
+        );
+        if (!thread) {
+          thread = await threadRepository.createThread(householdId, 'coordination', 'text');
+        }
+        await threadRepository.appendTurnNext({
+          threadId: thread.id,
+          role: 'system',
+          body: {
+            type: 'system_event',
+            event: 'packer.assigned',
+            payload: {
+              date,
+              packer_user_id: body.packer_user_id,
+              packer_display_name: packerDisplayName,
+            },
+          },
+          modality: 'text',
+        });
+      } catch (err) {
+        fastify.log.warn({ err }, 'packer: failed to write coordination thread turn');
+      }
+
+      return {
+        date,
+        packer_user_id: row.packer_user_id,
+        packer_display_name: packerDisplayName,
+      };
     },
   );
 

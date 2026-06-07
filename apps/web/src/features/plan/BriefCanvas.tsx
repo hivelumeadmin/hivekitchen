@@ -17,6 +17,8 @@ import { DisambiguationPicker } from './DisambiguationPicker.js';
 import { FreshnessState } from './FreshnessState.js';
 import { PlanActionSection } from './PlanActionSection.js';
 import { PlanTile, type PlanTileState, type ChildDotColor, type ChildInfo } from './PlanTile.js';
+import { PackerChip } from './PackerChip.js';
+import { PresenceIndicator } from '@/features/thread/PresenceIndicator.js';
 import { QuietDiff } from './QuietDiff.js';
 import { usePlanQuery } from './queries.js';
 import { QueryKeys } from '@/lib/realtime/query-keys.js';
@@ -28,6 +30,34 @@ import {
 import { adaptPlansResponse, type DayTreeView } from './tree-adapter.js';
 
 const CHILD_COLORS: readonly ChildDotColor[] = ['foliage', 'lumi-terracotta'];
+
+// Slice 5-S3 — map each weekday name to this week's ISO date (Mon-anchored) so
+// PackerChip can PATCH the right /days/:date/packer. Computed once per mount.
+function getWeekDates(): Record<string, string> {
+  const today = new Date();
+  const dow = today.getDay(); // 0=Sun
+  const monday = new Date(today);
+  monday.setDate(today.getDate() - (dow === 0 ? 6 : dow - 1));
+  const offsets: Record<string, number> = {
+    monday: 0,
+    tuesday: 1,
+    wednesday: 2,
+    thursday: 3,
+    friday: 4,
+    saturday: 5,
+  };
+  return Object.fromEntries(
+    Object.entries(offsets).map(([day, offset]) => {
+      const d = new Date(monday);
+      d.setDate(monday.getDate() + offset);
+      // Use local-date components to avoid UTC rollover for UTC+ users.
+      const yyyy = d.getFullYear();
+      const mo = String(d.getMonth() + 1).padStart(2, '0');
+      const dd = String(d.getDate()).padStart(2, '0');
+      return [day, `${yyyy}-${mo}-${dd}`];
+    }),
+  );
+}
 
 function buildChildColorMap(
   clearedAllergies: ClearedAllergyEntry[],
@@ -62,6 +92,8 @@ export function BriefCanvas() {
 
   const householdId = useAuthStore((s) => s.user?.current_household_id ?? null);
   const queryClient = useQueryClient();
+  // Slice 5-S3 — this week's date per weekday, for the PackerChip below each tile.
+  const weekDates = useMemo(() => getWeekDates(), []);
   const { data, isLoading, isError, isStale, isFetching, error } = useBriefStateQuery(householdId);
   // Story pre-4-s3 — the plan endpoint carries compound-uncertain flagged_items
   // when the hard-fail audit row signals AllergyUncertaintyBanner is needed.
@@ -325,6 +357,10 @@ export function BriefCanvas() {
 
   return (
     <main className="mx-auto w-full max-w-7xl flex-grow px-6 pt-12 pb-24">
+      {/* Story 5-S1 — multi-tab presence; self-hides when no partner is on Brief. */}
+      <div className="mb-2 flex justify-end">
+        <PresenceIndicator surface={{ kind: 'brief', id: householdId ?? '' }} />
+      </div>
       {/* Story pre-4-s3 — compound-uncertain hard-fail surface; banner self-hides on empty. */}
       {flaggedItems.length > 0 && (
         <div className="mb-6">
@@ -416,23 +452,29 @@ export function BriefCanvas() {
                       : 'decided';
 
               return (
-                <PlanTile
-                  key={summary.day}
-                  summary={summary}
-                  state={tileState}
-                  childColorMap={childColorMap}
-                  childRatings={summary.child_ratings}
-                  onSwapIntent={
-                    canSwap && !summary.paused && swappingItemId === null
-                      ? () => {
-                          if (document.activeElement instanceof HTMLElement) {
-                            swapTriggerRef.current = document.activeElement;
+                <div key={summary.day} className="flex flex-col gap-2">
+                  <PlanTile
+                    summary={summary}
+                    state={tileState}
+                    childColorMap={childColorMap}
+                    childRatings={summary.child_ratings}
+                    onSwapIntent={
+                      canSwap && !summary.paused && swappingItemId === null
+                        ? () => {
+                            if (document.activeElement instanceof HTMLElement) {
+                              swapTriggerRef.current = document.activeElement;
+                            }
+                            setActiveSwapDay(summary.day);
                           }
-                          setActiveSwapDay(summary.day);
-                        }
-                      : undefined
-                  }
-                />
+                        : undefined
+                    }
+                  />
+                  <PackerChip
+                    day={summary.day}
+                    date={weekDates[summary.day] ?? ''}
+                    householdId={householdId ?? ''}
+                  />
+                </div>
               );
             })}
           </div>

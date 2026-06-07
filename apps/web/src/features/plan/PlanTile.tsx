@@ -2,7 +2,6 @@ import { useRef, useState } from 'react';
 import type { KeyboardEvent as ReactKeyboardEvent } from 'react';
 import type { PlanTileSummary, VariantProposal } from '@hivekitchen/types';
 import { PauseCircleIcon } from '@/components/icons.js';
-import { PresenceIndicator } from '../thread/PresenceIndicator.js';
 import { TrustChip, type TrustChipVariant } from './TrustChip.js';
 
 export type PlanTileState =
@@ -179,12 +178,21 @@ export function PlanTile({
       onKeyDown={handleKeyDown}
       className={articleClasses}
     >
-      {isLocked && (
-        <PresenceIndicator
-          surface={{ kind: 'plan_tile', id: summary.day }}
-          partnerName={partnerName}
-          className="absolute top-2 end-2"
-        />
+      {/* Story 5-S1 — live presence is brief-only; plan_tile presence is deferred
+          (see Dev Notes). This is the static lock-by-partner badge; it renders
+          only when the parent supplies an explicit partnerName. */}
+      {isLocked && partnerName && (
+        <span
+          role="status"
+          aria-live="polite"
+          className="absolute top-2 end-2 inline-flex items-center gap-1 font-sans text-[13px] text-warm-neutral-600"
+        >
+          <span
+            aria-hidden="true"
+            className="inline-block h-5 w-5 rounded-full bg-sacred-200"
+          />
+          <span>{partnerName} is editing</span>
+        </span>
       )}
 
       <h2 className="text-xs uppercase tracking-wider text-fg-muted mb-4">

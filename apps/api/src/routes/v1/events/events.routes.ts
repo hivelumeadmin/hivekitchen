@@ -1,6 +1,12 @@
 // apps/api/src/routes/v1/events/events.routes.ts
 import type { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
+import type { SurfaceKind } from '@hivekitchen/types';
+import { emitPresenceEvent, getPresenceKey } from '../../../modules/presence/presence.helpers.js';
+
+interface StoredPresence {
+  surface: SurfaceKind;
+}
 
 /**
  * GET /v1/events — SSE channel stub.
@@ -91,6 +97,19 @@ export const eventsRoutes: FastifyPluginAsync = async (fastify) => {
       request.raw.on('close', () => {
         clearInterval(heartbeatInterval);
         fastify.sseDispatcher.unregister(payload.hh, reply.raw);
+        // Story 5-S1 — clear presence for this user on disconnect so the
+        // partner's tab clears immediately (rather than waiting for TTL).
+        void (async () => {
+          const key = getPresenceKey(payload.hh, payload.sub);
+          const raw = await fastify.redis.get(key);
+          if (!raw) return;
+          const stored = JSON.parse(raw) as StoredPresence;
+          await fastify.redis.del(key);
+          const expiredAt = new Date(Date.now() - 1000).toISOString();
+          emitPresenceEvent(fastify, payload.hh, payload.sub, stored.surface, expiredAt);
+        })().catch((err) =>
+          fastify.log.warn({ err }, 'events: presence clear on disconnect failed'),
+        );
         fastify.log.info(
           { module: 'events', action: 'sse.disconnect', clientId },
           'SSE client disconnected',

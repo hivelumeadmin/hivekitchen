@@ -18,6 +18,13 @@ const OTHER_HOUSEHOLD_ID = '33333333-3333-4333-8333-333333333333';
 const SAMPLE_INVITE_ID = '44444444-4444-4444-8444-444444444444';
 const JWT_SECRET = 'a'.repeat(32);
 
+interface UserProfileRowMock {
+  id: string;
+  email: string;
+  display_name: string | null;
+  role: 'primary_parent' | 'secondary_caregiver' | 'guest_author' | 'ops';
+}
+
 interface MockOpts {
   insertInviteResult?: InviteRow;
   insertInviteError?: unknown;
@@ -25,6 +32,11 @@ interface MockOpts {
   findInviteError?: unknown;
   updateAffectedRows?: number;
   updateError?: unknown;
+  // Slice 5-S2 — the accept flow updates the users row after marking redeemed.
+  userUpdateResult?: UserProfileRowMock;
+  userUpdateError?: unknown;
+  // Captures the patch passed to users.update so tests can assert the linkage.
+  capturedUserUpdate?: { value: Record<string, unknown> | null };
 }
 
 function buildMockSupabase(opts: MockOpts) {
@@ -32,6 +44,23 @@ function buildMockSupabase(opts: MockOpts) {
 
   return {
     from(table: string) {
+      if (table === 'users') {
+        return {
+          update: (patch: Record<string, unknown>) => {
+            if (opts.capturedUserUpdate) opts.capturedUserUpdate.value = patch;
+            return {
+              eq: () => ({
+                select: () => ({
+                  single: vi.fn().mockResolvedValue({
+                    data: opts.userUpdateResult ?? null,
+                    error: opts.userUpdateError ?? null,
+                  }),
+                }),
+              }),
+            };
+          },
+        };
+      }
       if (table === 'invites') {
         return {
           insert: () => ({
@@ -131,15 +160,18 @@ function signAccessToken(
   app: FastifyInstance,
   overrides: Partial<{
     sub: string;
-    hh: string;
+    hh: string | null;
     role: 'primary_parent' | 'secondary_caregiver' | 'guest_author' | 'ops';
   }> = {},
 ): string {
-  return app.jwt.sign({
+  const payload: Record<string, unknown> = {
     sub: overrides.sub ?? SAMPLE_USER_ID,
-    hh: overrides.hh ?? SAMPLE_HOUSEHOLD_ID,
     role: overrides.role ?? 'primary_parent',
-  });
+  };
+  if (overrides.hh !== null) {
+    payload.hh = overrides.hh ?? SAMPLE_HOUSEHOLD_ID;
+  }
+  return app.jwt.sign(payload);
 }
 
 // Manually craft an HS256 JWT so we can set `exp` directly in the payload (the
@@ -412,5 +444,166 @@ describe('POST /v1/auth/invites/redeem', () => {
     expect(res.statusCode).toBe(410);
     const body = JSON.parse(res.body) as { type: string };
     expect(body.type).toBe('/errors/link-expired');
+  });
+});
+
+describe('POST /v1/auth/invites/accept (5-S2)', () => {
+  let app: FastifyInstance;
+
+  afterEach(async () => {
+    if (app) await app.close();
+  });
+
+  const INVITEE_USER_ID = '55555555-5555-4555-8555-555555555555';
+
+  function sampleUserRow(): UserProfileRowMock {
+    return {
+      id: INVITEE_USER_ID,
+      email: 'partner@example.com',
+      display_name: 'Partner',
+      role: 'secondary_caregiver',
+    };
+  }
+
+  function validInviteToken(): string {
+    const futureExp = Math.floor(Date.now() / 1000) + 14 * 24 * 60 * 60;
+    return encodeInviteToken(
+      craftInviteJwt({
+        household_id: SAMPLE_HOUSEHOLD_ID,
+        role: 'secondary_caregiver',
+        invite_id: SAMPLE_INVITE_ID,
+        jti: SAMPLE_INVITE_ID,
+        iat: Math.floor(Date.now() / 1000),
+        exp: futureExp,
+      }),
+    );
+  }
+
+  it('valid token + authenticated user → 200 with fresh access_token and linked user', async () => {
+    const capturedUserUpdate = { value: null as Record<string, unknown> | null };
+    const supabaseMock = buildMockSupabase({
+      findInviteResult: activeInviteRow(),
+      updateAffectedRows: 1,
+      userUpdateResult: sampleUserRow(),
+      capturedUserUpdate,
+    });
+    app = await buildTestApp(supabaseMock);
+    const accessToken = signAccessToken(app, { sub: INVITEE_USER_ID, hh: null, role: 'primary_parent' });
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/v1/auth/invites/accept',
+      headers: { authorization: `Bearer ${accessToken}` },
+      payload: { token: validInviteToken() },
+    });
+
+    expect(res.statusCode).toBe(200);
+    const body = JSON.parse(res.body) as {
+      access_token: string;
+      user: { id: string; role: string; current_household_id: string };
+      household_id: string;
+      scope_target: string;
+    };
+    expect(body.access_token.length).toBeGreaterThan(0);
+    expect(body.household_id).toBe(SAMPLE_HOUSEHOLD_ID);
+    expect(body.scope_target).toBe('/app');
+    expect(body.user.role).toBe('secondary_caregiver');
+    expect(body.user.current_household_id).toBe(SAMPLE_HOUSEHOLD_ID);
+    // The fresh JWT must carry the updated household + role claims.
+    const decoded = app.jwt.verify<{ sub: string; hh: string; role: string }>(body.access_token);
+    expect(decoded.hh).toBe(SAMPLE_HOUSEHOLD_ID);
+    expect(decoded.role).toBe('secondary_caregiver');
+    // The users row was updated with the new household + role.
+    expect(capturedUserUpdate.value).toMatchObject({
+      current_household_id: SAMPLE_HOUSEHOLD_ID,
+      role: 'secondary_caregiver',
+    });
+  });
+
+  it('unauthenticated (no JWT) → 401', async () => {
+    const supabaseMock = buildMockSupabase({
+      findInviteResult: activeInviteRow(),
+      updateAffectedRows: 1,
+      userUpdateResult: sampleUserRow(),
+    });
+    app = await buildTestApp(supabaseMock);
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/v1/auth/invites/accept',
+      payload: { token: validInviteToken() },
+    });
+
+    expect(res.statusCode).toBe(401);
+  });
+
+  it('already-redeemed invite → 410 link-expired', async () => {
+    const supabaseMock = buildMockSupabase({
+      findInviteResult: activeInviteRow(),
+      updateAffectedRows: 0, // markRedeemed sees 0 rows → already redeemed
+      userUpdateResult: sampleUserRow(),
+    });
+    app = await buildTestApp(supabaseMock);
+    const accessToken = signAccessToken(app, { sub: INVITEE_USER_ID, hh: null });
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/v1/auth/invites/accept',
+      headers: { authorization: `Bearer ${accessToken}` },
+      payload: { token: validInviteToken() },
+    });
+
+    expect(res.statusCode).toBe(410);
+    const body = JSON.parse(res.body) as { type: string };
+    expect(body.type).toBe('/errors/link-expired');
+  });
+
+  it('expired invite JWT → 410 link-expired', async () => {
+    const supabaseMock = buildMockSupabase({ userUpdateResult: sampleUserRow() });
+    app = await buildTestApp(supabaseMock);
+    const accessToken = signAccessToken(app, { sub: INVITEE_USER_ID, hh: null });
+
+    const pastExp = Math.floor(Date.now() / 1000) - 60;
+    const expiredToken = encodeInviteToken(
+      craftInviteJwt({
+        household_id: SAMPLE_HOUSEHOLD_ID,
+        role: 'secondary_caregiver',
+        invite_id: SAMPLE_INVITE_ID,
+        jti: SAMPLE_INVITE_ID,
+        iat: pastExp - 10,
+        exp: pastExp,
+      }),
+    );
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/v1/auth/invites/accept',
+      headers: { authorization: `Bearer ${accessToken}` },
+      payload: { token: expiredToken },
+    });
+
+    expect(res.statusCode).toBe(410);
+    const body = JSON.parse(res.body) as { type: string };
+    expect(body.type).toBe('/errors/link-expired');
+  });
+
+  it('already a member of a household → 403', async () => {
+    const supabaseMock = buildMockSupabase({
+      findInviteResult: activeInviteRow(),
+      updateAffectedRows: 1,
+      userUpdateResult: sampleUserRow(),
+    });
+    app = await buildTestApp(supabaseMock);
+    // Default hh = SAMPLE_HOUSEHOLD_ID — simulates a user already in a household.
+    const accessToken = signAccessToken(app, { sub: INVITEE_USER_ID });
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/v1/auth/invites/accept',
+      headers: { authorization: `Bearer ${accessToken}` },
+      payload: { token: validInviteToken() },
+    });
+
+    expect(res.statusCode).toBe(403);
   });
 });

@@ -99,6 +99,41 @@ export class UserRepository extends BaseRepository {
     return (data as UserProfileRow | null) ?? null;
   }
 
+  // Slice 5-S2 — link an invitee's account to the inviting household. Narrowed
+  // to 'secondary_caregiver' on purpose: this is the only role the invite-accept
+  // flow assigns (see story Dev Notes — do not generalize the parameter).
+  async setHouseholdMembership(
+    userId: string,
+    householdId: string,
+    role: 'secondary_caregiver',
+  ): Promise<UserProfileRow> {
+    const { data, error } = await this.client
+      .from('users')
+      .update({ current_household_id: householdId, role })
+      .eq('id', userId)
+      .select(PROFILE_COLUMNS)
+      .single();
+    if (error) throw error;
+    return data as UserProfileRow;
+  }
+
+  // Slice 5-S2 — household member roster. guest_author members share the
+  // household's current_household_id but are filtered out here; only the
+  // co-caregivers appear in the settings member list. primary_parent sorts
+  // first via the role column ordering.
+  async findByHousehold(
+    householdId: string,
+  ): Promise<Pick<UserProfileRow, 'id' | 'display_name' | 'role'>[]> {
+    const { data, error } = await this.client
+      .from('users')
+      .select('id, display_name, role')
+      .eq('current_household_id', householdId)
+      .in('role', ['primary_parent', 'secondary_caregiver'])
+      .order('role');
+    if (error) throw error;
+    return (data ?? []) as Pick<UserProfileRow, 'id' | 'display_name' | 'role'>[];
+  }
+
   async updateUserProfile(id: string, input: UpdateUserProfileInput): Promise<UserProfileRow> {
     const { data, error } = await this.client
       .from('users')
