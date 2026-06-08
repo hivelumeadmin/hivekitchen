@@ -62,7 +62,7 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: web-dist
           path: apps/web/dist/
@@ -96,7 +96,7 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: marketing-dist
           path: apps/marketing/dist/
@@ -134,7 +134,7 @@ jobs:
         run: pnpm exec playwright install chromium --with-deps
         working-directory: apps/web
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: web-dist
           path: apps/web/dist/
