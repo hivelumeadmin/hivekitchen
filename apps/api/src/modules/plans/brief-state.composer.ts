@@ -10,6 +10,7 @@ import type {
 } from '../children/children.repository.js';
 import type { AuditService } from '../../audit/audit.service.js';
 import type { LunchLinkSessionRepository } from './lunch-link-session.repository.js';
+import type { MemoryRepository } from '../memory/memory.repository.js';
 import type {
   ClearedAllergyEntry,
   PlanDayRow,
@@ -30,6 +31,9 @@ export interface BriefStateComposerDeps {
   lunchLinkSessionRepository?: LunchLinkSessionRepository;
   auditService: AuditService;
   logger: FastifyBaseLogger;
+  // Slice 5-S8: optional so existing tests that construct the composer without a
+  // memory repo remain valid. When absent, buildLearningMomentCallout returns null.
+  memoryRepository?: MemoryRepository;
 }
 
 const SCHOOL_DAYS = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'] as const;
@@ -52,6 +56,7 @@ export class BriefStateComposer {
   private readonly lunchLinkSessionRepo: LunchLinkSessionRepository | undefined;
   private readonly auditService: AuditService;
   private readonly logger: FastifyBaseLogger;
+  private readonly memoryRepository: MemoryRepository | undefined;
 
   constructor(deps: BriefStateComposerDeps) {
     this.plansRepo = deps.plansRepository;
@@ -60,6 +65,88 @@ export class BriefStateComposer {
     this.lunchLinkSessionRepo = deps.lunchLinkSessionRepository;
     this.auditService = deps.auditService;
     this.logger = deps.logger;
+    this.memoryRepository = deps.memoryRepository;
+  }
+
+  // Slice 5-S8 — evaluate the "I noticed" threshold. Returns a callout when ≥3
+  // turn-sourced memory nodes exist for the household within the 7-day window
+  // AND the suppress window (set by a prior dismiss) has elapsed. Returns null
+  // otherwise — including when no memory repository is wired (e.g. in tests).
+  private async buildLearningMomentCallout(
+    householdId: string,
+    suppressedUntil: string | null,
+  ): Promise<{ prose: string; node_ids: string[]; surfaced_at: string } | null> {
+    if (!this.memoryRepository) return null; // not wired in tests
+    if (suppressedUntil && new Date(suppressedUntil) > new Date()) return null; // AC#6
+
+    const since = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+    const nodes = await this.memoryRepository.findRecentTurnSourcedNodes(householdId, since);
+
+    if (nodes.length < 3) return null; // AC#8 — threshold not met
+
+    // Build prose from the most-recently-created node (first in desc-order result).
+    const best = nodes[0]!;
+    const prose = `I've noticed ${best.prose_text} — want me to keep that in mind?`.slice(0, 400);
+    const nodeIds = nodes.slice(0, 5).map((n) => n.id);
+
+    return { prose, node_ids: nodeIds, surfaced_at: new Date().toISOString() };
+  }
+
+  // Slice 5-S8 — respond to a surfaced learning moment. Patches ONLY the callout
+  // fields in the existing brief_state row (no full refreshTree, which would
+  // re-evaluate and potentially immediately re-surface the callout). Idempotent:
+  // a no-op when there is no active callout. On 'dismiss', sets a 7-day suppress
+  // window; 'confirm' / 'tell_more' carry the existing window forward (AC#3–#5).
+  async respondToLearningMoment(
+    householdId: string,
+    action: 'confirm' | 'tell_more' | 'dismiss',
+    requestId: string,
+  ): Promise<void> {
+    const current = await this.briefStateRepo.findByHousehold(householdId);
+    if (!current || !current.payload.learning_moment_callout) {
+      return; // no callout to respond to — idempotent no-op
+    }
+
+    const suppressedUntil =
+      action === 'dismiss'
+        ? new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString()
+        : current.payload.learning_moment_suppressed_until;
+
+    await this.briefStateRepo.upsert({
+      household_id: householdId,
+      plan_id: current.plan_id,
+      moment_headline: current.moment_headline,
+      lumi_note: current.lumi_note,
+      memory_prose: current.memory_prose,
+      payload: {
+        ...current.payload,
+        learning_moment_callout: null,
+        learning_moment_suppressed_until: suppressedUntil ?? null,
+      },
+      generated_at: current.generated_at,
+      plan_revision: current.plan_revision,
+    });
+
+    const auditEventType =
+      action === 'confirm'
+        ? 'memory.learning_moment_confirmed'
+        : action === 'dismiss'
+          ? 'memory.learning_moment_dismissed'
+          : 'memory.learning_moment_tell_more';
+
+    try {
+      await this.auditService.write({
+        event_type: auditEventType,
+        household_id: householdId,
+        request_id: requestId,
+        metadata: { action },
+      });
+    } catch (auditErr) {
+      this.logger.warn(
+        { auditErr, household_id: householdId },
+        'audit write failed for learning moment respond — non-fatal',
+      );
+    }
   }
 
 
@@ -171,7 +258,7 @@ export class BriefStateComposer {
     householdId: string,
     weekId: string,
     requestId: string,
-    opts: { userInitiated?: boolean } = {},
+    opts: { userInitiated?: boolean; planReasoning?: string | null } = {},
   ): Promise<void> {
     try {
       const plan = await this.plansRepo.findCurrentByHousehold({
@@ -215,6 +302,17 @@ export class BriefStateComposer {
       const tree = composePlanTree({ days, mainAssignments, slots, variations });
       const previousTileSummaries = previousBrief?.payload?.tile_summaries ?? null;
 
+      // Slice 5-S8 — "I noticed" learning-moment callout. Read the suppress
+      // window from the previous payload, then evaluate the turn-sourced
+      // threshold. Sequential (after the parallel block) because it needs
+      // previousBrief; returns null early for households with no candidates.
+      const suppressedUntil =
+        previousBrief?.payload?.learning_moment_suppressed_until ?? null;
+      const learningMomentCallout = await this.buildLearningMomentCallout(
+        householdId,
+        suppressedUntil,
+      );
+
       const upsertInput: BriefStateUpsertInput = {
         household_id: householdId,
         plan_id: plan.id,
@@ -241,6 +339,16 @@ export class BriefStateComposer {
           plan_state: previousBrief?.payload?.plan_state ?? null,
           plan_state_set_at: previousBrief?.payload?.plan_state_set_at ?? null,
           plan_state_message: previousBrief?.payload?.plan_state_message ?? null,
+          // Slice 5-S8 — learning moment callout + carried-forward suppress window.
+          learning_moment_callout: learningMomentCallout,
+          learning_moment_suppressed_until: suppressedUntil,
+          // Slice 5-S9 — set plan reasoning from commit opts, else carry forward
+          // from the previous payload (swap/variation/pause refreshes never zero it).
+          // null = explicit clear (new commit with no reasoning); undefined = carry forward.
+          plan_reasoning:
+            opts.planReasoning !== undefined
+              ? (opts.planReasoning ?? null)
+              : (previousBrief?.payload?.plan_reasoning ?? null),
         },
         generated_at: new Date().toISOString(),
         plan_revision: plan.revision,

@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { Turn, TurnBody, TurnBodyMessage, TurnBodyPlanDiff, TurnBodyProposal, TurnBodySystemEvent, TurnBodyPresence, TurnBodyRatificationPrompt } from './thread.js';
+import { Turn, TurnBody, TurnBodyMessage, TurnBodyPlanDiff, TurnBodyProposal, TurnBodySystemEvent, TurnBodyPresence, TurnBodyRatificationPrompt, TurnBodyFamilyLanguagePrompt } from './thread.js';
+import { LumiTurnResponseSchema } from './lumi.js';
 
 const UUID1 = '00000000-0000-4000-8000-000000000001';
 const UUID2 = '00000000-0000-4000-8000-000000000002';
@@ -234,5 +235,66 @@ describe('TurnBody — ratification_prompt discriminant', () => {
       priors: [{ prior_id: PRIOR_UUID, key: 'south_asian', label: 'South Asian' }],
     });
     expect(r.success).toBe(true);
+  });
+});
+
+describe('TurnBodyFamilyLanguagePrompt (Slice 5-S10)', () => {
+  const validBody = { type: 'family_language_prompt', term: 'Nani', maps_to: 'grandmother' };
+
+  it('parses a valid family_language_prompt body', () => {
+    expect(TurnBodyFamilyLanguagePrompt.safeParse(validBody).success).toBe(true);
+  });
+
+  it('rejects an empty term', () => {
+    expect(TurnBodyFamilyLanguagePrompt.safeParse({ ...validBody, term: '' }).success).toBe(false);
+  });
+
+  it('participates in the TurnBody discriminated union', () => {
+    const parsed = TurnBody.safeParse(validBody);
+    expect(parsed.success).toBe(true);
+    if (parsed.success) expect(parsed.data.type).toBe('family_language_prompt');
+  });
+});
+
+describe('LumiTurnResponseSchema (Slice 5-S10 ratification_turn)', () => {
+  const userTurn = {
+    id: UUID1,
+    thread_id: UUID2,
+    server_seq: '1',
+    created_at: DT,
+    role: 'user',
+    body: { type: 'message', content: 'hi nani' },
+  };
+  const lumiTurn = {
+    id: UUID3,
+    thread_id: UUID2,
+    server_seq: '2',
+    created_at: DT,
+    role: 'lumi',
+    body: { type: 'message', content: 'hello' },
+  };
+
+  it('parses without a ratification_turn', () => {
+    expect(
+      LumiTurnResponseSchema.safeParse({ thread_id: UUID2, user_turn: userTurn, lumi_turn: lumiTurn }).success,
+    ).toBe(true);
+  });
+
+  it('parses with a family_language_prompt ratification_turn', () => {
+    expect(
+      LumiTurnResponseSchema.safeParse({
+        thread_id: UUID2,
+        user_turn: userTurn,
+        lumi_turn: lumiTurn,
+        ratification_turn: {
+          id: UUID3,
+          thread_id: UUID2,
+          server_seq: '3',
+          created_at: DT,
+          role: 'lumi',
+          body: { type: 'family_language_prompt', term: 'Nani', maps_to: 'grandmother' },
+        },
+      }).success,
+    ).toBe(true);
   });
 });

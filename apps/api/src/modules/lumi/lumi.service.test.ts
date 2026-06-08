@@ -47,6 +47,15 @@ function buildDeps(overrides: {
   allergens?: Array<{ child_id: string | null; allergen: string }>;
   activeThread?: { id: string } | null;
   priorTurns?: Turn[];
+  // 5-S7 — pass a mock memoryService to exercise passive enrichment. Omit it to
+  // mirror the nudge-job path (enrichment is skipped entirely).
+  memoryService?: { noteFromAgent: ReturnType<typeof vi.fn> };
+  // 5-S10 — pass a mock familyLanguageRepository to exercise inline detection +
+  // the snapshot ratchet block. Omit it to mirror the no-detection path.
+  familyLanguageRepository?: {
+    recordUsage: ReturnType<typeof vi.fn>;
+    getTerms: ReturnType<typeof vi.fn>;
+  };
 } = {}) {
   const repository = {
     getHouseholdDisplayName: vi.fn().mockResolvedValue(overrides.displayName ?? null),
@@ -86,6 +95,8 @@ function buildDeps(overrides: {
     childrenRepository,
     householdAllergensRepository,
     voiceTranscriptRepository,
+    memoryService: overrides.memoryService,
+    familyLanguageRepository: overrides.familyLanguageRepository,
   } as unknown as LumiServiceDeps;
 
   const service = new LumiService(deps);
@@ -97,6 +108,9 @@ function buildDeps(overrides: {
     redis,
     logger,
     voiceTranscriptRepository,
+    openai,
+    memoryService: overrides.memoryService,
+    familyLanguageRepository: overrides.familyLanguageRepository,
   };
 }
 
@@ -542,5 +556,266 @@ describe('LumiService.processVoiceUtterance — ambient voice (Story 5-S5b)', ()
     const frames = sentFrames(ws);
     expect(frames.map((f) => f.type)).toContain('response.end');
     expect(frames.find((f) => f.type === 'error')).toBeUndefined();
+  });
+});
+
+// 5-S7 — passive enrichment fires as `void this.runPassiveEnrichment(...)` after
+// the Lumi turn is committed. submitTextTurn returns before the enrichment chain
+// settles, so we flush the microtask queue (a macrotask boundary drains all
+// pending microtasks deterministically — this is not a timing wait).
+const flushFireAndForget = (): Promise<void> =>
+  new Promise<void>((resolve) => {
+    setTimeout(resolve, 0);
+  });
+
+function enrichmentCompletion(content: string) {
+  return { choices: [{ message: { content } }] };
+}
+
+describe('LumiService.submitTextTurn — passive enrichment (Story 5-S7)', () => {
+  it('writes a memory node with source_type=turn anchored to the user turn when OpenAI returns signals', async () => {
+    const memoryService = { noteFromAgent: vi.fn().mockResolvedValue({ node_id: 'n1', created_at: 'x' }) };
+    const { service, openai } = buildDeps({ activeThread: null, memoryService });
+    openai.chat.completions.create.mockResolvedValue(
+      enrichmentCompletion(
+        '{"signals":[{"node_type":"cultural_rhythm","facet":"diwali-2026","prose_text":"Diwali is in three weeks.","confidence":0.8}]}',
+      ),
+    );
+
+    const result = await service.submitTextTurn({
+      householdId: 'hh1',
+      message: 'Diwali is in three weeks',
+      contextSignal: { surface: 'planning' },
+    });
+    await flushFireAndForget();
+
+    expect(memoryService.noteFromAgent).toHaveBeenCalledTimes(1);
+    expect(memoryService.noteFromAgent).toHaveBeenCalledWith({
+      householdId: 'hh1',
+      nodeType: 'cultural_rhythm',
+      facet: 'diwali-2026',
+      proseText: 'Diwali is in three weeks.',
+      subjectChildId: null,
+      confidence: 0.8,
+      sourceType: 'turn',
+      sourceRef: { thread_id: result.thread_id, turn_id: result.user_turn.id },
+    });
+  });
+
+  it('does not write a memory node when OpenAI returns an empty signals array', async () => {
+    const memoryService = { noteFromAgent: vi.fn().mockResolvedValue({ node_id: 'n1', created_at: 'x' }) };
+    const { service, openai, logger } = buildDeps({ activeThread: null, memoryService });
+    openai.chat.completions.create.mockResolvedValue(enrichmentCompletion('{"signals":[]}'));
+
+    await service.submitTextTurn({
+      householdId: 'hh1',
+      message: 'what is for lunch?',
+      contextSignal: { surface: 'planning' },
+    });
+    await flushFireAndForget();
+
+    expect(memoryService.noteFromAgent).not.toHaveBeenCalled();
+    expect(logger.warn).not.toHaveBeenCalled();
+  });
+
+  it('does not propagate an enrichment OpenAI failure to submitTextTurn', async () => {
+    const memoryService = { noteFromAgent: vi.fn() };
+    const { service, openai, logger } = buildDeps({ activeThread: null, memoryService });
+    openai.chat.completions.create.mockRejectedValue(new Error('rate limited'));
+
+    const result = await service.submitTextTurn({
+      householdId: 'hh1',
+      message: 'Diwali is in three weeks',
+      contextSignal: { surface: 'planning' },
+    });
+    await flushFireAndForget();
+
+    expect(result.lumi_turn.role).toBe('lumi');
+    expect(memoryService.noteFromAgent).not.toHaveBeenCalled();
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ action: 'lumi.passive_enrichment_failed' }),
+      expect.any(String),
+    );
+  });
+
+  it('warns and writes nothing when the enrichment result fails schema validation', async () => {
+    const memoryService = { noteFromAgent: vi.fn() };
+    const { service, openai, logger } = buildDeps({ activeThread: null, memoryService });
+    openai.chat.completions.create.mockResolvedValue(
+      enrichmentCompletion('{"signals":[{"node_type":"not_a_real_type","facet":"x","prose_text":"y","confidence":0.8}]}'),
+    );
+
+    await service.submitTextTurn({
+      householdId: 'hh1',
+      message: 'Diwali is in three weeks',
+      contextSignal: { surface: 'planning' },
+    });
+    await flushFireAndForget();
+
+    expect(memoryService.noteFromAgent).not.toHaveBeenCalled();
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ action: 'lumi.passive_enrichment_parse_failed' }),
+      expect.any(String),
+    );
+  });
+
+  it('skips enrichment entirely (no OpenAI call) when memoryService is absent', async () => {
+    const { service, openai } = buildDeps({ activeThread: null });
+
+    const result = await service.submitTextTurn({
+      householdId: 'hh1',
+      message: 'Diwali is in three weeks',
+      contextSignal: { surface: 'planning' },
+    });
+    await flushFireAndForget();
+
+    expect(openai.chat.completions.create).not.toHaveBeenCalled();
+    expect(result.lumi_turn.role).toBe('lumi');
+  });
+});
+
+describe('LumiService.submitTextTurn — family-language ratchet (Slice 5-S10)', () => {
+  function buildFamilyLanguageRepo(overrides: {
+    newlyCandidate?: Array<{ term: string; maps_to: string }>;
+    recordUsageThrows?: boolean;
+  } = {}) {
+    return {
+      recordUsage: overrides.recordUsageThrows
+        ? vi.fn().mockRejectedValue(new Error('households read failed'))
+        : vi.fn().mockResolvedValue({ newlyCandidate: overrides.newlyCandidate ?? [] }),
+      getTerms: vi.fn().mockResolvedValue([]),
+    };
+  }
+
+  it('persists a family_language_prompt turn and returns it as ratification_turn when a term crosses', async () => {
+    const familyLanguageRepository = buildFamilyLanguageRepo({
+      newlyCandidate: [{ term: 'Nani', maps_to: 'grandmother' }],
+    });
+    const { service, repository } = buildDeps({ activeThread: null, familyLanguageRepository });
+
+    const result = await service.submitTextTurn({
+      householdId: 'hh1',
+      message: 'I called Nani and then Nani called back',
+      contextSignal: { surface: 'planning' },
+    });
+
+    expect(familyLanguageRepository.recordUsage).toHaveBeenCalledTimes(1);
+    expect(result.ratification_turn).toBeDefined();
+    expect(result.ratification_turn!.body).toEqual({
+      type: 'family_language_prompt',
+      term: 'Nani',
+      maps_to: 'grandmother',
+    });
+    // 3 inserts: user turn, lumi reply, ratification turn.
+    expect(repository.insertTurn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        role: 'lumi',
+        body: { type: 'family_language_prompt', term: 'Nani', maps_to: 'grandmother' },
+      }),
+    );
+  });
+
+  it('does not return a ratification_turn when no term crosses the threshold', async () => {
+    const familyLanguageRepository = buildFamilyLanguageRepo({ newlyCandidate: [] });
+    const { service } = buildDeps({ activeThread: null, familyLanguageRepository });
+
+    const result = await service.submitTextTurn({
+      householdId: 'hh1',
+      message: 'Nani says hi',
+      contextSignal: { surface: 'planning' },
+    });
+
+    expect(familyLanguageRepository.recordUsage).toHaveBeenCalledTimes(1);
+    expect(result.ratification_turn).toBeUndefined();
+  });
+
+  it('does not call recordUsage when the message has no kinship terms', async () => {
+    const familyLanguageRepository = buildFamilyLanguageRepo();
+    const { service } = buildDeps({ activeThread: null, familyLanguageRepository });
+
+    await service.submitTextTurn({
+      householdId: 'hh1',
+      message: 'what is for lunch on Tuesday?',
+      contextSignal: { surface: 'planning' },
+    });
+
+    expect(familyLanguageRepository.recordUsage).not.toHaveBeenCalled();
+  });
+
+  it('returns the turn normally when detection throws (best-effort, no throw)', async () => {
+    const familyLanguageRepository = buildFamilyLanguageRepo({ recordUsageThrows: true });
+    const { service, logger } = buildDeps({ activeThread: null, familyLanguageRepository });
+
+    const result = await service.submitTextTurn({
+      householdId: 'hh1',
+      message: 'Nani Nani Nani',
+      contextSignal: { surface: 'planning' },
+    });
+
+    expect(result.lumi_turn.role).toBe('lumi');
+    expect(result.ratification_turn).toBeUndefined();
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ action: 'lumi.family_language_detect_failed' }),
+      expect.any(String),
+    );
+  });
+
+  it('does not detect or throw when familyLanguageRepository is absent (nudge-job ctor path)', async () => {
+    const { service } = buildDeps({ activeThread: null });
+
+    const result = await service.submitTextTurn({
+      householdId: 'hh1',
+      message: 'Nani Nani Nani',
+      contextSignal: { surface: 'planning' },
+    });
+
+    expect(result.ratification_turn).toBeUndefined();
+    expect(result.lumi_turn.role).toBe('lumi');
+  });
+});
+
+describe('LumiService.fetchHouseholdSnapshot — family-language ratchet (Slice 5-S10)', () => {
+  it('appends the Family language block for active terms', async () => {
+    const familyLanguageRepository = {
+      recordUsage: vi.fn(),
+      getTerms: vi.fn().mockResolvedValue([
+        {
+          term: 'Nani',
+          maps_to: 'grandmother',
+          usage_count: 3,
+          state: 'active',
+          first_seen_at: '2026-06-08T10:00:00.000Z',
+          ratified_at: '2026-06-08T10:05:00.000Z',
+        },
+        {
+          term: 'Lola',
+          maps_to: 'grandmother',
+          usage_count: 1,
+          state: 'candidate',
+          first_seen_at: '2026-06-08T10:00:00.000Z',
+          ratified_at: null,
+        },
+      ]),
+    };
+    const { service } = buildDeps({ displayName: 'The Patels', familyLanguageRepository });
+
+    const snapshot = await snapshotOf(service)('hh1');
+
+    expect(snapshot).toContain('Family language (use these exact words');
+    expect(snapshot).toContain('call the grandmother "Nani"');
+    // Only active terms are injected — a candidate term is NOT in the snapshot.
+    expect(snapshot).not.toContain('"Lola"');
+  });
+
+  it('omits the Family language block when there are no active terms', async () => {
+    const familyLanguageRepository = {
+      recordUsage: vi.fn(),
+      getTerms: vi.fn().mockResolvedValue([]),
+    };
+    const { service } = buildDeps({ displayName: 'The Patels', familyLanguageRepository });
+
+    const snapshot = await snapshotOf(service)('hh1');
+
+    expect(snapshot).not.toContain('Family language');
   });
 });

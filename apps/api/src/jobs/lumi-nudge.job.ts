@@ -8,6 +8,7 @@ import { ChildAllergensRepository } from '../modules/children/child-allergens.re
 import { ChildrenRepository } from '../modules/children/children.repository.js';
 import { HouseholdAllergensRepository } from '../modules/households/household-allergens.repository.js';
 import { VoiceTranscriptRepository } from '../modules/voice/voice-transcript.repository.js';
+import { FamilyLanguageRepository } from '../modules/family-language/family-language.repository.js';
 import { LumiRepository } from '../modules/lumi/lumi.repository.js';
 import { LumiService } from '../modules/lumi/lumi.service.js';
 import { UserRepository } from '../modules/users/user.repository.js';
@@ -103,6 +104,7 @@ const lumiNudgePlugin: FastifyPluginAsync = async (fastify) => {
   );
   const householdAllergensRepository = new HouseholdAllergensRepository(fastify.supabase, kek);
   const voiceTranscriptRepository = new VoiceTranscriptRepository(fastify.supabase);
+  const familyLanguageRepository = new FamilyLanguageRepository(fastify.supabase);
   const repository = new LumiRepository(fastify.supabase);
   const userRepository = new UserRepository(fastify.supabase);
   const lumiService = new LumiService({
@@ -115,6 +117,10 @@ const lumiNudgePlugin: FastifyPluginAsync = async (fastify) => {
     childrenRepository,
     householdAllergensRepository,
     voiceTranscriptRepository,
+    // 5-S10 — nudges must honor the ratchet (never say "Grandma" after "Nani"
+    // is active). Detection won't fire here (nudges don't call submitTextTurn),
+    // but fetchHouseholdSnapshot reads active terms.
+    familyLanguageRepository,
   });
 
   fastify.bullmq.getWorker(

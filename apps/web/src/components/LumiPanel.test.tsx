@@ -1,11 +1,25 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import type { ReactElement } from 'react';
 import { render, screen, fireEvent, waitFor, cleanup, act } from '@testing-library/react';
-import type { Turn } from '@hivekitchen/types';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import type { AuthUser, Turn } from '@hivekitchen/types';
 import { useLumiStore } from '@/stores/lumi.store.js';
+import { useAuthStore } from '@/stores/auth.store.js';
 import { VoiceSessionContext } from '@/contexts/VoiceSessionContext.js';
 import { LumiPanel } from './LumiPanel.js';
 
 const THREAD_ID = '11111111-1111-4111-8111-111111111111';
+
+// Slice 5-S10 (review patch) — the panel now reads family-language terms via
+// TanStack Query, so renders must be wrapped in a QueryClientProvider.
+let queryClient: QueryClient;
+function renderPanel(ui: ReactElement = <LumiPanel />) {
+  return render(ui, {
+    wrapper: ({ children }) => (
+      <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+    ),
+  });
+}
 
 function turn(id: string, text: string, role: 'user' | 'lumi' = 'user'): Turn {
   return {
@@ -38,6 +52,10 @@ const originalFetch = globalThis.fetch;
 describe('LumiPanel', () => {
   beforeEach(() => {
     useLumiStore.getState().reset();
+    useAuthStore.setState({ user: null, accessToken: null });
+    queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false, gcTime: 0 } },
+    });
   });
 
   afterEach(() => {
@@ -47,13 +65,13 @@ describe('LumiPanel', () => {
   });
 
   it('returns null when the panel is closed', () => {
-    const { container } = render(<LumiPanel />);
+    const { container } = renderPanel();
     expect(container.firstChild).toBeNull();
   });
 
   it('renders panel chrome (label + dismiss) when the panel is open', () => {
     useLumiStore.getState().openPanel();
-    render(<LumiPanel />);
+    renderPanel();
 
     expect(screen.getByRole('complementary', { name: /lumi panel/i })).toBeDefined();
     expect(screen.getByRole('button', { name: /close lumi panel/i })).toBeDefined();
@@ -61,7 +79,7 @@ describe('LumiPanel', () => {
 
   it('dismiss button calls closePanel via the store', () => {
     useLumiStore.getState().openPanel();
-    render(<LumiPanel />);
+    renderPanel();
 
     fireEvent.click(screen.getByRole('button', { name: /close lumi panel/i }));
 
@@ -76,7 +94,7 @@ describe('LumiPanel', () => {
         turn('bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', 'Hi back', 'lumi'),
       ],
     });
-    render(<LumiPanel />);
+    renderPanel();
 
     expect(screen.getByText('Hello there')).toBeDefined();
     expect(screen.getByText('Hi back')).toBeDefined();
@@ -96,7 +114,7 @@ describe('LumiPanel', () => {
     }));
 
     useLumiStore.setState({ isPanelOpen: true, turns: validTurns });
-    render(<LumiPanel />);
+    renderPanel();
 
     expect(screen.queryByText('msg-0')).toBeNull();
     expect(screen.queryByText('msg-3')).toBeNull();
@@ -106,7 +124,7 @@ describe('LumiPanel', () => {
 
   it('shows the loading state while hydrating with no turns', () => {
     useLumiStore.setState({ isPanelOpen: true, isHydrating: true, turns: [] });
-    render(<LumiPanel />);
+    renderPanel();
 
     expect(screen.getByRole('status')).toBeDefined();
     expect(screen.getByText(/catching up with lumi/i)).toBeDefined();
@@ -114,7 +132,7 @@ describe('LumiPanel', () => {
 
   it('text input is enabled (composer wired in Story 12-S8)', () => {
     useLumiStore.getState().openPanel();
-    render(<LumiPanel />);
+    renderPanel();
 
     const input = screen.getByLabelText(/ask lumi/i) as HTMLTextAreaElement;
     expect(input.disabled).toBe(false);
@@ -122,7 +140,7 @@ describe('LumiPanel', () => {
 
   it('voice mode shows the "tap orb to end" hint and leaves the composer usable', () => {
     useLumiStore.getState().openPanel('voice');
-    render(<LumiPanel />);
+    renderPanel();
 
     expect(screen.getByText(/tap the orb to end voice session/i)).toBeDefined();
     expect((screen.getByLabelText(/ask lumi/i) as HTMLTextAreaElement).disabled).toBe(false);
@@ -131,7 +149,7 @@ describe('LumiPanel', () => {
   it('renders voiceError as an alert when set', () => {
     useLumiStore.getState().openPanel('voice');
     useLumiStore.getState().setVoiceError('mic blocked');
-    render(<LumiPanel />);
+    renderPanel();
 
     const alert = screen.getByRole('alert');
     expect(alert.textContent).toContain('mic blocked');
@@ -151,7 +169,7 @@ describe('LumiPanel', () => {
     ) as unknown as typeof fetch;
 
     useLumiStore.getState().openPanel();
-    render(<LumiPanel />);
+    renderPanel();
 
     await waitFor(() => {
       expect(screen.getByText('Server hello')).toBeDefined();
@@ -165,7 +183,7 @@ describe('LumiPanel', () => {
     globalThis.fetch = fetchMock as unknown as typeof fetch;
 
     useLumiStore.getState().openPanel();
-    render(<LumiPanel />);
+    renderPanel();
 
     expect(fetchMock).not.toHaveBeenCalled();
   });
@@ -180,7 +198,7 @@ describe('LumiPanel', () => {
     globalThis.fetch = fetchMock as unknown as typeof fetch;
 
     useLumiStore.getState().openPanel();
-    render(<LumiPanel />);
+    renderPanel();
 
     expect(fetchMock).not.toHaveBeenCalled();
   });
@@ -199,7 +217,7 @@ describe('LumiPanel', () => {
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
 
     useLumiStore.getState().openPanel();
-    render(<LumiPanel />);
+    renderPanel();
 
     await waitFor(() => {
       expect(useLumiStore.getState().isHydrating).toBe(false);
@@ -213,7 +231,7 @@ describe('LumiPanel', () => {
     const fetchSpy = vi.fn().mockResolvedValue(jsonResponse(makeTurnResponse()));
     globalThis.fetch = fetchSpy as unknown as typeof fetch;
 
-    render(<LumiPanel />);
+    renderPanel();
     const input = screen.getByLabelText(/ask lumi/i);
     fireEvent.change(input, { target: { value: 'hello lumi' } });
     fireEvent.submit(input.closest('form')!);
@@ -234,7 +252,7 @@ describe('LumiPanel', () => {
       .fn()
       .mockResolvedValue(jsonResponse(makeTurnResponse('Hello Lumi', 'Got it.'))) as unknown as typeof fetch;
 
-    render(<LumiPanel />);
+    renderPanel();
     const input = screen.getByLabelText(/ask lumi/i);
     fireEvent.change(input, { target: { value: 'Hello Lumi' } });
     fireEvent.submit(input.closest('form')!);
@@ -251,7 +269,7 @@ describe('LumiPanel', () => {
       .fn()
       .mockResolvedValue(jsonResponse(makeTurnResponse())) as unknown as typeof fetch;
 
-    render(<LumiPanel />);
+    renderPanel();
     const input = screen.getByLabelText(/ask lumi/i);
     fireEvent.change(input, { target: { value: 'hi' } });
     fireEvent.submit(input.closest('form')!);
@@ -267,7 +285,7 @@ describe('LumiPanel', () => {
       .fn()
       .mockResolvedValue(jsonResponse({ type: '/errors/upstream', status: 502 }, 502)) as unknown as typeof fetch;
 
-    render(<LumiPanel />);
+    renderPanel();
     const input = screen.getByLabelText(/ask lumi/i) as HTMLTextAreaElement;
     fireEvent.change(input, { target: { value: 'will fail' } });
     fireEvent.submit(input.closest('form')!);
@@ -287,7 +305,7 @@ describe('LumiPanel', () => {
     const fetchSpy = vi.fn().mockReturnValue(pending);
     globalThis.fetch = fetchSpy as unknown as typeof fetch;
 
-    render(<LumiPanel />);
+    renderPanel();
     const input = screen.getByLabelText(/ask lumi/i) as HTMLTextAreaElement;
     fireEvent.change(input, { target: { value: 'first' } });
     fireEvent.submit(input.closest('form')!);
@@ -306,7 +324,7 @@ describe('LumiPanel', () => {
 
   it('mode toggle renders "Text" and "Voice" buttons when panel is open', () => {
     useLumiStore.getState().openPanel();
-    render(<LumiPanel />);
+    renderPanel();
 
     expect(screen.getByRole('button', { name: /text mode/i })).toBeDefined();
     expect(screen.getByRole('button', { name: /voice mode/i })).toBeDefined();
@@ -316,7 +334,7 @@ describe('LumiPanel', () => {
     const startSession = vi.fn().mockResolvedValue(undefined);
     useLumiStore.setState({ isPanelOpen: true, surface: 'planning' });
 
-    render(
+    renderPanel(
       <VoiceSessionContext.Provider value={{ startSession, endSession: async () => {} }}>
         <LumiPanel />
       </VoiceSessionContext.Provider>,
@@ -333,7 +351,7 @@ describe('LumiPanel', () => {
     useLumiStore.getState().setVoiceError(
       "Voice chat is part of Premium. We've got you in text — same Lumi.",
     );
-    render(<LumiPanel />);
+    renderPanel();
 
     const alert = screen.getByRole('alert');
     expect(alert.textContent).toContain('Premium');
@@ -341,14 +359,14 @@ describe('LumiPanel', () => {
 
   it('"Listening…" hint renders when voiceStatus is active', () => {
     useLumiStore.setState({ isPanelOpen: true, voiceStatus: 'active' });
-    render(<LumiPanel />);
+    renderPanel();
 
     expect(screen.getByText(/listening/i)).toBeDefined();
   });
 
   it('"Connecting…" hint renders when voiceStatus is connecting', () => {
     useLumiStore.setState({ isPanelOpen: true, voiceStatus: 'connecting' });
-    render(<LumiPanel />);
+    renderPanel();
 
     expect(screen.getByText(/connecting to lumi voice/i)).toBeDefined();
   });
@@ -357,14 +375,14 @@ describe('LumiPanel', () => {
 
   it('renders "Pause nudges" when proactiveNudges is true', () => {
     useLumiStore.setState({ isPanelOpen: true, proactiveNudges: true });
-    render(<LumiPanel />);
+    renderPanel();
 
     expect(screen.getByRole('button', { name: /pause nudges/i })).toBeDefined();
   });
 
   it('renders "Resume nudges" when proactiveNudges is false', () => {
     useLumiStore.setState({ isPanelOpen: true, proactiveNudges: false });
-    render(<LumiPanel />);
+    renderPanel();
 
     expect(screen.getByRole('button', { name: /resume nudges/i })).toBeDefined();
   });
@@ -374,7 +392,7 @@ describe('LumiPanel', () => {
     const fetchSpy = vi.fn().mockResolvedValue(jsonResponse({}));
     globalThis.fetch = fetchSpy as unknown as typeof fetch;
 
-    render(<LumiPanel />);
+    renderPanel();
     fireEvent.click(screen.getByRole('button', { name: /pause nudges/i }));
 
     await waitFor(() => expect(fetchSpy).toHaveBeenCalled());
@@ -391,7 +409,7 @@ describe('LumiPanel', () => {
       .fn()
       .mockResolvedValue(jsonResponse({ type: '/errors/upstream', status: 502 }, 502)) as unknown as typeof fetch;
 
-    render(<LumiPanel />);
+    renderPanel();
     fireEvent.click(screen.getByRole('button', { name: /pause nudges/i }));
 
     await waitFor(() => expect(useLumiStore.getState().proactiveNudges).toBe(true));
@@ -406,7 +424,7 @@ describe('LumiPanel', () => {
       captionTranscript: 'pasta please',
       captionLumiReply: 'On it — pasta Tuesday.',
     });
-    render(<LumiPanel />);
+    renderPanel();
 
     expect(screen.getByRole('region', { name: /voice captions/i })).toBeDefined();
     expect(screen.getByText('pasta please')).toBeDefined();
@@ -419,7 +437,7 @@ describe('LumiPanel', () => {
       voiceStatus: 'idle',
       captionTranscript: 'pasta please',
     });
-    render(<LumiPanel />);
+    renderPanel();
 
     expect(screen.queryByRole('region', { name: /voice captions/i })).toBeNull();
   });
@@ -431,7 +449,7 @@ describe('LumiPanel', () => {
       captionTranscript: 'pasta please',
       captionLumiReply: 'On it.',
     });
-    render(<LumiPanel />);
+    renderPanel();
     expect(screen.getByRole('region', { name: /voice captions/i })).toBeDefined();
 
     act(() => {
@@ -441,6 +459,84 @@ describe('LumiPanel', () => {
     expect(useLumiStore.getState().captionTranscript).toBe('');
     expect(useLumiStore.getState().captionLumiReply).toBe('');
     expect(screen.queryByRole('region', { name: /voice captions/i })).toBeNull();
+  });
+
+  // ── Family-language ratification (Slice 5-S10) ────────────────────────────
+
+  function familyLanguageTurn(id: string): Turn {
+    return {
+      id,
+      thread_id: THREAD_ID,
+      server_seq: 3,
+      created_at: '2026-06-08T00:00:00.000Z',
+      role: 'lumi',
+      body: { type: 'family_language_prompt', term: 'Nani', maps_to: 'grandmother' },
+    };
+  }
+
+  it('renders a family_language_prompt turn as the ratification card, not a message row', () => {
+    useLumiStore.setState({
+      isPanelOpen: true,
+      turns: [familyLanguageTurn('dddddddd-dddd-4ddd-8ddd-dddddddddddd')],
+    });
+    renderPanel();
+
+    expect(screen.getByText(/I noticed you call them/i)).toBeDefined();
+    expect(screen.getByRole('button', { name: /yes, keep it in mind/i })).toBeDefined();
+  });
+
+  it('suppresses a persisted family_language_prompt card whose term is already resolved (active)', async () => {
+    // Review patch (5-S10, D1): on re-hydration the persisted prompt would replay.
+    // The panel reads the household terms and must hide a prompt whose term is no
+    // longer `candidate`.
+    const HH = '99999999-9999-4999-8999-999999999999';
+    useAuthStore.setState({ user: { current_household_id: HH } as AuthUser });
+    useLumiStore.setState({
+      isPanelOpen: true,
+      turns: [familyLanguageTurn('ffffffff-ffff-4fff-8fff-ffffffffffff')],
+    });
+    globalThis.fetch = vi.fn().mockResolvedValue(
+      jsonResponse({
+        terms: [
+          {
+            term: 'Nani',
+            maps_to: 'grandmother',
+            usage_count: 2,
+            state: 'active',
+            first_seen_at: '2026-06-08T10:00:00.000Z',
+            ratified_at: '2026-06-08T10:05:00.000Z',
+          },
+        ],
+      }),
+    ) as unknown as typeof fetch;
+
+    renderPanel();
+
+    // The card never appears once the server confirms the term is active.
+    await waitFor(() => {
+      expect(screen.queryByText(/I noticed you call them/i)).toBeNull();
+    });
+  });
+
+  it('appends a ratification_turn from the POST response so the card shows', async () => {
+    useLumiStore.setState({ isPanelOpen: true, surface: 'planning' });
+    const response = {
+      ...makeTurnResponse('I called Nani', 'Lovely.'),
+      ratification_turn: familyLanguageTurn('eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee'),
+    };
+    globalThis.fetch = vi.fn().mockResolvedValue(jsonResponse(response)) as unknown as typeof fetch;
+
+    renderPanel();
+    const input = screen.getByLabelText(/ask lumi/i);
+    fireEvent.change(input, { target: { value: 'I called Nani' } });
+    fireEvent.submit(input.closest('form')!);
+
+    await waitFor(() => {
+      expect(screen.getByText(/I noticed you call them/i)).toBeDefined();
+    });
+    expect(
+      useLumiStore.getState().turns.some((t) => t.body.type === 'family_language_prompt'),
+    ).toBe(true);
   });
 });
 

@@ -25,6 +25,7 @@ import {
   DayAssignmentsResponseSchema,
   AssignPackerRequestSchema,
   AssignPackerResponseSchema,
+  RespondToLearningMomentRequestSchema,
 } from '@hivekitchen/contracts';
 import type {
   TileRetryRequest,
@@ -217,6 +218,31 @@ const householdsRoutesPlugin: FastifyPluginAsync = async (fastify) => {
       }
       const brief = await fastify.plansService.getBrief(householdId);
       return { brief };
+    },
+  );
+
+  // Slice 5-S8 — POST /v1/households/:householdId/brief/learning-moment
+  // Respond to an "I noticed" learning moment: confirm | tell_more | dismiss.
+  // Patches the callout fields in brief_state (no full refresh), writes an audit
+  // row, and (on dismiss) sets a 7-day suppress window. 403 on cross-household.
+  fastify.post(
+    '/v1/households/:householdId/brief/learning-moment',
+    {
+      preHandler: requireParentOrCaregiver,
+      schema: {
+        params: z.object({ householdId: z.string().uuid() }),
+        body: RespondToLearningMomentRequestSchema,
+        response: { 204: z.object({}) },
+      },
+    },
+    async (request, reply) => {
+      const { householdId } = request.params as { householdId: string };
+      if (householdId !== request.user.household_id) {
+        throw new ForbiddenError('Cannot respond to another household learning moment');
+      }
+      const { action } = request.body as { action: 'confirm' | 'tell_more' | 'dismiss' };
+      await fastify.briefStateComposer.respondToLearningMoment(householdId, action, request.id);
+      return reply.status(204).send();
     },
   );
 

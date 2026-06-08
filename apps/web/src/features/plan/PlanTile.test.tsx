@@ -415,3 +415,28 @@ describe('PlanTile — paused state (Story 3.12)', () => {
     expect(onSwapIntent).not.toHaveBeenCalled();
   });
 });
+
+// Slice 5-S9 — "Why this?" ghost button.
+describe('PlanTile — Why this? (5-S9)', () => {
+  it('renders the "Why this?" button when onWhyThis is provided', () => {
+    render(<PlanTile summary={makeSummary()} onWhyThis={() => {}} />);
+    expect(screen.getByRole('button', { name: /why this/i })).toBeDefined();
+  });
+
+  it('does not render the "Why this?" button when onWhyThis is absent', () => {
+    render(<PlanTile summary={makeSummary()} />);
+    expect(screen.queryByRole('button', { name: /why this/i })).toBeNull();
+  });
+
+  it('calls onWhyThis (and not onSwapIntent) when the button is clicked', () => {
+    const onWhyThis = vi.fn();
+    const onSwapIntent = vi.fn();
+    render(
+      <PlanTile summary={makeSummary()} onWhyThis={onWhyThis} onSwapIntent={onSwapIntent} />,
+    );
+    fireEvent.click(screen.getByRole('button', { name: /why this/i }));
+    expect(onWhyThis).toHaveBeenCalledTimes(1);
+    // stopPropagation keeps the tile's swap intent from also firing.
+    expect(onSwapIntent).not.toHaveBeenCalled();
+  });
+});

@@ -1,0 +1,2580 @@
+=== DIFF: tracked file changes (git diff HEAD) ===
+warning: in the working copy of 'apps/api/src/modules/lumi/lumi.service.test.ts', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'apps/api/src/modules/voice/voice.service.test.ts', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'apps/web/src/hooks/useLumiVoiceSession.test.ts', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'apps/web/src/hooks/useLumiVoiceSession.ts', LF will be replaced by CRLF the next time Git touches it
+diff --git a/apps/api/.env.local.example b/apps/api/.env.local.example
+index 3e47f13..cc71966 100644
+--- a/apps/api/.env.local.example
++++ b/apps/api/.env.local.example
+@@ -43,10 +43,6 @@ OPENAI_TRACES_ENABLED=false
+ # ---- ElevenLabs (STT + TTS v3) ----------
+ ELEVENLABS_API_KEY=replace-with-dev-key
+ ELEVENLABS_VOICE_ID=replace-with-voice-id
+-# ConvAI agent ID used by Epic 2 voice onboarding (slice 2-s21+). Slice 2-s20
+-# narration uses TTS WebSocket directly (no agent), so this var is only
+-# exercised by the conversational onboarding pipeline.
+-ELEVENLABS_AGENT_ID=replace-with-agent-id
+ # Model used by slice 2-s20 browser-direct TTS WebSocket. Optional — defaults
+ # to eleven_flash_v2_5 (low-latency multilingual) when unset.
+ ELEVENLABS_TTS_MODEL_ID=eleven_flash_v2_5
+diff --git a/apps/api/src/common/env.ts b/apps/api/src/common/env.ts
+index ce8fb42..b6744b7 100644
+--- a/apps/api/src/common/env.ts
++++ b/apps/api/src/common/env.ts
+@@ -65,10 +65,6 @@ const EnvSchema = z
+ 
+     ELEVENLABS_API_KEY: z.string().min(1),
+     ELEVENLABS_VOICE_ID: z.string().min(1),
+-    // ConvAI agent ID — used by Epic 2 voice onboarding (2-s21+). Optional
+-    // until 2-s21 ships; omitting it will not block boot. Slice 2-S20 narration
+-    // uses the TTS WebSocket directly and does not require this var.
+-    ELEVENLABS_AGENT_ID: optionalEmptyAsUndefined(z.string().min(1)),
+     // Model used by the browser-direct TTS WebSocket (slice 2-S20). Flash
+     // v2.5 is the low-latency English/multilingual default. Override per
+     // environment if a different model is preferred.
+diff --git a/apps/api/src/middleware/authenticate.hook.ts b/apps/api/src/middleware/authenticate.hook.ts
+index 08cfb7f..0ab5055 100644
+--- a/apps/api/src/middleware/authenticate.hook.ts
++++ b/apps/api/src/middleware/authenticate.hook.ts
+@@ -3,12 +3,13 @@ import type { FastifyPluginAsync } from 'fastify';
+ import { UnauthorizedError } from '../common/errors.js';
+ 
+ const SKIP_PREFIXES = ['/v1/internal/', '/v1/webhooks/', '/v1/auth/'];
+-// /v1/voice/ws cannot send an Authorization header (browsers do not allow
+-// custom headers on WebSocket upgrades) — JWT is validated inside the WS
+-// handler from the ?token= query param instead.
++// /v1/voice/ws (onboarding) and /v1/lumi/voice/ws (ambient Lumi, Story 5-S5b)
++// cannot send an Authorization header (browsers do not allow custom headers on
++// WebSocket upgrades) — JWT is validated inside the WS handler from the ?token=
++// query param instead.
+ // /v1/events is the SSE channel; native EventSource also cannot send
+ // custom headers — JWT is validated inside the route from the ?token= param.
+-const SKIP_EXACT = new Set(['/v1/voice/ws', '/v1/events']);
++const SKIP_EXACT = new Set(['/v1/voice/ws', '/v1/lumi/voice/ws', '/v1/events']);
+ // Slice 4-S3 — GET /v1/lunch-link/:token is the child-facing public endpoint.
+ // Only GET is skipped here; POST /v1/lunch-link/generate stays auth-gated.
+ const LUNCH_LINK_PUBLIC_RE = /^\/v1\/lunch-link\/[^/]+$/;
+diff --git a/apps/api/src/modules/lumi/lumi.routes.test.ts b/apps/api/src/modules/lumi/lumi.routes.test.ts
+index 297ab74..7d563b9 100644
+--- a/apps/api/src/modules/lumi/lumi.routes.test.ts
++++ b/apps/api/src/modules/lumi/lumi.routes.test.ts
+@@ -411,24 +411,6 @@ function signToken(
+   return app.jwt.sign({ sub: userId, hh: householdId, role });
+ }
+ 
+-// Helper: install a fetch mock on globalThis. Returns the `fetch` spy.
+-function mockFetch(impl: (url: string) => Promise<Response>): ReturnType<typeof vi.fn> {
+-  const spy = vi.fn().mockImplementation((input: string | URL) => impl(String(input)));
+-  globalThis.fetch = spy as unknown as typeof globalThis.fetch;
+-  return spy;
+-}
+-
+-function ok(json: unknown): Response {
+-  return new Response(JSON.stringify(json), {
+-    status: 200,
+-    headers: { 'Content-Type': 'application/json' },
+-  });
+-}
+-
+-function fail(status: number): Response {
+-  return new Response('boom', { status });
+-}
+-
+ const VALID_CONTEXT_SIGNAL_PLANNING = {
+   surface: 'planning' as const,
+ };
+@@ -842,18 +824,18 @@ describe('POST /v1/lumi/voice/sessions', () => {
+     globalThis.fetch = realFetch;
+   });
+ 
+-  it('happy path — Premium parent: creates session, returns token pair, sets Redis sentinel', async () => {
+-    const fetchSpy = mockFetch(async () =>
+-      ok({ signed_url: `https://api.elevenlabs.io/wss/${randomUUID()}` }),
+-    );
+-    const insertedThreadCapture: Record<string, unknown>[] = [];
++  // Story 5-S5b — no ElevenLabs credential pre-mint any more. The response is
++  // just { talk_session_id }; the browser opens HiveKitchen's own
++  // /v1/lumi/voice/ws with its JWT + this id.
++  it('happy path — Premium parent: creates session (no token mint), sets Redis sentinel', async () => {
++    const fetchSpy = vi.fn();
++    globalThis.fetch = fetchSpy as unknown as typeof globalThis.fetch;
+     const insertedSessionCapture: Record<string, unknown>[] = [];
+ 
+     app = await buildTestApp({
+       supabase: buildMockSupabase({
+         householdTier: 'premium',
+         activeAmbientThread: null,
+-        capturedAmbientThreadInsert: (row) => insertedThreadCapture.push(row),
+         capturedTalkSessionInsert: (row) => insertedSessionCapture.push(row),
+       }),
+     });
+@@ -867,18 +849,10 @@ describe('POST /v1/lumi/voice/sessions', () => {
+     });
+ 
+     expect(res.statusCode).toBe(201);
+-    const body = JSON.parse(res.body) as {
+-      talk_session_id: string;
+-      stt_token: string;
+-      tts_token: string;
+-      voice_id: string;
+-    };
+-    expect(body.talk_session_id).toBe(SAMPLE_TALK_SESSION_ID);
+-    expect(body.voice_id).toBe(VOICE_ID);
+-    expect(body.stt_token.length).toBeGreaterThan(0);
+-    expect(body.tts_token.length).toBeGreaterThan(0);
+-    // Two ElevenLabs calls (STT + TTS) per AC #1
+-    expect(fetchSpy).toHaveBeenCalledTimes(2);
++    const body = JSON.parse(res.body) as Record<string, unknown>;
++    expect(body).toEqual({ talk_session_id: SAMPLE_TALK_SESSION_ID });
++    // No ElevenLabs credential call happens at session creation any more.
++    expect(fetchSpy).not.toHaveBeenCalled();
+     expect(insertedSessionCapture).toHaveLength(1);
+     expect(insertedSessionCapture[0]).toMatchObject({
+       user_id: SAMPLE_USER_ID,
+@@ -894,7 +868,6 @@ describe('POST /v1/lumi/voice/sessions', () => {
+   });
+ 
+   it('lazy thread creation — no existing thread → new ambient thread inserted with type=surface', async () => {
+-    mockFetch(async () => ok({ signed_url: 'wss://x' }));
+     const insertedThreadCapture: Record<string, unknown>[] = [];
+ 
+     app = await buildTestApp({
+@@ -921,7 +894,6 @@ describe('POST /v1/lumi/voice/sessions', () => {
+   });
+ 
+   it('existing thread reuse — no new thread inserted when one is already active', async () => {
+-    mockFetch(async () => ok({ signed_url: 'wss://x' }));
+     const insertedThreadCapture: Record<string, unknown>[] = [];
+     const insertedSessionCapture: Record<string, unknown>[] = [];
+ 
+@@ -1007,62 +979,6 @@ describe('POST /v1/lumi/voice/sessions', () => {
+     expect(body.type).toBe('/errors/forbidden');
+   });
+ 
+-  it('ElevenLabs STT credential issuance fails → 502, no session row written', async () => {
+-    let call = 0;
+-    mockFetch(async () => {
+-      call += 1;
+-      return call === 1 ? fail(500) : ok({ signed_url: 'wss://tts' });
+-    });
+-    const sessionInserts: Record<string, unknown>[] = [];
+-
+-    app = await buildTestApp({
+-      supabase: buildMockSupabase({
+-        householdTier: 'premium',
+-        activeAmbientThread: null,
+-        capturedTalkSessionInsert: (row) => sessionInserts.push(row),
+-      }),
+-    });
+-    const token = signToken(app);
+-
+-    const res = await app.inject({
+-      method: 'POST',
+-      url: '/v1/lumi/voice/sessions',
+-      headers: { authorization: `Bearer ${token}` },
+-      payload: { context_signal: VALID_CONTEXT_SIGNAL_PLANNING },
+-    });
+-
+-    expect(res.statusCode).toBe(502);
+-    expect(sessionInserts).toHaveLength(0);
+-  });
+-
+-  it('ElevenLabs TTS credential issuance fails after STT succeeds → 502, no session row', async () => {
+-    let call = 0;
+-    mockFetch(async () => {
+-      call += 1;
+-      return call === 1 ? ok({ signed_url: 'wss://stt' }) : fail(503);
+-    });
+-    const sessionInserts: Record<string, unknown>[] = [];
+-
+-    app = await buildTestApp({
+-      supabase: buildMockSupabase({
+-        householdTier: 'premium',
+-        activeAmbientThread: null,
+-        capturedTalkSessionInsert: (row) => sessionInserts.push(row),
+-      }),
+-    });
+-    const token = signToken(app);
+-
+-    const res = await app.inject({
+-      method: 'POST',
+-      url: '/v1/lumi/voice/sessions',
+-      headers: { authorization: `Bearer ${token}` },
+-      payload: { context_signal: VALID_CONTEXT_SIGNAL_PLANNING },
+-    });
+-
+-    expect(res.statusCode).toBe(502);
+-    expect(sessionInserts).toHaveLength(0);
+-  });
+-
+   it('unauthenticated POST → 401', async () => {
+     app = await buildTestApp({
+       supabase: buildMockSupabase({ householdTier: 'premium' }),
+diff --git a/apps/api/src/modules/lumi/lumi.routes.ts b/apps/api/src/modules/lumi/lumi.routes.ts
+index 5bcae40..e8f396e 100644
+--- a/apps/api/src/modules/lumi/lumi.routes.ts
++++ b/apps/api/src/modules/lumi/lumi.routes.ts
+@@ -5,6 +5,7 @@ import {
+   LumiThreadTurnsResponseSchema,
+   LumiTurnRequestSchema,
+   LumiTurnResponseSchema,
++  LumiVoiceClientMessageSchema,
+   VoiceTalkSessionCreateSchema,
+   VoiceTalkSessionResponseSchema,
+ } from '@hivekitchen/contracts';
+@@ -12,8 +13,17 @@ import type { LumiTurnRequest } from '@hivekitchen/types';
+ import { ChildAllergensRepository } from '../children/child-allergens.repository.js';
+ import { ChildrenRepository } from '../children/children.repository.js';
+ import { HouseholdAllergensRepository } from '../households/household-allergens.repository.js';
++import { VoiceTranscriptRepository } from '../voice/voice-transcript.repository.js';
+ import { LumiRepository } from './lumi.repository.js';
+-import { LumiService } from './lumi.service.js';
++import { LumiService, type LumiVoiceWsState } from './lumi.service.js';
++
++// JWT payload on the WS upgrade ?token= query param (browsers cannot set an
++// Authorization header on a WebSocket upgrade — the path is in auth SKIP_EXACT).
++interface AccessTokenPayload {
++  sub: string;
++  hh: string;
++  role: 'primary_parent' | 'secondary_caregiver' | 'guest_author' | 'ops';
++}
+ 
+ const ThreadTurnsParamsSchema = z.object({
+   threadId: z.string().uuid(),
+@@ -47,6 +57,7 @@ export const lumiRoutes: FastifyPluginAsync = async (fastify) => {
+     childAllergensRepository,
+   );
+   const householdAllergensRepository = new HouseholdAllergensRepository(fastify.supabase, kek);
++  const voiceTranscriptRepository = new VoiceTranscriptRepository(fastify.supabase);
+ 
+   const service = new LumiService({
+     repository,
+@@ -57,6 +68,7 @@ export const lumiRoutes: FastifyPluginAsync = async (fastify) => {
+     openai: fastify.openai,
+     childrenRepository,
+     householdAllergensRepository,
++    voiceTranscriptRepository,
+   });
+ 
+   fastify.get(
+@@ -91,6 +103,7 @@ export const lumiRoutes: FastifyPluginAsync = async (fastify) => {
+         householdId: request.user.household_id,
+         message: body.message,
+         contextSignal: body.context_signal,
++        modality: body.modality,
+       });
+       return reply.code(201).send(result);
+     },
+@@ -150,4 +163,99 @@ export const lumiRoutes: FastifyPluginAsync = async (fastify) => {
+       return reply.status(204).send();
+     },
+   );
++
++  // GET /v1/lumi/voice/ws — ambient Lumi voice transport (Story 5-S5b). Mirrors
++  // the onboarding GET /v1/voice/ws: JWT via ?token=, talk session via
++  // ?session_id=. The full path '/v1/lumi/voice/ws' is in the auth plugin's
++  // SKIP_EXACT set (browsers cannot set Authorization on a WS upgrade).
++  //
++  // Flow: browser sends a `context` frame once, then streams WAV utterances as
++  // binary frames. Per frame the server transcribes (Scribe), runs the LumiAgent
++  // turn (submitTextTurn, modality 'voice' — persists thread_turns +
++  // voice_transcript), and streams the reply back via TTS. Authoritative session
++  // teardown stays the DELETE /voice/sessions/:id path; close here is best-effort.
++  fastify.get('/voice/ws', { websocket: true }, (socket, request) => {
++    const url = new URL(request.url, 'http://localhost');
++    const token = url.searchParams.get('token');
++    const sessionId = url.searchParams.get('session_id');
++
++    if (typeof token !== 'string' || token.length === 0) {
++      try { socket.close(4001, 'missing token'); } catch { /* noop */ }
++      return;
++    }
++    if (typeof sessionId !== 'string' || sessionId.length === 0) {
++      try { socket.close(4001, 'missing session_id'); } catch { /* noop */ }
++      return;
++    }
++
++    let payload: AccessTokenPayload;
++    try {
++      payload = fastify.jwt.verify<AccessTokenPayload>(token);
++    } catch {
++      try { socket.close(4001, 'invalid token'); } catch { /* noop */ }
++      return;
++    }
++
++    void (async () => {
++      let session: Awaited<ReturnType<typeof repository.findTalkSession>>;
++      try {
++        session = await repository.findTalkSession(sessionId);
++      } catch (err) {
++        request.log.error(
++          { err, module: 'lumi', action: 'lumi.voice.ws_open_failed', session_id: sessionId },
++          'ambient voice WS session lookup failed',
++        );
++        try { socket.close(1011, 'internal error'); } catch { /* noop */ }
++        return;
++      }
++
++      if (session === null || session.status !== 'active') {
++        try { socket.close(4004, 'session not found'); } catch { /* noop */ }
++        return;
++      }
++      if (session.user_id !== payload.sub) {
++        try { socket.close(4001, 'auth failed'); } catch { /* noop */ }
++        return;
++      }
++
++      const state: LumiVoiceWsState = {
++        householdId: session.household_id,
++        contextSignal: null,
++        isProcessing: false,
++        seq: 0,
++      };
++
++      socket.on('message', (data, isBinary) => {
++        if (isBinary) {
++          const buf = Buffer.isBuffer(data) ? data : Buffer.from(data as ArrayBuffer);
++          void service.processVoiceUtterance(state, buf, socket);
++          return;
++        }
++        const text = Buffer.isBuffer(data) ? data.toString('utf8') : String(data);
++        let parsed: unknown;
++        try { parsed = JSON.parse(text); } catch { return; }
++        const result = LumiVoiceClientMessageSchema.safeParse(parsed);
++        if (!result.success) return;
++        if (result.data.type === 'context') {
++          state.contextSignal = result.data.context_signal;
++          return;
++        }
++        if (result.data.type === 'ping') {
++          try { socket.send(JSON.stringify({ type: 'pong' })); } catch { /* noop */ }
++        }
++      });
++
++      socket.on('close', () => {
++        // Best-effort only: the authoritative teardown is DELETE
++        // /v1/lumi/voice/sessions/:id → closeTalkSession (do not double-close).
++        request.log.debug(
++          { module: 'lumi', action: 'lumi.voice.ws_closed', session_id: sessionId },
++          'ambient voice WS closed',
++        );
++      });
++
++      // Sent after listeners are registered to avoid any receipt/handling race.
++      try { socket.send(JSON.stringify({ type: 'session.ready' })); } catch { /* noop */ }
++    })();
++  });
+ };
+diff --git a/apps/api/src/modules/lumi/lumi.service.test.ts b/apps/api/src/modules/lumi/lumi.service.test.ts
+index 3286855..8e06753 100644
+--- a/apps/api/src/modules/lumi/lumi.service.test.ts
++++ b/apps/api/src/modules/lumi/lumi.service.test.ts
+@@ -1,11 +1,15 @@
+ import { describe, it, expect, vi, beforeEach } from 'vitest';
++import { Buffer } from 'node:buffer';
++import type { WebSocket } from '@fastify/websocket';
+ import type { Turn } from '@hivekitchen/types';
+ 
+ // Mock the LumiAgent so submitTextTurn's call into it is observable without an
+ // OpenAI round-trip. `respondMock` is hoisted so the factory can close over it.
+-const { respondMock, generateNudgeMock } = vi.hoisted(() => ({
++const { respondMock, generateNudgeMock, transcribeWavMock, streamTtsToWsMock } = vi.hoisted(() => ({
+   respondMock: vi.fn(),
+   generateNudgeMock: vi.fn(),
++  transcribeWavMock: vi.fn(),
++  streamTtsToWsMock: vi.fn(),
+ }));
+ vi.mock('../../agents/lumi.agent.js', () => ({
+   LumiAgent: class FakeLumiAgent {
+@@ -13,8 +17,29 @@ vi.mock('../../agents/lumi.agent.js', () => ({
+     generateNudge = generateNudgeMock;
+   },
+ }));
++// Story 5-S5b — the ambient voice path uses raw Scribe STT + TTS (no hosted
++// ElevenLabs agent). Mock the shared helpers so processVoiceUtterance is
++// observable without a network round-trip.
++vi.mock('../voice/elevenlabs-audio.js', () => ({
++  transcribeWav: transcribeWavMock,
++  streamTtsToWs: streamTtsToWsMock,
++}));
++
++import { LumiService, type LumiServiceDeps, type LumiVoiceWsState } from './lumi.service.js';
++
++function makeMockWs(): { send: ReturnType<typeof vi.fn> } & WebSocket {
++  return { send: vi.fn(), close: vi.fn(), readyState: 1 } as unknown as {
++    send: ReturnType<typeof vi.fn>;
++  } & WebSocket;
++}
+ 
+-import { LumiService, type LumiServiceDeps } from './lumi.service.js';
++function sentFrames(ws: { send: ReturnType<typeof vi.fn> }): Array<{ type: string; code?: string; text?: string }> {
++  return ws.send.mock.calls
++    .map((c: unknown[]) => {
++      try { return JSON.parse(c[0] as string); } catch { return null; }
++    })
++    .filter(Boolean) as Array<{ type: string; code?: string; text?: string }>;
++}
+ 
+ function buildDeps(overrides: {
+   displayName?: string | null;
+@@ -49,6 +74,7 @@ function buildDeps(overrides: {
+   const openai = { chat: { completions: { create: vi.fn() } } };
+   const logger = { error: vi.fn(), warn: vi.fn(), info: vi.fn() };
+   const redis = { set: vi.fn(), del: vi.fn() };
++  const voiceTranscriptRepository = { insertTranscript: vi.fn().mockResolvedValue(undefined) };
+ 
+   const deps = {
+     repository,
+@@ -59,10 +85,19 @@ function buildDeps(overrides: {
+     openai,
+     childrenRepository,
+     householdAllergensRepository,
++    voiceTranscriptRepository,
+   } as unknown as LumiServiceDeps;
+ 
+   const service = new LumiService(deps);
+-  return { service, repository, childrenRepository, householdAllergensRepository, redis, logger };
++  return {
++    service,
++    repository,
++    childrenRepository,
++    householdAllergensRepository,
++    redis,
++    logger,
++    voiceTranscriptRepository,
++  };
+ }
+ 
+ // fetchHouseholdSnapshot is private; reach it via a typed cast for unit scope.
+@@ -76,8 +111,21 @@ beforeEach(() => {
+   respondMock.mockResolvedValue('Mocked Lumi reply.');
+   generateNudgeMock.mockReset();
+   generateNudgeMock.mockResolvedValue('Your week is ready — dal-rice on Monday.');
++  transcribeWavMock.mockReset();
++  transcribeWavMock.mockResolvedValue('pasta on Tuesday please');
++  streamTtsToWsMock.mockReset();
++  streamTtsToWsMock.mockResolvedValue(undefined);
+ });
+ 
++function makeVoiceState(): LumiVoiceWsState {
++  return {
++    householdId: 'hh1',
++    contextSignal: { surface: 'planning' },
++    isProcessing: false,
++    seq: 0,
++  };
++}
++
+ describe('LumiService.fetchHouseholdSnapshot', () => {
+   it('assembles family name, child name + age band, and allergens', async () => {
+     const { service } = buildDeps({
+@@ -205,6 +253,74 @@ describe('LumiService.submitTextTurn — agent dispatch', () => {
+   });
+ });
+ 
++describe('LumiService.submitTextTurn — voice modality (Story 5-S5)', () => {
++  it('persists a voice transcript anchored to the Lumi turn when modality is voice', async () => {
++    const { service, voiceTranscriptRepository } = buildDeps({ activeThread: null });
++
++    const result = await service.submitTextTurn({
++      householdId: 'hh1',
++      message: 'pasta on Tuesday please',
++      contextSignal: { surface: 'planning' },
++      modality: 'voice',
++    });
++
++    expect(voiceTranscriptRepository.insertTranscript).toHaveBeenCalledTimes(1);
++    expect(voiceTranscriptRepository.insertTranscript).toHaveBeenCalledWith(
++      result.thread_id,
++      result.lumi_turn.id,
++      'pasta on Tuesday please',
++    );
++  });
++
++  it('stamps thread_turns with modality "voice" on both turns', async () => {
++    const { service, repository } = buildDeps({ activeThread: null });
++
++    await service.submitTextTurn({
++      householdId: 'hh1',
++      message: 'hi',
++      contextSignal: { surface: 'planning' },
++      modality: 'voice',
++    });
++
++    expect(repository.insertTurn).toHaveBeenCalledWith(
++      expect.objectContaining({ role: 'user', modality: 'voice' }),
++    );
++    expect(repository.insertTurn).toHaveBeenCalledWith(
++      expect.objectContaining({ role: 'lumi', modality: 'voice' }),
++    );
++  });
++
++  it('does NOT persist a voice transcript for a text turn', async () => {
++    const { service, voiceTranscriptRepository, repository } = buildDeps({ activeThread: null });
++
++    await service.submitTextTurn({
++      householdId: 'hh1',
++      message: 'hi',
++      contextSignal: { surface: 'planning' },
++    });
++
++    expect(voiceTranscriptRepository.insertTranscript).not.toHaveBeenCalled();
++    expect(repository.insertTurn).toHaveBeenCalledWith(
++      expect.objectContaining({ role: 'user', modality: 'text' }),
++    );
++  });
++
++  it('still returns success when the transcript write fails (best-effort)', async () => {
++    const { service, voiceTranscriptRepository, logger } = buildDeps({ activeThread: null });
++    voiceTranscriptRepository.insertTranscript.mockRejectedValueOnce(new Error('db down'));
++
++    const result = await service.submitTextTurn({
++      householdId: 'hh1',
++      message: 'hi',
++      contextSignal: { surface: 'planning' },
++      modality: 'voice',
++    });
++
++    expect(result.lumi_turn.role).toBe('lumi');
++    expect(logger.warn).toHaveBeenCalled();
++  });
++});
++
+ describe('LumiService.persistNudge', () => {
+   it('resolves the thread, generates the nudge, and persists it with nudgeTrigger', async () => {
+     const { service, repository } = buildDeps({ activeThread: { id: 'thread-1' } });
+@@ -268,3 +384,99 @@ describe('LumiService.persistNudge', () => {
+     );
+   });
+ });
++
++describe('LumiService.processVoiceUtterance — ambient voice (Story 5-S5b)', () => {
++  it('transcribes via Scribe, runs the LumiAgent turn, and streams TTS — raw, no hosted agent', async () => {
++    const { service } = buildDeps({ activeThread: null });
++    const ws = makeMockWs();
++
++    await service.processVoiceUtterance(makeVoiceState(), Buffer.from('wav-bytes'), ws);
++
++    // STT path is raw Scribe (transcribeWav), called with the API key + buffer.
++    expect(transcribeWavMock).toHaveBeenCalledTimes(1);
++    expect(transcribeWavMock.mock.calls[0][0]).toBe('k');
++    // Reply synthesized via the shared TTS helper with the LumiAgent reply text.
++    expect(streamTtsToWsMock).toHaveBeenCalledTimes(1);
++    expect(streamTtsToWsMock.mock.calls[0][2]).toBe('Mocked Lumi reply.');
++
++    const frames = sentFrames(ws);
++    expect(frames.map((f) => f.type)).toEqual(['transcript', 'response.start', 'response.end']);
++    expect(frames.find((f) => f.type === 'transcript')!.text).toBe('pasta on Tuesday please');
++    expect(frames.find((f) => f.type === 'response.end')!.text).toBe('Mocked Lumi reply.');
++  });
++
++  it('persists the turn through submitTextTurn with modality "voice" (5-S5 path)', async () => {
++    const { service, repository, voiceTranscriptRepository } = buildDeps({ activeThread: null });
++    const ws = makeMockWs();
++
++    await service.processVoiceUtterance(makeVoiceState(), Buffer.from('wav'), ws);
++
++    expect(repository.insertTurn).toHaveBeenCalledWith(
++      expect.objectContaining({ role: 'user', modality: 'voice' }),
++    );
++    expect(repository.insertTurn).toHaveBeenCalledWith(
++      expect.objectContaining({ role: 'lumi', modality: 'voice' }),
++    );
++    expect(voiceTranscriptRepository.insertTranscript).toHaveBeenCalledTimes(1);
++  });
++
++  it('drops a concurrent frame while a turn is already in flight (single-flight guard)', async () => {
++    const { service } = buildDeps({ activeThread: null });
++    const ws = makeMockWs();
++    const state = makeVoiceState();
++
++    // First call hangs at STT so isProcessing stays true.
++    let releaseStt: (text: string) => void = () => {};
++    transcribeWavMock.mockImplementationOnce(
++      () => new Promise<string>((resolve) => { releaseStt = resolve; }),
++    );
++
++    const first = service.processVoiceUtterance(state, Buffer.from('a'), ws);
++    // Second arrives mid-flight → dropped before any STT call.
++    await service.processVoiceUtterance(state, Buffer.from('b'), ws);
++
++    releaseStt('hello');
++    await first;
++
++    expect(transcribeWavMock).toHaveBeenCalledTimes(1);
++  });
++
++  it('emits a non-fatal stt_failed error frame without closing the session on STT failure', async () => {
++    const { service } = buildDeps({ activeThread: null });
++    const ws = makeMockWs();
++    transcribeWavMock.mockRejectedValueOnce(new Error('scribe down'));
++
++    await service.processVoiceUtterance(makeVoiceState(), Buffer.from('wav'), ws);
++
++    const frames = sentFrames(ws);
++    const errorFrame = frames.find((f) => f.type === 'error');
++    expect(errorFrame).toBeDefined();
++    expect(errorFrame!.code).toBe('stt_failed');
++    // Non-fatal: no turn ran, no TTS, session not torn down here.
++    expect(streamTtsToWsMock).not.toHaveBeenCalled();
++    expect((ws as unknown as { close: ReturnType<typeof vi.fn> }).close).not.toHaveBeenCalled();
++  });
++
++  it('resets isProcessing after a turn so the next utterance can run', async () => {
++    const { service } = buildDeps({ activeThread: null });
++    const ws = makeMockWs();
++    const state = makeVoiceState();
++
++    await service.processVoiceUtterance(state, Buffer.from('a'), ws);
++    expect(state.isProcessing).toBe(false);
++    await service.processVoiceUtterance(state, Buffer.from('b'), ws);
++
++    expect(transcribeWavMock).toHaveBeenCalledTimes(2);
++  });
++
++  it('drops the frame when no context frame has been received yet', async () => {
++    const { service } = buildDeps({ activeThread: null });
++    const ws = makeMockWs();
++    const state: LumiVoiceWsState = { ...makeVoiceState(), contextSignal: null };
++
++    await service.processVoiceUtterance(state, Buffer.from('wav'), ws);
++
++    expect(transcribeWavMock).not.toHaveBeenCalled();
++    expect(ws.send).not.toHaveBeenCalled();
++  });
++});
+diff --git a/apps/api/src/modules/lumi/lumi.service.ts b/apps/api/src/modules/lumi/lumi.service.ts
+index b193fc6..420b0df 100644
+--- a/apps/api/src/modules/lumi/lumi.service.ts
++++ b/apps/api/src/modules/lumi/lumi.service.ts
+@@ -1,11 +1,15 @@
++import type { Buffer } from 'node:buffer';
+ import type { FastifyBaseLogger } from 'fastify';
++import type { WebSocket } from '@fastify/websocket';
+ import type Redis from 'ioredis';
+ import type OpenAI from 'openai';
+ import type { LumiSurface, LumiContextSignal, NudgeTrigger, Turn } from '@hivekitchen/types';
+-import { ForbiddenError, UpstreamError, ValidationError } from '../../common/errors.js';
++import { ForbiddenError, ValidationError } from '../../common/errors.js';
+ import { LumiAgent } from '../../agents/lumi.agent.js';
++import { transcribeWav, streamTtsToWs } from '../voice/elevenlabs-audio.js';
+ import type { ChildrenRepository } from '../children/children.repository.js';
+ import type { HouseholdAllergensRepository } from '../households/household-allergens.repository.js';
++import type { VoiceTranscriptRepository } from '../voice/voice-transcript.repository.js';
+ import type { LumiRepository, TalkSessionRow } from './lumi.repository.js';
+ 
+ export interface LumiServiceDeps {
+@@ -17,6 +21,7 @@ export interface LumiServiceDeps {
+   openai: OpenAI; // NEW — real LumiAgent dispatch
+   childrenRepository: ChildrenRepository; // NEW — for household snapshot
+   householdAllergensRepository: HouseholdAllergensRepository; // NEW — canonical allergen table
++  voiceTranscriptRepository: VoiceTranscriptRepository; // 5-S5 — voice transcript persistence
+ }
+ 
+ export interface CreateTalkSessionInput {
+@@ -28,13 +33,31 @@ export interface CreateTalkSessionInput {
+ 
+ export interface CreateTalkSessionResult {
+   talk_session_id: string;
+-  stt_token: string;
+-  tts_token: string;
+-  voice_id: string;
++}
++
++// Story 5-S5b — per-connection state for an ambient Lumi voice WebSocket
++// (GET /v1/lumi/voice/ws). One object lives in the route handler's closure for
++// the life of the socket; the service mutates it. `contextSignal` is set from
++// the browser's `context` frame; `isProcessing` is the single-flight guard
++// (mirrors the onboarding VoiceService turn loop); `seq` numbers the frames.
++export interface LumiVoiceWsState {
++  householdId: string;
++  contextSignal: LumiContextSignal | null;
++  isProcessing: boolean;
++  seq: number;
+ }
+ 
+ const TALK_SESSION_TTL_SECONDS = 20;
+ 
++// 60s × 16kHz × 2B ≈ 1.9 MB — mirrors the onboarding voice cap (2.6b).
++const MAX_AUDIO_BYTES = 2 * 1024 * 1024;
++
++// Non-fatal voice error copy — a single STT/agent/TTS miss never tears the
++// session down (12-S10 TRANSCRIPT_FAILED behaviour); the user just speaks again.
++const STT_FAILED_COPY = 'Could not hear that — try again';
++const AGENT_FAILED_COPY = "I'm having a little trouble — could you say that again?";
++const TTS_FAILED_COPY = 'Voice unavailable — please read the response instead';
++
+ // 'onboarding' is a valid LumiSurface (see lumi.ts contract comment) but the
+ // onboarding voice flow has its own dedicated route at POST /v1/voice/sessions
+ // (Story 2.6/2.6b). Ambient tap-to-talk is for non-onboarding surfaces only.
+@@ -56,6 +79,7 @@ export class LumiService {
+   private readonly openai: OpenAI;
+   private readonly childrenRepository: ChildrenRepository;
+   private readonly householdAllergensRepository: HouseholdAllergensRepository;
++  private readonly voiceTranscriptRepository: VoiceTranscriptRepository;
+ 
+   constructor(deps: LumiServiceDeps) {
+     this.repository = deps.repository;
+@@ -66,6 +90,7 @@ export class LumiService {
+     this.openai = deps.openai;
+     this.childrenRepository = deps.childrenRepository;
+     this.householdAllergensRepository = deps.householdAllergensRepository;
++    this.voiceTranscriptRepository = deps.voiceTranscriptRepository;
+   }
+ 
+   async createTalkSession(input: CreateTalkSessionInput): Promise<CreateTalkSessionResult> {
+@@ -98,31 +123,14 @@ export class LumiService {
+       existing ??
+       (await this.repository.createAmbientThread(input.householdId, surface, 'voice'));
+ 
+-    // Issue ElevenLabs credentials BEFORE persisting the session row so a token
+-    // failure leaves no orphaned voice_sessions row (AC #10 — atomic creation).
+-    const { sttToken, ttsToken } = await this.issueElevenLabsCredentials();
+-
+-    let session: TalkSessionRow;
+-    try {
+-      session = await this.repository.createTalkSession({
+-        userId: input.userId,
+-        householdId: input.householdId,
+-        threadId: thread.id,
+-      });
+-    } catch (err) {
+-      // ElevenLabs credentials were already minted — log but do not surface
+-      // the leak (the tokens are short-lived and unused).
+-      this.logger.error(
+-        {
+-          err,
+-          module: 'lumi',
+-          action: 'lumi.talk_session_persist_failed',
+-          household_id: input.householdId,
+-        },
+-        'voice_sessions insert failed after issuing ElevenLabs credentials — credentials will expire unused',
+-      );
+-      throw err;
+-    }
++    // Story 5-S5b — no ElevenLabs credential pre-mint any more. The session is
++    // just a bound id: the browser opens HiveKitchen's own /v1/lumi/voice/ws
++    // with its JWT + this id, and the server owns Scribe STT + TTS.
++    const session: TalkSessionRow = await this.repository.createTalkSession({
++      userId: input.userId,
++      householdId: input.householdId,
++      threadId: thread.id,
++    });
+ 
+     // Best-effort 20s inactivity sentinel. Auto-close consumer arrives in
+     // Story 12.8; for now this is just a TTL stamp.
+@@ -145,12 +153,125 @@ export class LumiService {
+       );
+     }
+ 
+-    return {
+-      talk_session_id: session.id,
+-      stt_token: sttToken,
+-      tts_token: ttsToken,
+-      voice_id: this.voiceId,
+-    };
++    return { talk_session_id: session.id };
++  }
++
++  // Story 5-S5b — process one complete voice utterance arriving over the ambient
++  // Lumi WebSocket. Mirrors the onboarding VoiceService turn loop but drives the
++  // LumiAgent (via submitTextTurn) instead of the OnboardingAgent. STT is raw
++  // ElevenLabs Scribe (REST); the reply is synthesized via ElevenLabs TTS and
++  // streamed back as binary frames; persistence (thread_turns + voice_transcript)
++  // is exactly the 5-S5 path because it flows through submitTextTurn.
++  //
++  // Non-fatal by design: a single STT/agent/TTS failure emits an `error` frame
++  // and returns without closing the socket — the user simply speaks again. The
++  // `state.isProcessing` single-flight guard drops any frame that arrives while
++  // a turn is in flight (matches the onboarding guard).
++  async processVoiceUtterance(
++    state: LumiVoiceWsState,
++    wav: Buffer,
++    ws: WebSocket,
++  ): Promise<void> {
++    if (state.contextSignal === null) {
++      this.logger.warn(
++        { module: 'lumi', action: 'lumi.voice.utterance_before_context' },
++        'audio frame arrived before the context frame — dropping',
++      );
++      return;
++    }
++
++    if (state.isProcessing) {
++      this.logger.warn(
++        { module: 'lumi', action: 'lumi.voice.turn_dropped_concurrent' },
++        'binary frame dropped — turn already in flight',
++      );
++      return;
++    }
++
++    if (wav.length > MAX_AUDIO_BYTES) {
++      this.logger.warn(
++        { module: 'lumi', action: 'lumi.voice.audio_too_large', bytes: wav.length },
++        'audio frame exceeds size limit — dropping',
++      );
++      this.sendJson(ws, { type: 'error', code: 'stt_failed', message: STT_FAILED_COPY });
++      return;
++    }
++
++    const contextSignal = state.contextSignal;
++    state.isProcessing = true;
++    const seq = ++state.seq;
++
++    try {
++      let transcript: string;
++      try {
++        transcript = await transcribeWav(this.elevenLabsApiKey, wav);
++      } catch (err) {
++        this.logger.warn(
++          { err, module: 'lumi', action: 'lumi.voice.stt_failed' },
++          'ElevenLabs STT failed — sending non-fatal error frame',
++        );
++        this.sendJson(ws, { type: 'error', code: 'stt_failed', message: STT_FAILED_COPY });
++        return;
++      }
++
++      if (transcript.trim().length === 0) {
++        // Scribe heard nothing intelligible — treat like a soft miss.
++        this.sendJson(ws, { type: 'error', code: 'stt_failed', message: STT_FAILED_COPY });
++        return;
++      }
++
++      this.sendJson(ws, { type: 'transcript', seq, text: transcript });
++
++      let result: Awaited<ReturnType<typeof this.submitTextTurn>>;
++      try {
++        result = await this.submitTextTurn({
++          householdId: state.householdId,
++          message: transcript,
++          contextSignal,
++          modality: 'voice',
++        });
++      } catch (err) {
++        this.logger.warn(
++          { err, module: 'lumi', action: 'lumi.voice.agent_failed' },
++          'LumiAgent turn failed — sending non-fatal error frame',
++        );
++        this.sendJson(ws, { type: 'error', code: 'agent_failed', message: AGENT_FAILED_COPY });
++        return;
++      }
++
++      const reply =
++        result.lumi_turn.body.type === 'message' ? result.lumi_turn.body.content : '';
++
++      this.sendJson(ws, { type: 'response.start', seq });
++
++      try {
++        await streamTtsToWs(this.elevenLabsApiKey, this.voiceId, reply, ws);
++      } catch (err) {
++        this.logger.warn(
++          { err, module: 'lumi', action: 'lumi.voice.tts_failed' },
++          'ElevenLabs TTS streaming failed — sending reply text + non-fatal error frame',
++        );
++        // Close the open turn so the client can show the reply, then report.
++        this.sendJson(ws, { type: 'response.end', seq, text: reply });
++        this.sendJson(ws, { type: 'error', code: 'tts_failed', message: TTS_FAILED_COPY });
++        return;
++      }
++
++      this.sendJson(ws, { type: 'response.end', seq, text: reply });
++    } finally {
++      state.isProcessing = false;
++    }
++  }
++
++  private sendJson(ws: WebSocket, payload: object): void {
++    try {
++      ws.send(JSON.stringify(payload));
++    } catch (err) {
++      this.logger.warn(
++        { err, module: 'lumi', action: 'lumi.voice.ws_send_failed' },
++        'voice WebSocket send failed (client likely disconnected)',
++      );
++    }
+   }
+ 
+   // Ambient text turn (Story 12-S8 stub; 12-S9 real dispatch). Lazy-resolves the
+@@ -163,8 +284,12 @@ export class LumiService {
+     householdId: string;
+     message: string;
+     contextSignal: LumiContextSignal;
++    // 5-S5 — voice turns pass 'voice'; text turns omit it (defaults to 'text').
++    // Stamps thread_turns.modality and gates voice_transcripts persistence.
++    modality?: 'text' | 'voice';
+   }): Promise<{ thread_id: string; user_turn: Turn; lumi_turn: Turn }> {
+     const surface = input.contextSignal.surface;
++    const modality = input.modality ?? 'text';
+     assertAmbientSurface(surface);
+ 
+     const existing = await this.repository.findActiveAmbientThread(
+@@ -188,7 +313,7 @@ export class LumiService {
+       threadId: thread.id,
+       role: 'user',
+       body: { type: 'message', content: input.message },
+-      modality: 'text',
++      modality,
+     });
+ 
+     const agent = new LumiAgent(this.openai);
+@@ -198,16 +323,40 @@ export class LumiService {
+       contextSignal: input.contextSignal,
+       conversationHistory: priorTurns,
+       householdSnapshot,
+-      modality: 'text',
++      modality,
+     });
+ 
+     const lumiTurn = await this.repository.insertTurn({
+       threadId: thread.id,
+       role: 'lumi',
+       body: { type: 'message', content: lumiText },
+-      modality: 'text',
++      modality,
+     });
+ 
++    // 5-S5 — persist the user's speech transcript, anchored to the Lumi turn.
++    // Best-effort: a transcript write failure must never block the voice turn
++    // from returning (the caption is already shown client-side; losing the
++    // persistence is a degraded-mode issue, not a fatal error).
++    if (modality === 'voice') {
++      try {
++        await this.voiceTranscriptRepository.insertTranscript(
++          thread.id,
++          lumiTurn.id,
++          input.message,
++        );
++      } catch (err) {
++        this.logger.warn(
++          {
++            err,
++            module: 'lumi',
++            action: 'lumi.voice_transcript_persist_failed',
++            thread_id: thread.id,
++          },
++          'voice transcript persist failed — best-effort, continuing',
++        );
++      }
++    }
++
+     return { thread_id: thread.id, user_turn: userTurn, lumi_turn: lumiTurn };
+   }
+ 
+@@ -345,41 +494,4 @@ export class LumiService {
+     }
+   }
+ 
+-  // The architecture spec says "the API calls ElevenLabs to obtain a single-use
+-  // STT token and a single-use TTS token." ElevenLabs's public API does not
+-  // currently expose dedicated single-use STT-stream or TTS-stream tokens; the
+-  // closest documented mechanism is the Conversational AI signed URL endpoint.
+-  // We make two distinct fetch calls so:
+-  //   * AC #1 ("API calls ElevenLabs to obtain a single-use STT token AND a
+-  //     single-use TTS token") is met structurally;
+-  //   * AC #10 (atomic on token failure) is exercised by a single failing call.
+-  // Story 12.8 owns the actual browser-direct WS transport and may revise the
+-  // exact endpoint(s) called here.
+-  private async issueElevenLabsCredentials(): Promise<{
+-    sttToken: string;
+-    ttsToken: string;
+-  }> {
+-    const url = `https://api.elevenlabs.io/v1/convai/conversation/get_signed_url?agent_id=${encodeURIComponent(this.voiceId)}`;
+-    const headers = { 'xi-api-key': this.elevenLabsApiKey };
+-
+-    const sttRes = await fetch(url, { method: 'GET', headers });
+-    if (!sttRes.ok) {
+-      throw new UpstreamError(`ElevenLabs STT credential issuance failed: HTTP ${sttRes.status}`);
+-    }
+-    const sttJson = (await sttRes.json()) as { signed_url?: unknown };
+-    if (typeof sttJson.signed_url !== 'string' || sttJson.signed_url.length === 0) {
+-      throw new UpstreamError('ElevenLabs STT credential issuance returned no signed_url');
+-    }
+-
+-    const ttsRes = await fetch(url, { method: 'GET', headers });
+-    if (!ttsRes.ok) {
+-      throw new UpstreamError(`ElevenLabs TTS credential issuance failed: HTTP ${ttsRes.status}`);
+-    }
+-    const ttsJson = (await ttsRes.json()) as { signed_url?: unknown };
+-    if (typeof ttsJson.signed_url !== 'string' || ttsJson.signed_url.length === 0) {
+-      throw new UpstreamError('ElevenLabs TTS credential issuance returned no signed_url');
+-    }
+-
+-    return { sttToken: sttJson.signed_url, ttsToken: ttsJson.signed_url };
+-  }
+ }
+diff --git a/apps/api/src/modules/voice/voice.routes.test.ts b/apps/api/src/modules/voice/voice.routes.test.ts
+index 962bfde..3205836 100644
+--- a/apps/api/src/modules/voice/voice.routes.test.ts
++++ b/apps/api/src/modules/voice/voice.routes.test.ts
+@@ -120,7 +120,6 @@ async function buildTestApp(opts: {
+     JWT_SECRET,
+     ELEVENLABS_API_KEY: 'test-key',
+     ELEVENLABS_VOICE_ID: VOICE_ID,
+-    ELEVENLABS_AGENT_ID: 'test-agent-id',
+     ELEVENLABS_TTS_MODEL_ID: 'eleven_flash_v2_5',
+   };
+   app.decorate('env', env as unknown as FastifyInstance['env']);
+diff --git a/apps/api/src/modules/voice/voice.routes.ts b/apps/api/src/modules/voice/voice.routes.ts
+index fa24d52..e45969e 100644
+--- a/apps/api/src/modules/voice/voice.routes.ts
++++ b/apps/api/src/modules/voice/voice.routes.ts
+@@ -37,7 +37,6 @@ const voiceRoutesPlugin: FastifyPluginAsync = async (fastify) => {
+     culturalPriorService,
+     elevenLabsApiKey: fastify.env.ELEVENLABS_API_KEY,
+     voiceId: fastify.env.ELEVENLABS_VOICE_ID,
+-    agentId: fastify.env.ELEVENLABS_AGENT_ID,
+     ttsModelId: fastify.env.ELEVENLABS_TTS_MODEL_ID,
+     logger: fastify.log,
+     memoryService: fastify.memoryService,
+diff --git a/apps/api/src/modules/voice/voice.service.test.ts b/apps/api/src/modules/voice/voice.service.test.ts
+index e8116c5..216bd3c 100644
+--- a/apps/api/src/modules/voice/voice.service.test.ts
++++ b/apps/api/src/modules/voice/voice.service.test.ts
+@@ -96,7 +96,6 @@ function makeService(opts?: {
+     culturalPriorService: makeCulturalPriorService(),
+     elevenLabsApiKey: 'test-el-key',
+     voiceId: 'test-voice-id',
+-    agentId: 'test-agent-id',
+     ttsModelId: 'eleven_flash_v2_5',
+     logger: makeLogger(),
+   });
+diff --git a/apps/api/src/modules/voice/voice.service.ts b/apps/api/src/modules/voice/voice.service.ts
+index 57360c2..5b1bbb8 100644
+--- a/apps/api/src/modules/voice/voice.service.ts
++++ b/apps/api/src/modules/voice/voice.service.ts
+@@ -3,6 +3,7 @@ import type { FastifyBaseLogger } from 'fastify';
+ import type { WebSocket } from '@fastify/websocket';
+ import { ConflictError, UpstreamError } from '../../common/errors.js';
+ import { stripExpressionTags } from '../../common/strip-expression-tags.js';
++import { transcribeWav, streamTtsToWs } from './elevenlabs-audio.js';
+ import type { OnboardingAgent, LlmMessage } from '../../agents/onboarding.agent.js';
+ import type { CulturalPriorService } from '../cultural-priors/cultural-prior.service.js';
+ import type { MemoryService } from '../memory/memory.service.js';
+@@ -41,10 +42,6 @@ export interface VoiceServiceDeps {
+   culturalPriorService: CulturalPriorService;
+   elevenLabsApiKey: string;
+   voiceId: string;
+-  // ElevenLabs ConvAI agent ID used by Epic 2 voice onboarding (2-s21+).
+-  // Optional until 2-s21 ships. Distinct from `voiceId`, which is a TTS
+-  // voice identifier used by the narration path (2-s20).
+-  agentId?: string;
+   // Slice 2-S20 — model used by the browser-direct TTS WebSocket. Wired
+   // through env (ELEVENLABS_TTS_MODEL_ID, default `eleven_flash_v2_5`).
+   ttsModelId: string;
+@@ -69,7 +66,6 @@ export class VoiceService {
+   private readonly culturalPriorService: CulturalPriorService;
+   private readonly elevenLabsApiKey: string;
+   private readonly voiceId: string;
+-  private readonly agentId: string | undefined;
+   private readonly ttsModelId: string;
+   private readonly logger: FastifyBaseLogger;
+   private readonly memoryService?: MemoryService;
+@@ -81,7 +77,6 @@ export class VoiceService {
+     this.culturalPriorService = deps.culturalPriorService;
+     this.elevenLabsApiKey = deps.elevenLabsApiKey;
+     this.voiceId = deps.voiceId;
+-    this.agentId = deps.agentId;
+     this.ttsModelId = deps.ttsModelId;
+     this.logger = deps.logger;
+     this.memoryService = deps.memoryService;
+@@ -637,28 +632,8 @@ export class VoiceService {
+   }
+ 
+   private async transcribe(audioBuffer: Buffer): Promise<string> {
+-    const form = new FormData();
+-    const blob = new Blob([new Uint8Array(audioBuffer)], { type: 'audio/wav' });
+-    form.append('audio', blob, 'utterance.wav');
+-    form.append('model_id', 'scribe_v1');
+-
+-    const res = await fetch('https://api.elevenlabs.io/v1/speech-to-text', {
+-      method: 'POST',
+-      headers: { 'xi-api-key': this.elevenLabsApiKey },
+-      body: form,
+-    });
+-
+-    if (!res.ok) {
+-      throw new UpstreamError(
+-        `ElevenLabs STT failed: HTTP ${res.status}`,
+-      );
+-    }
+-
+-    const json = (await res.json()) as { text?: unknown };
+-    if (typeof json.text !== 'string') {
+-      throw new UpstreamError('ElevenLabs STT returned no transcript text');
+-    }
+-    return json.text;
++    // Shared with the ambient Lumi voice path (Story 5-S5b) — one Scribe impl.
++    return transcribeWav(this.elevenLabsApiKey, audioBuffer);
+   }
+ 
+   // Slice 2-S20 — browser-direct TTS via single-use token.
+@@ -671,11 +646,11 @@ export class VoiceService {
+   // single-use (consumed on connect), so the long-lived xi-api-key stays
+   // server-side.
+   //
+-  // Why TTS WS (not ConvAI signed URL): for one-shot narration we don't need
+-  // a conversational agent — TTS is cheaper (character billing vs minute
+-  // billing), simpler (no first_message override hack, no agent_response
+-  // close detection), and the voice is selected by voice_id rather than by
+-  // a dashboard-configured agent.
++  // Why the TTS WebSocket: for one-shot narration we don't need a hosted
++  // conversational agent — TTS is cheaper (character billing vs minute
++  // billing), simpler (no first_message override hack, no response-close
++  // detection), and the voice is selected by voice_id rather than by a
++  // dashboard-configured agent.
+   async issueTtsToken(): Promise<{ token: string; voice_id: string; model_id: string }> {
+     const url = 'https://api.elevenlabs.io/v1/single-use-token/tts_websocket';
+     let res: Response;
+@@ -716,44 +691,8 @@ export class VoiceService {
+   }
+ 
+   private async streamTts(text: string, ws: WebSocket): Promise<void> {
+-    const res = await fetch(
+-      `https://api.elevenlabs.io/v1/text-to-speech/${this.voiceId}/stream`,
+-      {
+-        method: 'POST',
+-        headers: {
+-          'xi-api-key': this.elevenLabsApiKey,
+-          'Content-Type': 'application/json',
+-        },
+-        body: JSON.stringify({
+-          text,
+-          model_id: 'eleven_v3',
+-          output_format: 'mp3_44100_128',
+-          voice_settings: {
+-            stability: 0.5,
+-            similarity_boost: 0.8,
+-            style: 0.6,
+-            use_speaker_boost: true,
+-          },
+-        }),
+-      },
+-    );
+-
+-    if (!res.ok || res.body === null) {
+-      throw new UpstreamError(`ElevenLabs TTS failed: HTTP ${res.status}`);
+-    }
+-
+-    const reader = res.body.getReader();
+-    try {
+-      while (true) {
+-        const { done, value } = await reader.read();
+-        if (done) break;
+-        if (value && value.byteLength > 0) {
+-          ws.send(Buffer.from(value));
+-        }
+-      }
+-    } finally {
+-      reader.cancel().catch(() => { /* noop */ });
+-    }
++    // Shared with the ambient Lumi voice path (Story 5-S5b) — one TTS impl.
++    return streamTtsToWs(this.elevenLabsApiKey, this.voiceId, text, ws);
+   }
+ 
+   private sendText(ws: WebSocket, payload: object): void {
+diff --git a/apps/web/src/features/onboarding/components/MediaPanels.tsx b/apps/web/src/features/onboarding/components/MediaPanels.tsx
+index 4c44569..693ac73 100644
+--- a/apps/web/src/features/onboarding/components/MediaPanels.tsx
++++ b/apps/web/src/features/onboarding/components/MediaPanels.tsx
+@@ -68,8 +68,9 @@ interface TtsTokenResponse {
+ export function AudioPanel({ caption, text }: AudioPanelProps) {
+   const wsRef = useRef<WebSocket | null>(null);
+   const audioCtxRef = useRef<AudioContext | null>(null);
+-  // Sample rate of the inbound PCM stream — ConvAI defaults to 16 kHz pcm_16000.
+-  // If we override `output_format` in the init message we must update this.
++  // Sample rate of the inbound PCM stream — the narration TTS WebSocket emits
++  // 16 kHz pcm_16000. If we override `output_format` in the init message we
++  // must update this.
+   const sampleRateRef = useRef<number>(16000);
+   // Time pointer for scheduling chunk playback contiguously via Web Audio API.
+   const nextPlayTimeRef = useRef<number>(0);
+diff --git a/apps/web/src/hooks/useLumiVoiceSession.test.ts b/apps/web/src/hooks/useLumiVoiceSession.test.ts
+index c5afcc0..1a774a6 100644
+--- a/apps/web/src/hooks/useLumiVoiceSession.test.ts
++++ b/apps/web/src/hooks/useLumiVoiceSession.test.ts
+@@ -1,11 +1,16 @@
+ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+ import { renderHook, act } from '@testing-library/react';
+ import { useLumiStore } from '@/stores/lumi.store.js';
++import { useAuthStore } from '@/stores/auth.store.js';
+ import { useLumiVoiceSession } from './useLumiVoiceSession.js';
+ 
+ // ── WebSocket mock ────────────────────────────────────────────────────────
++// Story 5-S5b — ambient Lumi voice now runs over a SINGLE HiveKitchen WebSocket
++// (GET /v1/lumi/voice/ws). No ElevenLabs browser-direct socket, no hosted agent.
+ 
+ interface MockWs {
++  url: string;
++  binaryType: string;
+   send: ReturnType<typeof vi.fn>;
+   close: ReturnType<typeof vi.fn>;
+   readyState: number;
+@@ -15,8 +20,10 @@ interface MockWs {
+   _emit: (type: string, ...args: unknown[]) => void;
+ }
+ 
+-function createMockWs(): MockWs {
++function createMockWs(url: string): MockWs {
+   const ws: MockWs = {
++    url,
++    binaryType: 'blob',
+     send: vi.fn(),
+     close: vi.fn(),
+     readyState: 0, // CONNECTING
+@@ -33,22 +40,28 @@ function createMockWs(): MockWs {
+   return ws;
+ }
+ 
+-// Track created WebSocket instances in order (0 = TTS, 1 = STT)
+ let wsInstances: MockWs[] = [];
+ 
+ // ── VAD mock ──────────────────────────────────────────────────────────────
+-
+-const mockVad = {
+-  start: vi.fn(),
+-  pause: vi.fn(),
+-  destroy: vi.fn(),
+-  userSpeaking: false,
+-  loading: false,
+-  errored: false,
+-};
++// Capture the config so tests can drive onSpeechEnd directly.
++
++const vadState = vi.hoisted(() => ({
++  config: null as null | { onSpeechEnd?: (audio: Float32Array) => void },
++  vad: {
++    start: vi.fn(),
++    pause: vi.fn(),
++    destroy: vi.fn(),
++    userSpeaking: false,
++    loading: false,
++    errored: false,
++  },
++}));
+ 
+ vi.mock('@ricky0123/vad-react', () => ({
+-  useMicVAD: vi.fn(() => mockVad),
++  useMicVAD: vi.fn((config: { onSpeechEnd?: (audio: Float32Array) => void }) => {
++    vadState.config = config;
++    return vadState.vad;
++  }),
+ }));
+ 
+ // ── Helpers ───────────────────────────────────────────────────────────────
+@@ -61,46 +74,14 @@ async function flush(n = 3) {
+ // ── Fixtures ──────────────────────────────────────────────────────────────
+ 
+ const SESSION_ID = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+-const THREAD_ID  = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+-const USER_TURN_ID  = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
+-const LUMI_TURN_ID  = 'dddddddd-dddd-4ddd-8ddd-dddddddddddd';
+ 
+ function makeSessionResponse() {
+-  return {
+-    talk_session_id: SESSION_ID,
+-    stt_token: 'wss://stt.example.com/token',
+-    tts_token: 'tts-tok',
+-    voice_id: 'voice-abc',
+-  };
+-}
+-
+-function makeTurnResponse(userText = 'hello', lumiText = 'Got it.') {
+-  return {
+-    thread_id: THREAD_ID,
+-    user_turn: {
+-      id: USER_TURN_ID,
+-      thread_id: THREAD_ID,
+-      server_seq: 1,
+-      created_at: '2026-06-05T00:00:00.000Z',
+-      role: 'user',
+-      body: { type: 'message', content: userText },
+-    },
+-    lumi_turn: {
+-      id: LUMI_TURN_ID,
+-      thread_id: THREAD_ID,
+-      server_seq: 2,
+-      created_at: '2026-06-05T00:00:01.000Z',
+-      role: 'lumi',
+-      body: { type: 'message', content: lumiText },
+-    },
+-  };
++  return { talk_session_id: SESSION_ID };
+ }
+ 
+ /**
+- * Fake Response whose `.json()` returns an IMMEDIATELY resolved Promise.
+- * Using the real `new Response(JSON.stringify(...))` causes jsdom's ReadableStream
+- * consumption to take an indeterminate number of microtask ticks, which makes
+- * microtask-counting flushes unreliable. This shim keeps test timing deterministic.
++ * Fake Response whose `.json()` returns an IMMEDIATELY resolved Promise so the
++ * microtask-counting flushes stay deterministic (see original 5-S5 harness).
+  */
+ function fakeJsonResponse(body: unknown, status = 200): Response {
+   return {
+@@ -111,7 +92,6 @@ function fakeJsonResponse(body: unknown, status = 200): Response {
+ }
+ 
+ function fake204Response(): Response {
+-  // hkFetch short-circuits on 204 before calling .json(), so no json method needed.
+   return { ok: true, status: 204 } as unknown as Response;
+ }
+ 
+@@ -123,14 +103,16 @@ const originalWebSocket = globalThis.WebSocket;
+ describe('useLumiVoiceSession', () => {
+   beforeEach(() => {
+     useLumiStore.getState().reset();
+-    mockVad.start.mockClear();
+-    mockVad.pause.mockClear();
++    useAuthStore.setState({ accessToken: 'test-jwt' });
++    vadState.vad.start.mockClear();
++    vadState.vad.pause.mockClear();
++    vadState.config = null;
+     wsInstances = [];
+ 
+-    // Use `function` keyword so the mock works as a `new`-able constructor.
++    // `function` keyword so the mock works as a `new`-able constructor.
+     // eslint-disable-next-line prefer-arrow-callback
+-    globalThis.WebSocket = vi.fn().mockImplementation(function mockWebSocket() {
+-      const ws = createMockWs();
++    globalThis.WebSocket = vi.fn().mockImplementation(function mockWebSocket(url: string) {
++      const ws = createMockWs(url);
+       wsInstances.push(ws);
+       return ws;
+     }) as unknown as typeof WebSocket;
+@@ -139,22 +121,12 @@ describe('useLumiVoiceSession', () => {
+     // @ts-expect-error test-only constant
+     globalThis.WebSocket.CONNECTING = 0;
+ 
+-    // AudioContext is not available in jsdom — mock the minimal surface used
+-    // by openTtsWs's 'open' handler and endSession's cleanup.
+-    const audioCtxMock = {
+-      resume: vi.fn().mockResolvedValue(undefined),
+-      createBuffer: vi.fn().mockReturnValue({ copyToChannel: vi.fn(), duration: 0.1 }),
+-      createBufferSource: vi.fn().mockReturnValue({
+-        buffer: null, connect: vi.fn(), start: vi.fn(),
+-      }),
+-      currentTime: 0,
+-      destination: {},
+-      close: vi.fn().mockResolvedValue(undefined),
+-    };
+-    // eslint-disable-next-line prefer-arrow-callback
+-    globalThis.AudioContext = vi.fn().mockImplementation(function mockAudioContext() {
+-      return audioCtxMock;
+-    }) as unknown as typeof AudioContext;
++    // MP3-Blob playback uses URL.createObjectURL + HTMLMediaElement.play, neither
++    // implemented in jsdom — stub the minimal surface.
++    globalThis.URL.createObjectURL = vi.fn(() => 'blob:mock');
++    globalThis.URL.revokeObjectURL = vi.fn();
++    vi.spyOn(window.HTMLMediaElement.prototype, 'play').mockResolvedValue(undefined);
++    vi.spyOn(window.HTMLMediaElement.prototype, 'pause').mockImplementation(() => {});
+   });
+ 
+   afterEach(() => {
+@@ -166,38 +138,24 @@ describe('useLumiVoiceSession', () => {
+ 
+   // ── Shared setup helpers ────────────────────────────────────────────────
+ 
+-  /**
+-   * Kicks off startSession and flushes enough microtask ticks for hkFetch to
+-   * resolve and both WebSocket instances to be created. The hook suspends at
+-   * Promise.all waiting for the 'open' events.
+-   *
+-   * Microtask budget with fakeJsonResponse (immediately-resolved .json()):
+-   *   tick 1 → hkFetch's `await fetch(url)` resolves → hits `await res.json()`
+-   *   tick 2 → res.json() resolves → startSession resumes, creates both WS,
+-   *             hits `await Promise.all([...])`
+-   */
+   async function startSessionAndFlushToWsCreation(
+     result: { current: ReturnType<typeof useLumiVoiceSession> },
+     signal: Parameters<typeof result.current.startSession>[0] = { surface: 'planning' },
+   ) {
+     await act(async () => {
+       void result.current.startSession(signal);
+-      await flush(3); // 2 ticks needed + 1 spare
++      await flush(3);
+     });
+   }
+ 
+-  /**
+-   * Fires the 'open' event on all created WebSockets and flushes the resulting
+-   * Promise.all resolution + post-connect code (setVoiceStatus, vad.start,
+-   * resetInactivityTimer).
+-   */
+-  async function openAllWs() {
++  /** Fires 'open' on the single WS and flushes the resulting state transitions. */
++  async function openWs() {
+     await act(async () => {
+       for (const ws of wsInstances) {
+         ws.readyState = 1; // OPEN
+         ws._emit('open');
+       }
+-      await flush(3); // flush Promise.all resolve + setVoiceStatus + vad.start
++      await flush(3);
+     });
+   }
+ 
+@@ -224,7 +182,7 @@ describe('useLumiVoiceSession', () => {
+     });
+   });
+ 
+-  it('startSession with 403 response calls onError with Premium copy; no WS opened, no talkSessionId', async () => {
++  it('startSession with 403 calls onError with Premium copy; no WS opened, no talkSessionId', async () => {
+     globalThis.fetch = vi.fn().mockResolvedValue(
+       fakeJsonResponse({ type: '/errors/forbidden' }, 403),
+     ) as unknown as typeof fetch;
+@@ -245,7 +203,7 @@ describe('useLumiVoiceSession', () => {
+     expect(useLumiStore.getState().talkSessionId).toBeNull();
+   });
+ 
+-  it('startSession on success opens both WS connections and transitions store connecting → active', async () => {
++  it('startSession opens ONE HK WS at /v1/lumi/voice/ws and transitions connecting → active', async () => {
+     globalThis.fetch = vi.fn().mockResolvedValue(
+       fakeJsonResponse(makeSessionResponse()),
+     ) as unknown as typeof fetch;
+@@ -256,79 +214,132 @@ describe('useLumiVoiceSession', () => {
+ 
+     await startSessionAndFlushToWsCreation(result);
+ 
+-    expect(wsInstances).toHaveLength(2);
++    expect(wsInstances).toHaveLength(1);
++    expect(wsInstances[0]!.url).toContain('/v1/lumi/voice/ws');
++    expect(wsInstances[0]!.url).toContain(`session_id=${SESSION_ID}`);
++    expect(wsInstances[0]!.url).toContain('token=test-jwt');
+     expect(useLumiStore.getState().talkSessionId).toBe(SESSION_ID);
+     expect(useLumiStore.getState().voiceStatus).toBe('connecting');
+ 
+-    await openAllWs();
++    await openWs();
+ 
+     expect(useLumiStore.getState().voiceStatus).toBe('active');
+-    expect(mockVad.start).toHaveBeenCalledTimes(1);
++    expect(vadState.vad.start).toHaveBeenCalledTimes(1);
+   });
+ 
+-  it('endSession closes both WS connections, calls DELETE, and resets store', async () => {
+-    useLumiStore.getState().setTalkSession(SESSION_ID);
+-    useLumiStore.getState().setVoiceStatus('active');
+-
+-    globalThis.fetch = vi.fn().mockResolvedValue(fake204Response()) as unknown as typeof fetch;
++  it('sends the context frame on open, then ships a WAV ArrayBuffer on speech end', async () => {
++    globalThis.fetch = vi.fn().mockResolvedValue(
++      fakeJsonResponse(makeSessionResponse()),
++    ) as unknown as typeof fetch;
+ 
+     const { result } = renderHook(() =>
+       useLumiVoiceSession({ onTranscript: vi.fn(), onLumiReply: vi.fn(), onError: vi.fn() }),
+     );
+ 
+-    await act(async () => {
+-      await result.current.endSession();
++    await startSessionAndFlushToWsCreation(result);
++    await openWs();
++
++    const ws = wsInstances[0]!;
++    // First send is the JSON context frame.
++    const firstSend = ws.send.mock.calls[0]![0] as string;
++    expect(JSON.parse(firstSend)).toEqual({
++      type: 'context',
++      context_signal: { surface: 'planning' },
+     });
+ 
+-    expect(mockVad.pause).toHaveBeenCalledTimes(1);
+-    const fetchSpy = globalThis.fetch as ReturnType<typeof vi.fn>;
+-    const deleteCalls = fetchSpy.mock.calls.filter((args: unknown[]) =>
+-      String(args[0]).includes(`/v1/lumi/voice/sessions/${SESSION_ID}`),
+-    );
+-    expect(deleteCalls).toHaveLength(1);
+-    expect(deleteCalls[0][1].method).toBe('DELETE');
+-    expect(useLumiStore.getState().voiceStatus).toBe('idle');
+-    expect(useLumiStore.getState().talkSessionId).toBeNull();
++    // Drive a VAD utterance — a WAV ArrayBuffer goes up the same socket.
++    await act(async () => {
++      vadState.config?.onSpeechEnd?.(new Float32Array(320));
++    });
++    const lastArg = ws.send.mock.calls.at(-1)![0];
++    expect(lastArg).toBeInstanceOf(ArrayBuffer);
+   });
+ 
+-  it('receiving a transcript triggers onTranscript → POST /v1/lumi/turns → onLumiReply', async () => {
+-    const fetchSpy = vi.fn()
+-      .mockResolvedValueOnce(fakeJsonResponse(makeSessionResponse()))
+-      .mockResolvedValueOnce(fakeJsonResponse(makeTurnResponse('hello', 'Got it.')));
++  it('server transcript → onTranscript and response.end → onLumiReply (no client turn POST)', async () => {
++    const fetchSpy = vi.fn().mockResolvedValue(fakeJsonResponse(makeSessionResponse()));
+     globalThis.fetch = fetchSpy as unknown as typeof fetch;
+ 
+     const onTranscript = vi.fn();
+     const onLumiReply = vi.fn();
+-
+     const { result } = renderHook(() =>
+       useLumiVoiceSession({ onTranscript, onLumiReply, onError: vi.fn() }),
+     );
+ 
+     await startSessionAndFlushToWsCreation(result);
+-    await openAllWs();
++    await openWs();
+     expect(useLumiStore.getState().voiceStatus).toBe('active');
+ 
+-    const sttWs = wsInstances[1]!;
++    const ws = wsInstances[0]!;
+     await act(async () => {
+-      sttWs._emit('message', {
+-        data: JSON.stringify({ type: 'user_transcript', user_transcript: 'hello' }),
+-      } as MessageEvent);
+-      // onTranscript fires synchronously inside handleTranscript (before its first await)
+-      // onLumiReply fires after hkFetch resolves — 2 more ticks
+-      await flush(5);
++      ws._emit('message', { data: JSON.stringify({ type: 'transcript', seq: 1, text: 'hello' }) });
++      ws._emit('message', { data: JSON.stringify({ type: 'response.end', seq: 1, text: 'Got it.' }) });
++      await flush(3);
+     });
+ 
+     expect(onTranscript).toHaveBeenCalledWith('hello');
+     expect(onLumiReply).toHaveBeenCalledWith('Got it.');
++    // The turn is server-orchestrated — the client never POSTs /v1/lumi/turns.
++    const turnPosts = fetchSpy.mock.calls.filter((c: unknown[]) =>
++      String(c[0]).includes('/v1/lumi/turns'),
++    );
++    expect(turnPosts).toHaveLength(0);
+   });
+ 
+-  it('20s inactivity timer fires endSession when no speech is detected', async () => {
+-    // Only fake timer APIs — Promises/microtasks are unaffected so flush() still works.
++  it('a non-fatal error frame surfaces a notice but keeps the session active', async () => {
++    globalThis.fetch = vi.fn().mockResolvedValue(
++      fakeJsonResponse(makeSessionResponse()),
++    ) as unknown as typeof fetch;
++
++    const { result } = renderHook(() =>
++      useLumiVoiceSession({ onTranscript: vi.fn(), onLumiReply: vi.fn(), onError: vi.fn() }),
++    );
++
++    await startSessionAndFlushToWsCreation(result);
++    await openWs();
++
++    const ws = wsInstances[0]!;
++    await act(async () => {
++      ws._emit('message', {
++        data: JSON.stringify({ type: 'error', code: 'stt_failed', message: 'Could not hear that' }),
++      });
++      await flush(2);
++    });
++
++    expect(useLumiStore.getState().voiceStatus).toBe('active');
++    expect(useLumiStore.getState().voiceError).toBe('Could not hear that');
++  });
++
++  it('endSession closes the WS, calls DELETE, and resets the store', async () => {
++    useLumiStore.getState().setTalkSession(SESSION_ID);
++    useLumiStore.getState().setVoiceStatus('active');
++
++    globalThis.fetch = vi.fn().mockResolvedValue(fake204Response()) as unknown as typeof fetch;
++
++    const { result } = renderHook(() =>
++      useLumiVoiceSession({ onTranscript: vi.fn(), onLumiReply: vi.fn(), onError: vi.fn() }),
++    );
++
++    await act(async () => {
++      await result.current.endSession();
++    });
++
++    expect(vadState.vad.pause).toHaveBeenCalledTimes(1);
++    const fetchSpy = globalThis.fetch as ReturnType<typeof vi.fn>;
++    const deleteCalls = fetchSpy.mock.calls.filter((args: unknown[]) =>
++      String(args[0]).includes(`/v1/lumi/voice/sessions/${SESSION_ID}`),
++    );
++    expect(deleteCalls).toHaveLength(1);
++    expect((deleteCalls[0]![1] as RequestInit).method).toBe('DELETE');
++    expect(useLumiStore.getState().voiceStatus).toBe('idle');
++    expect(useLumiStore.getState().talkSessionId).toBeNull();
++  });
++
++  it('20s inactivity fires endSession when no speech is detected', async () => {
+     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval'] });
+ 
+     const fetchSpy = vi.fn()
+-      .mockResolvedValueOnce(fakeJsonResponse(makeSessionResponse()))  // POST /voice/sessions
+-      .mockResolvedValue(fake204Response());                            // DELETE /voice/sessions/:id
++      .mockResolvedValueOnce(fakeJsonResponse(makeSessionResponse()))
++      .mockResolvedValue(fake204Response());
+     globalThis.fetch = fetchSpy as unknown as typeof fetch;
+ 
+     const { result } = renderHook(() =>
+@@ -336,13 +347,9 @@ describe('useLumiVoiceSession', () => {
+     );
+ 
+     await startSessionAndFlushToWsCreation(result);
+-    await openAllWs();
++    await openWs();
+     expect(useLumiStore.getState().voiceStatus).toBe('active');
+ 
+-    // Advance past 20s: fires the inactivity timeout callback synchronously.
+-    // endSession's async chain: AudioContext.close (1 tick) + DELETE fetch
+-    // (1 tick for the already-resolved fetch mock + 204 short-circuit) +
+-    // endTalkSession (sync). Under fake timers, Promise microtasks still flush.
+     await act(async () => {
+       vi.advanceTimersByTime(20_001);
+       await flush(6);
+@@ -352,35 +359,30 @@ describe('useLumiVoiceSession', () => {
+     expect(useLumiStore.getState().talkSessionId).toBeNull();
+   });
+ 
+-  it('WS connect error triggers cleanup AND preserves error state (voiceStatus error, voiceError set, DELETE called)', async () => {
++  it('WS connect error triggers cleanup AND preserves error state + fires DELETE', async () => {
+     const fetchSpy = vi.fn()
+-      .mockResolvedValueOnce(fakeJsonResponse(makeSessionResponse()))  // POST /voice/sessions
+-      .mockResolvedValue(fake204Response());                            // DELETE (best-effort)
++      .mockResolvedValueOnce(fakeJsonResponse(makeSessionResponse()))
++      .mockResolvedValue(fake204Response());
+     globalThis.fetch = fetchSpy as unknown as typeof fetch;
+ 
+     // Wire onError the way the layout does (→ setVoiceError) so we can assert
+-    // the AC#8 store outcome the error path must leave behind.
++    // the store outcome the error path must leave behind.
+     const onError = vi.fn((msg: string) => useLumiStore.getState().setVoiceError(msg));
+     const { result } = renderHook(() =>
+       useLumiVoiceSession({ onTranscript: vi.fn(), onLumiReply: vi.fn(), onError }),
+     );
+ 
+     await startSessionAndFlushToWsCreation(result);
+-    expect(wsInstances).toHaveLength(2);
++    expect(wsInstances).toHaveLength(1);
+ 
+-    // Fire error on TTS WS (index 0) before it opens — this rejects the
+-    // openTtsWs promise, which causes endSession cleanup to run.
+     await act(async () => {
+       wsInstances[0]!._emit('error');
+       await flush(6);
+     });
+ 
+     expect(onError).toHaveBeenCalledWith('Voice connection lost. Try again.');
+-    // AC#8: error state must SURVIVE the endSession teardown, not be clobbered
+-    // back to idle/null by endTalkSession.
+     expect(useLumiStore.getState().voiceStatus).toBe('error');
+     expect(useLumiStore.getState().voiceError).toBe('Voice connection lost. Try again.');
+-    // The created talk session must be torn down server-side.
+     const deleteCalls = fetchSpy.mock.calls.filter((args: unknown[]) =>
+       String(args[0]).includes(`/v1/lumi/voice/sessions/${SESSION_ID}`),
+     );
+diff --git a/apps/web/src/hooks/useLumiVoiceSession.ts b/apps/web/src/hooks/useLumiVoiceSession.ts
+index becca78..a71c7ca 100644
+--- a/apps/web/src/hooks/useLumiVoiceSession.ts
++++ b/apps/web/src/hooks/useLumiVoiceSession.ts
+@@ -1,33 +1,15 @@
+ import { useCallback, useEffect, useRef } from 'react';
+ import { useMicVAD } from '@ricky0123/vad-react';
+ import type { LumiContextSignal } from '@hivekitchen/types';
+-import { VoiceTalkSessionResponseSchema, LumiTurnResponseSchema } from '@hivekitchen/contracts';
++import {
++  VoiceTalkSessionResponseSchema,
++  WsServerMessageSchema,
++  type WsServerMessage,
++} from '@hivekitchen/contracts';
+ import { hkFetch, HkApiError } from '@/lib/fetch.js';
++import { encodeWav } from '@/lib/encodeWav.js';
+ import { useLumiStore } from '@/stores/lumi.store.js';
+-
+-// ── Audio helpers ──────────────────────────────────────────────────────────
+-
+-function float32ToInt16(float32: Float32Array): Int16Array {
+-  const out = new Int16Array(float32.length);
+-  for (let i = 0; i < float32.length; i++) {
+-    const s = Math.max(-1, Math.min(1, float32[i]!));
+-    out[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
+-  }
+-  return out;
+-}
+-
+-function int16ToBase64(int16: Int16Array): string {
+-  // Chunked conversion: per-byte string concat over a full utterance (tens of
+-  // KB+) is O(n²) and janks on longer speech. fromCharCode spreads ≤ 0x8000
+-  // args per call (safe stack budget) and concatenates O(n).
+-  const bytes = new Uint8Array(int16.buffer, int16.byteOffset, int16.byteLength);
+-  let binary = '';
+-  const CHUNK = 0x8000;
+-  for (let i = 0; i < bytes.length; i += CHUNK) {
+-    binary += String.fromCharCode(...bytes.subarray(i, i + CHUNK));
+-  }
+-  return btoa(binary);
+-}
++import { useAuthStore } from '@/stores/auth.store.js';
+ 
+ // ── Types ──────────────────────────────────────────────────────────────────
+ 
+@@ -42,24 +24,31 @@ export interface UseLumiVoiceSessionReturn {
+   endSession: () => Promise<void>;
+ }
+ 
++const WS_BASE_URL = import.meta.env.VITE_API_WS_URL;
++
+ const INACTIVITY_TIMEOUT_MS = 20_000;
+ const PREMIUM_FALLBACK_COPY =
+   "Voice chat is part of Premium. We've got you in text — same Lumi.";
+ const CONNECTION_LOST_COPY = 'Voice connection lost. Try again.';
+ const MIC_UNAVAILABLE_COPY = 'Microphone unavailable. Check permissions and try again.';
+-const TRANSCRIPT_FAILED_COPY = "Lumi didn't catch that. Try again.";
++const START_FAILED_COPY = 'Could not start voice session. Try again.';
+ 
+ // ── Hook ───────────────────────────────────────────────────────────────────
++// Story 5-S5b — ambient Lumi voice runs over HiveKitchen's OWN WebSocket
++// (GET /v1/lumi/voice/ws), mirroring the onboarding voice path (2.6b). The
++// browser does client-side VAD, ships each complete utterance as a WAV binary
++// frame, and the server transcribes (Scribe), runs the LumiAgent turn, and
++// streams the TTS reply back as MP3 chunks. There is NO ElevenLabs Conversational
++// AI agent and no browser-direct ElevenLabs socket anywhere in this path.
+ 
+ export function useLumiVoiceSession({
+   onTranscript,
+   onLumiReply,
+   onError,
+ }: UseLumiVoiceSessionOptions): UseLumiVoiceSessionReturn {
+-  const ttsWsRef = useRef<WebSocket | null>(null);
+-  const sttWsRef = useRef<WebSocket | null>(null);
+-  const audioCtxRef = useRef<AudioContext | null>(null);
+-  const nextPlayTimeRef = useRef<number>(0);
++  const wsRef = useRef<WebSocket | null>(null);
++  const audioBufferRef = useRef<{ seq: number; chunks: Uint8Array[] } | null>(null);
++  const playingAudioRef = useRef<HTMLAudioElement | null>(null);
+   const inactivityTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+   const contextSignalRef = useRef<LumiContextSignal | null>(null);
+ 
+@@ -79,44 +68,6 @@ export function useLumiVoiceSession({
+   // endSessionRef lets timer/WS callbacks call endSession before it's defined
+   const endSessionRef = useRef<(errorMsg?: string) => Promise<void>>(async () => {});
+ 
+-  // ── TTS audio playback (mirrors MediaPanels.tsx pattern) ──────────────────
+-
+-  function playAudioChunk(base64: string) {
+-    const ctx = audioCtxRef.current;
+-    if (ctx === null) return;
+-    let binary: string;
+-    try { binary = atob(base64); } catch { return; }
+-    const bytes = new Uint8Array(binary.length);
+-    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i)!;
+-    // Guard odd byte lengths: new Int16Array(buffer, off, len) throws on a
+-    // fractional length. Drop the trailing odd byte rather than throw out of
+-    // the WS message handler.
+-    const usableLen = bytes.byteLength - (bytes.byteLength % 2);
+-    if (usableLen === 0) return;
+-    const pcm = new Int16Array(bytes.buffer, bytes.byteOffset, usableLen / 2);
+-    const float = new Float32Array(pcm.length);
+-    for (let i = 0; i < pcm.length; i++) float[i] = pcm[i]! / 0x8000;
+-    if (float.length === 0) return;
+-    const buffer = ctx.createBuffer(1, float.length, 16000);
+-    buffer.copyToChannel(float, 0);
+-    const source = ctx.createBufferSource();
+-    source.buffer = buffer;
+-    source.connect(ctx.destination);
+-    const startAt = Math.max(ctx.currentTime, nextPlayTimeRef.current);
+-    source.start(startAt);
+-    nextPlayTimeRef.current = startAt + buffer.duration;
+-    // Keep the session alive while Lumi is speaking — a long reply must not
+-    // trip the inactivity timer mid-playback.
+-    resetInactivityTimer();
+-  }
+-
+-  function sendToTts(text: string) {
+-    const ws = ttsWsRef.current;
+-    if (ws === null || ws.readyState !== WebSocket.OPEN) return;
+-    ws.send(JSON.stringify({ text }));
+-    ws.send(JSON.stringify({ text: '' }));
+-  }
+-
+   // ── Inactivity timer ──────────────────────────────────────────────────────
+ 
+   function resetInactivityTimer() {
+@@ -126,26 +77,87 @@ export function useLumiVoiceSession({
+     }, INACTIVITY_TIMEOUT_MS);
+   }
+ 
+-  // ── VAD ──────────────────────────────────────────────────────────────────
+-  // Option A: ElevenLabs Conversational AI WebSocket for STT.
+-  // stt_token from POST /v1/lumi/voice/sessions is a signed WSS URL
+-  // (ElevenLabs /v1/convai/conversation/get_signed_url). We send mic audio as
+-  // base64 PCM chunks and listen for { type: 'user_transcript' } messages.
+-  // USER-SIDE GATE: the ElevenLabs agent (ELEVENLABS_VOICE_ID) must be
+-  // configured in the ElevenLabs dashboard without a built-in LLM response so
+-  // that HiveKitchen's LumiAgent handles the reply.
++  // ── TTS playback (mirrors onboarding useVoiceSession — MP3 Blob via Audio) ──
++
++  function playBufferedAudio() {
++    const buf = audioBufferRef.current;
++    audioBufferRef.current = null;
++    if (!buf || buf.chunks.length === 0) return;
++    if (playingAudioRef.current !== null) {
++      try { playingAudioRef.current.pause(); } catch { /* noop */ }
++      playingAudioRef.current = null;
++    }
++    const blob = new Blob(buf.chunks as BlobPart[], { type: 'audio/mpeg' });
++    const objectUrl = URL.createObjectURL(blob);
++    const audio = new Audio(objectUrl);
++    playingAudioRef.current = audio;
++    audio.addEventListener('ended', () => {
++      URL.revokeObjectURL(objectUrl);
++      playingAudioRef.current = null;
++    });
++    audio.addEventListener('error', () => {
++      URL.revokeObjectURL(objectUrl);
++      playingAudioRef.current = null;
++    });
++    void audio.play().catch(() => {
++      URL.revokeObjectURL(objectUrl);
++      playingAudioRef.current = null;
++    });
++    // Keep the session alive while Lumi is speaking — a long reply must not
++    // trip the inactivity timer mid-playback.
++    resetInactivityTimer();
++  }
++
++  // ── Server frame handling ─────────────────────────────────────────────────
++
++  function handleServerMessage(msg: WsServerMessage) {
++    switch (msg.type) {
++      case 'session.ready':
++        return;
++      case 'transcript':
++        // STT succeeded — clear any prior transient notice and reset inactivity
++        // even before the reply lands, so a long turn doesn't auto-end.
++        if (useLumiStore.getState().voiceError !== null) {
++          useLumiStore.setState({ voiceError: null });
++        }
++        resetInactivityTimer();
++        onTranscriptRef.current(msg.text);
++        return;
++      case 'response.start':
++        audioBufferRef.current = { seq: msg.seq, chunks: [] };
++        return;
++      case 'response.end':
++        onLumiReplyRef.current(msg.text);
++        playBufferedAudio();
++        return;
++      case 'session.summary':
++        // Ambient Lumi never emits an onboarding summary — ignore defensively.
++        return;
++      case 'error':
++        // Non-fatal: surface a transient notice but keep the session live so the
++        // user can simply speak again (12-S10 behaviour). Direct setState keeps
++        // voiceStatus at 'active' — do NOT route through setVoiceError/endSession.
++        useLumiStore.setState({ voiceError: msg.message });
++        return;
++    }
++  }
++
++  // ── VAD — client-side speech detection → WAV over the HK WS ────────────────
+ 
+   const vad = useMicVAD({
+     startOnLoad: false,
+     onSpeechEnd: (audio: Float32Array) => {
+-      const sttWs = sttWsRef.current;
+-      if (sttWs === null || sttWs.readyState !== WebSocket.OPEN) return;
++      const ws = wsRef.current;
++      if (ws === null || ws.readyState !== WebSocket.OPEN) return;
+       // The user spoke — reset inactivity even before the transcript returns,
+       // so STT latency on a long utterance doesn't auto-end the session.
+       resetInactivityTimer();
+-      const int16 = float32ToInt16(audio);
+-      const b64 = int16ToBase64(int16);
+-      sttWs.send(JSON.stringify({ user_audio_chunk: b64 }));
++      const wav = encodeWav(audio, 16000);
++      // Copy into a fresh ArrayBuffer so WS.send receives a plain ArrayBuffer
++      // (Uint8Array.buffer can be a SharedArrayBuffer in some runtimes).
++      const ab = new ArrayBuffer(wav.byteLength);
++      new Uint8Array(ab).set(wav);
++      ws.send(ab);
+     },
+     positiveSpeechThreshold: 0.8,
+     negativeSpeechThreshold: 0.3,
+@@ -158,7 +170,7 @@ export function useLumiVoiceSession({
+ 
+   // Mic-permission denial / device failure surfaces asynchronously via
+   // vad.errored (vad.start() does not synchronously throw). Observe it and run
+-  // the AC#8 error path when a session is live. (AC#8 + USER-SIDE GATE #1.)
++  // the error path when a session is live.
+   useEffect(() => {
+     if (!vad.errored) return;
+     const status = useLumiStore.getState().voiceStatus;
+@@ -167,55 +179,6 @@ export function useLumiVoiceSession({
+     }
+   }, [vad.errored]);
+ 
+-  // ── Transcript → HK API → TTS ──────────────────────────────────────────
+-
+-  async function handleTranscript(text: string) {
+-    // Empty transcript would POST message:'' and hit the server's min(1) 400.
+-    if (!text.trim()) return;
+-    resetInactivityTimer();
+-    onTranscriptRef.current(text);
+-
+-    const contextSignal = contextSignalRef.current;
+-    if (contextSignal === null) return;
+-
+-    try {
+-      const raw = await hkFetch<unknown>('/v1/lumi/turns', {
+-        method: 'POST',
+-        body: { message: text, context_signal: contextSignal },
+-      });
+-      const data = LumiTurnResponseSchema.parse(raw);
+-
+-      // Clear any prior transient transcript-failure notice on success.
+-      // Direct setState (not setVoiceError) so we don't disturb voiceStatus.
+-      if (useLumiStore.getState().voiceError !== null) {
+-        useLumiStore.setState({ voiceError: null });
+-      }
+-
+-      // Pin thread ID so subsequent panel opens pre-hydrate correctly
+-      const surface = contextSignal.surface;
+-      useLumiStore.setState((s) => ({
+-        threadIds: { ...s.threadIds, [surface]: data.thread_id },
+-      }));
+-
+-      // Append real turns from API (no optimistic display needed for voice)
+-      useLumiStore.getState().appendTurn(data.user_turn);
+-      useLumiStore.getState().appendTurn(data.lumi_turn);
+-
+-      const lumiText =
+-        data.lumi_turn.body.type === 'message' ? data.lumi_turn.body.content : '';
+-      if (lumiText) {
+-        onLumiReplyRef.current(lumiText);
+-        sendToTts(lumiText);
+-      }
+-    } catch {
+-      // Surface a transient notice but keep the session live so the user can
+-      // simply speak again (decision: surface + stay in session). Direct
+-      // setState keeps voiceStatus at 'active' — do NOT route through
+-      // setVoiceError/endSession, which would tear the session down.
+-      useLumiStore.setState({ voiceError: TRANSCRIPT_FAILED_COPY });
+-    }
+-  }
+-
+   // ── endSession ────────────────────────────────────────────────────────────
+ 
+   const endSession = useCallback(async (errorMsg?: string) => {
+@@ -232,24 +195,18 @@ export function useLumiVoiceSession({
+ 
+       try { vadRef.current.pause(); } catch { /* noop */ }
+ 
+-      // Null refs BEFORE closing to guard against close-event → endSession re-entry
+-      const ttsWs = ttsWsRef.current;
+-      ttsWsRef.current = null;
+-      if (ttsWs !== null) {
+-        try { ttsWs.close(1000, 'session ended'); } catch { /* noop */ }
++      // Null the ref BEFORE closing to guard against close-event → endSession re-entry
++      const ws = wsRef.current;
++      wsRef.current = null;
++      if (ws !== null) {
++        try { ws.close(1000, 'session ended'); } catch { /* noop */ }
+       }
+ 
+-      const sttWs = sttWsRef.current;
+-      sttWsRef.current = null;
+-      if (sttWs !== null) {
+-        try { sttWs.close(1000, 'session ended'); } catch { /* noop */ }
++      if (playingAudioRef.current !== null) {
++        try { playingAudioRef.current.pause(); } catch { /* noop */ }
++        playingAudioRef.current = null;
+       }
+-
+-      if (audioCtxRef.current !== null) {
+-        try { await audioCtxRef.current.close(); } catch { /* noop */ }
+-        audioCtxRef.current = null;
+-      }
+-      nextPlayTimeRef.current = 0;
++      audioBufferRef.current = null;
+       contextSignalRef.current = null;
+ 
+       const talkSessionId = useLumiStore.getState().talkSessionId;
+@@ -262,9 +219,9 @@ export function useLumiVoiceSession({
+       }
+ 
+       // endTalkSession resets voiceStatus→'idle', voiceError→null, panelMode→
+-      // 'text' (the AC#8 text fallback). When ending due to an error, re-set
+-      // the error AFTER the reset so voiceStatus:'error' + the role="alert"
+-      // message survive (otherwise the cleanup clobbers them). (AC#8.)
++      // 'text' (the text fallback). When ending due to an error, re-set the
++      // error AFTER the reset so voiceStatus:'error' + the role="alert" message
++      // survive (otherwise the cleanup clobbers them).
+       useLumiStore.getState().endTalkSession();
+       if (errorMsg) onErrorRef.current(errorMsg);
+     } finally {
+@@ -275,9 +232,9 @@ export function useLumiVoiceSession({
+   endSessionRef.current = endSession;
+ 
+   // End any live session if the layout unmounts (logout / navigation away):
+-  // otherwise the mic stream stays hot, both WS + AudioContext leak, the timer
+-  // keeps firing, and the server talk-session row is never DELETEd. Guarded on
+-  // an existing session so idle unmounts stay quiet.
++  // otherwise the mic stream stays hot, the WS + Audio leak, the timer keeps
++  // firing, and the server talk-session row is never DELETEd. Guarded on an
++  // existing session so idle unmounts stay quiet.
+   useEffect(() => {
+     return () => {
+       if (useLumiStore.getState().talkSessionId !== null) {
+@@ -286,106 +243,68 @@ export function useLumiVoiceSession({
+     };
+   }, []);
+ 
+-  // ── TTS WebSocket ─────────────────────────────────────────────────────────
++  // ── HiveKitchen voice WebSocket ───────────────────────────────────────────
+ 
+-  function openTtsWs(ttsToken: string, voiceId: string): Promise<void> {
++  function openWs(sessionId: string, accessToken: string): Promise<void> {
+     return new Promise((resolve, reject) => {
+-      const params = new URLSearchParams({
+-        single_use_token: ttsToken,
+-        model_id: 'eleven_multilingual_v2',
+-        output_format: 'pcm_16000',
+-      });
+-      const url =
+-        `wss://api.elevenlabs.io/v1/text-to-speech/${encodeURIComponent(voiceId)}` +
+-        `/stream-input?${params.toString()}`;
+-
+-      const ws = new WebSocket(url);
+-      ttsWsRef.current = ws;
++      const ws = new WebSocket(
++        `${WS_BASE_URL}/v1/lumi/voice/ws?session_id=${encodeURIComponent(sessionId)}` +
++          `&token=${encodeURIComponent(accessToken)}`,
++      );
++      ws.binaryType = 'arraybuffer';
++      wsRef.current = ws;
+ 
+       ws.addEventListener('open', () => {
+-        // Identity guard: if teardown already swapped/nulled the ref (peer WS
+-        // errored, session ended mid-connect), this late open must not
+-        // resurrect an AudioContext + sending socket nobody will close.
+-        if (ttsWsRef.current !== ws) {
++        // Identity guard: if teardown already swapped/nulled the ref (session
++        // ended mid-connect), this late open must not resurrect a live socket.
++        if (wsRef.current !== ws) {
+           try { ws.close(); } catch { /* noop */ }
+           return;
+         }
+-        audioCtxRef.current = new AudioContext({ sampleRate: 16000 });
+-        void audioCtxRef.current.resume();
+-        nextPlayTimeRef.current = 0;
+-
+-        ws.send(
+-          JSON.stringify({
+-            text: ' ',
+-            voice_settings: { stability: 0.5, similarity_boost: 0.8 },
+-            generation_config: { chunk_length_schedule: [120] },
+-          }),
+-        );
++        // Send the context frame first so the server can drive the LumiAgent
++        // turn with the same LumiContextSignal the text path uses. It travels
++        // ahead of any audio on this ordered socket (VAD starts after this).
++        const ctx = contextSignalRef.current;
++        if (ctx !== null) {
++          try { ws.send(JSON.stringify({ type: 'context', context_signal: ctx })); } catch { /* noop */ }
++        }
+         resolve();
+       });
+ 
+       ws.addEventListener('message', (event) => {
+-        if (ttsWsRef.current !== ws) return;
+-        if (typeof event.data !== 'string') return;
+-        let msg: unknown;
+-        try { msg = JSON.parse(event.data); } catch { return; }
+-        if (typeof msg !== 'object' || msg === null) return;
+-        const m = msg as { audio?: unknown };
+-        if (typeof m.audio === 'string' && m.audio.length > 0) {
+-          playAudioChunk(m.audio);
+-        }
+-      });
+-
+-      ws.addEventListener('error', () => {
+-        // Compare identity, not nullness: a stale socket's late error must not
+-        // tear down a freshly-started session.
+-        if (ttsWsRef.current === ws) void endSessionRef.current(CONNECTION_LOST_COPY);
+-        reject(new Error('TTS WS error'));
+-      });
+-
+-      ws.addEventListener('close', (e) => {
+-        if (e.code !== 1000 && ttsWsRef.current === ws) {
+-          void endSessionRef.current(CONNECTION_LOST_COPY);
+-        }
+-      });
+-    });
+-  }
+-
+-  // ── STT WebSocket — Option A: ElevenLabs Conversational AI ───────────────
+-
+-  function openSttWs(sttToken: string): Promise<void> {
+-    return new Promise((resolve, reject) => {
+-      // sttToken is the full signed WSS URL from ElevenLabs get_signed_url
+-      const ws = new WebSocket(sttToken);
+-      sttWsRef.current = ws;
+-
+-      ws.addEventListener('open', () => {
+-        if (sttWsRef.current !== ws) {
+-          try { ws.close(); } catch { /* noop */ }
++        if (wsRef.current !== ws) return;
++        if (typeof event.data === 'string') {
++          let parsed: unknown;
++          try { parsed = JSON.parse(event.data); } catch { return; }
++          const result = WsServerMessageSchema.safeParse(parsed);
++          if (!result.success) return;
++          handleServerMessage(result.data);
+           return;
+         }
+-        resolve();
+-      });
+-
+-      ws.addEventListener('message', (event) => {
+-        if (sttWsRef.current !== ws) return;
+-        if (typeof event.data !== 'string') return;
+-        let msg: unknown;
+-        try { msg = JSON.parse(event.data); } catch { return; }
+-        if (typeof msg !== 'object' || msg === null) return;
+-        const m = msg as { type?: unknown; user_transcript?: unknown };
+-        if (m.type === 'user_transcript' && typeof m.user_transcript === 'string') {
+-          void handleTranscript(m.user_transcript);
++        // Binary — MP3 chunk for the in-flight Lumi response.
++        const buf = audioBufferRef.current;
++        if (!buf) return;
++        if (event.data instanceof ArrayBuffer) {
++          if (audioBufferRef.current?.seq === buf.seq) {
++            buf.chunks.push(new Uint8Array(event.data));
++          }
++        } else if (event.data instanceof Blob) {
++          void event.data.arrayBuffer().then((ab) => {
++            const b = audioBufferRef.current;
++            if (b && b.seq === buf.seq) b.chunks.push(new Uint8Array(ab));
++          });
+         }
+       });
+ 
+       ws.addEventListener('error', () => {
+-        if (sttWsRef.current === ws) void endSessionRef.current(CONNECTION_LOST_COPY);
+-        reject(new Error('STT WS error'));
++        // Compare identity, not nullness: a stale socket's late error must not
++        // tear down a freshly-started session.
++        if (wsRef.current === ws) void endSessionRef.current(CONNECTION_LOST_COPY);
++        reject(new Error('voice WS error'));
+       });
+ 
+       ws.addEventListener('close', (e) => {
+-        if (e.code !== 1000 && sttWsRef.current === ws) {
++        if (e.code !== 1000 && wsRef.current === ws) {
+           void endSessionRef.current(CONNECTION_LOST_COPY);
+         }
+       });
+@@ -396,8 +315,8 @@ export function useLumiVoiceSession({
+ 
+   const startSession = useCallback(async (contextSignal: LumiContextSignal) => {
+     // Guard double-start: voiceStatus stays 'idle' until the POST resolves, so
+-    // a second click before then would otherwise spawn a 2nd session + WS pair
+-    // and orphan the first (leaked sockets, undeleted server row).
++    // a second click before then would otherwise spawn a 2nd session + WS and
++    // orphan the first (leaked socket, undeleted server row).
+     if (startingRef.current) return;
+     const curStatus = useLumiStore.getState().voiceStatus;
+     if (curStatus === 'connecting' || curStatus === 'active') return;
+@@ -421,28 +340,31 @@ export function useLumiVoiceSession({
+       } catch (err) {
+         if (err instanceof HkApiError && err.status === 403) {
+           // Standard-tier or non-primary-parent: graceful fallback, no WS, no
+-          // mode switch — panel stays in text mode (AC#2).
++          // mode switch — panel stays in text mode.
+           onErrorRef.current(PREMIUM_FALLBACK_COPY);
+           return;
+         }
+-        onErrorRef.current('Could not start voice session. Try again.');
++        onErrorRef.current(START_FAILED_COPY);
+         return;
+       }
+ 
+       const data = VoiceTalkSessionResponseSchema.parse(raw);
++
++      const accessToken = useAuthStore.getState().accessToken;
++      if (accessToken === null || !WS_BASE_URL) {
++        onErrorRef.current(START_FAILED_COPY);
++        return;
++      }
++
+       useLumiStore.getState().setTalkSession(data.talk_session_id); // → voiceStatus: 'connecting'
+       // Surface voice mode so the Voice tab reads active and the "tap the orb
+       // to end" hint renders (isVoiceMode = panelMode === 'voice').
+       useLumiStore.getState().openPanel('voice');
+ 
+       try {
+-        // Open both connections concurrently; both must succeed before going active
+-        await Promise.all([
+-          openTtsWs(data.tts_token, data.voice_id),
+-          openSttWs(data.stt_token),
+-        ]);
++        await openWs(data.talk_session_id, accessToken);
+       } catch {
+-        // Individual WS error/close handlers trigger endSession cleanup
++        // The WS error/close handler triggers endSession cleanup.
+         return;
+       }
+ 
+diff --git a/packages/contracts/src/lumi.test.ts b/packages/contracts/src/lumi.test.ts
+index a43c3f7..ca5157b 100644
+--- a/packages/contracts/src/lumi.test.ts
++++ b/packages/contracts/src/lumi.test.ts
+@@ -7,6 +7,7 @@ import {
+   LumiTurnResponseSchema,
+   VoiceTalkSessionCreateSchema,
+   VoiceTalkSessionResponseSchema,
++  LumiVoiceClientMessageSchema,
+   LumiNudgeEventSchema,
+   NudgeTriggerSchema,
+ } from './lumi.js';
+@@ -247,6 +248,36 @@ describe('LumiTurnRequestSchema', () => {
+   it('rejects missing context_signal', () => {
+     expect(LumiTurnRequestSchema.safeParse({ message: 'hi' }).success).toBe(false);
+   });
++
++  // Story 5-S5 — optional modality discriminator.
++  it('accepts modality: "voice"', () => {
++    expect(
++      LumiTurnRequestSchema.safeParse({
++        message: 'hi',
++        context_signal: { surface: 'general' },
++        modality: 'voice',
++      }).success,
++    ).toBe(true);
++  });
++
++  it('accepts a request without modality (backward-compat default to text)', () => {
++    const result = LumiTurnRequestSchema.safeParse({
++      message: 'hi',
++      context_signal: { surface: 'general' },
++    });
++    expect(result.success).toBe(true);
++    if (result.success) expect(result.data.modality).toBeUndefined();
++  });
++
++  it('rejects an unknown modality value', () => {
++    expect(
++      LumiTurnRequestSchema.safeParse({
++        message: 'hi',
++        context_signal: { surface: 'general' },
++        modality: 'invalid',
++      }).success,
++    ).toBe(false);
++  });
+ });
+ 
+ describe('LumiThreadTurnsResponseSchema', () => {
+@@ -345,81 +376,54 @@ describe('VoiceTalkSessionCreateSchema', () => {
+   });
+ });
+ 
++// Story 5-S5b — response reshaped to { talk_session_id } only. The browser
++// opens HiveKitchen's own /v1/lumi/voice/ws with its JWT + this id; no
++// ElevenLabs token crosses the wire any more.
+ describe('VoiceTalkSessionResponseSchema', () => {
+-  it('accepts a valid response', () => {
+-    const result = VoiceTalkSessionResponseSchema.safeParse({
+-      talk_session_id: UUID1,
+-      stt_token: 'stt-abc',
+-      tts_token: 'tts-xyz',
+-      voice_id: 'voice-lumi',
+-    });
++  it('accepts a response with just talk_session_id', () => {
++    const result = VoiceTalkSessionResponseSchema.safeParse({ talk_session_id: UUID1 });
+     expect(result.success).toBe(true);
+   });
+ 
+-  it('rejects empty stt_token', () => {
++  it('rejects non-uuid talk_session_id', () => {
+     expect(
+-      VoiceTalkSessionResponseSchema.safeParse({
+-        talk_session_id: UUID1,
+-        stt_token: '',
+-        tts_token: 'tts-xyz',
+-        voice_id: 'voice-lumi',
+-      }).success,
++      VoiceTalkSessionResponseSchema.safeParse({ talk_session_id: 'not-a-uuid' }).success,
+     ).toBe(false);
+   });
+ 
+-  it('rejects whitespace-only stt_token', () => {
+-    expect(
+-      VoiceTalkSessionResponseSchema.safeParse({
+-        talk_session_id: UUID1,
+-        stt_token: '   ',
+-        tts_token: 'tts-xyz',
+-        voice_id: 'voice-lumi',
+-      }).success,
+-    ).toBe(false);
++  it('rejects a missing talk_session_id', () => {
++    expect(VoiceTalkSessionResponseSchema.safeParse({}).success).toBe(false);
+   });
++});
+ 
+-  it('rejects token containing internal whitespace', () => {
+-    expect(
+-      VoiceTalkSessionResponseSchema.safeParse({
+-        talk_session_id: UUID1,
+-        stt_token: 'stt token',
+-        tts_token: 'tts-xyz',
+-        voice_id: 'voice-lumi',
+-      }).success,
+-    ).toBe(false);
++describe('LumiVoiceClientMessageSchema', () => {
++  it('accepts a context frame carrying a LumiContextSignal', () => {
++    const result = LumiVoiceClientMessageSchema.safeParse({
++      type: 'context',
++      context_signal: { surface: 'planning' },
++    });
++    expect(result.success).toBe(true);
++  });
++
++  it('accepts a ping frame', () => {
++    expect(LumiVoiceClientMessageSchema.safeParse({ type: 'ping' }).success).toBe(true);
+   });
+ 
+-  it('rejects token longer than 2048 chars', () => {
++  it('rejects a context frame with an invalid surface', () => {
+     expect(
+-      VoiceTalkSessionResponseSchema.safeParse({
+-        talk_session_id: UUID1,
+-        stt_token: 'x'.repeat(2049),
+-        tts_token: 'tts-xyz',
+-        voice_id: 'voice-lumi',
++      LumiVoiceClientMessageSchema.safeParse({
++        type: 'context',
++        context_signal: { surface: 'dashboard' },
+       }).success,
+     ).toBe(false);
+   });
+ 
+-  it('accepts token exactly at cap of 2048 chars', () => {
+-    expect(
+-      VoiceTalkSessionResponseSchema.safeParse({
+-        talk_session_id: UUID1,
+-        stt_token: 'x'.repeat(2048),
+-        tts_token: 'tts-xyz',
+-        voice_id: 'voice-lumi',
+-      }).success,
+-    ).toBe(true);
++  it('rejects a context frame missing context_signal', () => {
++    expect(LumiVoiceClientMessageSchema.safeParse({ type: 'context' }).success).toBe(false);
+   });
+ 
+-  it('rejects non-uuid talk_session_id', () => {
+-    expect(
+-      VoiceTalkSessionResponseSchema.safeParse({
+-        talk_session_id: 'not-a-uuid',
+-        stt_token: 'stt-abc',
+-        tts_token: 'tts-xyz',
+-        voice_id: 'voice-lumi',
+-      }).success,
+-    ).toBe(false);
++  it('rejects an unknown frame type', () => {
++    expect(LumiVoiceClientMessageSchema.safeParse({ type: 'user_audio' }).success).toBe(false);
+   });
+ });
+ 
+diff --git a/packages/contracts/src/lumi.ts b/packages/contracts/src/lumi.ts
+index e5a3ee3..968ab1c 100644
+--- a/packages/contracts/src/lumi.ts
++++ b/packages/contracts/src/lumi.ts
+@@ -32,9 +32,14 @@ export const LumiContextSignalSchema = z.object({
+ 
+ // LumiTurnRequest — POST /v1/lumi/turns body (text-mode turn; Story 12.10).
+ // .trim() runs before .min(1) so whitespace-only messages are rejected.
++// `modality` (Story 5-S5) is optional and defaults to 'text' at the service
++// layer: text turns from the LumiPanel composer omit it, voice turns from
++// useLumiVoiceSession send 'voice' so the API stamps thread_turns.modality and
++// persists a voice_transcripts row. No existing callers break.
+ export const LumiTurnRequestSchema = z.object({
+   message: z.string().trim().min(1).max(4000),
+   context_signal: LumiContextSignalSchema,
++  modality: z.enum(['text', 'voice']).optional(),
+ });
+ 
+ // LumiThreadTurnsResponse — GET /v1/lumi/threads/:threadId/turns response
+@@ -65,17 +70,24 @@ export const VoiceTalkSessionCreateSchema = z.object({
+   context_signal: LumiContextSignalSchema,
+ });
+ 
+-// Tokens are passed straight to ElevenLabs — fail fast on whitespace or
+-// implausibly long values rather than letting ElevenLabs reject them.
+-const VoiceCredentialSchema = z.string().min(1).max(2048).regex(/^\S+$/);
+-
++// Story 5-S5b — ambient Lumi voice runs over HiveKitchen's OWN WebSocket
++// (GET /v1/lumi/voice/ws), not a browser-direct ElevenLabs socket. The talk
++// session is bound by id; the browser opens the HK WS with its JWT + this id,
++// and the server owns STT (Scribe REST) + TTS. No ElevenLabs token crosses the
++// wire any more — the old { stt_token, tts_token, voice_id } shape is gone.
+ export const VoiceTalkSessionResponseSchema = z.object({
+   talk_session_id: z.string().uuid(),
+-  stt_token: VoiceCredentialSchema,
+-  tts_token: VoiceCredentialSchema,
+-  voice_id: VoiceCredentialSchema,
+ });
+ 
++// Story 5-S5b — client → server text frames on GET /v1/lumi/voice/ws. The
++// browser sends `context` once on open (so the server can drive the LumiAgent
++// turn with the same LumiContextSignal the text path uses), then streams WAV
++// utterances as binary frames. `ping` mirrors the onboarding WS keepalive.
++export const LumiVoiceClientMessageSchema = z.discriminatedUnion('type', [
++  z.object({ type: z.literal('context'), context_signal: LumiContextSignalSchema }).strict(),
++  z.object({ type: z.literal('ping') }).strict(),
++]);
++
+ // NudgeTrigger — the event class that produced a proactive Lumi nudge (Story
+ // 12-S11). Carried on the lumi-nudge job data and stamped (DB-only) on the
+ // resulting thread_turns row. plan_completed is the only trigger wired at MVP;
+@@ -103,5 +115,6 @@ export type LumiThreadTurnsResponse = z.infer<typeof LumiThreadTurnsResponseSche
+ export type LumiTurnResponse = z.infer<typeof LumiTurnResponseSchema>;
+ export type VoiceTalkSessionCreate = z.infer<typeof VoiceTalkSessionCreateSchema>;
+ export type VoiceTalkSessionResponse = z.infer<typeof VoiceTalkSessionResponseSchema>;
++export type LumiVoiceClientMessage = z.infer<typeof LumiVoiceClientMessageSchema>;
+ export type LumiNudgeEvent = z.infer<typeof LumiNudgeEventSchema>;
+ export type NudgeTrigger = z.infer<typeof NudgeTriggerSchema>;
+
+=== NEW FILE: apps/api/src/modules/voice/elevenlabs-audio.ts ===
+import { Buffer } from 'node:buffer';
+import type { WebSocket } from '@fastify/websocket';
+import { UpstreamError } from '../../common/errors.js';
+
+// Story 5-S5b — the two stateless ElevenLabs audio calls, extracted so BOTH the
+// onboarding voice path (VoiceService) and the ambient Lumi voice path
+// (LumiService) share exactly ONE Scribe/TTS fetch implementation. These are
+// pure functions over (apiKey, …); they hold no session state. ElevenLabs is
+// used here as two stateless audio services only — Scribe STT (REST) + TTS —
+// with no Conversational AI agent.
+
+// STT — ElevenLabs Scribe (`scribe_v1`) over REST `POST /v1/speech-to-text`.
+// Takes a complete WAV utterance (16 kHz mono) and returns the transcript text.
+export async function transcribeWav(apiKey: string, wav: Buffer): Promise<string> {
+  const form = new FormData();
+  const blob = new Blob([new Uint8Array(wav)], { type: 'audio/wav' });
+  form.append('audio', blob, 'utterance.wav');
+  form.append('model_id', 'scribe_v1');
+
+  const res = await fetch('https://api.elevenlabs.io/v1/speech-to-text', {
+    method: 'POST',
+    headers: { 'xi-api-key': apiKey },
+    body: form,
+  });
+
+  if (!res.ok) {
+    throw new UpstreamError(`ElevenLabs STT failed: HTTP ${res.status}`);
+  }
+
+  const json = (await res.json()) as { text?: unknown };
+  if (typeof json.text !== 'string') {
+    throw new UpstreamError('ElevenLabs STT returned no transcript text');
+  }
+  return json.text;
+}
+
+// TTS — ElevenLabs `POST /v1/text-to-speech/{voice}/stream` (`eleven_v3`,
+// `mp3_44100_128`). Streams the synthesized audio and forwards each chunk to the
+// browser as a binary WebSocket frame. Raw audio never transits OpenAI and is
+// never persisted.
+export async function streamTtsToWs(
+  apiKey: string,
+  voiceId: string,
+  text: string,
+  ws: WebSocket,
+): Promise<void> {
+  const res = await fetch(
+    `https://api.elevenlabs.io/v1/text-to-speech/${voiceId}/stream`,
+    {
+      method: 'POST',
+      headers: {
+        'xi-api-key': apiKey,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        text,
+        model_id: 'eleven_v3',
+        output_format: 'mp3_44100_128',
+        voice_settings: {
+          stability: 0.5,
+          similarity_boost: 0.8,
+          style: 0.6,
+          use_speaker_boost: true,
+        },
+      }),
+    },
+  );
+
+  if (!res.ok || res.body === null) {
+    throw new UpstreamError(`ElevenLabs TTS failed: HTTP ${res.status}`);
+  }
+
+  const reader = res.body.getReader();
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (value && value.byteLength > 0) {
+        ws.send(Buffer.from(value));
+      }
+    }
+  } finally {
+    reader.cancel().catch(() => {
+      /* noop */
+    });
+  }
+}
+
+=== NEW FILE: apps/api/src/modules/lumi/off-convai-guard.test.ts ===
+import { describe, it, expect } from 'vitest';
+import { readdirSync, readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { dirname, join, resolve, relative } from 'node:path';
+
+// Story 5-S5b — grep guard. After migrating ambient Lumi voice off the
+// ElevenLabs Conversational AI agent, NONE of these tokens may appear anywhere
+// under apps/api/src or apps/web/src. The vendored `.agents/**` boilerplate is
+// out of scope (it lives outside the src trees, so it is never scanned here).
+const FORBIDDEN = [
+  'get_signed_url',
+  'agent_id',
+  'ELEVENLABS_AGENT_ID',
+  'user_transcript',
+  'convai',
+  'issueElevenLabsCredentials',
+];
+
+const THIS_FILE = fileURLToPath(import.meta.url);
+const API_SRC = resolve(dirname(THIS_FILE), '..', '..'); // apps/api/src
+const REPO_ROOT = resolve(API_SRC, '..', '..', '..'); // repo root
+const WEB_SRC = join(REPO_ROOT, 'apps', 'web', 'src');
+
+const SCANNED_EXTENSIONS = ['.ts', '.tsx'];
+
+function collectFiles(dir: string): string[] {
+  const out: string[] = [];
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    const full = join(dir, entry.name);
+    if (entry.isDirectory()) {
+      if (entry.name === 'node_modules' || entry.name === 'dist') continue;
+      out.push(...collectFiles(full));
+      continue;
+    }
+    if (!SCANNED_EXTENSIONS.some((ext) => entry.name.endsWith(ext))) continue;
+    // Exclude this guard file itself — it necessarily names the tokens.
+    if (full === THIS_FILE) continue;
+    out.push(full);
+  }
+  return out;
+}
+
+describe('off-ConvAI grep guard (Story 5-S5b)', () => {
+  const files = [...collectFiles(API_SRC), ...collectFiles(WEB_SRC)];
+
+  it('scans a non-trivial number of source files', () => {
+    expect(files.length).toBeGreaterThan(50);
+  });
+
+  for (const token of FORBIDDEN) {
+    it(`no source file under apps/{api,web}/src contains "${token}"`, () => {
+      const needle = token.toLowerCase();
+      const hits = files.filter((f) =>
+        readFileSync(f, 'utf8').toLowerCase().includes(needle),
+      );
+      expect(hits.map((f) => relative(REPO_ROOT, f))).toEqual([]);
+    });
+  }
+});

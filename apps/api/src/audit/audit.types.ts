@@ -33,6 +33,9 @@ export const AUDIT_EVENT_TYPES = [
   'memory.updated',
   'memory.seeded',
   'memory.hard_forgotten', // Story 7-S5 — nightly promotion job tombstone
+  'memory.learning_moment_confirmed', // 5-S8: user tapped [Yes, keep it in mind]
+  'memory.learning_moment_dismissed', // 5-S8: user tapped [Not for us], 7-day suppress set
+  'memory.learning_moment_tell_more', // 5-S8: user tapped [Tell me more], no suppress
   // heart_note
   'heart_note.created',
   'heart_note.updated',

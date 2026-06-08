@@ -48,6 +48,7 @@ interface LumiActions {
   closePanel: () => void;
   hydrateThread: (surface: LumiSurface, threadId: string, turns: Turn[]) => void;
   appendTurn: (turn: Turn) => void;
+  removeTurn: (turnId: string) => void;
   setTalkSession: (sessionId: string) => void;
   setVoiceStatus: (status: VoiceStatus) => void;
   setVoiceError: (msg: string | null) => void;
@@ -128,6 +129,11 @@ export const useLumiStore = create<LumiState & LumiActions>()((set) => ({
 
   appendTurn: (turn) =>
     set((state) => ({ turns: [...state.turns, turn] })),
+
+  // Slice 5-S10 — remove a resolved family-language ratification turn so its card
+  // disappears once the parent opts in / forgets.
+  removeTurn: (turnId) =>
+    set((state) => ({ turns: state.turns.filter((t) => t.id !== turnId) })),
 
   setTalkSession: (sessionId) =>
     set({ talkSessionId: sessionId, voiceStatus: 'connecting', voiceError: null }),

@@ -127,6 +127,10 @@ Output expectations:
 - variations: one per child per slot. Same Main + per-child Variation rows is
   the family-first preferred shape — DO NOT split into separate Mains unless a
   child's allergens or hard cultural-rule constraint genuinely forces it.
+- reasoning (optional, <= 600 chars): 2-3 sentences citing the primary signals
+  that shaped this week's choices — e.g. memory nodes, cultural priors, pantry
+  coverage, or allergen constraints. Plain prose, no bullet points, no theatrical
+  AI language. Omit if no distinct rationale exists.
 
 Worked examples follow. Mirror their shape exactly. Use real UUIDs from your
 recipe.search / recipe.fetch results — the placeholders <recipe-id-...> below

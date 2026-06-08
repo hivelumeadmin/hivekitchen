@@ -324,6 +324,47 @@ describe('MemoryService.noteFromAgent', () => {
     expect(state.insertProvenanceCalls[0].captured_by).toBeNull();
     expect(state.insertProvenanceCalls[0].confidence).toBe(0.7);
   });
+
+  it("stores source_type='turn' and the provided sourceRef when sourceType is passed (5-S7)", async () => {
+    const state: FakeRepoState = { insertNodeCalls: [], insertProvenanceCalls: [] };
+    const repository = buildRepository({ state });
+    const service = new MemoryService({ repository, logger: buildLogger() });
+
+    await service.noteFromAgent({
+      householdId: HOUSEHOLD_ID,
+      nodeType: 'cultural_rhythm',
+      facet: 'diwali-2026',
+      proseText: 'Diwali is in three weeks.',
+      subjectChildId: null,
+      confidence: 0.8,
+      sourceType: 'turn',
+      sourceRef: { thread_id: THREAD_ID, turn_id: TURN_ID },
+    });
+
+    expect(state.insertProvenanceCalls).toHaveLength(1);
+    expect(state.insertProvenanceCalls[0].source_type).toBe('turn');
+    expect(state.insertProvenanceCalls[0].source_ref).toEqual({
+      thread_id: THREAD_ID,
+      turn_id: TURN_ID,
+    });
+  });
+
+  it("defaults source_type to 'tool' when sourceType is omitted (5-S7 — existing callers unaffected)", async () => {
+    const state: FakeRepoState = { insertNodeCalls: [], insertProvenanceCalls: [] };
+    const repository = buildRepository({ state });
+    const service = new MemoryService({ repository, logger: buildLogger() });
+
+    await service.noteFromAgent({
+      householdId: HOUSEHOLD_ID,
+      nodeType: 'preference',
+      facet: 'avoids spicy',
+      proseText: 'Avoids spicy food.',
+      subjectChildId: null,
+      confidence: 0.7,
+    });
+
+    expect(state.insertProvenanceCalls[0].source_type).toBe('tool');
+  });
 });
 
 describe('MemoryService.findActive', () => {

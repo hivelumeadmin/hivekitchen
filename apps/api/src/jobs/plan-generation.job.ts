@@ -436,6 +436,13 @@ const planGenerationPlugin: FastifyPluginAsync = async (fastify) => {
           lastAttemptComposeOutput = retryOutput;
           return retryCommit;
         },
+        // Slice 5-S9 — cache the planner's "Why this?" rationale. Uses the
+        // initial compose output: commit()'s brief refresh fires when the FINAL
+        // plan clears, but the job has no channel to update reasoning post-regen,
+        // and the initial rationale stays contextually relevant for typical weeks.
+        // null (when absent) explicitly clears any prior reasoning rather than
+        // carrying it forward from the previous plan.
+        composeOutput.reasoning ?? null,
       );
 
       // Story 3.27 — after commit clears, persist any planner-emitted variant

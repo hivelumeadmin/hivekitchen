@@ -167,13 +167,15 @@ describe('OnboardingMomentRepository.countRequiredSetSources', () => {
   // chained .eq() calls, so we make .eq() return a builder that is BOTH
   // chain-able and resolves to the payload when awaited.
   function makeCountQuery(payload: { count: number | null; error: unknown }): unknown {
-    const builder: { select: ReturnType<typeof vi.fn>; eq: ReturnType<typeof vi.fn>; then: (resolve: (v: unknown) => unknown) => unknown } = {
+    const builder: { select: ReturnType<typeof vi.fn>; eq: ReturnType<typeof vi.fn>; not: ReturnType<typeof vi.fn>; then: (resolve: (v: unknown) => unknown) => unknown } = {
       select: vi.fn(),
       eq: vi.fn(),
+      not: vi.fn(),
       then: (resolve: (v: unknown) => unknown) => Promise.resolve(payload).then(resolve),
     };
     builder.select.mockReturnValue(builder);
     builder.eq.mockReturnValue(builder);
+    builder.not.mockReturnValue(builder);
     return builder;
   }
 
@@ -191,7 +193,7 @@ describe('OnboardingMomentRepository.countRequiredSetSources', () => {
         return makeHouseholdQuery({ data: { display_name: 'The Menons' }, error: null });
       }
       if (table === 'children') return makeCountQuery({ count: 2, error: null });
-      if (table === 'child_allergens') return makeCountQuery({ count: 3, error: null });
+      if (table === 'household_allergens') return makeCountQuery({ count: 3, error: null });
       // Slice 2.6-s1 — favorite_lunch count derives from household_recipe_usage
       // rows the parent declared (catalog_provenance='declared').
       if (table === 'household_recipe_usage') return makeCountQuery({ count: 10, error: null });
@@ -249,13 +251,15 @@ describe('OnboardingMomentRepository.countRequiredSetSources', () => {
       if (table === 'households') {
         return makeHouseholdQuery({ data: { display_name: 'X' }, error: null });
       }
-      const builder: { select: ReturnType<typeof vi.fn>; eq: ReturnType<typeof vi.fn>; then: (resolve: (v: unknown) => unknown) => unknown } = {
+      const builder: { select: ReturnType<typeof vi.fn>; eq: ReturnType<typeof vi.fn>; not: ReturnType<typeof vi.fn>; then: (resolve: (v: unknown) => unknown) => unknown } = {
         select: selectMock,
         eq: vi.fn(),
+        not: vi.fn(),
         then: (resolve: (v: unknown) => unknown) =>
           Promise.resolve({ count: 0, error: null }).then(resolve),
       };
       builder.eq.mockReturnValue(builder);
+      builder.not.mockReturnValue(builder);
       return builder;
     });
     const client = { from: fromMock } as unknown as SupabaseClient;
@@ -263,7 +267,7 @@ describe('OnboardingMomentRepository.countRequiredSetSources', () => {
 
     await repo.countRequiredSetSources(HOUSEHOLD_ID);
 
-    // children + child_allergens use 'id', head count.
+    // children + household_allergens (per-child) use 'id', head count.
     // Slice 2.6-s1 — household_recipe_usage uses 'recipe_id'.
     expect(selectMock).toHaveBeenCalledWith('id', { count: 'exact', head: true });
     expect(selectMock).toHaveBeenCalledWith('recipe_id', { count: 'exact', head: true });

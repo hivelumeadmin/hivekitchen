@@ -222,6 +222,36 @@ export class MemoryRepository extends BaseRepository {
     return (data ?? []).length;
   }
 
+  // Slice 5-S8 — recent turn-sourced nodes for the "I noticed" learning-moment
+  // threshold. JOINs memory_provenance with the `!inner` PostgREST suffix so
+  // only nodes that have a provenance row with source_type='turn' are returned.
+  // Excludes soft-forgotten nodes and bounds to the caller-provided window.
+  // BaseRepository has no logger, so errors return [] silently — the composer
+  // logs the absence of a callout, not the DB error.
+  async findRecentTurnSourcedNodes(
+    householdId: string,
+    sinceIso: string,
+  ): Promise<Array<{ id: string; prose_text: string; node_type: string; created_at: string }>> {
+    const { data, error } = await this.client
+      .from('memory_nodes')
+      .select('id, prose_text, node_type, created_at, memory_provenance!inner(source_type)')
+      .eq('household_id', householdId)
+      .eq('hard_forgotten', false)
+      .is('soft_forget_at', null)
+      .gte('created_at', sinceIso)
+      .eq('memory_provenance.source_type', 'turn')
+      .order('created_at', { ascending: false })
+      .limit(10);
+    if (error) return [];
+    type Row = { id: string; prose_text: string; node_type: string; created_at: string };
+    return ((data as Row[] | null) ?? []).map((r) => ({
+      id: r.id,
+      prose_text: r.prose_text,
+      node_type: r.node_type,
+      created_at: r.created_at,
+    }));
+  }
+
   // Story 7-S8 — flat list of (subject_child_id, source_type) for every
   // provenance record attached to an ACTIVE node (not hard-forgotten, not
   // soft-forgotten). The service buckets these into per-child + household-general

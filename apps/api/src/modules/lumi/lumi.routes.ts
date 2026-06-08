@@ -14,6 +14,7 @@ import { ChildAllergensRepository } from '../children/child-allergens.repository
 import { ChildrenRepository } from '../children/children.repository.js';
 import { HouseholdAllergensRepository } from '../households/household-allergens.repository.js';
 import { VoiceTranscriptRepository } from '../voice/voice-transcript.repository.js';
+import { FamilyLanguageRepository } from '../family-language/family-language.repository.js';
 import { LumiRepository } from './lumi.repository.js';
 import { LumiService, type LumiVoiceWsState } from './lumi.service.js';
 
@@ -58,6 +59,7 @@ export const lumiRoutes: FastifyPluginAsync = async (fastify) => {
   );
   const householdAllergensRepository = new HouseholdAllergensRepository(fastify.supabase, kek);
   const voiceTranscriptRepository = new VoiceTranscriptRepository(fastify.supabase);
+  const familyLanguageRepository = new FamilyLanguageRepository(fastify.supabase);
 
   const service = new LumiService({
     repository,
@@ -69,6 +71,8 @@ export const lumiRoutes: FastifyPluginAsync = async (fastify) => {
     childrenRepository,
     householdAllergensRepository,
     voiceTranscriptRepository,
+    memoryService: fastify.memoryService, // 5-S7 — wired by memory-hook
+    familyLanguageRepository, // 5-S10 — inline detection + snapshot ratchet
   });
 
   fastify.get(

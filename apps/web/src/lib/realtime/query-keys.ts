@@ -60,4 +60,12 @@ export const QueryKeys = {
    */
   childRequests: (householdId: string): ['child-requests', string] =>
     ['child-requests', householdId],
+
+  /**
+   * Slice 5-S10 (review patch) — household family-language terms. Read by the
+   * Lumi panel to suppress already-resolved ratification cards on re-hydration.
+   * @example QueryKeys.familyLanguage('household-uuid') → ['family-language', 'household-uuid']
+   */
+  familyLanguage: (householdId: string): ['family-language', string] =>
+    ['family-language', householdId],
 } as const;

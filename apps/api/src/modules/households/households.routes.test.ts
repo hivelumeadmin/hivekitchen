@@ -157,6 +157,7 @@ interface BuildAppOpts {
   state: MockState;
   plansService?: Partial<FastifyInstance['plansService']>;
   memoryService?: Partial<FastifyInstance['memoryService']>;
+  briefStateComposer?: Partial<FastifyInstance['briefStateComposer']>;
 }
 
 async function buildTestApp(opts: BuildAppOpts): Promise<FastifyInstance> {
@@ -208,6 +209,12 @@ async function buildTestApp(opts: BuildAppOpts): Promise<FastifyInstance> {
     app.decorate(
       'memoryService',
       opts.memoryService as unknown as FastifyInstance['memoryService'],
+    );
+  }
+  if (opts.briefStateComposer) {
+    app.decorate(
+      'briefStateComposer',
+      opts.briefStateComposer as unknown as FastifyInstance['briefStateComposer'],
     );
   }
   await app.register(householdsRoutes);
@@ -2959,5 +2966,75 @@ describe('PATCH /v1/households/:id/days/:date/packer (5-S3)', () => {
 
     expect(res.statusCode).toBe(200);
     expect(state.emitted).toHaveLength(0);
+  });
+});
+
+// Slice 5-S8 — POST /v1/households/:householdId/brief/learning-moment
+describe('POST /v1/households/:householdId/brief/learning-moment', () => {
+  let app: FastifyInstance;
+
+  afterEach(async () => {
+    if (app) await app.close();
+  });
+
+  it('returns 204 and calls respondToLearningMoment with the action', async () => {
+    const respondToLearningMoment = vi.fn().mockResolvedValue(undefined);
+    app = await buildTestApp({
+      state: freshState(),
+      briefStateComposer: { respondToLearningMoment },
+    });
+    const token = signPrimary(app);
+
+    const res = await app.inject({
+      method: 'POST',
+      url: `/v1/households/${SAMPLE_HOUSEHOLD_ID}/brief/learning-moment`,
+      headers: { authorization: `Bearer ${token}` },
+      payload: { action: 'confirm' },
+    });
+
+    expect(res.statusCode).toBe(204);
+    expect(respondToLearningMoment).toHaveBeenCalledWith(
+      SAMPLE_HOUSEHOLD_ID,
+      'confirm',
+      expect.any(String),
+    );
+  });
+
+  it('returns 403 on a cross-household respond', async () => {
+    const respondToLearningMoment = vi.fn().mockResolvedValue(undefined);
+    app = await buildTestApp({
+      state: freshState(),
+      briefStateComposer: { respondToLearningMoment },
+    });
+    const token = signPrimary(app);
+    const otherHousehold = '99999999-9999-4999-8999-999999999999';
+
+    const res = await app.inject({
+      method: 'POST',
+      url: `/v1/households/${otherHousehold}/brief/learning-moment`,
+      headers: { authorization: `Bearer ${token}` },
+      payload: { action: 'confirm' },
+    });
+
+    expect(res.statusCode).toBe(403);
+    expect(respondToLearningMoment).not.toHaveBeenCalled();
+  });
+
+  it('returns 400 on an invalid action', async () => {
+    const respondToLearningMoment = vi.fn().mockResolvedValue(undefined);
+    app = await buildTestApp({
+      state: freshState(),
+      briefStateComposer: { respondToLearningMoment },
+    });
+    const token = signPrimary(app);
+
+    const res = await app.inject({
+      method: 'POST',
+      url: `/v1/households/${SAMPLE_HOUSEHOLD_ID}/brief/learning-moment`,
+      headers: { authorization: `Bearer ${token}` },
+      payload: { action: 'banana' },
+    });
+
+    expect(res.statusCode).toBe(400);
   });
 });

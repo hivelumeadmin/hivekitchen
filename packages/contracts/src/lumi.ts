@@ -59,6 +59,9 @@ export const LumiTurnResponseSchema = z.object({
   thread_id: z.string().uuid(),
   user_turn: Turn,
   lumi_turn: Turn,
+  // Slice 5-S10 — present only when this turn triggered a family-language
+  // ratification. The client appends it immediately (no SSE round-trip).
+  ratification_turn: Turn.optional(),
 });
 
 // VoiceTalkSessionCreate — POST /v1/lumi/voice/sessions body (Story 12.5).

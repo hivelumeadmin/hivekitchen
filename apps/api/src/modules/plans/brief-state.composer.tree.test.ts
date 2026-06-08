@@ -7,6 +7,7 @@ import {
 import type { PlansRepository } from './plans.repository.js';
 import type { BriefStateRepository } from './brief-state.repository.js';
 import type { LunchLinkSessionRepository } from './lunch-link-session.repository.js';
+import type { MemoryRepository } from '../memory/memory.repository.js';
 import type {
   ChildrenRepository,
   DecryptedChildRow,
@@ -196,6 +197,8 @@ describe('BriefStateComposer.refreshTree — 8-read parallelism + composition', 
         plan_state: null;
         plan_state_set_at: null;
         plan_state_message: null;
+        // Slice 5-S9 — carry-forward source for plan_reasoning.
+        plan_reasoning?: string | null;
       };
     } | null;
   }) {
@@ -248,6 +251,42 @@ describe('BriefStateComposer.refreshTree — 8-read parallelism + composition', 
     await composer.refreshTree(HOUSEHOLD_ID, WEEK_ID, REQUEST_ID);
     expect(mocks.upsert).not.toHaveBeenCalled();
     expect(mocks.findMainAssignmentsByPlanId).not.toHaveBeenCalled();
+  });
+
+  // Slice 5-S9 — "Why this?" plan reasoning carry-forward.
+  it('sets plan_reasoning from opts.planReasoning when provided', async () => {
+    const plan = buildPlan({ id: PLAN_ID, household_id: HOUSEHOLD_ID });
+    const { composer, mocks } = buildDeps({ plan });
+    await composer.refreshTree(HOUSEHOLD_ID, WEEK_ID, REQUEST_ID, {
+      planReasoning: 'Batch-prep pasta chosen for the week.',
+    });
+    const upsertCall = mocks.upsert.mock.calls[0]![0] as { payload: { plan_reasoning: string | null } };
+    expect(upsertCall.payload.plan_reasoning).toBe('Batch-prep pasta chosen for the week.');
+  });
+
+  it('carries forward plan_reasoning from previousBrief when opts has none', async () => {
+    const plan = buildPlan({ id: PLAN_ID, household_id: HOUSEHOLD_ID });
+    const previousBrief = {
+      payload: {
+        tile_summaries: [] as [],
+        plan_state: null,
+        plan_state_set_at: null,
+        plan_state_message: null,
+        plan_reasoning: 'Carried forward reasoning.',
+      },
+    };
+    const { composer, mocks } = buildDeps({ plan, previousBrief });
+    await composer.refreshTree(HOUSEHOLD_ID, WEEK_ID, REQUEST_ID);
+    const upsertCall = mocks.upsert.mock.calls[0]![0] as { payload: { plan_reasoning: string | null } };
+    expect(upsertCall.payload.plan_reasoning).toBe('Carried forward reasoning.');
+  });
+
+  it('sets plan_reasoning to null when opts has none and previousBrief has none', async () => {
+    const plan = buildPlan({ id: PLAN_ID, household_id: HOUSEHOLD_ID });
+    const { composer, mocks } = buildDeps({ plan, previousBrief: null });
+    await composer.refreshTree(HOUSEHOLD_ID, WEEK_ID, REQUEST_ID);
+    const upsertCall = mocks.upsert.mock.calls[0]![0] as { payload: { plan_reasoning: string | null } };
+    expect(upsertCall.payload.plan_reasoning).toBeNull();
   });
 
   it('fires the 4 tree reads in parallel and upserts when a cleared plan exists', async () => {
@@ -381,5 +420,202 @@ describe('BriefStateComposer.refreshTree — 8-read parallelism + composition', 
       payload: { tile_summaries: Array<{ day: string; lunch_link_suppressed_children: string[] }> };
     };
     expect(upsertCall.payload.tile_summaries[0]?.lunch_link_suppressed_children).toEqual([CHILD_A]);
+  });
+});
+
+// Slice 5-S8 — "I noticed" learning-moment callout threshold + carry-forward.
+describe('BriefStateComposer.refreshTree — 5-S8 learning moment', () => {
+  const TURN_NODE_1 = '10000000-0000-4000-8000-000000000001';
+  const TURN_NODE_2 = '10000000-0000-4000-8000-000000000002';
+  const TURN_NODE_3 = '10000000-0000-4000-8000-000000000003';
+
+  function turnNode(id: string, prose: string) {
+    return { id, prose_text: prose, node_type: 'preference', created_at: NOW };
+  }
+
+  function buildLMDeps(opts: {
+    memoryRepository?: { findRecentTurnSourcedNodes: ReturnType<typeof vi.fn> };
+    suppressedUntil?: string | null;
+  }) {
+    const plan = buildPlan({ id: PLAN_ID, household_id: HOUSEHOLD_ID });
+    const days = [dayRow({ id: DAY_MON, day: 'monday' })];
+    const slots = [slotRow({ id: SLOT_MON_MAIN, plan_day_id: DAY_MON })];
+    const variations = [variationRow({ plan_slot_id: SLOT_MON_MAIN, child_id: CHILD_A })];
+    const mainAssignments = [mainAssign({ id: MAIN_ASSIGN_1, plan_id: PLAN_ID })];
+
+    const upsert = vi.fn().mockResolvedValue(undefined);
+    const previousBrief =
+      opts.suppressedUntil !== undefined
+        ? {
+            payload: {
+              tile_summaries: [],
+              plan_state: null,
+              plan_state_set_at: null,
+              plan_state_message: null,
+              learning_moment_suppressed_until: opts.suppressedUntil,
+            },
+          }
+        : null;
+
+    const composer = new BriefStateComposer({
+      plansRepository: {
+        findCurrentByHousehold: vi.fn().mockResolvedValue(plan),
+        findMainAssignmentsByPlanId: vi.fn().mockResolvedValue(mainAssignments),
+        findDaysByPlanId: vi.fn().mockResolvedValue(days),
+        findSlotsByDayIds: vi.fn().mockResolvedValue(slots),
+        findVariationsBySlotIds: vi.fn().mockResolvedValue(variations),
+      } as unknown as PlansRepository,
+      briefStateRepository: {
+        upsert,
+        findByHousehold: vi.fn().mockResolvedValue(previousBrief),
+      } as unknown as BriefStateRepository,
+      childrenRepository: {
+        findByHouseholdId: vi.fn().mockResolvedValue([]),
+      } as unknown as ChildrenRepository,
+      auditService: { write: vi.fn().mockResolvedValue(undefined) } as unknown as AuditService,
+      logger: buildLogger(),
+      ...(opts.memoryRepository
+        ? { memoryRepository: opts.memoryRepository as unknown as MemoryRepository }
+        : {}),
+    });
+    return { composer, upsert };
+  }
+
+  function calloutFromUpsert(upsert: ReturnType<typeof vi.fn>) {
+    const call = upsert.mock.calls[0]![0] as {
+      payload: {
+        learning_moment_callout: { prose: string; node_ids: string[] } | null;
+        learning_moment_suppressed_until: string | null;
+      };
+    };
+    return call.payload;
+  }
+
+  it('sets learning_moment_callout when ≥3 turn-sourced nodes exist', async () => {
+    const findRecentTurnSourcedNodes = vi
+      .fn()
+      .mockResolvedValue([
+        turnNode(TURN_NODE_1, 'your family loves spicy food'),
+        turnNode(TURN_NODE_2, 'you pack on Sundays'),
+        turnNode(TURN_NODE_3, 'the twins share a Main'),
+      ]);
+    const { composer, upsert } = buildLMDeps({ memoryRepository: { findRecentTurnSourcedNodes } });
+
+    await composer.refreshTree(HOUSEHOLD_ID, WEEK_ID, REQUEST_ID);
+
+    const payload = calloutFromUpsert(upsert);
+    expect(payload.learning_moment_callout).not.toBeNull();
+    expect(payload.learning_moment_callout?.prose).toContain('your family loves spicy food');
+    expect(payload.learning_moment_callout?.node_ids).toEqual([
+      TURN_NODE_1,
+      TURN_NODE_2,
+      TURN_NODE_3,
+    ]);
+  });
+
+  it('leaves learning_moment_callout null when < 3 nodes', async () => {
+    const findRecentTurnSourcedNodes = vi
+      .fn()
+      .mockResolvedValue([turnNode(TURN_NODE_1, 'a'), turnNode(TURN_NODE_2, 'b')]);
+    const { composer, upsert } = buildLMDeps({ memoryRepository: { findRecentTurnSourcedNodes } });
+
+    await composer.refreshTree(HOUSEHOLD_ID, WEEK_ID, REQUEST_ID);
+
+    expect(calloutFromUpsert(upsert).learning_moment_callout).toBeNull();
+  });
+
+  it('respects the suppress window — null callout when suppressedUntil is in the future', async () => {
+    const future = new Date(Date.now() + 6 * 24 * 60 * 60 * 1000).toISOString();
+    const findRecentTurnSourcedNodes = vi
+      .fn()
+      .mockResolvedValue([
+        turnNode(TURN_NODE_1, 'a'),
+        turnNode(TURN_NODE_2, 'b'),
+        turnNode(TURN_NODE_3, 'c'),
+        turnNode('10000000-0000-4000-8000-000000000004', 'd'),
+        turnNode('10000000-0000-4000-8000-000000000005', 'e'),
+      ]);
+    const { composer, upsert } = buildLMDeps({
+      memoryRepository: { findRecentTurnSourcedNodes },
+      suppressedUntil: future,
+    });
+
+    await composer.refreshTree(HOUSEHOLD_ID, WEEK_ID, REQUEST_ID);
+
+    expect(calloutFromUpsert(upsert).learning_moment_callout).toBeNull();
+    // The threshold query is short-circuited when suppressed.
+    expect(findRecentTurnSourcedNodes).not.toHaveBeenCalled();
+  });
+
+  it('carries forward learning_moment_suppressed_until unchanged', async () => {
+    const past = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+    const findRecentTurnSourcedNodes = vi
+      .fn()
+      .mockResolvedValue([
+        turnNode(TURN_NODE_1, 'a'),
+        turnNode(TURN_NODE_2, 'b'),
+        turnNode(TURN_NODE_3, 'c'),
+      ]);
+    const { composer, upsert } = buildLMDeps({
+      memoryRepository: { findRecentTurnSourcedNodes },
+      suppressedUntil: past,
+    });
+
+    await composer.refreshTree(HOUSEHOLD_ID, WEEK_ID, REQUEST_ID);
+
+    const payload = calloutFromUpsert(upsert);
+    expect(payload.learning_moment_suppressed_until).toBe(past);
+    // Past suppress window does not block — callout still forms.
+    expect(payload.learning_moment_callout).not.toBeNull();
+  });
+
+  it('skips buildLearningMomentCallout when memoryRepository is absent', async () => {
+    const { composer, upsert } = buildLMDeps({});
+
+    await composer.refreshTree(HOUSEHOLD_ID, WEEK_ID, REQUEST_ID);
+
+    expect(calloutFromUpsert(upsert).learning_moment_callout).toBeNull();
+  });
+});
+
+// Slice 5-S9 (P4) — AC3 coverage: respondToLearningMoment must preserve plan_reasoning.
+describe('BriefStateComposer.respondToLearningMoment — preserves plan_reasoning (5-S9)', () => {
+  it('carries plan_reasoning forward through the payload spread on confirm', async () => {
+    const upsert = vi.fn().mockResolvedValue(undefined);
+    const currentBrief = {
+      household_id: HOUSEHOLD_ID,
+      plan_id: PLAN_ID,
+      moment_headline: null,
+      lumi_note: null,
+      memory_prose: null,
+      payload: {
+        tile_summaries: [],
+        plan_state: null,
+        plan_state_set_at: null,
+        plan_state_message: null,
+        learning_moment_callout: { prose: 'I noticed something.', node_ids: [], surfaced_at: NOW },
+        learning_moment_suppressed_until: null,
+        plan_reasoning: 'Pasta for batch-prep this week.',
+      },
+      generated_at: NOW,
+      plan_revision: 1,
+    };
+
+    const composer = new BriefStateComposer({
+      plansRepository: {} as unknown as PlansRepository,
+      briefStateRepository: {
+        upsert,
+        findByHousehold: vi.fn().mockResolvedValue(currentBrief),
+      } as unknown as BriefStateRepository,
+      childrenRepository: {} as unknown as ChildrenRepository,
+      auditService: { write: vi.fn().mockResolvedValue(undefined) } as unknown as AuditService,
+      logger: buildLogger(),
+    });
+
+    await composer.respondToLearningMoment(HOUSEHOLD_ID, 'confirm', REQUEST_ID);
+
+    const upsertPayload = (upsert.mock.calls[0]![0] as { payload: { plan_reasoning: string | null } }).payload;
+    expect(upsertPayload.plan_reasoning).toBe('Pasta for batch-prep this week.');
+    expect(upsertPayload.learning_moment_callout).toBeNull();
   });
 });

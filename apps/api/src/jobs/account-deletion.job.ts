@@ -127,7 +127,7 @@ export async function runAccountDeletion(
   const ops: Array<{ table: string; column: string; ids: string[] | null }> = [
     { table: 'memory_provenance', column: 'memory_node_id', ids: memoryNodeIds },
     { table: 'memory_nodes', column: 'household_id', ids: null },
-    { table: 'child_allergens', column: 'child_id', ids: childIds },
+    { table: 'household_allergens', column: 'household_id', ids: null },
     { table: 'child_preferences', column: 'child_id', ids: childIds },
     { table: 'child_lunch_requests', column: 'household_id', ids: null },
     { table: 'flavor_passport_stamps', column: 'child_id', ids: childIds },

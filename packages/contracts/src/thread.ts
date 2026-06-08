@@ -56,6 +56,15 @@ export const TurnBodyRatificationPrompt = z.object({
   ).min(1),
 });
 
+// Slice 5-S10 — Lumi originates this turn when a family-language kinship term
+// crosses the ratification threshold. The web renders it as a
+// FamilyLanguageRatificationCard (three pills, sacred-plum tinted term).
+export const TurnBodyFamilyLanguagePrompt = z.object({
+  type: z.literal('family_language_prompt'),
+  term: z.string().min(1).max(40),
+  maps_to: z.string().min(1).max(40),
+});
+
 export const TurnBody = z.discriminatedUnion('type', [
   TurnBodyMessage,
   TurnBodyPlanDiff,
@@ -63,6 +72,7 @@ export const TurnBody = z.discriminatedUnion('type', [
   TurnBodySystemEvent,
   TurnBodyPresence,
   TurnBodyRatificationPrompt,
+  TurnBodyFamilyLanguagePrompt,
 ]);
 
 export const Turn = z.object({

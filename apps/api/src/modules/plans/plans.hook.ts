@@ -16,6 +16,7 @@ import { ExtraRemovalSignalService } from './extra-removal-signal.service.js';
 import { RecipeService } from '../recipe/recipe.service.js';
 import { RecipesRepository } from '../recipe/recipes.repository.js';
 import { LunchLinkSessionRepository } from './lunch-link-session.repository.js';
+import { MemoryRepository } from '../memory/memory.repository.js';
 import { VariantProposalRepository } from './variant-proposal.repository.js';
 import { VariantProposalService } from './variant-proposal.service.js';
 
@@ -75,6 +76,10 @@ const plansHookPlugin: FastifyPluginAsync = async (fastify) => {
   // child's delivery loop and skip SendGrid/Twilio when suppressed_at IS NOT NULL.
   const lunchLinkSessionRepository = new LunchLinkSessionRepository(fastify.supabase);
 
+  // Slice 5-S8 — composer reads turn-sourced memory nodes for the "I noticed"
+  // learning-moment threshold.
+  const memoryRepository = new MemoryRepository(fastify.supabase);
+
   const briefStateComposer = new BriefStateComposer({
     plansRepository: repository,
     briefStateRepository,
@@ -82,6 +87,7 @@ const plansHookPlugin: FastifyPluginAsync = async (fastify) => {
     lunchLinkSessionRepository,
     auditService: fastify.auditService,
     logger: fastify.log,
+    memoryRepository,
   });
   // Story 3.22 — passive Extra-removal bias service. Lives next to PlansService
   // because the swap path is the only signal source today; co-locating avoids

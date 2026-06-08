@@ -863,3 +863,124 @@ describe('MemoryRepository.findActiveProvenanceSourcesByHousehold', () => {
     });
   });
 });
+
+// Slice 5-S8 — findRecentTurnSourcedNodes (turn-sourced threshold for the
+// "I noticed" learning moment).
+
+interface TurnQueryCapture {
+  table: string;
+  selectCols: string | null;
+  eq: Array<{ col: string; val: unknown }>;
+  is: Array<{ col: string; val: unknown }>;
+  gte: Array<{ col: string; val: unknown }>;
+  order: { col: string; ascending: boolean } | null;
+  limit: number | null;
+}
+
+// Models the PostgREST embedded-join chain used by findRecentTurnSourcedNodes:
+// .select(...).eq().is().gte().eq().order().limit() — the terminal .limit() is
+// awaited and resolves with the seeded result.
+function buildTurnMockClient(result: { data: unknown; error: unknown }): {
+  client: SupabaseClient;
+  capture: TurnQueryCapture;
+} {
+  const capture: TurnQueryCapture = {
+    table: '',
+    selectCols: null,
+    eq: [],
+    is: [],
+    gte: [],
+    order: null,
+    limit: null,
+  };
+  const chain = {
+    eq(col: string, val: unknown) {
+      capture.eq.push({ col, val });
+      return chain;
+    },
+    is(col: string, val: unknown) {
+      capture.is.push({ col, val });
+      return chain;
+    },
+    gte(col: string, val: unknown) {
+      capture.gte.push({ col, val });
+      return chain;
+    },
+    order(col: string, opts: { ascending: boolean }) {
+      capture.order = { col, ascending: opts.ascending };
+      return chain;
+    },
+    limit(n: number) {
+      capture.limit = n;
+      return Promise.resolve(result);
+    },
+  };
+  const client = {
+    from(table: string) {
+      capture.table = table;
+      return {
+        select(cols: string) {
+          capture.selectCols = cols;
+          return chain;
+        },
+      };
+    },
+  } as unknown as SupabaseClient;
+  return { client, capture };
+}
+
+describe('MemoryRepository.findRecentTurnSourcedNodes', () => {
+  const SINCE = '2026-05-31T00:00:00.000Z';
+
+  it('returns nodes joined with turn-sourced provenance, filtered to the window', async () => {
+    const rows = [
+      {
+        id: NODE_ID,
+        prose_text: 'loves spicy food',
+        node_type: 'preference',
+        created_at: '2026-06-06T00:00:00.000Z',
+        memory_provenance: [{ source_type: 'turn' }],
+      },
+      {
+        id: '88888888-8888-4888-8888-888888888888',
+        prose_text: 'packs lunch on Sundays',
+        node_type: 'routine',
+        created_at: '2026-06-05T00:00:00.000Z',
+        memory_provenance: [{ source_type: 'turn' }],
+      },
+    ];
+    const { client, capture } = buildTurnMockClient({ data: rows, error: null });
+    const repo = new MemoryRepository(client);
+
+    const out = await repo.findRecentTurnSourcedNodes(HOUSEHOLD_ID, SINCE);
+
+    expect(capture.table).toBe('memory_nodes');
+    expect(capture.selectCols).toBe(
+      'id, prose_text, node_type, created_at, memory_provenance!inner(source_type)',
+    );
+    expect(capture.eq).toContainEqual({ col: 'household_id', val: HOUSEHOLD_ID });
+    expect(capture.eq).toContainEqual({ col: 'memory_provenance.source_type', val: 'turn' });
+    expect(capture.is).toContainEqual({ col: 'soft_forget_at', val: null });
+    expect(capture.gte).toContainEqual({ col: 'created_at', val: SINCE });
+    expect(capture.order).toEqual({ col: 'created_at', ascending: false });
+    // The embedded provenance array is stripped from the mapped output.
+    expect(out).toEqual([
+      { id: NODE_ID, prose_text: 'loves spicy food', node_type: 'preference', created_at: '2026-06-06T00:00:00.000Z' },
+      {
+        id: '88888888-8888-4888-8888-888888888888',
+        prose_text: 'packs lunch on Sundays',
+        node_type: 'routine',
+        created_at: '2026-06-05T00:00:00.000Z',
+      },
+    ]);
+  });
+
+  it('returns an empty array on a Supabase error (no throw)', async () => {
+    const { client } = buildTurnMockClient({ data: null, error: { message: 'db', code: 'XX000' } });
+    const repo = new MemoryRepository(client);
+
+    const out = await repo.findRecentTurnSourcedNodes(HOUSEHOLD_ID, SINCE);
+
+    expect(out).toEqual([]);
+  });
+});

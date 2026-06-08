@@ -54,6 +54,7 @@ import { onboardingRoutes } from './modules/onboarding/onboarding.routes.js';
 import { complianceRoutes } from './modules/compliance/compliance.routes.js';
 import { childrenRoutes } from './modules/children/children.routes.js';
 import { culturalPriorRoutes } from './modules/cultural-priors/cultural-prior.routes.js';
+import { familyLanguageRoutes } from './modules/family-language/family-language.routes.js';
 import { householdsRoutes } from './modules/households/households.routes.js';
 import { memoryRoutes } from './modules/memory/memory.routes.js';
 import { plansRoutes } from './modules/plans/plans.routes.js';
@@ -251,6 +252,7 @@ export async function buildApp(opts: BuildAppOptions) {
   await app.register(complianceRoutes);
   await app.register(childrenRoutes);
   await app.register(culturalPriorRoutes);
+  await app.register(familyLanguageRoutes);
   await app.register(householdsRoutes);
   await app.register(memoryRoutes);
   await app.register(plansRoutes);

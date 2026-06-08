@@ -25,7 +25,17 @@ export function createPlanComposeSpec(planService: PlansService, redis: Redis): 
       try {
         const parsed = PlanComposeTreeInputSchema.parse(input);
         const result = await planService.composeTree(parsed);
-        return PlanComposeTreeOutputSchema.parse(result);
+        // Slice 5-S9 — "reasoning" is planner metadata, not part of the
+        // structural tree, so PlanComposeTreeInputSchema strips it from `parsed`.
+        // Recover it from the raw tool args and merge it into the output the
+        // orchestrator parses. Defensively truncated to the schema max (600) so a
+        // long rationale can never fail the whole plan.compose call.
+        const rawReasoning = (input as { reasoning?: unknown }).reasoning;
+        const withReasoning =
+          typeof rawReasoning === 'string' && rawReasoning.length > 0
+            ? { ...result, reasoning: rawReasoning.slice(0, 600) }
+            : result;
+        return PlanComposeTreeOutputSchema.parse(withReasoning);
       } finally {
         try {
           await recordToolLatency(redis, 'plan.compose', Date.now() - start);

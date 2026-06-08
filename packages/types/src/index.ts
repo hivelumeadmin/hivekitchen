@@ -129,6 +129,13 @@ import {
   RatifyCulturalPriorResponseSchema,
   TemplateStateChangedEventSchema,
   TurnBodyRatificationPrompt,
+  TurnBodyFamilyLanguagePrompt,
+  FamilyLanguageStateSchema,
+  FamilyLanguageTermSchema,
+  FamilyLanguageRatifyActionSchema,
+  FamilyLanguageRatifyBodySchema,
+  FamilyLanguageRatifyResponseSchema,
+  FamilyLanguageTermsResponseSchema,
   LumiSurfaceSchema,
   LumiContextSignalSchema,
   LumiTurnRequestSchema,
@@ -206,6 +213,10 @@ import {
   BriefStatePayloadSchema,
   BriefStateRowSchema,
   BriefResponseSchema,
+  // Slice 5-S8 — "I noticed" learning moment
+  LearningMomentCalloutSchema,
+  LearningMomentActionSchema,
+  RespondToLearningMomentRequestSchema,
   RegeneratePlanQuerySchema,
   RegeneratePlanResponseSchema,
   GetPlansQuerySchema,
@@ -506,6 +517,15 @@ export type RatifyCulturalPriorResponse = z.infer<typeof RatifyCulturalPriorResp
 export type TemplateStateChangedEvent = z.infer<typeof TemplateStateChangedEventSchema>;
 export type TurnBodyRatificationPrompt = z.infer<typeof TurnBodyRatificationPrompt>;
 
+// Family-language ratchet (Slice 5-S10 — UX-DR47 forward-only kinship terms)
+export type TurnBodyFamilyLanguagePrompt = z.infer<typeof TurnBodyFamilyLanguagePrompt>;
+export type FamilyLanguageState = z.infer<typeof FamilyLanguageStateSchema>;
+export type FamilyLanguageTerm = z.infer<typeof FamilyLanguageTermSchema>;
+export type FamilyLanguageRatifyAction = z.infer<typeof FamilyLanguageRatifyActionSchema>;
+export type FamilyLanguageRatifyBody = z.infer<typeof FamilyLanguageRatifyBodySchema>;
+export type FamilyLanguageRatifyResponse = z.infer<typeof FamilyLanguageRatifyResponseSchema>;
+export type FamilyLanguageTermsResponse = z.infer<typeof FamilyLanguageTermsResponseSchema>;
+
 // Ambient Lumi (Story 12.1 — ADR-002 contract surface)
 export type LumiSurface = z.infer<typeof LumiSurfaceSchema>;
 export type LumiContextSignal = z.infer<typeof LumiContextSignalSchema>;
@@ -606,6 +626,11 @@ export type PlanTileSummary = z.infer<typeof PlanTileSummarySchema>;
 export type BriefStatePayload = z.infer<typeof BriefStatePayloadSchema>;
 export type BriefStateRow = z.infer<typeof BriefStateRowSchema>;
 export type BriefResponse = z.infer<typeof BriefResponseSchema>;
+
+// Slice 5-S8 — "I noticed" learning moment callout + respond action
+export type LearningMomentCallout = z.infer<typeof LearningMomentCalloutSchema>;
+export type LearningMomentAction = z.infer<typeof LearningMomentActionSchema>;
+export type RespondToLearningMomentRequest = z.infer<typeof RespondToLearningMomentRequestSchema>;
 
 // Cleared allergies (Story 3.10 — composer-emitted entry per child/allergen)
 export type ClearedAllergyEntry = z.infer<typeof ClearedAllergyEntrySchema>;
