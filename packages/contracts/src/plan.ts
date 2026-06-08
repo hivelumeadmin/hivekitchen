@@ -273,6 +273,10 @@ export const BriefStatePayloadSchema = z.object({
   learning_moment_callout: LearningMomentCalloutSchema.nullable().default(null),
   // 5-S8 — suppress window after dismiss action. Null means no active suppress.
   learning_moment_suppressed_until: z.string().datetime({ offset: true }).nullable().default(null),
+  // 5-S9 — "Why this?" plan reasoning, cached from the planner at commit time.
+  // Carries forward on non-commit refreshes (swap/variation/pause). Null when
+  // no plan has set it yet. Lives entirely in this JSONB payload — no migration.
+  plan_reasoning: z.string().nullable().default(null),
 });
 
 export const BriefStateRowSchema = z.object({
@@ -681,6 +685,10 @@ export const PlanComposeTreeOutputSchema = z.object({
   variant_proposal: PlanVariantProposalOutputSchema.optional(),
   // Story 3.29 carry-through.
   degraded_reason: z.enum(['CULTURAL_INTERSECTION_EMPTY']).nullable().optional(),
+  // Slice 5-S9 — "Why this?" plan reasoning. The planner emits a short prose
+  // rationale (2-3 sentences) for the week's choices; cached into
+  // brief_state.payload.plan_reasoning at commit time (never LLM-on-scroll).
+  reasoning: z.string().max(600).optional(),
 });
 
 // ---- Repository commit input (what PlansRepository.commit() passes to RPC) -

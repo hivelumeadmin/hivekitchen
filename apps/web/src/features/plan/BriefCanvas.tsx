@@ -122,6 +122,9 @@ export function BriefCanvas() {
   // Story 3.12 — picker / swap-in-progress UI state.
   const [activeSwapDay, setActiveSwapDay] = useState<PlanTileSummary['day'] | null>(null);
   const [swappingItemId, setSwappingItemId] = useState<string | null>(null);
+  // Slice 5-S9 — "Why this?" inline reasoning panel. One panel per canvas
+  // (reasoning is household-level, not tile-specific), local + dismissable.
+  const [showReasoning, setShowReasoning] = useState(false);
   // Story 3.13 — regenerating state. Stays true from POST 202 until the brief's
   // plan_revision increments, indicating the BullMQ job committed a new plan.
   const [isRegenerating, setIsRegenerating] = useState(false);
@@ -154,6 +157,11 @@ export function BriefCanvas() {
   const planStateMessage = payload?.plan_state_message ?? null;
   // Slice 5-S8 — "I noticed" learning-moment callout (null below threshold).
   const learningMomentCallout = payload?.learning_moment_callout ?? null;
+  // Slice 5-S9 — "Why this?" plan reasoning (null when no plan has set it).
+  const planReasoning = payload?.plan_reasoning ?? null;
+  // Reset the panel whenever reasoning changes identity (new plan committed or
+  // reasoning cleared) so a stale showReasoning=true cannot auto-reopen the panel.
+  useEffect(() => { setShowReasoning(false); }, [planReasoning]);
   const childColorMap = useMemo(
     () => buildChildColorMap(clearedAllergies),
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -462,6 +470,7 @@ export function BriefCanvas() {
                     state={tileState}
                     childColorMap={childColorMap}
                     childRatings={summary.child_ratings}
+                    onWhyThis={planReasoning ? () => setShowReasoning(true) : undefined}
                     onSwapIntent={
                       canSwap && !summary.paused && swappingItemId === null
                         ? () => {
@@ -482,6 +491,27 @@ export function BriefCanvas() {
               );
             })}
           </div>
+
+          {/* Slice 5-S9 — "Why this?" reasoning panel. Inline (no modal/drawer);
+              household-level so all tiles share it. Dismissed by ✕ only. */}
+          {showReasoning && planReasoning !== null && (
+            <div className="mt-4 rounded-xl border border-honey-amber-200 bg-honey-amber-50 p-4">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <p className="mb-1 text-xs font-medium text-honey-amber-700">Lumi&rsquo;s thinking</p>
+                  <p className="font-serif text-sm leading-relaxed text-fg">{planReasoning}</p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setShowReasoning(false)}
+                  aria-label="Close reasoning"
+                  className="mt-0.5 shrink-0 text-xs text-honey-amber-500 hover:text-honey-amber-700 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-amber-warm"
+                >
+                  ✕
+                </button>
+              </div>
+            </div>
+          )}
 
           {activeSwapDay !== null && planId !== null && (() => {
             const activeDayView = dayViewsByDay.get(activeSwapDay);

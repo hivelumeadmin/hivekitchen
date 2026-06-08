@@ -43,6 +43,10 @@ export interface PlanTileProps {
   onVariantChoice?: (proposalId: string, choice: 'try_variant' | 'keep_original') => void;
   // Story 4-S4 — keyed by child_id; only children who have rated appear here.
   childRatings?: Record<string, 'loved' | 'ok' | 'not-really'>;
+  // Slice 5-S9 — "Why this?" reveals the household-level plan reasoning panel in
+  // BriefCanvas. Rendered only when provided (parent passes it only when
+  // payload.plan_reasoning is non-null).
+  onWhyThis?: () => void;
 }
 
 const RATING_EMOJIS: Record<'loved' | 'ok' | 'not-really', string> = {
@@ -112,6 +116,7 @@ export function PlanTile({
   variantProposal,
   onVariantChoice,
   childRatings,
+  onWhyThis,
 }: PlanTileProps) {
   const variant = forceVariant ?? deriveVariant(summary.day);
   const tileRef = useRef<HTMLElement>(null);
@@ -207,6 +212,21 @@ export function PlanTile({
         <p className="text-[15px] leading-[1.4] text-fg-muted/60 mb-6 flex-grow">
           Plan pending
         </p>
+      )}
+
+      {/* Slice 5-S9 — "Why this?" ghost button. stopPropagation so it does not
+          also trigger the tile's onSwapIntent click. */}
+      {onWhyThis !== undefined && (
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            onWhyThis();
+          }}
+          className="mb-3 self-start text-xs text-honey-amber-600 underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-amber-warm"
+        >
+          Why this?
+        </button>
       )}
 
       {effectiveState === 'pending-input' && variantProposal !== undefined && (

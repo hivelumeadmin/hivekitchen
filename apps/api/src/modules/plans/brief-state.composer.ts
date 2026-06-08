@@ -258,7 +258,7 @@ export class BriefStateComposer {
     householdId: string,
     weekId: string,
     requestId: string,
-    opts: { userInitiated?: boolean } = {},
+    opts: { userInitiated?: boolean; planReasoning?: string | null } = {},
   ): Promise<void> {
     try {
       const plan = await this.plansRepo.findCurrentByHousehold({
@@ -342,6 +342,13 @@ export class BriefStateComposer {
           // Slice 5-S8 — learning moment callout + carried-forward suppress window.
           learning_moment_callout: learningMomentCallout,
           learning_moment_suppressed_until: suppressedUntil,
+          // Slice 5-S9 — set plan reasoning from commit opts, else carry forward
+          // from the previous payload (swap/variation/pause refreshes never zero it).
+          // null = explicit clear (new commit with no reasoning); undefined = carry forward.
+          plan_reasoning:
+            opts.planReasoning !== undefined
+              ? (opts.planReasoning ?? null)
+              : (previousBrief?.payload?.plan_reasoning ?? null),
         },
         generated_at: new Date().toISOString(),
         plan_revision: plan.revision,

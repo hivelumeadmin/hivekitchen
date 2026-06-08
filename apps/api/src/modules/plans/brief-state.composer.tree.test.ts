@@ -197,6 +197,8 @@ describe('BriefStateComposer.refreshTree — 8-read parallelism + composition', 
         plan_state: null;
         plan_state_set_at: null;
         plan_state_message: null;
+        // Slice 5-S9 — carry-forward source for plan_reasoning.
+        plan_reasoning?: string | null;
       };
     } | null;
   }) {
@@ -249,6 +251,42 @@ describe('BriefStateComposer.refreshTree — 8-read parallelism + composition', 
     await composer.refreshTree(HOUSEHOLD_ID, WEEK_ID, REQUEST_ID);
     expect(mocks.upsert).not.toHaveBeenCalled();
     expect(mocks.findMainAssignmentsByPlanId).not.toHaveBeenCalled();
+  });
+
+  // Slice 5-S9 — "Why this?" plan reasoning carry-forward.
+  it('sets plan_reasoning from opts.planReasoning when provided', async () => {
+    const plan = buildPlan({ id: PLAN_ID, household_id: HOUSEHOLD_ID });
+    const { composer, mocks } = buildDeps({ plan });
+    await composer.refreshTree(HOUSEHOLD_ID, WEEK_ID, REQUEST_ID, {
+      planReasoning: 'Batch-prep pasta chosen for the week.',
+    });
+    const upsertCall = mocks.upsert.mock.calls[0]![0] as { payload: { plan_reasoning: string | null } };
+    expect(upsertCall.payload.plan_reasoning).toBe('Batch-prep pasta chosen for the week.');
+  });
+
+  it('carries forward plan_reasoning from previousBrief when opts has none', async () => {
+    const plan = buildPlan({ id: PLAN_ID, household_id: HOUSEHOLD_ID });
+    const previousBrief = {
+      payload: {
+        tile_summaries: [] as [],
+        plan_state: null,
+        plan_state_set_at: null,
+        plan_state_message: null,
+        plan_reasoning: 'Carried forward reasoning.',
+      },
+    };
+    const { composer, mocks } = buildDeps({ plan, previousBrief });
+    await composer.refreshTree(HOUSEHOLD_ID, WEEK_ID, REQUEST_ID);
+    const upsertCall = mocks.upsert.mock.calls[0]![0] as { payload: { plan_reasoning: string | null } };
+    expect(upsertCall.payload.plan_reasoning).toBe('Carried forward reasoning.');
+  });
+
+  it('sets plan_reasoning to null when opts has none and previousBrief has none', async () => {
+    const plan = buildPlan({ id: PLAN_ID, household_id: HOUSEHOLD_ID });
+    const { composer, mocks } = buildDeps({ plan, previousBrief: null });
+    await composer.refreshTree(HOUSEHOLD_ID, WEEK_ID, REQUEST_ID);
+    const upsertCall = mocks.upsert.mock.calls[0]![0] as { payload: { plan_reasoning: string | null } };
+    expect(upsertCall.payload.plan_reasoning).toBeNull();
   });
 
   it('fires the 4 tree reads in parallel and upserts when a cleared plan exists', async () => {
@@ -537,5 +575,47 @@ describe('BriefStateComposer.refreshTree — 5-S8 learning moment', () => {
     await composer.refreshTree(HOUSEHOLD_ID, WEEK_ID, REQUEST_ID);
 
     expect(calloutFromUpsert(upsert).learning_moment_callout).toBeNull();
+  });
+});
+
+// Slice 5-S9 (P4) — AC3 coverage: respondToLearningMoment must preserve plan_reasoning.
+describe('BriefStateComposer.respondToLearningMoment — preserves plan_reasoning (5-S9)', () => {
+  it('carries plan_reasoning forward through the payload spread on confirm', async () => {
+    const upsert = vi.fn().mockResolvedValue(undefined);
+    const currentBrief = {
+      household_id: HOUSEHOLD_ID,
+      plan_id: PLAN_ID,
+      moment_headline: null,
+      lumi_note: null,
+      memory_prose: null,
+      payload: {
+        tile_summaries: [],
+        plan_state: null,
+        plan_state_set_at: null,
+        plan_state_message: null,
+        learning_moment_callout: { prose: 'I noticed something.', node_ids: [], surfaced_at: NOW },
+        learning_moment_suppressed_until: null,
+        plan_reasoning: 'Pasta for batch-prep this week.',
+      },
+      generated_at: NOW,
+      plan_revision: 1,
+    };
+
+    const composer = new BriefStateComposer({
+      plansRepository: {} as unknown as PlansRepository,
+      briefStateRepository: {
+        upsert,
+        findByHousehold: vi.fn().mockResolvedValue(currentBrief),
+      } as unknown as BriefStateRepository,
+      childrenRepository: {} as unknown as ChildrenRepository,
+      auditService: { write: vi.fn().mockResolvedValue(undefined) } as unknown as AuditService,
+      logger: buildLogger(),
+    });
+
+    await composer.respondToLearningMoment(HOUSEHOLD_ID, 'confirm', REQUEST_ID);
+
+    const upsertPayload = (upsert.mock.calls[0]![0] as { payload: { plan_reasoning: string | null } }).payload;
+    expect(upsertPayload.plan_reasoning).toBe('Pasta for batch-prep this week.');
+    expect(upsertPayload.learning_moment_callout).toBeNull();
   });
 });

@@ -316,7 +316,7 @@ export class KitchenMapRepository extends BaseRepository {
         .from('household_recipe_usage')
         .select(USAGE_JOIN_COLUMNS)
         .eq('household_id', householdId),
-      this.client.from('child_allergens').select(CHILD_ALLERGEN_COLUMNS).eq('household_id', householdId),
+      this.client.from('household_allergens').select(CHILD_ALLERGEN_COLUMNS).eq('household_id', householdId).not('child_id', 'is', null),
       this.client.from('food_preferences').select(FOOD_PREFERENCE_COLUMNS).eq('household_id', householdId),
       this.client.from('dietary_preferences').select(DIETARY_COLUMNS).eq('household_id', householdId),
       this.client.from('household_rules').select(HOUSEHOLD_RULE_COLUMNS).eq('household_id', householdId),
@@ -540,7 +540,7 @@ export class KitchenMapRepository extends BaseRepository {
             household_id: householdId,
             child_id: row.child_id,
           },
-          'kitchen-map child_allergens decryption failed — row skipped',
+          'kitchen-map household_allergens decryption failed — row skipped',
         );
       }
     }

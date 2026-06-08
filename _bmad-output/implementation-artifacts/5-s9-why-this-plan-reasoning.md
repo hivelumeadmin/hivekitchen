@@ -1,7 +1,7 @@
 # 5-S9 — Why this? Plan Reasoning
 
 > **Folds:** story 5.13, PRD FR64  
-> **Status:** ready-for-dev  
+> **Status:** done  
 > **Epic:** 5 — Ambient Intelligence Layer
 
 ---
@@ -434,11 +434,82 @@ When reading `brief_state.payload.plan_reasoning` on the frontend, always use `p
 
 ## Done Definition
 
-- [ ] `pnpm --filter @hivekitchen/contracts test` passes with new `plan_reasoning` + `reasoning` tests  
-- [ ] `pnpm --filter @hivekitchen/api test` passes with new composer carry-forward tests  
-- [ ] `pnpm --filter @hivekitchen/web test` passes with new PlanTile + BriefCanvas reasoning panel tests  
-- [ ] Typecheck counts do not increase from baseline  
-- [ ] Manual smoke: generate a plan → `brief_state.payload.plan_reasoning` is non-null in DB  
-- [ ] Manual smoke: "Why this?" button visible on PlanTile → click → inline amber panel appears → ✕ dismisses  
-- [ ] Manual smoke: swap a Main → `refreshTree()` fires → `plan_reasoning` is preserved (carry-forward)  
-- [ ] Manual smoke: household with no plan → no "Why this?" button (planReasoning null → onWhyThis undefined)
+- [x] `pnpm --filter @hivekitchen/contracts test` passes with new `plan_reasoning` + `reasoning` tests — 727p/7f (+5; 7f = baseline)
+- [x] `pnpm --filter @hivekitchen/api test` passes with new composer carry-forward tests — 1766p/20f/13skip (+3; 20f = baseline)
+- [x] `pnpm --filter @hivekitchen/web test` passes with new PlanTile + BriefCanvas reasoning panel tests — 551p/2f (+6; 2f = baseline 5-S3 debt)
+- [x] Typecheck counts do not increase from baseline — api 12 · web 7 · contracts 1 · types 1 (unchanged)
+- [ ] Manual smoke: generate a plan → `brief_state.payload.plan_reasoning` is non-null in DB *(USER-SIDE — live stack)*
+- [ ] Manual smoke: "Why this?" button visible on PlanTile → click → inline amber panel appears → ✕ dismisses *(USER-SIDE — covered by web tests; live confirm)*
+- [ ] Manual smoke: swap a Main → `refreshTree()` fires → `plan_reasoning` is preserved (carry-forward) *(USER-SIDE — live stack)*
+- [ ] Manual smoke: household with no plan → no "Why this?" button (planReasoning null → onWhyThis undefined) *(USER-SIDE — covered by web test; live confirm)*
+
+---
+
+## Dev Agent Record
+
+### Status
+review — implemented 2026-06-08. No DB migration (lives in existing `brief_state.payload` JSONB). No new deps.
+
+### Implementation Plan (as executed)
+Built bottom-up, verifying each layer:
+1. **Contracts** — `PlanComposeTreeOutputSchema.reasoning?` (≤600) + `BriefStatePayloadSchema.plan_reasoning` (nullable, default null). Verified plan.test 12p (+5).
+2. **API** — `refreshTree()` opts `planReasoning?` with carry-forward; `PlansService.commit()` 4th param; `plan-generation.job` passes `composeOutput.reasoning`; planner prompt `reasoning` instruction. Verified composer/tools/prompt 33p.
+3. **API tool boundary (added reconciliation #1)** — threaded `reasoning` through `plan.compose`.
+4. **Web** — `PlanTile.onWhyThis?` ghost button (stopPropagation); `BriefCanvas` reads `plan_reasoning`, wires `onWhyThis`, renders inline amber panel. Verified PlanTile+BriefCanvas 65p (+6).
+
+### Reconciliation decisions (deviations from the slice spec, with rationale)
+1. **`reasoning` threaded across the `plan.compose` tool boundary (NOT in the story).** The story assumed `composeOutput.reasoning` would be populated from Task 1a + 2d alone. But `plan.compose` parses its args with `PlanComposeTreeInputSchema` — which has **no** `reasoning` field — so the planner's reasoning was stripped *before* the orchestrator's output parse, leaving `composeOutput.reasoning` always `undefined` (feature inert). Fix: in `plan.tools.ts` `fn`, recover `reasoning` from the raw tool args and merge it into the output (defensively `.slice(0, 600)` so a long rationale can never fail the whole `plan.compose` call). This is the missing link that makes AC1→AC2 actually work end-to-end. `PlanComposeTreeInputSchema` left unchanged (reasoning is planner *metadata*, not structural plan input).
+2. **Design tokens are `honey-amber-*` / `fg`, not `honey-*` / `charcoal-*`.** The story's snippets used `text-honey-600`, `bg-honey-50`, `text-charcoal-700` — none of those resolve. The design system exposes `honey-amber-{50..800}` (see `AllergyUncertaintyBanner`, the existing amber card) and uses `fg` for body text (no `charcoal` token). Used `text-honey-amber-600` (button), `bg-honey-amber-50 / border-honey-amber-200 / text-honey-amber-700 / text-honey-amber-500` (panel), `text-fg` (body).
+3. **`PlanTile.test.tsx` already existed** (story said "file may be new") — appended the 3 Why-this tests to it. Added a `stopPropagation` assertion (the story's plain snippet would let a click bubble to the tile's `onSwapIntent`; the impl stops it, so the test asserts `onSwapIntent` is NOT called).
+4. **Fixture top-up.** `plan_reasoning` is a required (defaulted) field on the output type, so two pre-existing payload fixtures (`apps/api/test/factories/index.ts` `buildBriefState`, web `BriefCanvas.test.tsx` `makeBrief`) needed `plan_reasoning: null` added to keep typecheck at baseline.
+
+### Completion Notes
+- All 8 ACs satisfied. AC1/AC2 verified end-to-end via the tool-boundary fix (reconciliation #1). AC3 carry-forward + AC8 no-migration verified by the composer unit tests. AC4–AC6 verified by PlanTile/BriefCanvas tests; AC7 by contract tests.
+- The `commit()` 4th param is optional → all existing 3-arg callers (swap/variation/pause paths) stay valid; only `plan-generation.job` passes reasoning. Non-commit refreshes carry the value forward (never zeroed).
+- Accepted limitation (per story): on a guardrail regen, the *initial* compose output's reasoning is cached (the job has no channel to update it post-regen); contextually relevant for typical weeks.
+
+### Test Results (vs. current HEAD baseline = commit c783157)
+| Suite | Baseline | After 5-S9 | Δ | Failing |
+|-------|----------|-----------|---|---------|
+| Contracts | 722p / 7f | 727p / 7f | +5 | 7 (pre-existing) |
+| API | 1763p / 20f / 13skip | 1766p / 20f / 13skip | +3 | 20 (pre-existing) |
+| Web | 545p / 2f | 551p / 2f | +6 | 2 (pre-existing 5-S3 debt) |
+
+**Typecheck:** api 12 · web 7 · contracts 1 · types 1 — all unchanged from baseline; zero new errors in any touched file.
+
+### File List
+**Modified:**
+- `packages/contracts/src/plan.ts` (+`reasoning?` on `PlanComposeTreeOutputSchema`; +`plan_reasoning` on `BriefStatePayloadSchema`)
+- `packages/contracts/src/plan.test.ts` (+5 tests)
+- `apps/api/src/modules/plans/brief-state.composer.ts` (refreshTree opts `planReasoning?` + carry-forward write)
+- `apps/api/src/modules/plans/brief-state.composer.tree.test.ts` (+3 carry-forward tests; widened `previousBrief` type)
+- `apps/api/src/modules/plans/plans.service.ts` (commit 4th param → refreshTree opts)
+- `apps/api/src/jobs/plan-generation.job.ts` (pass `composeOutput.reasoning`)
+- `apps/api/src/agents/prompts/planner.prompt.ts` (reasoning field instruction)
+- `apps/api/src/agents/tools/plan.tools.ts` (thread reasoning across the tool boundary — reconciliation #1)
+- `apps/api/test/factories/index.ts` (`plan_reasoning: null` in `buildBriefState`)
+- `apps/web/src/features/plan/PlanTile.tsx` (`onWhyThis?` prop + ghost button)
+- `apps/web/src/features/plan/PlanTile.test.tsx` (+3 tests)
+- `apps/web/src/features/plan/BriefCanvas.tsx` (read `plan_reasoning`, wire `onWhyThis`, inline amber panel)
+- `apps/web/src/features/plan/BriefCanvas.test.tsx` (+3 tests; `plan_reasoning: null` in `makeBrief`)
+- `_bmad-output/implementation-artifacts/sprint-status.yaml` (status → in-progress → review)
+
+**No new files. No migration. No new dependencies.**
+
+### Change Log
+- 2026-06-08 — Implemented 5-S9 "Why this?" plan reasoning end-to-end (contracts + composer carry-forward + commit/job wiring + planner prompt + plan.compose tool-boundary threading + PlanTile button + BriefCanvas inline panel). All 8 ACs met; suites green at baselines (+5 contracts / +3 API / +6 web); zero new typecheck errors. Status → review.
+
+---
+
+### Review Findings
+
+- [x] [Review][Patch] Prompt says ≤300 chars but schema enforces max(600) — align prompt instruction to match schema cap [`apps/api/src/agents/prompts/planner.prompt.ts:130`]
+- [x] [Review][Patch] AC2 violation: absent reasoning on commit carries forward previous plan's reasoning instead of null — use `null` as explicit clear sentinel (pass `composeOutput.reasoning ?? null` in job; update composer to treat `null` as override vs `undefined` as carry-forward) [`apps/api/src/jobs/plan-generation.job.ts:443`, `apps/api/src/modules/plans/brief-state.composer.ts:345`]
+- [x] [Review][Patch] `showReasoning` never resets when `planReasoning` changes — panel reopens automatically when a new plan with reasoning is committed; add `useEffect(() => { setShowReasoning(false); }, [planReasoning])` [`apps/web/src/features/plan/BriefCanvas.tsx:125`]
+- [x] [Review][Patch] No test asserting `respondToLearningMoment` preserves `plan_reasoning` (AC3 path through 5-S8 `...current.payload` spread) — add a targeted unit test [`apps/api/src/modules/plans/brief-state.composer.ts:115-128`]
+- [x] [Review][Defer] Stale reasoning shown when guardrail regen fires [`apps/api/src/jobs/plan-generation.job.ts:436`] — deferred, documented accepted limitation in story spec (initial compose reasoning used even if regen changes the plan; contextually relevant for typical weeks)
+- [x] [Review][Defer] Non-string `reasoning` from LLM silently dropped with no log [`apps/api/src/agents/tools/plan.tools.ts:33`] — deferred, LLM non-string emission is low probability; add logger.warn in a future hardening pass
+- [x] [Review][Defer] Stale `plan_reasoning` could persist across week rollover via non-plan `refreshTree` calls — deferred, AC3 by-design carry-forward; requires a future TTL or week-change reset strategy
+- [x] [Review][Defer] `rawReasoning.slice(0, 600)` may truncate at a UTF-16 surrogate boundary on emoji-heavy input [`apps/api/src/agents/tools/plan.tools.ts:37`] — deferred, low probability in prose reasoning text
+- [x] [Review][Defer] Five identical "Why this?" button labels — no per-tile disambiguation for screen readers [`apps/web/src/features/plan/PlanTile.tsx:220`] — deferred, household-level reasoning is spec intent; add `aria-label="Why this plan?"` with day context if accessibility audit flags it
+- [x] [Review][Defer] `BriefStatePayloadSchema.plan_reasoning` has no `max()` guard unlike `PlanComposeTreeOutputSchema.reasoning` [`packages/contracts/src/plan.ts:276`] — deferred, defense-in-depth; add when field is written from non-planner paths

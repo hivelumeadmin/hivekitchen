@@ -65,6 +65,7 @@ function makeBrief(
       plan_state_message: null,
       learning_moment_callout: null,
       learning_moment_suppressed_until: null,
+      plan_reasoning: null,
       ...payloadOverrides,
     },
     generated_at: '2026-05-02T00:00:00.000Z',
@@ -578,5 +579,54 @@ describe('BriefCanvas — Story 3.29 (degraded cultural-intersection note)', () 
     });
     const sovereigntyCall = calls.find((c) => c.path.includes('/sovereignty-mode'));
     expect(sovereigntyCall?.body).toEqual({ sovereignty_mode: 'alternating' });
+  });
+});
+
+// Slice 5-S9 — "Why this?" plan reasoning panel.
+describe('BriefCanvas — Why this? reasoning panel (5-S9)', () => {
+  it('does not render "Why this?" when plan_reasoning is null', async () => {
+    const { hkFetch } = await import('@/lib/fetch.js');
+    vi.mocked(hkFetch).mockResolvedValue({ brief: makeBrief() } satisfies BriefResponse);
+
+    renderWithClient(<BriefCanvas />);
+
+    await waitFor(() => expect(screen.getByLabelText('Monday')).toBeDefined());
+    expect(screen.queryByRole('button', { name: /why this/i })).toBeNull();
+  });
+
+  it('passes onWhyThis to tiles when plan_reasoning is non-null', async () => {
+    const { hkFetch } = await import('@/lib/fetch.js');
+    vi.mocked(hkFetch).mockResolvedValue({
+      brief: makeBrief({ payload: { plan_reasoning: 'Pasta Mon+Tue for batch-prep.' } }),
+    } satisfies BriefResponse);
+
+    renderWithClient(<BriefCanvas />);
+
+    await waitFor(() =>
+      expect(screen.getAllByRole('button', { name: /why this/i }).length).toBeGreaterThan(0),
+    );
+  });
+
+  it('shows the reasoning panel on "Why this?" click and dismisses it on ✕', async () => {
+    const { hkFetch } = await import('@/lib/fetch.js');
+    vi.mocked(hkFetch).mockResolvedValue({
+      brief: makeBrief({ payload: { plan_reasoning: 'Pasta Mon+Tue for batch-prep.' } }),
+    } satisfies BriefResponse);
+
+    renderWithClient(<BriefCanvas />);
+
+    await waitFor(() =>
+      expect(screen.getAllByRole('button', { name: /why this/i }).length).toBeGreaterThan(0),
+    );
+
+    // Panel hidden until the parent opts to see it.
+    expect(screen.queryByText(/Lumi.s thinking/)).toBeNull();
+
+    fireEvent.click(screen.getAllByRole('button', { name: /why this/i })[0]!);
+    expect(screen.getByText(/Lumi.s thinking/)).toBeDefined();
+    expect(screen.getByText('Pasta Mon+Tue for batch-prep.')).toBeDefined();
+
+    fireEvent.click(screen.getByRole('button', { name: /close reasoning/i }));
+    expect(screen.queryByText(/Lumi.s thinking/)).toBeNull();
   });
 });

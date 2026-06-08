@@ -153,6 +153,11 @@ export class PlansService {
     input: CommitPlanTreeInput,
     requestId: string,
     regenerate: (rejections: GuardrailResult[]) => Promise<CommitPlanTreeInput>,
+    // Slice 5-S9 — the planner's "Why this?" rationale, cached into
+    // brief_state.payload.plan_reasoning on the commit refresh. Optional so the
+    // existing 3-arg callers stay valid; only plan-generation.job passes it.
+    // null = new plan with no reasoning (clears any prior); undefined = carry forward.
+    planReasoning?: string | null,
   ): Promise<string> {
     // Enforce plan_id re-use: if a plan already exists for this household+week,
     // reuse its id so commit_plan's ON CONFLICT (id) upsert path is taken and
@@ -211,6 +216,7 @@ export class PlansService {
           current.household_id,
           weekId,
           requestId,
+          { planReasoning },
         );
 
         try {

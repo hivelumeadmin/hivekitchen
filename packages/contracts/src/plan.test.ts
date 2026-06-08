@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   BriefStatePayloadSchema,
   LearningMomentCalloutSchema,
+  PlanComposeTreeOutputSchema,
   RespondToLearningMomentRequestSchema,
 } from './plan.js';
 
@@ -71,5 +72,53 @@ describe('BriefStatePayloadSchema — 5-S8 fields', () => {
     });
     expect(parsed.learning_moment_callout?.prose).toBe('noticed');
     expect(parsed.learning_moment_suppressed_until).toBe(NOW);
+  });
+});
+
+// Slice 5-S9 — "Why this?" plan reasoning.
+
+describe('BriefStatePayloadSchema — 5-S9 plan_reasoning', () => {
+  it('defaults plan_reasoning to null when absent', () => {
+    expect(BriefStatePayloadSchema.parse({}).plan_reasoning).toBeNull();
+  });
+
+  it('round-trips a non-null plan_reasoning', () => {
+    const parsed = BriefStatePayloadSchema.parse({
+      plan_reasoning: 'Lumi chose pasta for continuity.',
+    });
+    expect(parsed.plan_reasoning).toBe('Lumi chose pasta for continuity.');
+  });
+});
+
+describe('PlanComposeTreeOutputSchema — 5-S9 reasoning', () => {
+  const RECIPE_ID = '33333333-3333-4333-8333-333333333333';
+  const minimalValidPlanOutput = {
+    plan_id: '44444444-4444-4444-8444-444444444444',
+    household_id: '55555555-5555-4555-8555-555555555555',
+    week_of: '2026-06-09',
+    main_assignments: [{ sequence: 1, recipe_id: RECIPE_ID }],
+    days: [{ day: 'monday' as const, slots: [{ slot_kind: 'main' as const, main_assignment_sequence: 1 }] }],
+    prompt_version: 'v1',
+  };
+
+  it('accepts optional reasoning within 600 chars', () => {
+    const out = PlanComposeTreeOutputSchema.parse({
+      ...minimalValidPlanOutput,
+      reasoning: 'Pasta Mon+Tue for batch-prep; peanut-free swap for Isla.',
+    });
+    expect(out.reasoning).toBeDefined();
+  });
+
+  it('parses without reasoning (optional)', () => {
+    const out = PlanComposeTreeOutputSchema.parse(minimalValidPlanOutput);
+    expect(out.reasoning).toBeUndefined();
+  });
+
+  it('rejects reasoning longer than 600 chars', () => {
+    const result = PlanComposeTreeOutputSchema.safeParse({
+      ...minimalValidPlanOutput,
+      reasoning: 'x'.repeat(601),
+    });
+    expect(result.success).toBe(false);
   });
 });

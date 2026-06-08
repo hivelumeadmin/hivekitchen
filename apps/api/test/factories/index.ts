@@ -95,6 +95,7 @@ export function buildBriefState(overrides: Partial<BriefStateRow> = {}): BriefSt
       plan_state_message: null,
       learning_moment_callout: null,
       learning_moment_suppressed_until: null,
+      plan_reasoning: null,
     },
     generated_at: NOW_ISO,
     plan_revision: 1,

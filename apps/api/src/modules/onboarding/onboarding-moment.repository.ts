@@ -133,9 +133,10 @@ export class OnboardingMomentRepository {
         .select('id', { count: 'exact', head: true })
         .eq('household_id', householdId),
       this.client
-        .from('child_allergens')
+        .from('household_allergens')
         .select('id', { count: 'exact', head: true })
-        .eq('household_id', householdId),
+        .eq('household_id', householdId)
+        .not('child_id', 'is', null),
       // Slice 2.6-s1 — favorite_lunches table dropped; count derives from
       // household_recipe_usage rows the parent declared (catalog_provenance
       // ='declared'). The completion gate semantics (FR124 ≥10) are
@@ -159,7 +160,7 @@ export class OnboardingMomentRepository {
     }
     if (allergenRes.error !== null && allergenRes.error !== undefined) {
       throw new Error(
-        `onboarding_moment_state.countRequiredSetSources(child_allergens): ${allergenRes.error.message}`,
+        `onboarding_moment_state.countRequiredSetSources(household_allergens): ${allergenRes.error.message}`,
       );
     }
     if (favoriteRes.error !== null && favoriteRes.error !== undefined) {
