@@ -36,6 +36,8 @@ export interface UserProfileOverrides {
   is_onboarded?: boolean;
   // 2-S26: mirrors LoginResponse — mutually exclusive with is_onboarded.
   is_onboarding_in_progress?: boolean;
+  // 5-S13: caption-only accessibility preference.
+  caption_only_mode?: boolean;
 }
 
 export function userProfile(overrides: UserProfileOverrides = {}) {
@@ -65,6 +67,8 @@ export function userProfile(overrides: UserProfileOverrides = {}) {
     is_onboarded: isOnboarded,
     // 2-S26: default false. Tests that exercise the resume surface override.
     is_onboarding_in_progress: overrides.is_onboarding_in_progress ?? false,
+    // 5-S13: default false (matches DB DEFAULT false).
+    caption_only_mode: overrides.caption_only_mode ?? false,
     ...overrides,
   };
 }

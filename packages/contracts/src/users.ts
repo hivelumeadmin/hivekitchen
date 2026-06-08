@@ -70,6 +70,17 @@ export const UserProfileSchema = z.object({
   // 2-S26 — mirrors LoginResponse.is_onboarding_in_progress so route-guards
   // and the /onboarding page can detect resumability after a /me refresh.
   is_onboarding_in_progress: z.boolean(),
+  // Slice 5-S13 — "Text only" accessibility preference. When true, the ambient
+  // Lumi voice hook skips TTS playback (captions still stream). Mirrors
+  // users.caption_only_mode (DB default false).
+  caption_only_mode: z.boolean(),
+});
+
+// ---- PATCH /v1/users/me/accessibility request body ------------------------
+// Slice 5-S13 — single-field update for the caption-only accessibility pref.
+// A missing field is rejected (Zod requires it), so an empty body returns 400.
+export const UpdateAccessibilityRequestSchema = z.object({
+  caption_only_mode: z.boolean(),
 });
 
 // ---- PATCH /v1/users/me request body --------------------------------------

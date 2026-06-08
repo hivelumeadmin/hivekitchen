@@ -5,12 +5,14 @@ import {
   UpdateProfileRequestSchema,
   UpdateNotificationPrefsRequestSchema,
   UpdateCulturalPreferenceRequestSchema,
+  UpdateAccessibilityRequestSchema,
   UserProfileSchema,
 } from '@hivekitchen/contracts';
 import type {
   UpdateProfileRequest,
   UpdateNotificationPrefsRequest,
   UpdateCulturalPreferenceRequest,
+  UpdateAccessibilityRequest,
   PasswordResetRequest,
 } from '@hivekitchen/types';
 import { UserRepository } from './user.repository.js';
@@ -103,6 +105,32 @@ const userRoutesPlugin: FastifyPluginAsync = async (fastify) => {
         household_id: request.user.household_id,
         request_id: request.id,
         metadata: { fields_changed: fieldsChanged },
+      };
+      return profile;
+    },
+  );
+
+  fastify.patch(
+    '/v1/users/me/accessibility',
+    {
+      schema: {
+        body: UpdateAccessibilityRequestSchema,
+        response: { 200: UserProfileSchema },
+      },
+    },
+    async (request) => {
+      const body = request.body as UpdateAccessibilityRequest;
+      const profile = await service.updateMyAccessibility(
+        request.user.id,
+        request.user.household_id,
+        body,
+      );
+      request.auditContext = {
+        event_type: 'account.updated',
+        user_id: request.user.id,
+        household_id: request.user.household_id,
+        request_id: request.id,
+        metadata: { fields_changed: ['caption_only_mode'] },
       };
       return profile;
     },

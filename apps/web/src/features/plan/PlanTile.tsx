@@ -8,6 +8,7 @@ export type PlanTileState =
   | 'decided'
   | 'pending-input'
   | 'swap-in-progress'
+  | 'proposal-pending'   // Slice 5-S12: waiting for Lumi to resolve a swap proposal
   | 'locked'
   | 'mutability-frozen'
   | 'paused';   // Story 3.12: sick-day pause
@@ -126,7 +127,10 @@ export function PlanTile({
   const isFrozen = state === 'mutability-frozen';
   const isLocked = state === 'locked';
   const isPaused = state === 'paused';
-  const isInteractive = !isPast && !isFrozen && !isPaused && state !== 'swap-in-progress';
+  const isInteractive =
+    !isPast && !isFrozen && !isPaused
+    && state !== 'swap-in-progress'
+    && state !== 'proposal-pending';
   const hasMorningTint = variant === 'today' && new Date().getHours() < 13;
 
   const dishLine = deriveDishLine(summary);
@@ -215,8 +219,12 @@ export function PlanTile({
       )}
 
       {/* Slice 5-S9 — "Why this?" ghost button. stopPropagation so it does not
-          also trigger the tile's onSwapIntent click. */}
-      {onWhyThis !== undefined && (
+          also trigger the tile's onSwapIntent click. Hidden while a swap is
+          in flight (5-S12 AC8: interactive affordances disabled in the
+          proposal-pending / swap-in-progress states). */}
+      {onWhyThis !== undefined &&
+        state !== 'proposal-pending' &&
+        state !== 'swap-in-progress' && (
         <button
           type="button"
           onClick={(e) => {
@@ -357,6 +365,16 @@ export function PlanTile({
         >
           <span className="h-4 w-4 rounded-full border-2 border-border border-t-amber-warm animate-spin" />
         </span>
+      )}
+
+      {/* Slice 5-S12 — sacred-plum pulse: Lumi is finding a swap. The pulse is
+          suppressed for reduced-motion users (static dot) via the motion-reduce
+          variant, which compiles to @media (prefers-reduced-motion: reduce). */}
+      {state === 'proposal-pending' && (
+        <span
+          aria-label="Lumi is finding a swap"
+          className="absolute top-3 end-3 inline-block h-1.5 w-1.5 rounded-full bg-sacred-500 [animation:hk-sacred-plum-pulse_1.6s_ease-in-out_infinite] motion-reduce:[animation:none]"
+        />
       )}
     </article>
   );

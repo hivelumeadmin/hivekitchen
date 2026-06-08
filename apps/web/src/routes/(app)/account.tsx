@@ -73,6 +73,11 @@ export default function AccountPage() {
   const [culturalSaving, setCulturalSaving] = useState(false);
   const [culturalError, setCulturalError] = useState<string | null>(null);
 
+  // Slice 5-S13 — caption-only (Text only) accessibility preference.
+  const [captionOnlyMode, setCaptionOnlyModeLocal] = useState(false);
+  const [captionOnlySaving, setCaptionOnlySaving] = useState(false);
+  const [captionOnlyError, setCaptionOnlyError] = useState<string | null>(null);
+
   const [downloading, setDownloading] = useState<'json' | 'pdf' | null>(null);
   const [downloadError, setDownloadError] = useState<string | null>(null);
 
@@ -106,6 +111,10 @@ export default function AccountPage() {
         // the canonical value loaded here.
         useLumiStore.getState().setProactiveNudges(result.notification_prefs.proactive_lumi_nudges);
         setCulturalLanguage(result.cultural_language);
+        // Slice 5-S13 — hydrate the local toggle + the lumi store flag the
+        // voice hook reads (same pattern as proactiveNudges above).
+        setCaptionOnlyModeLocal(result.caption_only_mode);
+        useLumiStore.getState().setCaptionOnlyMode(result.caption_only_mode);
         setAcknowledgmentState(
           result.parental_notice_acknowledged_at,
           result.parental_notice_acknowledged_version,
@@ -228,6 +237,33 @@ export default function AccountPage() {
       }
     } finally {
       setCulturalSaving(false);
+    }
+  }
+
+  // Slice 5-S13 — toggle the caption-only accessibility preference. Optimistic
+  // UI: flip the local + store state immediately, reconcile from the response,
+  // revert on error (mirrors handleCulturalLanguageChange / notification toggles).
+  async function handleAccessibilityToggle(checked: boolean) {
+    if (!profile) return;
+    const previous = captionOnlyMode;
+    setCaptionOnlyError(null);
+    setCaptionOnlySaving(true);
+    setCaptionOnlyModeLocal(checked);
+    useLumiStore.getState().setCaptionOnlyMode(checked);
+    try {
+      const updated = await hkFetch<UserProfile>('/v1/users/me/accessibility', {
+        method: 'PATCH',
+        body: { caption_only_mode: checked },
+      });
+      setProfile(updated);
+      setCaptionOnlyModeLocal(updated.caption_only_mode);
+      useLumiStore.getState().setCaptionOnlyMode(updated.caption_only_mode);
+    } catch {
+      setCaptionOnlyModeLocal(previous);
+      useLumiStore.getState().setCaptionOnlyMode(previous);
+      setCaptionOnlyError('Could not update accessibility setting. Please try again.');
+    } finally {
+      setCaptionOnlySaving(false);
     }
   }
 
@@ -484,6 +520,28 @@ export default function AccountPage() {
           </label>
           {notifError && (
             <p role="alert" className="text-sm text-safety-red">{notifError}</p>
+          )}
+        </section>
+
+        <section className="space-y-3 border-t border-border pt-6">
+          <h2 className="font-serif text-xl text-fg">Accessibility</h2>
+          <p className="text-sm text-fg-muted">
+            Captions stream normally — Lumi&apos;s voice reply won&apos;t auto-play.
+          </p>
+          <label className="flex items-center justify-between gap-3 py-1">
+            <span className="text-sm">Text only — captions without audio</span>
+            <input
+              type="checkbox"
+              role="switch"
+              aria-label="Text only — captions without audio"
+              checked={captionOnlyMode}
+              onChange={(e) => void handleAccessibilityToggle(e.target.checked)}
+              disabled={captionOnlySaving}
+              className="h-4 w-4"
+            />
+          </label>
+          {captionOnlyError && (
+            <p role="alert" className="text-sm text-safety-red">{captionOnlyError}</p>
           )}
         </section>
 

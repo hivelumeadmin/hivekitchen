@@ -18,6 +18,7 @@ import type { PlanAdjustmentService } from '../modules/plans/plan-adjustment.ser
 import type { PlanDayContextService } from '../modules/plans/plan-day-context.service.js';
 import type { LunchLinkSessionRepository } from '../modules/plans/lunch-link-session.repository.js';
 import type { VariantProposalService } from '../modules/plans/variant-proposal.service.js';
+import type { ThreadRepository } from '../modules/threads/thread.repository.js';
 import type { DomainOrchestrator } from '../agents/orchestrator.js';
 
 interface BullMQFacade {
@@ -46,6 +47,7 @@ declare module 'fastify' {
     planDayContextService: PlanDayContextService;
     lunchLinkSessionRepository: LunchLinkSessionRepository;
     variantProposalService: VariantProposalService;
+    threadRepository: ThreadRepository;
     orchestrator: DomainOrchestrator;
   }
 

@@ -19,6 +19,7 @@ import { LunchLinkSessionRepository } from './lunch-link-session.repository.js';
 import { MemoryRepository } from '../memory/memory.repository.js';
 import { VariantProposalRepository } from './variant-proposal.repository.js';
 import { VariantProposalService } from './variant-proposal.service.js';
+import { ThreadRepository } from '../threads/thread.repository.js';
 
 const plansHookPlugin: FastifyPluginAsync = async (fastify) => {
   if (!fastify.supabase) {
@@ -166,6 +167,16 @@ const plansHookPlugin: FastifyPluginAsync = async (fastify) => {
     auditService: fastify.auditService,
     logger: fastify.log,
   });
+
+  // Slice 5-S12 — the conversational swap-proposal route appends a
+  // TurnBodyProposal turn to the household's family thread. Decorated here so
+  // the route resolves it via fastify.threadRepository.
+  if (fastify.hasDecorator('threadRepository')) {
+    throw new Error(
+      'threadRepository already decorated — check plugin registration order',
+    );
+  }
+  fastify.decorate('threadRepository', new ThreadRepository(fastify.supabase));
 
   fastify.decorate('plansService', plansService);
   fastify.decorate('briefStateComposer', briefStateComposer);

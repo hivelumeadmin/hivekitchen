@@ -285,6 +285,59 @@ describe('useLumiVoiceSession', () => {
     expect(turnPosts).toHaveLength(0);
   });
 
+  // Drives a full reply (response.start → MP3 chunk → response.end) on an open
+  // session and returns the play spy so callers can assert playback behaviour.
+  async function driveReply(
+    result: { current: ReturnType<typeof useLumiVoiceSession> },
+  ) {
+    await startSessionAndFlushToWsCreation(result);
+    await openWs();
+    const ws = wsInstances[0]!;
+    await act(async () => {
+      ws._emit('message', { data: JSON.stringify({ type: 'response.start', seq: 7 }) });
+      ws._emit('message', { data: new Uint8Array([1, 2, 3]).buffer });
+      ws._emit('message', { data: JSON.stringify({ type: 'response.end', seq: 7, text: 'Got it.' }) });
+      await flush(3);
+    });
+  }
+
+  it('caption-only mode: response.end fires onLumiReply but does NOT play audio (5-S13)', async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue(
+      fakeJsonResponse(makeSessionResponse()),
+    ) as unknown as typeof fetch;
+    useLumiStore.setState({ captionOnlyMode: true });
+
+    const onLumiReply = vi.fn();
+    const playSpy = window.HTMLMediaElement.prototype.play as unknown as ReturnType<typeof vi.fn>;
+    const { result } = renderHook(() =>
+      useLumiVoiceSession({ onTranscript: vi.fn(), onLumiReply, onError: vi.fn() }),
+    );
+
+    await driveReply(result);
+
+    // Captions always fire; the MP3 buffer is discarded unplayed.
+    expect(onLumiReply).toHaveBeenCalledWith('Got it.');
+    expect(playSpy).not.toHaveBeenCalled();
+  });
+
+  it('default mode: response.end plays the buffered audio (5-S13 no-regression)', async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue(
+      fakeJsonResponse(makeSessionResponse()),
+    ) as unknown as typeof fetch;
+    // captionOnlyMode defaults to false after reset() in beforeEach.
+
+    const onLumiReply = vi.fn();
+    const playSpy = window.HTMLMediaElement.prototype.play as unknown as ReturnType<typeof vi.fn>;
+    const { result } = renderHook(() =>
+      useLumiVoiceSession({ onTranscript: vi.fn(), onLumiReply, onError: vi.fn() }),
+    );
+
+    await driveReply(result);
+
+    expect(onLumiReply).toHaveBeenCalledWith('Got it.');
+    expect(playSpy).toHaveBeenCalledTimes(1);
+  });
+
   it('a non-fatal error frame surfaces a notice but keeps the session active', async () => {
     globalThis.fetch = vi.fn().mockResolvedValue(
       fakeJsonResponse(makeSessionResponse()),

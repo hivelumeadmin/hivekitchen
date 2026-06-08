@@ -61,6 +61,7 @@ function defaultUserRow(overrides: Partial<UserProfileRow> = {}): UserProfileRow
     cultural_language: 'default',
     parental_notice_acknowledged_at: null,
     parental_notice_acknowledged_version: null,
+    caption_only_mode: false,
     ...overrides,
   };
 }
@@ -618,6 +619,67 @@ describe('PATCH /v1/users/me/preferences', () => {
       method: 'PATCH',
       url: '/v1/users/me/preferences',
       payload: { cultural_language: 'south_asian' },
+    });
+
+    expect(res.statusCode).toBe(401);
+  });
+});
+
+describe('PATCH /v1/users/me/accessibility', () => {
+  let app: FastifyInstance;
+
+  afterEach(async () => {
+    if (app) await app.close();
+  });
+
+  it('updates caption_only_mode=true → 200 with updated value', async () => {
+    const supabaseMock = buildMockSupabase({
+      updateUserResult: defaultUserRow({ caption_only_mode: true }),
+    });
+    app = await buildTestApp(supabaseMock);
+    const token = signAccessToken(app);
+
+    const res = await app.inject({
+      method: 'PATCH',
+      url: '/v1/users/me/accessibility',
+      headers: { authorization: `Bearer ${token}` },
+      payload: { caption_only_mode: true },
+    });
+
+    expect(res.statusCode).toBe(200);
+    const body = JSON.parse(res.body) as { caption_only_mode: boolean };
+    expect(body.caption_only_mode).toBe(true);
+    expect(supabaseMock._updateArgCaptor).toHaveBeenCalledWith(
+      expect.objectContaining({ caption_only_mode: true }),
+    );
+  });
+
+  it('empty body (missing field) → 400 ValidationError', async () => {
+    const supabaseMock = buildMockSupabase({});
+    app = await buildTestApp(supabaseMock);
+    const token = signAccessToken(app);
+
+    const res = await app.inject({
+      method: 'PATCH',
+      url: '/v1/users/me/accessibility',
+      headers: { authorization: `Bearer ${token}` },
+      payload: {},
+    });
+
+    expect(res.statusCode).toBe(400);
+    const body = JSON.parse(res.body) as { type: string };
+    expect(body.type).toBe('/errors/validation');
+    expect(supabaseMock._updateProfileSpy).not.toHaveBeenCalled();
+  });
+
+  it('unauthenticated → 401', async () => {
+    const supabaseMock = buildMockSupabase({});
+    app = await buildTestApp(supabaseMock);
+
+    const res = await app.inject({
+      method: 'PATCH',
+      url: '/v1/users/me/accessibility',
+      payload: { caption_only_mode: true },
     });
 
     expect(res.statusCode).toBe(401);

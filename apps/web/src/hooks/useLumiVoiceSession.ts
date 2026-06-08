@@ -139,8 +139,15 @@ export function useLumiVoiceSession({
         return;
       case 'response.end':
         useLumiStore.getState().setLumiThinking(false);
-        onLumiReplyRef.current(msg.text);
-        playBufferedAudio();
+        onLumiReplyRef.current(msg.text);                  // captions ALWAYS fire
+        // Slice 5-S13 — caption-only mode discards the accumulated MP3 buffer
+        // instead of playing it. Reading the flag via getState() is correct here:
+        // this runs inside the WS message handler closure, not a React render.
+        if (useLumiStore.getState().captionOnlyMode) {
+          audioBufferRef.current = null;
+        } else {
+          playBufferedAudio();
+        }
         return;
       case 'session.summary':
         // Ambient Lumi never emits an onboarding summary — ignore defensively.

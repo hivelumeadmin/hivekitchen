@@ -1,6 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
-import type { ChildResponse, ClearedAllergyEntry, PlanTileSummary } from '@hivekitchen/types';
+import type {
+  ChildResponse,
+  ClearedAllergyEntry,
+  PlanTileSummary,
+  ProposeSwapResponse,
+  Weekday,
+} from '@hivekitchen/types';
+import { hkFetch } from '@/lib/fetch.js';
 import { useAuthStore } from '@/stores/auth.store.js';
 import { useComplianceStore } from '@/stores/compliance.store.js';
 import { PageHeader } from '@/components/PageHeader.js';
@@ -122,6 +129,14 @@ export function BriefCanvas() {
   // Story 3.12 — picker / swap-in-progress UI state.
   const [activeSwapDay, setActiveSwapDay] = useState<PlanTileSummary['day'] | null>(null);
   const [swappingItemId, setSwappingItemId] = useState<string | null>(null);
+  // Slice 5-S12 — tracks an in-flight conversational swap proposal; the matching
+  // tile pulses (sacred-plum) until Lumi resolves it. The day is captured here
+  // (not via onSwapStarted, which only carries the id) so the right tile pulses.
+  const [pendingProposal, setPendingProposal] = useState<{
+    id: string;
+    day: PlanTileSummary['day'];
+  } | null>(null);
+  const lastProposalRef = useRef<{ id: string; day: PlanTileSummary['day'] } | null>(null);
   // Slice 5-S9 — "Why this?" inline reasoning panel. One panel per canvas
   // (reasoning is household-level, not tile-specific), local + dismissable.
   const [showReasoning, setShowReasoning] = useState(false);
@@ -261,6 +276,24 @@ export function BriefCanvas() {
         },
       },
     );
+  }
+
+  // Slice 5-S12 — capture the parent's free-text swap intent as a proposal turn
+  // in the family thread. Returns the proposal_id so the picker can fire
+  // onSwapStarted; the day is stashed in lastProposalRef so onSwapStarted knows
+  // this id is a proposal (pulse the tile) rather than a variation (spinner).
+  async function handleProposeSwap(day: Weekday, content: string): Promise<string> {
+    if (planId === null) throw new Error('No plan');
+    const res = await hkFetch<ProposeSwapResponse>(
+      `/v1/plans/${planId}/swap-proposals`,
+      {
+        method: 'POST',
+        body: { day, content },
+        headers: { 'Idempotency-Key': crypto.randomUUID() },
+      },
+    );
+    lastProposalRef.current = { id: res.proposal_id, day };
+    return res.proposal_id;
   }
 
   // Story pre-4-s3 — banner-driven recovery. In hard-fail state planId is null
@@ -457,11 +490,13 @@ export function BriefCanvas() {
               const tileState: PlanTileState =
                 summary.paused
                   ? 'paused'
-                  : summary.items.some((i) => i.plan_item_id === swappingItemId)
-                    ? 'swap-in-progress'
-                    : activeSwapDay === summary.day
-                      ? 'pending-input'
-                      : 'decided';
+                  : pendingProposal !== null && summary.day === pendingProposal.day
+                    ? 'proposal-pending'
+                    : summary.items.some((i) => i.plan_item_id === swappingItemId)
+                      ? 'swap-in-progress'
+                      : activeSwapDay === summary.day
+                        ? 'pending-input'
+                        : 'decided';
 
               return (
                 <div key={summary.day} className="flex flex-col gap-2">
@@ -533,8 +568,19 @@ export function BriefCanvas() {
                 }))}
                 childNames={childNames}
                 onDismiss={dismissPicker}
-                onSwapStarted={(variationId) => {
-                  setSwappingItemId(variationId);
+                onProposeSwap={canSwap ? handleProposeSwap : undefined}
+                onSwapStarted={(id) => {
+                  // 5-S12 — a proposal flow returns a proposal_id (tracked in
+                  // lastProposalRef). It pulses the matching tile but must NOT
+                  // set swappingItemId, which would lock the rest of the canvas.
+                  if (lastProposalRef.current?.id === id) {
+                    setPendingProposal(lastProposalRef.current);
+                    lastProposalRef.current = null;
+                    swapTriggerRef.current = null;
+                    setActiveSwapDay(null);
+                    return;
+                  }
+                  setSwappingItemId(id);
                   swapTriggerRef.current = null;
                   setActiveSwapDay(null);
                 }}

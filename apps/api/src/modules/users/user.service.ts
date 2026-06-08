@@ -4,6 +4,7 @@ import type {
   UpdateProfileRequest,
   UpdateNotificationPrefsRequest,
   UpdateCulturalPreferenceRequest,
+  UpdateAccessibilityRequest,
 } from '@hivekitchen/types';
 import { ConflictError, UnauthorizedError, ValidationError } from '../../common/errors.js';
 import type { UserRepository, UserProfileRow, UpdateUserProfileInput } from './user.repository.js';
@@ -168,6 +169,22 @@ export class UserService {
     return { profile: toUserProfile(row, auth_providers, flags), fieldsChanged };
   }
 
+  // Slice 5-S13 — single-field accessibility update. The caption-only flag is a
+  // plain boolean column with a DB default, so there is no merge/ratchet logic;
+  // updateUserProfile spreads the field straight through to Supabase.
+  async updateMyAccessibility(
+    userId: string,
+    householdId: string,
+    input: UpdateAccessibilityRequest,
+  ): Promise<UserProfile> {
+    const row = await this.repository.updateUserProfile(userId, {
+      caption_only_mode: input.caption_only_mode,
+    });
+    const auth_providers = await this.fetchAuthProviders(userId);
+    const flags = await this.deriveOnboardingFlags(row, householdId);
+    return toUserProfile(row, auth_providers, flags);
+  }
+
   async initiatePasswordReset(email: string, webBaseUrl: string): Promise<void> {
     try {
       const { error } = await this.supabase.auth.resetPasswordForEmail(email, {
@@ -220,6 +237,7 @@ function toUserProfile(
     parental_notice_acknowledged_version: row.parental_notice_acknowledged_version,
     is_onboarded: flags.is_onboarded,
     is_onboarding_in_progress: flags.is_onboarding_in_progress,
+    caption_only_mode: row.caption_only_mode,
   };
 }
 

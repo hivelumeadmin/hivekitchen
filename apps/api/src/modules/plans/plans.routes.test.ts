@@ -124,6 +124,7 @@ interface PlansServiceMocks {
   pauseDayTree?: ReturnType<typeof vi.fn>;
   pauseChildOnDayTree?: ReturnType<typeof vi.fn>;
   requestRegeneration?: ReturnType<typeof vi.fn>;
+  findById?: ReturnType<typeof vi.fn>;
 }
 
 function buildPlansService(overrides: PlansServiceMocks = {}) {
@@ -166,6 +167,28 @@ function buildPlansService(overrides: PlansServiceMocks = {}) {
     requestRegeneration:
       overrides.requestRegeneration ??
       vi.fn().mockResolvedValue({ jobId: 'noop', rateLimitRemaining: 5 }),
+    findById:
+      overrides.findById ?? vi.fn().mockResolvedValue(MOCK_PLAN_ROW_CANONICAL),
+  };
+}
+
+interface ThreadRepositoryMocks {
+  findActiveThreadByHousehold?: ReturnType<typeof vi.fn>;
+  createThread?: ReturnType<typeof vi.fn>;
+  appendTurnNext?: ReturnType<typeof vi.fn>;
+}
+
+const MOCK_THREAD = { id: 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee' };
+
+function buildThreadRepository(overrides: ThreadRepositoryMocks = {}) {
+  return {
+    findActiveThreadByHousehold:
+      overrides.findActiveThreadByHousehold ??
+      vi.fn().mockResolvedValue(MOCK_THREAD),
+    createThread:
+      overrides.createThread ?? vi.fn().mockResolvedValue(MOCK_THREAD),
+    appendTurnNext:
+      overrides.appendTurnNext ?? vi.fn().mockResolvedValue({ id: 'turn-1', server_seq: 1 }),
   };
 }
 
@@ -206,6 +229,7 @@ async function buildTestApp(opts: {
   plansService?: ReturnType<typeof buildPlansService>;
   planDayContextService?: ReturnType<typeof buildPlanDayContextService>;
   variantProposalService?: ReturnType<typeof buildVariantProposalService>;
+  threadRepository?: ReturnType<typeof buildThreadRepository>;
 } = {}): Promise<FastifyInstance> {
   const app = Fastify({ logger: false, genReqId: () => randomUUID() });
   app.setValidatorCompiler(validatorCompiler);
@@ -226,6 +250,10 @@ async function buildTestApp(opts: {
   app.decorate(
     'variantProposalService',
     (opts.variantProposalService ?? buildVariantProposalService()) as unknown as FastifyInstance['variantProposalService'],
+  );
+  app.decorate(
+    'threadRepository',
+    (opts.threadRepository ?? buildThreadRepository()) as unknown as FastifyInstance['threadRepository'],
   );
 
   await app.register(jwt, { secret: JWT_SECRET, sign: { expiresIn: '15m' } });
@@ -1380,5 +1408,128 @@ describe('DELETE /v1/plans/:planId/slots/:planSlotId/override/:overrideId', () =
       householdId: SAMPLE_HOUSEHOLD_ID,
       requestId: IDEMPOTENCY_KEY,
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// POST /v1/plans/:planId/swap-proposals (Slice 5-S12)
+// ---------------------------------------------------------------------------
+
+describe('POST /v1/plans/:planId/swap-proposals', () => {
+  let app: FastifyInstance;
+  const URL = `/v1/plans/${SAMPLE_PLAN_ID}/swap-proposals`;
+  afterEach(async () => {
+    if (app) await app.close();
+  });
+
+  it('returns 401 without an Authorization header', async () => {
+    app = await buildTestApp();
+    const res = await app.inject({
+      method: 'POST',
+      url: URL,
+      payload: { day: 'wednesday', content: 'something lighter' },
+    });
+    expect(res.statusCode).toBe(401);
+  });
+
+  it('returns 403 when role is ops', async () => {
+    app = await buildTestApp();
+    const token = signOps(app);
+    const res = await app.inject({
+      method: 'POST',
+      url: URL,
+      headers: { authorization: `Bearer ${token}`, 'idempotency-key': IDEMPOTENCY_KEY },
+      payload: { day: 'wednesday', content: 'something lighter' },
+    });
+    expect(res.statusCode).toBe(403);
+  });
+
+  it('returns 400 when the Idempotency-Key header is missing', async () => {
+    app = await buildTestApp();
+    const token = signPrimary(app);
+    const res = await app.inject({
+      method: 'POST',
+      url: URL,
+      headers: { authorization: `Bearer ${token}` },
+      payload: { day: 'wednesday', content: 'something lighter' },
+    });
+    expect(res.statusCode).toBe(400);
+  });
+
+  it('returns 400 when content is empty', async () => {
+    app = await buildTestApp();
+    const token = signPrimary(app);
+    const res = await app.inject({
+      method: 'POST',
+      url: URL,
+      headers: { authorization: `Bearer ${token}`, 'idempotency-key': IDEMPOTENCY_KEY },
+      payload: { day: 'wednesday', content: '' },
+    });
+    expect(res.statusCode).toBe(400);
+  });
+
+  it('returns 404 when the plan does not belong to the household', async () => {
+    const plansService = buildPlansService({
+      findById: vi.fn().mockResolvedValue(null),
+    });
+    app = await buildTestApp({ plansService });
+    const token = signPrimary(app);
+    const res = await app.inject({
+      method: 'POST',
+      url: URL,
+      headers: { authorization: `Bearer ${token}`, 'idempotency-key': IDEMPOTENCY_KEY },
+      payload: { day: 'wednesday', content: 'something lighter' },
+    });
+    expect(res.statusCode).toBe(404);
+  });
+
+  it('returns 201 with a proposal_id and appends a proposal turn to the family thread', async () => {
+    const threadRepository = buildThreadRepository();
+    app = await buildTestApp({ threadRepository });
+    const token = signPrimary(app);
+    const res = await app.inject({
+      method: 'POST',
+      url: URL,
+      headers: { authorization: `Bearer ${token}`, 'idempotency-key': IDEMPOTENCY_KEY },
+      payload: { day: 'wednesday', content: 'something lighter, maybe a wrap' },
+    });
+    expect(res.statusCode).toBe(201);
+    const body = JSON.parse(res.body) as { proposal_id: string };
+    expect(body.proposal_id).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i,
+    );
+    expect(threadRepository.appendTurnNext).toHaveBeenCalledWith(
+      expect.objectContaining({
+        threadId: MOCK_THREAD.id,
+        role: 'user',
+        modality: 'text',
+        body: expect.objectContaining({
+          type: 'proposal',
+          proposal_id: body.proposal_id,
+          day: 'wednesday',
+          content: 'something lighter, maybe a wrap',
+        }),
+      }),
+    );
+  });
+
+  it('creates a family thread when none is active', async () => {
+    const threadRepository = buildThreadRepository({
+      findActiveThreadByHousehold: vi.fn().mockResolvedValue(null),
+    });
+    app = await buildTestApp({ threadRepository });
+    const token = signPrimary(app);
+    const res = await app.inject({
+      method: 'POST',
+      url: URL,
+      headers: { authorization: `Bearer ${token}`, 'idempotency-key': IDEMPOTENCY_KEY },
+      payload: { day: 'wednesday', content: 'something lighter' },
+    });
+    expect(res.statusCode).toBe(201);
+    expect(threadRepository.createThread).toHaveBeenCalledWith(
+      SAMPLE_HOUSEHOLD_ID,
+      'family',
+      'text',
+    );
   });
 });

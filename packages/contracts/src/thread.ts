@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { CulturalKeySchema } from './cultural.js';
+import { WeekdaySchema } from './plan.js';
 
 // Monotonic sequence ID. Accepts bigint, integer number, or a numeric string.
 // Rejects empty string / empty array / non-numeric string — which z.coerce.bigint
@@ -27,6 +28,10 @@ export const TurnBodyPlanDiff = z.object({
 export const TurnBodyProposal = z.object({
   type: z.literal('proposal'),
   proposal_id: z.string().uuid(),
+  // Slice 5-S12 — the swap-proposal target day. Persisted so the deferred
+  // LumiAgent (D-5S12-2) resolves the swap against a structured day rather than
+  // re-parsing free text. Mirrors TurnBodyPlanDiff carrying week_id.
+  day: WeekdaySchema,
   content: z.string(),
 });
 

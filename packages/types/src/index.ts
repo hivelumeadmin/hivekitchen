@@ -77,6 +77,7 @@ import {
   ApiError,
   UserProfileSchema,
   UpdateProfileRequestSchema,
+  UpdateAccessibilityRequestSchema,
   PasswordResetRequestSchema,
   PasswordResetCompleteRequestSchema,
   NotificationPrefsSchema,
@@ -313,6 +314,8 @@ import {
   PlanSlotParamSchema,
   PlanDayContextSlotParamSchema,
   PlanDayContextSlotRevertParamSchema,
+  ProposeSwapInputSchema,
+  ProposeSwapResponseSchema,
   StateComplianceOverridesResponseSchema,
   // Slice 5-S3 — PackerOfTheDay
   DayAssignmentSchema,
@@ -440,6 +443,8 @@ export type ApiError = z.infer<typeof ApiError>;
 // Users (Story 2.4 — profile management)
 export type UserProfile = z.infer<typeof UserProfileSchema>;
 export type UpdateProfileRequest = z.infer<typeof UpdateProfileRequestSchema>;
+// Slice 5-S13 — PATCH /v1/users/me/accessibility body
+export type UpdateAccessibilityRequest = z.infer<typeof UpdateAccessibilityRequestSchema>;
 export type PasswordResetRequest = z.infer<typeof PasswordResetRequestSchema>;
 
 // Password reset completion (Story 2.4b)
@@ -764,6 +769,10 @@ export type VariationParam = z.infer<typeof VariationParamSchema>;
 export type PlanSlotParam = z.infer<typeof PlanSlotParamSchema>;
 export type PlanDayContextSlotParam = z.infer<typeof PlanDayContextSlotParamSchema>;
 export type PlanDayContextSlotRevertParam = z.infer<typeof PlanDayContextSlotRevertParamSchema>;
+
+// Slice 5-S12 — conversational swap proposal.
+export type ProposeSwapInput = z.infer<typeof ProposeSwapInputSchema>;
+export type ProposeSwapResponse = z.infer<typeof ProposeSwapResponseSchema>;
 
 // State-residency compliance scaffold (Story 7-S12 — AR-21, NFR-COMP-3)
 export type StateComplianceOverridesResponse = z.infer<typeof StateComplianceOverridesResponseSchema>;

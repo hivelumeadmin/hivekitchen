@@ -53,6 +53,7 @@ function sampleProfile(): UserProfile {
     parental_notice_acknowledged_version: null,
     is_onboarded: true,
     is_onboarding_in_progress: false,
+    caption_only_mode: false,
   } as UserProfile;
 }
 
@@ -168,5 +169,56 @@ describe('AccountPage — Allergy safety log section', () => {
 
     expect(screen.queryByText('Allergy safety log')).toBeNull();
     expect(screen.queryByRole('button', { name: 'Download JSON' })).toBeNull();
+  });
+});
+
+describe('AccountPage — Accessibility section (Slice 5-S13)', () => {
+  beforeEach(() => {
+    hkFetchMock.mockReset();
+    hkFetchBlobMock.mockReset();
+    navigateSpy.mockClear();
+    hkFetchMock.mockResolvedValue(sampleProfile());
+    URL.createObjectURL = vi.fn(() => 'blob:mock');
+    URL.revokeObjectURL = vi.fn();
+  });
+
+  afterEach(() => {
+    cleanup();
+    vi.restoreAllMocks();
+    useAuthStore.getState().clearSession();
+    useAuthStore.setState({ user: null });
+  });
+
+  it('renders the Text only toggle, unchecked, when the profile loads', async () => {
+    setAuthenticated('primary_parent');
+    renderRoute();
+
+    const toggle = await screen.findByRole('switch', {
+      name: 'Text only — captions without audio',
+    });
+    expect((toggle as HTMLInputElement).checked).toBe(false);
+  });
+
+  it('fires PATCH /v1/users/me/accessibility with caption_only_mode:true on toggle', async () => {
+    setAuthenticated('primary_parent');
+    // GET returns caption_only_mode:false; the PATCH returns the updated profile.
+    hkFetchMock.mockResolvedValueOnce(sampleProfile());
+    hkFetchMock.mockResolvedValueOnce({ ...sampleProfile(), caption_only_mode: true });
+    renderRoute();
+
+    const toggle = await screen.findByRole('switch', {
+      name: 'Text only — captions without audio',
+    });
+    fireEvent.click(toggle);
+
+    await waitFor(() => {
+      expect(hkFetchMock).toHaveBeenCalledWith('/v1/users/me/accessibility', {
+        method: 'PATCH',
+        body: { caption_only_mode: true },
+      });
+    });
+    await waitFor(() => {
+      expect((toggle as HTMLInputElement).checked).toBe(true);
+    });
   });
 });

@@ -874,3 +874,18 @@ export const PlanDayContextSlotRevertParamSchema = z.object({
   planSlotId: z.string().uuid(),
   overrideId: z.string().uuid(),
 });
+
+// Slice 5-S12 — conversational swap proposal (L3 DisambiguationPicker). The
+// user's free-text intent is captured as a TurnBodyProposal turn in the
+// household's family thread; Lumi's resolution (swapMain + plan_diff turn) is
+// a deferred agent step.
+export const ProposeSwapInputSchema = z.object({
+  day: WeekdaySchema,
+  // Trim before length-checking so a whitespace-only payload (which passes a raw
+  // min(1)) is rejected, and the persisted proposal content is already trimmed.
+  content: z.string().trim().min(1).max(500),
+});
+
+export const ProposeSwapResponseSchema = z.object({
+  proposal_id: z.string().uuid(),
+});
