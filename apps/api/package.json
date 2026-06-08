@@ -36,7 +36,7 @@
     "@sendgrid/mail": "^8.0.0",
     "@supabase/supabase-js": "^2.106.1",
     "@tavily/core": "^0.5.6",
-    "bullmq": "^5.0.0",
+    "bullmq": "^5.76.10",
     "fastify": "^5.2.0",
     "fastify-plugin": "^5.0.0",
     "fastify-sse-v2": "^4.2.2",
