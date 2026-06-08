@@ -13,12 +13,14 @@ import {
   type AllergyUncertaintyFlaggedItem,
 } from './AllergyUncertaintyBanner.js';
 import { BriefWhyPanel } from './BriefWhyPanel.js';
+import { LumiCallout } from './LumiCallout.js';
 import { DisambiguationPicker } from './DisambiguationPicker.js';
 import { FreshnessState } from './FreshnessState.js';
 import { PlanActionSection } from './PlanActionSection.js';
 import { PlanTile, type PlanTileState, type ChildDotColor, type ChildInfo } from './PlanTile.js';
 import { PackerChip } from './PackerChip.js';
 import { PresenceIndicator } from '@/features/thread/PresenceIndicator.js';
+import { useLumiStore } from '@/stores/lumi.store.js';
 import { QuietDiff } from './QuietDiff.js';
 import { usePlanQuery } from './queries.js';
 import { QueryKeys } from '@/lib/realtime/query-keys.js';
@@ -150,6 +152,8 @@ export function BriefCanvas() {
   const scaffoldingDiff = payload?.scaffolding_diff ?? null;
   const planState = payload?.plan_state ?? null;
   const planStateMessage = payload?.plan_state_message ?? null;
+  // Slice 5-S8 — "I noticed" learning-moment callout (null below threshold).
+  const learningMomentCallout = payload?.learning_moment_callout ?? null;
   const childColorMap = useMemo(
     () => buildChildColorMap(clearedAllergies),
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -542,6 +546,14 @@ export function BriefCanvas() {
               lastSyncedAt={brief.updated_at}
             />
           </div>
+
+          {learningMomentCallout !== null && (
+            <LumiCallout
+              callout={learningMomentCallout}
+              householdId={brief.household_id}
+              onTellMore={() => useLumiStore.getState().openPanel()}
+            />
+          )}
 
           <BriefWhyPanel brief={brief} />
 

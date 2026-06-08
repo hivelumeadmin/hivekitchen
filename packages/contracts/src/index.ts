@@ -28,6 +28,7 @@ export * from './extra-rules.js';
 export * from './school-policy.js';
 export * from './plan-day-context.js';
 export * from './cultural.js';
+export * from './family-language.js';
 export * from './lumi.js';
 export * from './recipe.js';
 export * from './recipe-vocabulary.js';

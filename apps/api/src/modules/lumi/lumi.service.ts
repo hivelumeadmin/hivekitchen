@@ -3,13 +3,20 @@ import type { FastifyBaseLogger } from 'fastify';
 import type { WebSocket } from '@fastify/websocket';
 import type Redis from 'ioredis';
 import type OpenAI from 'openai';
+import { z } from 'zod';
 import type { LumiSurface, LumiContextSignal, NudgeTrigger, Turn } from '@hivekitchen/types';
 import { ForbiddenError, ValidationError } from '../../common/errors.js';
 import { LumiAgent } from '../../agents/lumi.agent.js';
 import { transcribeWav, streamTtsToWs } from '../voice/elevenlabs-audio.js';
 import type { ChildrenRepository } from '../children/children.repository.js';
 import type { HouseholdAllergensRepository } from '../households/household-allergens.repository.js';
+import type { MemoryService } from '../memory/memory.service.js';
 import type { VoiceTranscriptRepository } from '../voice/voice-transcript.repository.js';
+import {
+  detectFamilyLanguageTerms,
+  FAMILY_LANGUAGE_RATIFY_THRESHOLD,
+} from '../family-language/family-language.detector.js';
+import type { FamilyLanguageRepository } from '../family-language/family-language.repository.js';
 import type { LumiRepository, TalkSessionRow } from './lumi.repository.js';
 
 export interface LumiServiceDeps {
@@ -22,6 +29,8 @@ export interface LumiServiceDeps {
   childrenRepository: ChildrenRepository; // NEW — for household snapshot
   householdAllergensRepository: HouseholdAllergensRepository; // NEW — canonical allergen table
   voiceTranscriptRepository: VoiceTranscriptRepository; // 5-S5 — voice transcript persistence
+  memoryService?: MemoryService; // 5-S7 — passive enrichment; optional so nudge-job ctor is unchanged
+  familyLanguageRepository?: FamilyLanguageRepository; // 5-S10 — optional; detection + snapshot ratchet skipped when absent
 }
 
 export interface CreateTalkSessionInput {
@@ -58,6 +67,48 @@ const STT_FAILED_COPY = 'Could not hear that — try again';
 const AGENT_FAILED_COPY = "I'm having a little trouble — could you say that again?";
 const TTS_FAILED_COPY = 'Voice unavailable — please read the response instead';
 
+// 5-S7 — enrichment signal extraction result (internal, not a public contract).
+// These schemas are an implementation detail of the passive-enrichment OpenAI
+// call; they are intentionally NOT in @hivekitchen/contracts.
+const ENRICHMENT_NODE_TYPES = [
+  'preference',
+  'rhythm',
+  'cultural_rhythm',
+  'allergy',
+  'child_obsession',
+  'school_policy',
+  'other',
+] as const;
+const EnrichmentSignalSchema = z.object({
+  node_type: z.enum(ENRICHMENT_NODE_TYPES),
+  facet: z.string().min(1).max(40),
+  prose_text: z.string().min(1).max(150),
+  confidence: z.number().min(0).max(1),
+});
+const EnrichmentResultSchema = z.object({
+  signals: z.array(EnrichmentSignalSchema).max(3),
+});
+
+// 5-S7 — extraction system prompt. The literal word "JSON" must remain present:
+// response_format json_object requires it in the prompt or OpenAI returns 400.
+const ENRICHMENT_SYSTEM_PROMPT =
+  `You are a memory signal extractor for Lumi, a family kitchen assistant.
+Given one parent↔Lumi exchange, identify memory-worthy facts the PARENT explicitly stated about their family: food preferences, cultural events or practices, family rhythms, or child-specific observations.
+
+Return ONLY valid JSON:
+{"signals": [{"node_type": "...", "facet": "...", "prose_text": "...", "confidence": 0.0}]}
+or {"signals": []} if nothing memory-worthy was stated.
+
+node_type: preference | rhythm | cultural_rhythm | allergy | child_obsession | school_policy | other
+facet: short stable kebab-case identifier, max 40 chars (e.g. "diwali-2026", "layla-no-broccoli", "tuesday-pasta-night")
+prose_text: one complete sentence capturing the fact, max 150 chars
+confidence: 0.8 if explicitly stated; 0.6 if implied; 0.5 if uncertain
+
+Rules:
+- Only capture facts the PARENT explicitly stated. Do NOT invent or infer beyond their words.
+- Ignore greetings, questions, logistics, and Lumi's own reply content.
+- Max 3 signals per turn. Signal facets must be distinct.`.trim();
+
 // 'onboarding' is a valid LumiSurface (see lumi.ts contract comment) but the
 // onboarding voice flow has its own dedicated route at POST /v1/voice/sessions
 // (Story 2.6/2.6b). Ambient tap-to-talk is for non-onboarding surfaces only.
@@ -80,6 +131,8 @@ export class LumiService {
   private readonly childrenRepository: ChildrenRepository;
   private readonly householdAllergensRepository: HouseholdAllergensRepository;
   private readonly voiceTranscriptRepository: VoiceTranscriptRepository;
+  private readonly memoryService?: MemoryService;
+  private readonly familyLanguageRepository?: FamilyLanguageRepository;
 
   constructor(deps: LumiServiceDeps) {
     this.repository = deps.repository;
@@ -91,6 +144,8 @@ export class LumiService {
     this.childrenRepository = deps.childrenRepository;
     this.householdAllergensRepository = deps.householdAllergensRepository;
     this.voiceTranscriptRepository = deps.voiceTranscriptRepository;
+    this.memoryService = deps.memoryService;
+    this.familyLanguageRepository = deps.familyLanguageRepository;
   }
 
   async createTalkSession(input: CreateTalkSessionInput): Promise<CreateTalkSessionResult> {
@@ -300,7 +355,9 @@ export class LumiService {
     // 5-S5 — voice turns pass 'voice'; text turns omit it (defaults to 'text').
     // Stamps thread_turns.modality and gates voice_transcripts persistence.
     modality?: 'text' | 'voice';
-  }): Promise<{ thread_id: string; user_turn: Turn; lumi_turn: Turn }> {
+    // 5-S10 — present only when this turn crossed a family-language ratification
+    // threshold. processVoiceUtterance ignores it (live voice surfacing deferred).
+  }): Promise<{ thread_id: string; user_turn: Turn; lumi_turn: Turn; ratification_turn?: Turn }> {
     const surface = input.contextSignal.surface;
     const modality = input.modality ?? 'text';
     assertAmbientSurface(surface);
@@ -346,6 +403,12 @@ export class LumiService {
       modality,
     });
 
+    // 5-S7 — passive enrichment. Fire-and-forget: never blocks the text or voice
+    // turn response. Source ref anchors to the user turn so Visible Memory can
+    // link back to the conversation. subject_child_id is always null here; Lumi
+    // detects household-level signals only (per-child linking is a future slice).
+    void this.runPassiveEnrichment(input.householdId, userTurn.id, thread.id, input.message, lumiText);
+
     // 5-S5 — persist the user's speech transcript, anchored to the Lumi turn.
     // Best-effort: a transcript write failure must never block the voice turn
     // from returning (the caption is already shown client-side; losing the
@@ -370,7 +433,120 @@ export class LumiService {
       }
     }
 
-    return { thread_id: thread.id, user_turn: userTurn, lumi_turn: lumiTurn };
+    // 5-S10 — inline family-language detection. Unlike 5-S7's fire-and-forget
+    // enrichment, this is awaited: the ratification turn IS part of the response
+    // (AC3), and detection is a synchronous dictionary scan + one cheap
+    // read-modify-write. Best-effort: any failure here must never break the
+    // user's turn (it is an enhancement, not the reply).
+    let ratificationTurn: Turn | undefined;
+    if (this.familyLanguageRepository) {
+      try {
+        const detected = detectFamilyLanguageTerms(input.message);
+        if (detected.length > 0) {
+          const { newlyCandidate } = await this.familyLanguageRepository.recordUsage(
+            input.householdId,
+            detected,
+            FAMILY_LANGUAGE_RATIFY_THRESHOLD,
+          );
+          const first = newlyCandidate[0]; // one prompt at a time — keep it calm (UX)
+          if (first) {
+            ratificationTurn = await this.repository.insertTurn({
+              threadId: thread.id,
+              role: 'lumi',
+              body: { type: 'family_language_prompt', term: first.term, maps_to: first.maps_to },
+              modality,
+            });
+          }
+        }
+      } catch (err) {
+        this.logger.warn(
+          {
+            err,
+            module: 'lumi',
+            action: 'lumi.family_language_detect_failed',
+            household_id: input.householdId,
+          },
+          'family-language detection failed — non-fatal, continuing',
+        );
+      }
+    }
+
+    return {
+      thread_id: thread.id,
+      user_turn: userTurn,
+      lumi_turn: lumiTurn,
+      ...(ratificationTurn ? { ratification_turn: ratificationTurn } : {}),
+    };
+  }
+
+  // 5-S7 — passive memory enrichment. Best-effort, fire-and-forget extraction of
+  // memory-worthy signals from one parent↔Lumi exchange. MUST catch all errors
+  // internally: it runs as `void this.runPassiveEnrichment(...)`, so an uncaught
+  // rejection would surface as an unhandledRejection. Three guard layers: the
+  // OpenAI call, JSON.parse, and each per-signal note write.
+  private async runPassiveEnrichment(
+    householdId: string,
+    turnId: string,
+    threadId: string,
+    userMessage: string,
+    lumiReply: string,
+  ): Promise<void> {
+    if (!this.memoryService) return; // nudge-job path has no memoryService
+    try {
+      const completion = await this.openai.chat.completions.create({
+        model: 'gpt-4o',
+        response_format: { type: 'json_object' },
+        messages: [
+          { role: 'system', content: ENRICHMENT_SYSTEM_PROMPT },
+          { role: 'user', content: `Parent: ${userMessage}\nLumi: ${lumiReply}` },
+        ],
+        max_tokens: 400,
+        temperature: 0, // deterministic extraction, not creative generation
+      });
+      const raw = completion.choices[0]?.message?.content ?? '{"signals":[]}';
+      let parsed: ReturnType<typeof EnrichmentResultSchema.safeParse>;
+      try {
+        parsed = EnrichmentResultSchema.safeParse(JSON.parse(raw));
+      } catch {
+        this.logger.warn(
+          { module: 'lumi', action: 'lumi.passive_enrichment_parse_failed' },
+          'passive enrichment JSON.parse threw — raw response was not valid JSON',
+        );
+        return;
+      }
+      if (!parsed.success) {
+        this.logger.warn(
+          { module: 'lumi', action: 'lumi.passive_enrichment_parse_failed' },
+          'passive enrichment result failed schema validation',
+        );
+        return;
+      }
+      const sourceRef: Record<string, unknown> = { thread_id: threadId, turn_id: turnId };
+      for (const signal of parsed.data.signals) {
+        try {
+          await this.memoryService.noteFromAgent({
+            householdId,
+            nodeType: signal.node_type,
+            facet: signal.facet,
+            proseText: signal.prose_text,
+            subjectChildId: null,
+            confidence: signal.confidence,
+            sourceType: 'turn',
+            sourceRef,
+          });
+        } catch (err) {
+          this.logger.warn(
+            { err, module: 'lumi', action: 'lumi.passive_enrichment_note_failed', facet: signal.facet },
+            'passive enrichment note write failed — skipping signal',
+          );
+        }
+      }
+    } catch (err) {
+      this.logger.warn(
+        { err, module: 'lumi', action: 'lumi.passive_enrichment_failed', household_id: householdId },
+        'passive enrichment extraction failed — non-fatal',
+      );
+    }
   }
 
   // Story 12-S11 — proactive nudge. Fetches the household snapshot, lazy-resolves
@@ -469,6 +645,35 @@ export class LumiService {
         allergens.length > 0 ? `allergens: ${allergens.join(', ')}` : 'no known allergens';
       lines.push(`- ${child.name} (${child.age_band}) — ${allergenStr}`);
     }
+
+    // 5-S10 — forward-only family-language ratchet (UX-DR47). Once a kinship
+    // term is 'active', Lumi must use the household's exact word and never the
+    // generic English equivalent. Skipped when the repo is absent (no-op for the
+    // nudge-job ctor path that does not wire it).
+    if (this.familyLanguageRepository) {
+      try {
+        const activeTerms = (await this.familyLanguageRepository.getTerms(householdId)).filter(
+          (t) => t.state === 'active',
+        );
+        if (activeTerms.length > 0) {
+          lines.push(
+            'Family language (use these exact words, never the generic English term):',
+            ...activeTerms.map((t) => `- call the ${t.maps_to} "${t.term}"`),
+          );
+        }
+      } catch (err) {
+        this.logger.warn(
+          {
+            err,
+            module: 'lumi',
+            action: 'lumi.family_language_snapshot_failed',
+            household_id: householdId,
+          },
+          'family-language snapshot read failed — continuing without the ratchet block',
+        );
+      }
+    }
+
     return lines.join('\n');
   }
 

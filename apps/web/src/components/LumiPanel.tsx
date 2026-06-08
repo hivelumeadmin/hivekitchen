@@ -1,10 +1,15 @@
 import { useEffect, useState, type FormEvent } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import { LumiThreadTurnsResponseSchema, LumiTurnResponseSchema } from '@hivekitchen/contracts';
 import type { LumiSurface, Turn } from '@hivekitchen/types';
 import { hkFetch } from '@/lib/fetch.js';
 import { useLumiStore } from '@/stores/lumi.store.js';
+import { useAuthStore } from '@/stores/auth.store.js';
+import { useFamilyLanguageTerms } from '@/hooks/useFamilyLanguageTerms.js';
+import { QueryKeys } from '@/lib/realtime/query-keys.js';
 import { useVoiceSessionContext } from '@/contexts/VoiceSessionContext.js';
 import { CaptionRibbon } from './CaptionRibbon.js';
+import { FamilyLanguageRatificationCard } from './FamilyLanguageRatificationCard.js';
 
 const MAX_VISIBLE_TURNS = 8;
 
@@ -20,6 +25,7 @@ export function LumiPanel() {
   const surface = useLumiStore((s) => s.surface);
   const contextSignal = useLumiStore((s) => s.contextSignal);
   const proactiveNudges = useLumiStore((s) => s.proactiveNudges);
+  const householdId = useAuthStore((s) => s.user?.current_household_id) ?? '';
 
   const { startSession, endSession } = useVoiceSessionContext();
 
@@ -57,6 +63,11 @@ export function LumiPanel() {
       }));
       useLumiStore.getState().appendTurn(data.user_turn);
       useLumiStore.getState().appendTurn(data.lumi_turn);
+      // Slice 5-S10 — a family-language term crossed the ratification threshold;
+      // append the prompt immediately (no SSE round-trip) so the card shows.
+      if (data.ratification_turn) {
+        useLumiStore.getState().appendTurn(data.ratification_turn);
+      }
       setDraft('');
     } catch {
       // Draft is NOT cleared — the user can retry or edit.
@@ -96,12 +107,29 @@ export function LumiPanel() {
     return () => controller.abort();
   }, [isPanelOpen, surface]);
 
+  // Slice 5-S10 (review patch) — a family_language_prompt turn is persisted, so on
+  // re-hydration it would replay even after the parent already answered it. Read
+  // the household's terms and suppress any prompt whose term is no longer
+  // `candidate` (already opted-in / forgotten). Fails OPEN: an unknown term (stale
+  // cache, fresh prompt) still shows. Only fetched when the panel is open with a
+  // prompt present. NOTE: this hook must run before the early return below.
+  const hasPromptTurn = turns.some((t) => t.body.type === 'family_language_prompt');
+  const familyLanguageTerms = useFamilyLanguageTerms(householdId, isPanelOpen && hasPromptTurn);
+  const resolvedTermNames = new Set(
+    familyLanguageTerms.filter((t) => t.state !== 'candidate').map((t) => t.term),
+  );
+
   if (!isPanelOpen) return null;
 
-  // Filter to message turns before slicing so non-message turns don't consume
-  // slots and leave the panel blank when all visible turns are non-message.
+  // Filter to renderable turns before slicing so non-renderable turns don't
+  // consume slots and leave the panel blank. Slice 5-S10 adds the
+  // family_language_prompt card alongside plain message turns.
   const visibleTurns = turns
-    .filter((t) => t.body.type === 'message')
+    .filter((t) => {
+      if (t.body.type === 'message') return true;
+      if (t.body.type === 'family_language_prompt') return !resolvedTermNames.has(t.body.term);
+      return false;
+    })
     .slice(-MAX_VISIBLE_TURNS);
   const showLoading = isHydrating && turns.length === 0;
   const isVoiceMode = panelMode === 'voice';
@@ -218,7 +246,9 @@ export function LumiPanel() {
             Nothing to show yet.
           </p>
         ) : (
-          visibleTurns.map((turn) => <TurnRow key={turn.id} turn={turn} />)
+          visibleTurns.map((turn) => (
+            <TurnRow key={turn.id} turn={turn} householdId={householdId} />
+          ))
         )}
       </div>
 
@@ -271,7 +301,27 @@ export function LumiPanel() {
   );
 }
 
-function TurnRow({ turn }: { turn: Turn }) {
+function TurnRow({ turn, householdId }: { turn: Turn; householdId: string }) {
+  const queryClient = useQueryClient();
+
+  if (turn.body.type === 'family_language_prompt') {
+    return (
+      <FamilyLanguageRatificationCard
+        term={turn.body.term}
+        maps_to={turn.body.maps_to}
+        householdId={householdId}
+        onResolved={() => {
+          useLumiStore.getState().removeTurn(turn.id);
+          // Refresh the suppression set so the resolved term stays hidden even if
+          // the thread re-hydrates within this session (server is now the truth).
+          void queryClient.invalidateQueries({
+            queryKey: QueryKeys.familyLanguage(householdId),
+          });
+        }}
+      />
+    );
+  }
+
   if (turn.body.type !== 'message') return null;
 
   const isUser = turn.role === 'user';

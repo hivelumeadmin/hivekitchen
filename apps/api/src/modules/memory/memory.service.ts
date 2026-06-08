@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import type { FastifyBaseLogger } from 'fastify';
 import type {
   NodeType,
+  SourceType,
   MemoryNoteOutput,
   MemoryRecallInput,
   MemoryRecallOutput,
@@ -37,6 +38,7 @@ export interface NoteFromAgentInput {
   proseText: string;
   subjectChildId: string | null;
   confidence: number;
+  sourceType?: SourceType; // defaults to 'tool'; 5-S7 passes 'turn'
   sourceRef?: Record<string, unknown>;
 }
 
@@ -295,7 +297,7 @@ export class MemoryService {
     });
     await this.repository.insertProvenance({
       memory_node_id: node.id,
-      source_type: 'tool',
+      source_type: input.sourceType ?? 'tool',
       source_ref: input.sourceRef ?? {},
       captured_by: null,
       confidence: input.confidence,

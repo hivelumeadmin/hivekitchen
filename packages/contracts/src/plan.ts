@@ -244,6 +244,22 @@ export const ScaffoldingDiffSchema = z.object({
 // here are a mirror for routes that read brief_state only (the Brief route at
 // GET /v1/households/:id/brief). All sub-fields carry defaults so parsing the
 // column default '{}' (a brand-new, content-less row) succeeds cleanly.
+// Slice 5-S8 — "I noticed" learning moment. Surfaced in the Brief footer when
+// Lumi has noticed ≥3 turn-sourced memory nodes about the household. node_ids
+// references the memory_nodes that contributed; surfaced_at marks when the
+// callout was composed.
+export const LearningMomentCalloutSchema = z.object({
+  prose: z.string().min(1).max(400),
+  node_ids: z.array(z.string().uuid()).min(1).max(5),
+  surfaced_at: z.string().datetime({ offset: true }),
+});
+
+// Slice 5-S8 — respond-action for POST /v1/households/:id/brief/learning-moment.
+export const LearningMomentActionSchema = z.enum(['confirm', 'tell_more', 'dismiss']);
+export const RespondToLearningMomentRequestSchema = z.object({
+  action: LearningMomentActionSchema,
+});
+
 export const BriefStatePayloadSchema = z.object({
   tile_summaries: z.array(PlanTileSummarySchema).default([]),
   cleared_allergies: z.array(ClearedAllergyEntrySchema).default([]),
@@ -253,6 +269,10 @@ export const BriefStatePayloadSchema = z.object({
   plan_state: z.enum(['hard_failed', 'degraded']).nullable().default(null),
   plan_state_set_at: z.string().datetime({ offset: true }).nullable().default(null),
   plan_state_message: z.string().max(500).nullable().default(null),
+  // 5-S8 — "I noticed" learning moment callout. Null when below threshold or suppressed.
+  learning_moment_callout: LearningMomentCalloutSchema.nullable().default(null),
+  // 5-S8 — suppress window after dismiss action. Null means no active suppress.
+  learning_moment_suppressed_until: z.string().datetime({ offset: true }).nullable().default(null),
 });
 
 export const BriefStateRowSchema = z.object({

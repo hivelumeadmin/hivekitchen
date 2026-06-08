@@ -7,6 +7,7 @@ import {
 import type { PlansRepository } from './plans.repository.js';
 import type { BriefStateRepository } from './brief-state.repository.js';
 import type { LunchLinkSessionRepository } from './lunch-link-session.repository.js';
+import type { MemoryRepository } from '../memory/memory.repository.js';
 import type {
   ChildrenRepository,
   DecryptedChildRow,
@@ -381,5 +382,160 @@ describe('BriefStateComposer.refreshTree — 8-read parallelism + composition', 
       payload: { tile_summaries: Array<{ day: string; lunch_link_suppressed_children: string[] }> };
     };
     expect(upsertCall.payload.tile_summaries[0]?.lunch_link_suppressed_children).toEqual([CHILD_A]);
+  });
+});
+
+// Slice 5-S8 — "I noticed" learning-moment callout threshold + carry-forward.
+describe('BriefStateComposer.refreshTree — 5-S8 learning moment', () => {
+  const TURN_NODE_1 = '10000000-0000-4000-8000-000000000001';
+  const TURN_NODE_2 = '10000000-0000-4000-8000-000000000002';
+  const TURN_NODE_3 = '10000000-0000-4000-8000-000000000003';
+
+  function turnNode(id: string, prose: string) {
+    return { id, prose_text: prose, node_type: 'preference', created_at: NOW };
+  }
+
+  function buildLMDeps(opts: {
+    memoryRepository?: { findRecentTurnSourcedNodes: ReturnType<typeof vi.fn> };
+    suppressedUntil?: string | null;
+  }) {
+    const plan = buildPlan({ id: PLAN_ID, household_id: HOUSEHOLD_ID });
+    const days = [dayRow({ id: DAY_MON, day: 'monday' })];
+    const slots = [slotRow({ id: SLOT_MON_MAIN, plan_day_id: DAY_MON })];
+    const variations = [variationRow({ plan_slot_id: SLOT_MON_MAIN, child_id: CHILD_A })];
+    const mainAssignments = [mainAssign({ id: MAIN_ASSIGN_1, plan_id: PLAN_ID })];
+
+    const upsert = vi.fn().mockResolvedValue(undefined);
+    const previousBrief =
+      opts.suppressedUntil !== undefined
+        ? {
+            payload: {
+              tile_summaries: [],
+              plan_state: null,
+              plan_state_set_at: null,
+              plan_state_message: null,
+              learning_moment_suppressed_until: opts.suppressedUntil,
+            },
+          }
+        : null;
+
+    const composer = new BriefStateComposer({
+      plansRepository: {
+        findCurrentByHousehold: vi.fn().mockResolvedValue(plan),
+        findMainAssignmentsByPlanId: vi.fn().mockResolvedValue(mainAssignments),
+        findDaysByPlanId: vi.fn().mockResolvedValue(days),
+        findSlotsByDayIds: vi.fn().mockResolvedValue(slots),
+        findVariationsBySlotIds: vi.fn().mockResolvedValue(variations),
+      } as unknown as PlansRepository,
+      briefStateRepository: {
+        upsert,
+        findByHousehold: vi.fn().mockResolvedValue(previousBrief),
+      } as unknown as BriefStateRepository,
+      childrenRepository: {
+        findByHouseholdId: vi.fn().mockResolvedValue([]),
+      } as unknown as ChildrenRepository,
+      auditService: { write: vi.fn().mockResolvedValue(undefined) } as unknown as AuditService,
+      logger: buildLogger(),
+      ...(opts.memoryRepository
+        ? { memoryRepository: opts.memoryRepository as unknown as MemoryRepository }
+        : {}),
+    });
+    return { composer, upsert };
+  }
+
+  function calloutFromUpsert(upsert: ReturnType<typeof vi.fn>) {
+    const call = upsert.mock.calls[0]![0] as {
+      payload: {
+        learning_moment_callout: { prose: string; node_ids: string[] } | null;
+        learning_moment_suppressed_until: string | null;
+      };
+    };
+    return call.payload;
+  }
+
+  it('sets learning_moment_callout when ≥3 turn-sourced nodes exist', async () => {
+    const findRecentTurnSourcedNodes = vi
+      .fn()
+      .mockResolvedValue([
+        turnNode(TURN_NODE_1, 'your family loves spicy food'),
+        turnNode(TURN_NODE_2, 'you pack on Sundays'),
+        turnNode(TURN_NODE_3, 'the twins share a Main'),
+      ]);
+    const { composer, upsert } = buildLMDeps({ memoryRepository: { findRecentTurnSourcedNodes } });
+
+    await composer.refreshTree(HOUSEHOLD_ID, WEEK_ID, REQUEST_ID);
+
+    const payload = calloutFromUpsert(upsert);
+    expect(payload.learning_moment_callout).not.toBeNull();
+    expect(payload.learning_moment_callout?.prose).toContain('your family loves spicy food');
+    expect(payload.learning_moment_callout?.node_ids).toEqual([
+      TURN_NODE_1,
+      TURN_NODE_2,
+      TURN_NODE_3,
+    ]);
+  });
+
+  it('leaves learning_moment_callout null when < 3 nodes', async () => {
+    const findRecentTurnSourcedNodes = vi
+      .fn()
+      .mockResolvedValue([turnNode(TURN_NODE_1, 'a'), turnNode(TURN_NODE_2, 'b')]);
+    const { composer, upsert } = buildLMDeps({ memoryRepository: { findRecentTurnSourcedNodes } });
+
+    await composer.refreshTree(HOUSEHOLD_ID, WEEK_ID, REQUEST_ID);
+
+    expect(calloutFromUpsert(upsert).learning_moment_callout).toBeNull();
+  });
+
+  it('respects the suppress window — null callout when suppressedUntil is in the future', async () => {
+    const future = new Date(Date.now() + 6 * 24 * 60 * 60 * 1000).toISOString();
+    const findRecentTurnSourcedNodes = vi
+      .fn()
+      .mockResolvedValue([
+        turnNode(TURN_NODE_1, 'a'),
+        turnNode(TURN_NODE_2, 'b'),
+        turnNode(TURN_NODE_3, 'c'),
+        turnNode('10000000-0000-4000-8000-000000000004', 'd'),
+        turnNode('10000000-0000-4000-8000-000000000005', 'e'),
+      ]);
+    const { composer, upsert } = buildLMDeps({
+      memoryRepository: { findRecentTurnSourcedNodes },
+      suppressedUntil: future,
+    });
+
+    await composer.refreshTree(HOUSEHOLD_ID, WEEK_ID, REQUEST_ID);
+
+    expect(calloutFromUpsert(upsert).learning_moment_callout).toBeNull();
+    // The threshold query is short-circuited when suppressed.
+    expect(findRecentTurnSourcedNodes).not.toHaveBeenCalled();
+  });
+
+  it('carries forward learning_moment_suppressed_until unchanged', async () => {
+    const past = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+    const findRecentTurnSourcedNodes = vi
+      .fn()
+      .mockResolvedValue([
+        turnNode(TURN_NODE_1, 'a'),
+        turnNode(TURN_NODE_2, 'b'),
+        turnNode(TURN_NODE_3, 'c'),
+      ]);
+    const { composer, upsert } = buildLMDeps({
+      memoryRepository: { findRecentTurnSourcedNodes },
+      suppressedUntil: past,
+    });
+
+    await composer.refreshTree(HOUSEHOLD_ID, WEEK_ID, REQUEST_ID);
+
+    const payload = calloutFromUpsert(upsert);
+    expect(payload.learning_moment_suppressed_until).toBe(past);
+    // Past suppress window does not block — callout still forms.
+    expect(payload.learning_moment_callout).not.toBeNull();
+  });
+
+  it('skips buildLearningMomentCallout when memoryRepository is absent', async () => {
+    const { composer, upsert } = buildLMDeps({});
+
+    await composer.refreshTree(HOUSEHOLD_ID, WEEK_ID, REQUEST_ID);
+
+    expect(calloutFromUpsert(upsert).learning_moment_callout).toBeNull();
   });
 });

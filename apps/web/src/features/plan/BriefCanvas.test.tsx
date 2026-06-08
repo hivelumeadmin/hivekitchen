@@ -63,6 +63,8 @@ function makeBrief(
       plan_state: null,
       plan_state_set_at: null,
       plan_state_message: null,
+      learning_moment_callout: null,
+      learning_moment_suppressed_until: null,
       ...payloadOverrides,
     },
     generated_at: '2026-05-02T00:00:00.000Z',
