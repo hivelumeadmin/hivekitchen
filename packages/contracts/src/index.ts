@@ -12,6 +12,7 @@ export * from './account-deletion.js';
 export * from './presence.js';
 export * from './errors.js';
 export * from './users.js';
+export * from './voice-retention.js';
 export * from './onboarding.js';
 export * from './onboarding-state.js';
 export * from './compliance.js';

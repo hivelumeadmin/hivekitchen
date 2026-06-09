@@ -5,6 +5,7 @@ import type {
   UpdateNotificationPrefsRequest,
   UpdateCulturalPreferenceRequest,
   UpdateAccessibilityRequest,
+  UpdateVoiceRetentionRequest,
 } from '@hivekitchen/types';
 import { ConflictError, UnauthorizedError, ValidationError } from '../../common/errors.js';
 import type { UserRepository, UserProfileRow, UpdateUserProfileInput } from './user.repository.js';
@@ -185,6 +186,22 @@ export class UserService {
     return toUserProfile(row, auth_providers, flags);
   }
 
+  // Slice 5-S15 — update voice retention mode. Returns the updated profile.
+  // Transcript deletion (when switching to immediate_delete) is handled at the
+  // route layer to avoid coupling UserService to VoiceTranscriptRepository.
+  async updateVoiceRetention(
+    userId: string,
+    householdId: string,
+    input: UpdateVoiceRetentionRequest,
+  ): Promise<UserProfile> {
+    const row = await this.repository.updateUserProfile(userId, {
+      voice_retention_mode: input.voice_retention_mode,
+    });
+    const auth_providers = await this.fetchAuthProviders(userId);
+    const flags = await this.deriveOnboardingFlags(row, householdId);
+    return toUserProfile(row, auth_providers, flags);
+  }
+
   async initiatePasswordReset(email: string, webBaseUrl: string): Promise<void> {
     try {
       const { error } = await this.supabase.auth.resetPasswordForEmail(email, {
@@ -238,6 +255,7 @@ function toUserProfile(
     is_onboarded: flags.is_onboarded,
     is_onboarding_in_progress: flags.is_onboarding_in_progress,
     caption_only_mode: row.caption_only_mode,
+    voice_retention_mode: row.voice_retention_mode,
   };
 }
 

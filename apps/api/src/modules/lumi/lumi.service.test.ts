@@ -134,6 +134,8 @@ beforeEach(() => {
 function makeVoiceState(): LumiVoiceWsState {
   return {
     householdId: 'hh1',
+    userId: 'user1',
+    voiceRetentionMode: 'standard',
     contextSignal: { surface: 'planning' },
     isProcessing: false,
     seq: 0,
@@ -283,6 +285,46 @@ describe('LumiService.submitTextTurn — voice modality (Story 5-S5)', () => {
       result.thread_id,
       result.lumi_turn.id,
       'pasta on Tuesday please',
+      90,
+      undefined,
+    );
+  });
+
+  // 5-S15 — when the user has chosen immediate_delete, no transcript is persisted (AC6).
+  it('skips the transcript insert when voiceRetentionMode is immediate_delete', async () => {
+    const { service, voiceTranscriptRepository } = buildDeps({ activeThread: null });
+
+    await service.submitTextTurn({
+      householdId: 'hh1',
+      userId: 'user1',
+      voiceRetentionMode: 'immediate_delete',
+      message: 'pasta on Tuesday please',
+      contextSignal: { surface: 'planning' },
+      modality: 'voice',
+    });
+
+    expect(voiceTranscriptRepository.insertTranscript).not.toHaveBeenCalled();
+  });
+
+  // 5-S15 — voice turns forward userId so the row is scoped to the user.
+  it('forwards userId to insertTranscript in standard mode', async () => {
+    const { service, voiceTranscriptRepository } = buildDeps({ activeThread: null });
+
+    const result = await service.submitTextTurn({
+      householdId: 'hh1',
+      userId: 'user1',
+      voiceRetentionMode: 'standard',
+      message: 'pasta on Tuesday please',
+      contextSignal: { surface: 'planning' },
+      modality: 'voice',
+    });
+
+    expect(voiceTranscriptRepository.insertTranscript).toHaveBeenCalledWith(
+      result.thread_id,
+      result.lumi_turn.id,
+      'pasta on Tuesday please',
+      90,
+      'user1',
     );
   });
 

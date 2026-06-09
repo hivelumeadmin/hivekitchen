@@ -54,6 +54,7 @@ function sampleProfile(): UserProfile {
     is_onboarded: true,
     is_onboarding_in_progress: false,
     caption_only_mode: false,
+    voice_retention_mode: 'standard',
   } as UserProfile;
 }
 
@@ -201,9 +202,14 @@ describe('AccountPage — Accessibility section (Slice 5-S13)', () => {
 
   it('fires PATCH /v1/users/me/accessibility with caption_only_mode:true on toggle', async () => {
     setAuthenticated('primary_parent');
-    // GET returns caption_only_mode:false; the PATCH returns the updated profile.
-    hkFetchMock.mockResolvedValueOnce(sampleProfile());
-    hkFetchMock.mockResolvedValueOnce({ ...sampleProfile(), caption_only_mode: true });
+    // GET /me returns caption_only_mode:false; the PATCH returns the updated
+    // profile. Path-based so the parallel /voice-transcripts mount fetch (5-S15)
+    // does not consume an ordered mock.
+    hkFetchMock.mockImplementation((path: string) =>
+      path === '/v1/users/me/accessibility'
+        ? Promise.resolve({ ...sampleProfile(), caption_only_mode: true })
+        : Promise.resolve(sampleProfile()),
+    );
     renderRoute();
 
     const toggle = await screen.findByRole('switch', {
@@ -220,5 +226,90 @@ describe('AccountPage — Accessibility section (Slice 5-S13)', () => {
     await waitFor(() => {
       expect((toggle as HTMLInputElement).checked).toBe(true);
     });
+  });
+});
+
+describe('AccountPage — Voice Data section (Slice 5-S15)', () => {
+  const SAMPLE_TRANSCRIPT = {
+    id: '44444444-4444-4444-8444-444444444444',
+    transcript: 'What is for lunch today?',
+    retention_until: '2099-11-01T00:00:00.000Z',
+    created_at: '2026-10-23T10:00:00.000Z',
+  };
+
+  beforeEach(() => {
+    hkFetchMock.mockReset();
+    hkFetchBlobMock.mockReset();
+    navigateSpy.mockClear();
+    URL.createObjectURL = vi.fn(() => 'blob:mock');
+    URL.revokeObjectURL = vi.fn();
+  });
+
+  afterEach(() => {
+    cleanup();
+    vi.restoreAllMocks();
+    useAuthStore.getState().clearSession();
+    useAuthStore.setState({ user: null });
+  });
+
+  it('renders the Voice Data toggle and transcript list when transcripts exist', async () => {
+    setAuthenticated('primary_parent');
+    hkFetchMock.mockImplementation((path: string) =>
+      path === '/v1/users/me/voice-transcripts'
+        ? Promise.resolve({ transcripts: [SAMPLE_TRANSCRIPT], voice_retention_mode: 'standard' })
+        : Promise.resolve(sampleProfile()),
+    );
+    renderRoute();
+
+    const toggle = await screen.findByRole('switch', { name: 'Delete transcripts immediately' });
+    expect((toggle as HTMLInputElement).checked).toBe(false);
+    await screen.findByText('What is for lunch today?');
+  });
+
+  it('PATCHes immediate_delete and clears the transcript list on toggle', async () => {
+    setAuthenticated('primary_parent');
+    hkFetchMock.mockImplementation((path: string) =>
+      path === '/v1/users/me/voice-transcripts'
+        ? Promise.resolve({ transcripts: [SAMPLE_TRANSCRIPT], voice_retention_mode: 'standard' })
+        : Promise.resolve(sampleProfile()),
+    );
+    renderRoute();
+
+    const toggle = await screen.findByRole('switch', { name: 'Delete transcripts immediately' });
+    await screen.findByText('What is for lunch today?');
+    fireEvent.click(toggle);
+
+    await waitFor(() => {
+      expect(hkFetchMock).toHaveBeenCalledWith('/v1/users/me/voice-retention', {
+        method: 'PATCH',
+        body: { voice_retention_mode: 'immediate_delete' },
+      });
+    });
+    await waitFor(() => {
+      expect(screen.queryByText('What is for lunch today?')).toBeNull();
+    });
+    expect((toggle as HTMLInputElement).checked).toBe(true);
+  });
+
+  it('reverts the toggle and restores the list on PATCH failure', async () => {
+    setAuthenticated('primary_parent');
+    hkFetchMock.mockImplementation((path: string) => {
+      if (path === '/v1/users/me/voice-transcripts') {
+        return Promise.resolve({ transcripts: [SAMPLE_TRANSCRIPT], voice_retention_mode: 'standard' });
+      }
+      if (path === '/v1/users/me/voice-retention') {
+        return Promise.reject(new Error('500'));
+      }
+      return Promise.resolve(sampleProfile());
+    });
+    renderRoute();
+
+    const toggle = await screen.findByRole('switch', { name: 'Delete transcripts immediately' });
+    await screen.findByText('What is for lunch today?');
+    fireEvent.click(toggle);
+
+    await screen.findByText('Could not update voice data setting. Please try again.');
+    expect((toggle as HTMLInputElement).checked).toBe(false);
+    expect(screen.getByText('What is for lunch today?')).toBeTruthy();
   });
 });

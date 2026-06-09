@@ -78,6 +78,10 @@ import {
   UserProfileSchema,
   UpdateProfileRequestSchema,
   UpdateAccessibilityRequestSchema,
+  VoiceRetentionModeSchema,
+  UpdateVoiceRetentionRequestSchema,
+  VoiceTranscriptItemSchema,
+  VoiceTranscriptsResponseSchema,
   PasswordResetRequestSchema,
   PasswordResetCompleteRequestSchema,
   NotificationPrefsSchema,
@@ -451,6 +455,11 @@ export type UserProfile = z.infer<typeof UserProfileSchema>;
 export type UpdateProfileRequest = z.infer<typeof UpdateProfileRequestSchema>;
 // Slice 5-S13 — PATCH /v1/users/me/accessibility body
 export type UpdateAccessibilityRequest = z.infer<typeof UpdateAccessibilityRequestSchema>;
+// Slice 5-S15 — voice transcript retention controls
+export type VoiceRetentionMode = z.infer<typeof VoiceRetentionModeSchema>;
+export type UpdateVoiceRetentionRequest = z.infer<typeof UpdateVoiceRetentionRequestSchema>;
+export type VoiceTranscriptItem = z.infer<typeof VoiceTranscriptItemSchema>;
+export type VoiceTranscriptsResponse = z.infer<typeof VoiceTranscriptsResponseSchema>;
 export type PasswordResetRequest = z.infer<typeof PasswordResetRequestSchema>;
 
 // Password reset completion (Story 2.4b)

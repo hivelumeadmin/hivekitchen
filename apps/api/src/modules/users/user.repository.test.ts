@@ -36,6 +36,7 @@ const PARENT_ROW: UserProfileRow = {
   parental_notice_acknowledged_at: null,
   parental_notice_acknowledged_version: null,
   caption_only_mode: false,
+  voice_retention_mode: 'standard',
 };
 
 describe('UserRepository.findPrimaryParentForHousehold', () => {

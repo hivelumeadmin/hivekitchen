@@ -51,6 +51,8 @@ export interface CreateTalkSessionResult {
 // (mirrors the onboarding VoiceService turn loop); `seq` numbers the frames.
 export interface LumiVoiceWsState {
   householdId: string;
+  userId: string; // 5-S15 — for transcript user_id
+  voiceRetentionMode: 'standard' | 'immediate_delete'; // 5-S15 — cached at WS open
   contextSignal: LumiContextSignal | null;
   isProcessing: boolean;
   seq: number;
@@ -288,6 +290,8 @@ export class LumiService {
       try {
         result = await this.submitTextTurn({
           householdId: state.householdId,
+          userId: state.userId, // 5-S15
+          voiceRetentionMode: state.voiceRetentionMode, // 5-S15
           message: transcript,
           contextSignal,
           modality: 'voice',
@@ -355,6 +359,10 @@ export class LumiService {
     // 5-S5 — voice turns pass 'voice'; text turns omit it (defaults to 'text').
     // Stamps thread_turns.modality and gates voice_transcripts persistence.
     modality?: 'text' | 'voice';
+    // 5-S15 — passed for voice turns: scopes the transcript row to the user and
+    // skips the insert entirely when the user has chosen immediate-delete mode.
+    userId?: string;
+    voiceRetentionMode?: 'standard' | 'immediate_delete';
     // 5-S10 — present only when this turn crossed a family-language ratification
     // threshold. processVoiceUtterance ignores it (live voice surfacing deferred).
   }): Promise<{ thread_id: string; user_turn: Turn; lumi_turn: Turn; ratification_turn?: Turn }> {
@@ -413,12 +421,15 @@ export class LumiService {
     // Best-effort: a transcript write failure must never block the voice turn
     // from returning (the caption is already shown client-side; losing the
     // persistence is a degraded-mode issue, not a fatal error).
-    if (modality === 'voice') {
+    if (modality === 'voice' && input.voiceRetentionMode !== 'immediate_delete') {
+      // 5-S15: skip the insert entirely when the user chose immediate-delete mode.
       try {
         await this.voiceTranscriptRepository.insertTranscript(
           thread.id,
           lumiTurn.id,
           input.message,
+          90, // default retention days
+          input.userId, // undefined for text callers; set for voice callers (5-S15)
         );
       } catch (err) {
         this.logger.warn(

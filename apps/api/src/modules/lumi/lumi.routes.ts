@@ -14,6 +14,7 @@ import { ChildAllergensRepository } from '../children/child-allergens.repository
 import { ChildrenRepository } from '../children/children.repository.js';
 import { HouseholdAllergensRepository } from '../households/household-allergens.repository.js';
 import { VoiceTranscriptRepository } from '../voice/voice-transcript.repository.js';
+import { UserRepository } from '../users/user.repository.js';
 import { FamilyLanguageRepository } from '../family-language/family-language.repository.js';
 import { LumiRepository } from './lumi.repository.js';
 import { LumiService, type LumiVoiceWsState } from './lumi.service.js';
@@ -256,8 +257,22 @@ export const lumiRoutes: FastifyPluginAsync = async (fastify) => {
         return;
       }
 
+      // 5-S15 — fetch retention mode once per WS connection (not per turn).
+      // One extra DB read; cached in state for the connection's lifetime.
+      // Fail-open: if the user row is missing, default to 'standard'.
+      const userRepo = new UserRepository(fastify.supabase);
+      let voiceRetentionMode: 'standard' | 'immediate_delete' = 'standard';
+      try {
+        const userRow = await userRepo.findUserById(session.user_id);
+        voiceRetentionMode = userRow?.voice_retention_mode ?? 'standard';
+      } catch {
+        // fail-open: transcript persist proceeds in standard mode
+      }
+
       resolvedState = {
         householdId: session.household_id,
+        userId: session.user_id, // 5-S15
+        voiceRetentionMode, // 5-S15
         contextSignal: null,
         isProcessing: false,
         seq: 0,

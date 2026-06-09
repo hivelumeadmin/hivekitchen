@@ -1,5 +1,16 @@
 # Deferred Work Log
 
+## Deferred from: code review of 5-s15-voice-transcript-retention-controls (2026-06-08)
+
+- **D-5S15-CR1: Non-atomic PATCH delete+mode update** — `PATCH /v1/users/me/voice-retention` deletes transcripts (`deleteByUserId`) then updates the profile (`updateVoiceRetention`) as two separate non-atomic operations. If the profile update fails after the delete succeeds, transcripts are permanently gone but `voice_retention_mode` stays `standard`. Client reverts optimistically, briefly showing phantom transcripts until next page load. Spec explicitly accepts this as "acceptable MVP behavior" (delete-before-update is the safer failure mode — data was cleared, which the user asked for). [`apps/api/src/modules/users/user.routes.ts`]
+- **D-5S15-CR2: Pre-migration null user_id orphan rows not cleaned on mode switch** — `voice_transcripts` rows inserted before 5-S15 (by 5-S5) have `user_id = NULL`; `deleteByUserId` only deletes rows where `user_id = <userId>`, so those rows survive when a user switches to `immediate_delete`. They are invisible via `findByUserId` (correct API behavior) but not deleted on mode change. The nightly `deleteExpired` purge cleans them at `retention_until`. By-design per spec reconciliation note (no backfill possible — no user association exists for pre-migration rows). [`apps/api/src/modules/voice/voice-transcript.repository.ts`, `supabase/migrations/20261023000000_add_voice_retention_mode.sql`]
+
+## Deferred from: implementation of 5-s15-voice-transcript-retention-controls (2026-06-08)
+
+- **D-5S15-1: Per-turn mode refresh** — `voiceRetentionMode` is cached in `LumiVoiceWsState` at WS open. If the user changes mode mid-session (via Account settings in another tab), the WS state is stale until the socket reconnects. Acceptable for MVP — the next voice session reads the fresh value. Fix = re-read the user row per turn, or invalidate the cached mode on an SSE/account-updated signal. [`apps/api/src/modules/lumi/lumi.routes.ts`, `apps/api/src/modules/lumi/lumi.service.ts`]
+- **D-5S15-2: Transcript list pagination** — `GET /v1/users/me/voice-transcripts` is capped at 20 items (newest-first); full pagination/scroll is deferred. [`apps/api/src/modules/voice/voice-transcript.repository.ts` — `findByUserId`, `apps/web/src/routes/(app)/account.tsx`]
+- **D-5S15-3: Server-side TTS skip on immediate_delete** — when mode is `immediate_delete`, the server still streams TTS MP3 chunks even though no transcript is persisted (transcripts not written ≠ "never heard"). Reuse D-5S13-1 (server-side TTS skip). [`apps/api` voice WS handler / `LumiService`]
+
 ## Deferred from: code review of 5-s13-caption-only-mode (2026-06-08)
 
 - **D-5S13-CR1: `captionOnlyMode` store hydration gap** — `lumi.store.captionOnlyMode` defaults to `false` and is only set when the user visits the account page. A user with `caption_only_mode: true` in DB who opens a voice session without visiting account settings will hear TTS audio they opted out of. Spec-defined pattern (matches `proactiveNudges`); fix = hydrate from `/v1/users/me` at app boot (auth hook or root layout effect). [`apps/web/src/stores/lumi.store.ts`, `apps/web/src/routes/(app)/account.tsx`]

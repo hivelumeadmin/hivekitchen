@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { AuthUserSchema } from './auth.js';
+import { VoiceRetentionModeSchema } from './voice-retention.js';
 
 // ---- Notification preferences (Story 2.5) ---------------------------------
 // Heart Note anti-pattern (Story 4.13): NO heart_note_* field of any kind.
@@ -74,6 +75,10 @@ export const UserProfileSchema = z.object({
   // Lumi voice hook skips TTS playback (captions still stream). Mirrors
   // users.caption_only_mode (DB default false).
   caption_only_mode: z.boolean(),
+  // Slice 5-S15 — voice transcript retention preference. Controls whether
+  // transcripts are kept (standard → 90-day expiry) or immediately deleted.
+  // Mirrors users.voice_retention_mode (DB default 'standard').
+  voice_retention_mode: VoiceRetentionModeSchema,
 });
 
 // ---- PATCH /v1/users/me/accessibility request body ------------------------

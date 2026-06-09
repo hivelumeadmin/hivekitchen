@@ -38,6 +38,8 @@ export interface UserProfileOverrides {
   is_onboarding_in_progress?: boolean;
   // 5-S13: caption-only accessibility preference.
   caption_only_mode?: boolean;
+  // 5-S15: voice transcript retention mode.
+  voice_retention_mode?: 'standard' | 'immediate_delete';
 }
 
 export function userProfile(overrides: UserProfileOverrides = {}) {
@@ -69,6 +71,8 @@ export function userProfile(overrides: UserProfileOverrides = {}) {
     is_onboarding_in_progress: overrides.is_onboarding_in_progress ?? false,
     // 5-S13: default false (matches DB DEFAULT false).
     caption_only_mode: overrides.caption_only_mode ?? false,
+    // 5-S15: default 'standard' (matches DB DEFAULT 'standard').
+    voice_retention_mode: overrides.voice_retention_mode ?? 'standard',
     ...overrides,
   };
 }
