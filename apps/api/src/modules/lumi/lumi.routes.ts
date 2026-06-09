@@ -14,8 +14,10 @@ import { ChildAllergensRepository } from '../children/child-allergens.repository
 import { ChildrenRepository } from '../children/children.repository.js';
 import { HouseholdAllergensRepository } from '../households/household-allergens.repository.js';
 import { VoiceTranscriptRepository } from '../voice/voice-transcript.repository.js';
+import { VoiceUsageRepository } from '../voice/voice-usage.repository.js';
 import { UserRepository } from '../users/user.repository.js';
 import { FamilyLanguageRepository } from '../family-language/family-language.repository.js';
+import { STANDARD_TIER_CAP_MS, VOICE_CAP_COPY, getWeekStart } from '../../common/voice-tier.js';
 import { LumiRepository } from './lumi.repository.js';
 import { LumiService, type LumiVoiceWsState } from './lumi.service.js';
 
@@ -41,6 +43,16 @@ const TalkSessionParamsSchema = z.object({
   id: z.string().uuid(),
 });
 
+// 5-S16 — 429 cap response body (Fastify standard error shape + a machine code).
+// Declared so the typed `reply.status(429)` is permitted by the route's response
+// map; the web client routes on the 429 status, not on this body shape.
+const VoiceCapReachedResponseSchema = z.object({
+  statusCode: z.literal(429),
+  error: z.string(),
+  message: z.string(),
+  code: z.literal('voice_cap_reached'),
+});
+
 // Encapsulated routes plugin — registered with `{ prefix: '/v1/lumi' }` in app.ts.
 // Not wrapped with fastify-plugin: fp() opts out of encapsulation, which would
 // also drop the prefix scoping we depend on here.
@@ -60,6 +72,7 @@ export const lumiRoutes: FastifyPluginAsync = async (fastify) => {
   );
   const householdAllergensRepository = new HouseholdAllergensRepository(fastify.supabase, kek);
   const voiceTranscriptRepository = new VoiceTranscriptRepository(fastify.supabase);
+  const voiceUsageRepository = new VoiceUsageRepository(fastify.supabase);
   const familyLanguageRepository = new FamilyLanguageRepository(fastify.supabase);
 
   const service = new LumiService({
@@ -74,6 +87,7 @@ export const lumiRoutes: FastifyPluginAsync = async (fastify) => {
     voiceTranscriptRepository,
     memoryService: fastify.memoryService, // 5-S7 — wired by memory-hook
     familyLanguageRepository, // 5-S10 — inline detection + snapshot ratchet
+    voiceUsageRepository, // 5-S16 — tier cap
   });
 
   fastify.get(
@@ -119,11 +133,32 @@ export const lumiRoutes: FastifyPluginAsync = async (fastify) => {
     {
       schema: {
         body: VoiceTalkSessionCreateSchema,
-        response: { 201: VoiceTalkSessionResponseSchema },
+        response: { 201: VoiceTalkSessionResponseSchema, 429: VoiceCapReachedResponseSchema },
       },
     },
     async (request, reply) => {
       const body = request.body as z.infer<typeof VoiceTalkSessionCreateSchema>;
+
+      // 5-S16 — fast-path cap check at session creation: if the user is already
+      // at/over the weekly cap, reject before opening the WS. Fail-open: if the
+      // usage table is unreachable, allow session creation.
+      try {
+        const consumed = await voiceUsageRepository.getWeeklyUsage(request.user.id, getWeekStart());
+        if (consumed >= STANDARD_TIER_CAP_MS) {
+          return reply.status(429).send({
+            statusCode: 429,
+            error: 'Too Many Requests',
+            message: VOICE_CAP_COPY,
+            code: 'voice_cap_reached',
+          });
+        }
+      } catch (err) {
+        request.log.warn(
+          { err, module: 'lumi', action: 'lumi.voice.session_cap_check_failed' },
+          'voice usage read at session creation failed — allowing session',
+        );
+      }
+
       const result = await service.createTalkSession({
         userId: request.user.id,
         householdId: request.user.household_id,

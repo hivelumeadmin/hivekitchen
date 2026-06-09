@@ -6,12 +6,14 @@ import type OpenAI from 'openai';
 import { z } from 'zod';
 import type { LumiSurface, LumiContextSignal, NudgeTrigger, Turn } from '@hivekitchen/types';
 import { ForbiddenError, ValidationError } from '../../common/errors.js';
+import { STANDARD_TIER_CAP_MS, VOICE_CAP_COPY, getWeekStart } from '../../common/voice-tier.js';
 import { LumiAgent } from '../../agents/lumi.agent.js';
 import { transcribeWav, streamTtsToWs } from '../voice/elevenlabs-audio.js';
 import type { ChildrenRepository } from '../children/children.repository.js';
 import type { HouseholdAllergensRepository } from '../households/household-allergens.repository.js';
 import type { MemoryService } from '../memory/memory.service.js';
 import type { VoiceTranscriptRepository } from '../voice/voice-transcript.repository.js';
+import type { VoiceUsageRepository } from '../voice/voice-usage.repository.js';
 import {
   detectFamilyLanguageTerms,
   FAMILY_LANGUAGE_RATIFY_THRESHOLD,
@@ -31,6 +33,7 @@ export interface LumiServiceDeps {
   voiceTranscriptRepository: VoiceTranscriptRepository; // 5-S5 — voice transcript persistence
   memoryService?: MemoryService; // 5-S7 — passive enrichment; optional so nudge-job ctor is unchanged
   familyLanguageRepository?: FamilyLanguageRepository; // 5-S10 — optional; detection + snapshot ratchet skipped when absent
+  voiceUsageRepository?: VoiceUsageRepository; // 5-S16 — tier cap; absent = cap disabled (tests, nudge-job)
 }
 
 export interface CreateTalkSessionInput {
@@ -68,6 +71,19 @@ const MAX_AUDIO_BYTES = 2 * 1024 * 1024;
 const STT_FAILED_COPY = 'Could not hear that — try again';
 const AGENT_FAILED_COPY = "I'm having a little trouble — could you say that again?";
 const TTS_FAILED_COPY = 'Voice unavailable — please read the response instead';
+
+// 5-S16 — estimate WAV audio duration from the buffer's 44-byte PCM header
+// (sample rate, channels, bit depth read from the standard offsets). Returns 0
+// for malformed or sub-header buffers so the usage increment is simply skipped.
+function estimateWavDurationMs(buf: Buffer): number {
+  if (buf.length <= 44) return 0;
+  const sampleRate = buf.readUInt32LE(24); // bytes 24–27: sample rate (Hz)
+  const numChannels = buf.readUInt16LE(22); // bytes 22–23: channel count
+  const bitsPerSample = buf.readUInt16LE(34); // bytes 34–35: bit depth
+  if (sampleRate === 0 || numChannels === 0 || bitsPerSample === 0) return 0;
+  const bytesPerSecond = sampleRate * numChannels * (bitsPerSample / 8);
+  return ((buf.length - 44) / bytesPerSecond) * 1_000;
+}
 
 // 5-S7 — enrichment signal extraction result (internal, not a public contract).
 // These schemas are an implementation detail of the passive-enrichment OpenAI
@@ -135,6 +151,7 @@ export class LumiService {
   private readonly voiceTranscriptRepository: VoiceTranscriptRepository;
   private readonly memoryService?: MemoryService;
   private readonly familyLanguageRepository?: FamilyLanguageRepository;
+  private readonly voiceUsageRepository?: VoiceUsageRepository;
 
   constructor(deps: LumiServiceDeps) {
     this.repository = deps.repository;
@@ -148,6 +165,7 @@ export class LumiService {
     this.voiceTranscriptRepository = deps.voiceTranscriptRepository;
     this.memoryService = deps.memoryService;
     this.familyLanguageRepository = deps.familyLanguageRepository;
+    this.voiceUsageRepository = deps.voiceUsageRepository;
   }
 
   async createTalkSession(input: CreateTalkSessionInput): Promise<CreateTalkSessionResult> {
@@ -259,6 +277,36 @@ export class LumiService {
     const seq = ++state.seq;
 
     try {
+      // 5-S16 — standard-tier weekly cap check. Run INSIDE the isProcessing lock
+      // so a concurrent utterance from the same WS session is dropped by the
+      // guard above while this DB read is in flight; the `finally` always
+      // releases the lock, so a cap-reached early return never leaves it stuck.
+      // Fail-open: an unreachable usage table never blocks the user.
+      // 5-S16 — capture the current week key once so the cap check and usage
+      // increment always attribute to the same ISO week, avoiding a
+      // Monday-UTC-midnight race where two getWeekStart() calls straddle rollover.
+      const weekStart = getWeekStart();
+
+      if (this.voiceUsageRepository) {
+        let consumed = 0;
+        try {
+          consumed = await this.voiceUsageRepository.getWeeklyUsage(state.userId, weekStart);
+        } catch (err) {
+          this.logger.warn(
+            { err, module: 'lumi', action: 'lumi.voice.usage_read_failed' },
+            'voice usage read failed — failing open (not capping)',
+          );
+        }
+        if (consumed >= STANDARD_TIER_CAP_MS) {
+          this.logger.info(
+            { module: 'lumi', action: 'lumi.voice.cap_reached', user_id: state.userId, ms_consumed: consumed },
+            'voice tier cap reached — rejecting utterance',
+          );
+          this.sendJson(ws, { type: 'error', code: 'voice_cap_reached', message: VOICE_CAP_COPY });
+          return;
+        }
+      }
+
       let transcript: string;
       try {
         transcript = await transcribeWav(this.elevenLabsApiKey, wav);
@@ -269,6 +317,24 @@ export class LumiService {
         );
         this.sendJson(ws, { type: 'error', code: 'stt_failed', message: STT_FAILED_COPY });
         return;
+      }
+
+      // 5-S16 — increment usage after successful STT (duration now known). Fire-
+      // and-forget with a .catch(): the increment is best-effort and must never
+      // delay or abort the in-flight turn; the cap check fails-open for the same
+      // reason. The .catch() also prevents an unhandled-rejection warning.
+      if (this.voiceUsageRepository) {
+        const durationMs = Math.round(estimateWavDurationMs(wav));
+        if (durationMs > 0) {
+          this.voiceUsageRepository
+            .incrementUsage(state.userId, weekStart, durationMs)
+            .catch((err: unknown) => {
+              this.logger.warn(
+                { err, module: 'lumi', action: 'lumi.voice.usage_increment_failed', duration_ms: durationMs },
+                'voice usage increment failed — best-effort, continuing',
+              );
+            });
+        }
       }
 
       if (transcript.trim().length === 0) {

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useMicVAD } from '@ricky0123/vad-react';
 import type { LumiContextSignal } from '@hivekitchen/types';
 import {
@@ -22,6 +22,10 @@ export interface UseLumiVoiceSessionOptions {
 export interface UseLumiVoiceSessionReturn {
   startSession: (contextSignal: LumiContextSignal) => Promise<void>;
   endSession: () => Promise<void>;
+  // 5-S16 — true once the standard-tier weekly voice cap is hit (429 at session
+  // creation or a voice_cap_reached WS frame). The cap copy renders through the
+  // existing voiceError path; this flag lets the UI disable voice input.
+  capReached: boolean;
 }
 
 const WS_BASE_URL = import.meta.env.VITE_API_WS_URL;
@@ -32,6 +36,8 @@ const PREMIUM_FALLBACK_COPY =
 const CONNECTION_LOST_COPY = 'Voice connection lost. Try again.';
 const MIC_UNAVAILABLE_COPY = 'Microphone unavailable. Check permissions and try again.';
 const START_FAILED_COPY = 'Could not start voice session. Try again.';
+// 5-S16 — standard-tier weekly voice cap. Must match VOICE_CAP_COPY on the API.
+const VOICE_CAP_COPY = "You've used this week's voice time. Text still works.";
 
 // ── Hook ───────────────────────────────────────────────────────────────────
 // Story 5-S5b — ambient Lumi voice runs over HiveKitchen's OWN WebSocket
@@ -52,6 +58,10 @@ export function useLumiVoiceSession({
   const playingAudioUrlRef = useRef<string | null>(null);
   const inactivityTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const contextSignalRef = useRef<LumiContextSignal | null>(null);
+
+  // 5-S16 — weekly voice cap reached. Set on a 429 at session creation or a
+  // voice_cap_reached WS error frame; gates the voice-input UI.
+  const [capReached, setCapReached] = useState(false);
 
   // Re-entrancy guards: many paths can fire start/end simultaneously
   // (double-click, WS error + orb tap, inactivity timer + unmount).
@@ -159,6 +169,9 @@ export function useLumiVoiceSession({
         // Also clear the thinking pulse so a failed turn never leaves it hanging.
         useLumiStore.getState().setLumiThinking(false);
         useLumiStore.setState({ voiceError: msg.message });
+        // 5-S16 — the weekly voice cap is a sticky, session-spanning state, not a
+        // transient miss: latch capReached so the UI can disable voice input.
+        if (msg.code === 'voice_cap_reached') setCapReached(true);
         return;
     }
   }
@@ -346,6 +359,7 @@ export function useLumiVoiceSession({
     const curStatus = useLumiStore.getState().voiceStatus;
     if (curStatus === 'connecting' || curStatus === 'active') return;
     startingRef.current = true;
+    setCapReached(false); // reset before each attempt so a new week unblocks the user
 
     // Clear any stale inactivity timer left by a prior session before we begin.
     if (inactivityTimerRef.current !== null) {
@@ -373,6 +387,13 @@ export function useLumiVoiceSession({
           // Standard-tier or non-primary-parent: graceful fallback, no WS, no
           // mode switch — panel stays in text mode.
           onErrorRef.current(PREMIUM_FALLBACK_COPY);
+          return;
+        }
+        if (err instanceof HkApiError && err.status === 429) {
+          // 5-S16 — weekly voice cap already reached: latch capReached, surface
+          // the cap copy, and do NOT open the WS.
+          setCapReached(true);
+          onErrorRef.current(VOICE_CAP_COPY);
           return;
         }
         onErrorRef.current(START_FAILED_COPY);
@@ -406,5 +427,5 @@ export function useLumiVoiceSession({
     }
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  return { startSession, endSession };
+  return { startSession, endSession, capReached };
 }

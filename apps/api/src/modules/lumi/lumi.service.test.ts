@@ -84,6 +84,11 @@ function buildDeps(overrides: {
   const logger = { error: vi.fn(), warn: vi.fn(), info: vi.fn() };
   const redis = { set: vi.fn(), del: vi.fn() };
   const voiceTranscriptRepository = { insertTranscript: vi.fn().mockResolvedValue(undefined) };
+  // 5-S16 — under cap by default (getWeeklyUsage → 0); cap tests override per-call.
+  const voiceUsageRepository = {
+    getWeeklyUsage: vi.fn().mockResolvedValue(0),
+    incrementUsage: vi.fn().mockResolvedValue(undefined),
+  };
 
   const deps = {
     repository,
@@ -95,6 +100,7 @@ function buildDeps(overrides: {
     childrenRepository,
     householdAllergensRepository,
     voiceTranscriptRepository,
+    voiceUsageRepository,
     memoryService: overrides.memoryService,
     familyLanguageRepository: overrides.familyLanguageRepository,
   } as unknown as LumiServiceDeps;
@@ -108,10 +114,21 @@ function buildDeps(overrides: {
     redis,
     logger,
     voiceTranscriptRepository,
+    voiceUsageRepository,
     openai,
     memoryService: overrides.memoryService,
     familyLanguageRepository: overrides.familyLanguageRepository,
   };
+}
+
+// 5-S16 — build a minimal valid PCM WAV buffer (16kHz mono 16-bit) whose header
+// estimateWavDurationMs can read. `dataBytes` of audio → dataBytes/32000 seconds.
+function makeWavBuffer(dataBytes = 32_000): Buffer {
+  const buf = Buffer.alloc(44 + dataBytes);
+  buf.writeUInt16LE(1, 22); // numChannels
+  buf.writeUInt32LE(16_000, 24); // sampleRate
+  buf.writeUInt16LE(16, 34); // bitsPerSample
+  return buf;
 }
 
 // fetchHouseholdSnapshot is private; reach it via a typed cast for unit scope.
@@ -598,6 +615,47 @@ describe('LumiService.processVoiceUtterance — ambient voice (Story 5-S5b)', ()
     const frames = sentFrames(ws);
     expect(frames.map((f) => f.type)).toContain('response.end');
     expect(frames.find((f) => f.type === 'error')).toBeUndefined();
+  });
+
+  // 5-S16 — standard-tier weekly voice cap.
+  it('sends voice_cap_reached and skips STT when the user is at the cap', async () => {
+    const { service, voiceUsageRepository } = buildDeps({ activeThread: null });
+    voiceUsageRepository.getWeeklyUsage.mockResolvedValueOnce(600_000); // exactly at cap
+    const ws = makeMockWs();
+
+    await service.processVoiceUtterance(makeVoiceState(), Buffer.from('wav-bytes'), ws);
+
+    expect(transcribeWavMock).not.toHaveBeenCalled();
+    const frames = sentFrames(ws);
+    const errorFrame = frames.find((f) => f.type === 'error');
+    expect(errorFrame).toBeDefined();
+    expect(errorFrame!.code).toBe('voice_cap_reached');
+  });
+
+  it('processes the utterance and increments usage when under the cap', async () => {
+    const { service, voiceUsageRepository } = buildDeps({ activeThread: null });
+    voiceUsageRepository.getWeeklyUsage.mockResolvedValueOnce(300_000); // under cap
+    const ws = makeMockWs();
+
+    await service.processVoiceUtterance(makeVoiceState(), makeWavBuffer(), ws);
+    // The increment is fire-and-forget; drain the microtask queue at a macrotask
+    // boundary before asserting (not a timing wait).
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(transcribeWavMock).toHaveBeenCalledOnce();
+    expect(voiceUsageRepository.incrementUsage).toHaveBeenCalledOnce();
+    // 32000 data bytes @ 16kHz mono 16-bit = 1000 ms.
+    expect(voiceUsageRepository.incrementUsage.mock.calls[0][2]).toBe(1000);
+  });
+
+  it('does not increment usage when the WAV is too small to estimate a duration', async () => {
+    const { service, voiceUsageRepository } = buildDeps({ activeThread: null });
+    const ws = makeMockWs();
+
+    await service.processVoiceUtterance(makeVoiceState(), Buffer.alloc(44), ws);
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(voiceUsageRepository.incrementUsage).not.toHaveBeenCalled();
   });
 });
 

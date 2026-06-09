@@ -441,4 +441,53 @@ describe('useLumiVoiceSession', () => {
     );
     expect(deleteCalls.some((c) => (c[1] as RequestInit).method === 'DELETE')).toBe(true);
   });
+
+  // 5-S16 — standard-tier weekly voice cap.
+  it('sets capReached and opens no WS when session creation returns 429', async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue(
+      fakeJsonResponse({ code: 'voice_cap_reached' }, 429),
+    ) as unknown as typeof fetch;
+
+    const onError = vi.fn();
+    const { result } = renderHook(() =>
+      useLumiVoiceSession({ onTranscript: vi.fn(), onLumiReply: vi.fn(), onError }),
+    );
+
+    await act(async () => {
+      await result.current.startSession({ surface: 'planning' });
+    });
+
+    expect(result.current.capReached).toBe(true);
+    expect(onError).toHaveBeenCalledWith("You've used this week's voice time. Text still works.");
+    expect(wsInstances).toHaveLength(0);
+    expect(useLumiStore.getState().talkSessionId).toBeNull();
+  });
+
+  it('sets capReached on a voice_cap_reached WS error frame (session stays active)', async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue(
+      fakeJsonResponse(makeSessionResponse()),
+    ) as unknown as typeof fetch;
+
+    const { result } = renderHook(() =>
+      useLumiVoiceSession({ onTranscript: vi.fn(), onLumiReply: vi.fn(), onError: vi.fn() }),
+    );
+
+    await startSessionAndFlushToWsCreation(result);
+    await openWs();
+
+    const ws = wsInstances[0]!;
+    await act(async () => {
+      ws._emit('message', {
+        data: JSON.stringify({
+          type: 'error',
+          code: 'voice_cap_reached',
+          message: "You've used this week's voice time. Text still works.",
+        }),
+      });
+      await flush(2);
+    });
+
+    expect(result.current.capReached).toBe(true);
+    expect(useLumiStore.getState().voiceStatus).toBe('active');
+  });
 });

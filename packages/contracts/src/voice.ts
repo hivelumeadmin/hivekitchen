@@ -95,6 +95,7 @@ export const WsErrorCodeSchema = z.enum([
   'tts_failed',
   'summary_failed',
   'audio_too_large',
+  'voice_cap_reached', // 5-S16 — standard-tier weekly voice cap exceeded
 ]);
 
 export const WsErrorSchema = z.object({
