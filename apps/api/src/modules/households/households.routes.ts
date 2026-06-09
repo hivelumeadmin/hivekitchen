@@ -26,6 +26,8 @@ import {
   AssignPackerRequestSchema,
   AssignPackerResponseSchema,
   RespondToLearningMomentRequestSchema,
+  HouseholdGeolocationConsentSchema,
+  UpdateGeolocationConsentRequestSchema,
 } from '@hivekitchen/contracts';
 import type {
   TileRetryRequest,
@@ -33,7 +35,10 @@ import type {
   UpdateSovereigntyModeInput,
   AssignPackerRequest,
 } from '@hivekitchen/contracts';
-import type { CreateExtraLibraryItemInput } from '@hivekitchen/types';
+import type {
+  CreateExtraLibraryItemInput,
+  UpdateGeolocationConsentRequest,
+} from '@hivekitchen/types';
 import { AuditRepository } from '../../audit/audit.repository.js';
 import { AuditService } from '../../audit/audit.service.js';
 import { ForbiddenError, NotFoundError, ValidationError } from '../../common/errors.js';
@@ -862,6 +867,59 @@ const householdsRoutesPlugin: FastifyPluginAsync = async (fastify) => {
       }
 
       return reply.send({ sovereignty_mode: body.sovereignty_mode });
+    },
+  );
+
+  // Slice 5-S14 — GET /v1/households/:id/geolocation-consent
+  // Household-level geolocation opt-in state. Readable by any household member
+  // (no authorize gate — the web only renders the toggle for caregivers, but
+  // the read itself is non-sensitive). 403 on cross-household.
+  fastify.get(
+    '/v1/households/:id/geolocation-consent',
+    {
+      schema: {
+        params: HouseholdIdParamSchema,
+        response: { 200: HouseholdGeolocationConsentSchema },
+      },
+    },
+    async (request) => {
+      const { id: householdId } = request.params as { id: string };
+      if (householdId !== request.user.household_id) {
+        throw new ForbiddenError('Cannot access another household geolocation consent');
+      }
+      return householdsService.getGeolocationConsent(householdId);
+    },
+  );
+
+  // Slice 5-S14 — PATCH /v1/households/:id/geolocation-consent
+  // Caregivers only (requireParentOrCaregiver excludes guest_author = child
+  // profile → 403, AC5/AC11). Stores consent only; NO coordinates are ever sent
+  // to the server (NFR-PRIV-3). Audit-logged via request.auditContext.
+  fastify.patch(
+    '/v1/households/:id/geolocation-consent',
+    {
+      preHandler: requireParentOrCaregiver,
+      schema: {
+        params: HouseholdIdParamSchema,
+        body: UpdateGeolocationConsentRequestSchema,
+        response: { 200: HouseholdGeolocationConsentSchema },
+      },
+    },
+    async (request) => {
+      const { id: householdId } = request.params as { id: string };
+      if (householdId !== request.user.household_id) {
+        throw new ForbiddenError('Cannot update another household geolocation consent');
+      }
+      const body = request.body as UpdateGeolocationConsentRequest;
+      const consent = await householdsService.updateGeolocationConsent(householdId, body);
+      request.auditContext = {
+        event_type: 'household.geolocation_consent',
+        user_id: request.user.id,
+        household_id: householdId,
+        request_id: request.id,
+        metadata: { geolocation_enabled: body.geolocation_enabled },
+      };
+      return consent;
     },
   );
 };

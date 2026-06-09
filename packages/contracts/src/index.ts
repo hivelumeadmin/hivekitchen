@@ -24,6 +24,7 @@ export * from './flavor-passport.js';
 export * from './child-request.js';
 export * from './household-profile.js';
 export * from './household-members.js';
+export * from './household-geolocation.js';
 export * from './extra-rules.js';
 export * from './school-policy.js';
 export * from './plan-day-context.js';

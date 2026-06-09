@@ -1534,3 +1534,14 @@
 
 - **D-5S12-1: SSE auto-clear of the proposal-pending pulse** — BriefCanvas needs an SSE listener that clears `pendingProposal` when a `plan_diff` turn arrives for the matching day, so the sacred-plum pulse stops on Lumi's resolution. Until then the pulse only clears on navigate-away/reload (state is component-local). [`apps/web/src/features/plan/BriefCanvas.tsx`]
 - **D-5S12-2: LumiAgent consumes the proposal turn** — the agent that reads a `TurnBodyProposal` turn from the family thread and resolves it (swapMain + appends a `plan_diff` turn) is unbuilt. This story ships only the send side. Candidate for Epic 9 agent-orchestration. [agent layer]
+
+## Deferred from: code review of 5-s14-geolocation-opt-in-household-level (2026-06-08)
+
+- **CR-5S14-1: AC10 audit test gap** — no route test asserts an audit row is written to `state.audit` after PATCH; requires registering the audit hook in `buildTestApp`. Pre-existing infrastructure gap. [`apps/api/src/modules/households/households.routes.test.ts`]
+- **CR-5S14-2: Empty string `householdId` bypasses null guard** — `if (householdId === null)` in `handleGeolocationToggle` doesn't catch `''`; defended by auth store type contract (`string | null`) and route UUID param validation. [`apps/web/src/routes/(app)/household-settings.tsx`]
+- **CR-5S14-3: Weak `typeof === 'string'` assertion on `consented_at`** — PATCH enable test asserts `typeof === 'string'` not a valid ISO datetime; low risk since value is always `new Date().toISOString()`. [`apps/api/src/modules/households/households.routes.test.ts`]
+
+## Deferred from: 5-s14-geolocation-opt-in-household-level (2026-06-08)
+
+- **D-5S14-1: Actual coordinate collection and supplier routing** — `geolocation_enabled=true` is stored but no code reads it yet. A later epic will call `navigator.geolocation.getCurrentPosition()` at search-time (not consent-time) and pass coordinates to a supplier-search API. This slice ships consent-only; no coordinates are ever collected at consent-time or sent to the server (NFR-PRIV-3). [`apps/web/src/routes/(app)/household-settings.tsx`]
+- **D-5S14-2: Permission pre-check** — `navigator.permissions.query({ name: 'geolocation' })` could detect a permanently-denied browser state before calling `getCurrentPosition` and show a proactive "already denied" warning. Deferred — the `getCurrentPosition` error callback (code===1) handles denial correctly with the "Location access was denied" message. [`apps/web/src/routes/(app)/household-settings.tsx`]

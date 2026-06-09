@@ -344,6 +344,12 @@ export type AcceptInviteResponse = z.infer<typeof AcceptInviteResponseSchema>;
 export type HouseholdMember = z.infer<typeof HouseholdMemberSchema>;
 export type HouseholdMembersResponse = z.infer<typeof HouseholdMembersResponseSchema>;
 
+// Geolocation consent (Slice 5-S14 — household-level opt-in; FR74, NFR-PRIV-3)
+export type {
+  HouseholdGeolocationConsent,
+  UpdateGeolocationConsentRequest,
+} from '@hivekitchen/contracts';
+
 // Plans
 export type MealItem = z.infer<typeof MealItem>;
 export type DayPlan = z.infer<typeof DayPlan>;

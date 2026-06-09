@@ -1,5 +1,7 @@
 import { Buffer } from 'node:buffer';
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { HouseholdGeolocationConsentSchema } from '@hivekitchen/contracts';
+import type { HouseholdGeolocationConsent } from '@hivekitchen/types';
 import { BaseRepository } from '../../repository/base.repository.js';
 import { decryptField, encryptField, normalizedHash } from '../../lib/envelope-encryption.js';
 import { getHouseholdDek, getOrCreateHouseholdDek } from '../../lib/household-key.js';
@@ -408,6 +410,38 @@ export class HouseholdsRepository extends BaseRepository {
       .update({ deletion_requested_at: now })
       .eq('id', householdId);
     if (error) throw error;
+  }
+
+  // Slice 5-S14 — household-level geolocation consent. Consent-only: no
+  // coordinates are ever stored. geolocation_consented_at is preserved on
+  // opt-out (historical record); only the service-built update payload decides
+  // which columns are written.
+  async getGeolocationConsent(householdId: string): Promise<HouseholdGeolocationConsent | null> {
+    const { data, error } = await this.client
+      .from('households')
+      .select('geolocation_enabled, geolocation_consented_at, geolocation_purpose')
+      .eq('id', householdId)
+      .maybeSingle();
+    if (error) throw error;
+    return data ? HouseholdGeolocationConsentSchema.parse(data) : null;
+  }
+
+  async updateGeolocationConsent(
+    householdId: string,
+    input: {
+      geolocation_enabled: boolean;
+      geolocation_purpose: 'cultural_supplier_routing' | null;
+      geolocation_consented_at?: string; // only present when enabling
+    },
+  ): Promise<HouseholdGeolocationConsent> {
+    const { data, error } = await this.client
+      .from('households')
+      .update(input)
+      .eq('id', householdId)
+      .select('geolocation_enabled, geolocation_consented_at, geolocation_purpose')
+      .single();
+    if (error) throw error;
+    return HouseholdGeolocationConsentSchema.parse(data);
   }
 
   // 7-S11: job sweep — find households past the 30-day threshold.
