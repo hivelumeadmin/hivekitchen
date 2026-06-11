@@ -501,7 +501,8 @@ describe('GET /v1/households/:householdId/brief', () => {
   async function buildBriefApp(getBriefResult: unknown): Promise<FastifyInstance> {
     return buildTestApp({
       state: freshState(),
-      plansService: { getBrief: async (_id: string) => getBriefResult },
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      plansService: { getBrief: async (_id: string) => getBriefResult as any },
     });
   }
 

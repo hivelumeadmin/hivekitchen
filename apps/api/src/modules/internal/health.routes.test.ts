@@ -6,6 +6,7 @@ import fastifyJwt from '@fastify/jwt';
 import { requestIdPlugin } from '../../middleware/request-id.hook.js';
 import { isDomainError } from '../../common/errors.js';
 import { healthRoutes } from './health.routes.js';
+import type { DomainOrchestrator } from '../../agents/orchestrator.js';
 
 describe('health.routes (unit)', () => {
   let app: FastifyInstance;
@@ -103,7 +104,7 @@ describe('GET /v1/internal/health/llm-providers (auth)', () => {
         circuit_open: false,
         providers: ['openai', 'anthropic'],
       }),
-    });
+    } as unknown as DomainOrchestrator);
     // Mirror app.ts error mapping for the auth thrown errors so we can assert
     // 401 vs 403 without pulling in the full app bootstrap.
     app.setErrorHandler((err, _request, reply) => {
@@ -120,7 +121,7 @@ describe('GET /v1/internal/health/llm-providers (auth)', () => {
     await app.close();
   });
 
-  function signToken(role: string): string {
+  function signToken(role: 'primary_parent' | 'secondary_caregiver' | 'guest_author' | 'ops'): string {
     return app.jwt.sign({ sub: 'user-1', hh: 'household-1', role });
   }
 
