@@ -53,6 +53,8 @@ export const AUDIT_EVENT_TYPES = [
   'voice.session_started',
   'voice.session_ended',
   'voice.webhook_auth_failed',
+  'voice.tts_token_issued',
+  'voice.stt_token_issued',
   'voice.tts_synthesized', // slice 2-S20: one-shot TTS for on-page narration
   // billing
   'billing.subscribed',

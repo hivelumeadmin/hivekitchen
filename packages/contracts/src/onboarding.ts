@@ -12,6 +12,19 @@ import { CatalogProvenanceSchema } from './kitchen-map.js';
 export const OPENING_GREETING =
   "Hi, I'm Lumi. I'll help learn your kitchen so HiveKitchen can plan school lunches that are safe, realistic, and actually get eaten. Let's start simple — who am I planning lunches for?";
 
+// M1 hint chips — shown immediately with the opening greeting (before any turn).
+// Non-selectable illustrative examples that show the expected input format.
+// Single source of truth: frontend initialises chipConfig with this constant;
+// backend momentToChipConfig('m1_table') returns it after the first turn.
+export const M1_HINT_CHIPS = {
+  mode: 'hint' as const,
+  hints: [
+    'two kids, Layla 10 and Adam 12',
+    'three girls, Shelly 5, Anne 7, and Cathy 11',
+    'Just my son Aarav, 8 years old',
+  ],
+};
+
 // POST /v1/onboarding/text/turn — request body
 //
 // Slice 2.5-s3 introduces a chip-turn shape alongside the original text turn.

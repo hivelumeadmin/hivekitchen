@@ -129,5 +129,16 @@ export class DietaryPreferencesRepository {
 
     return { dietary_id: existingId, was_existing: true };
   }
+
+  async findByHouseholdId(
+    householdId: string,
+  ): Promise<Array<{ tag: string; enforcement: string; child_id: string | null }>> {
+    const { data, error } = await this.client
+      .from('dietary_preferences')
+      .select('tag, enforcement, child_id')
+      .eq('household_id', householdId);
+    if (error) throw error;
+    return (data ?? []) as Array<{ tag: string; enforcement: string; child_id: string | null }>;
+  }
 }
 

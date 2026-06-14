@@ -129,6 +129,105 @@ describe('LumiAgent.respond — system prompt assembly', () => {
   });
 });
 
+describe('LumiAgent.respond — conversational context (5-S11)', () => {
+  it('adds the brief morning instruction for timeOfDayBand=morning', async () => {
+    const { openai, create } = buildFakeOpenAI('ok');
+    const agent = new LumiAgent(openai);
+
+    await agent.respond({
+      ...BASE_INPUT,
+      surface: 'planning',
+      conversationalContext: { timeOfDayBand: 'morning' },
+    });
+
+    const sys = systemMessageOf(create);
+    expect(sys).toContain('# Conversational Context');
+    expect(sys).toContain('Time of day: morning');
+    expect(sys).toContain('The parent is likely in a hurry.');
+    expect(sys).toContain('one or two sentences');
+  });
+
+  it('adds the brief instruction for timeOfDayBand=afternoon', async () => {
+    const { openai, create } = buildFakeOpenAI('ok');
+    const agent = new LumiAgent(openai);
+
+    await agent.respond({
+      ...BASE_INPUT,
+      surface: 'planning',
+      conversationalContext: { timeOfDayBand: 'afternoon' },
+    });
+
+    expect(systemMessageOf(create)).toContain('The parent is likely in a hurry.');
+  });
+
+  it('adds the reflective evening instruction for timeOfDayBand=evening', async () => {
+    const { openai, create } = buildFakeOpenAI('ok');
+    const agent = new LumiAgent(openai);
+
+    await agent.respond({
+      ...BASE_INPUT,
+      surface: 'evening-check-in',
+      conversationalContext: { timeOfDayBand: 'evening' },
+    });
+
+    const sys = systemMessageOf(create);
+    expect(sys).toContain('# Conversational Context');
+    expect(sys).toContain('Time of day: evening');
+    expect(sys).toContain('The parent has time to reflect.');
+    expect(sys).toContain('2–4 sentence');
+  });
+
+  it('adds the reflective instruction for timeOfDayBand=night', async () => {
+    const { openai, create } = buildFakeOpenAI('ok');
+    const agent = new LumiAgent(openai);
+
+    await agent.respond({
+      ...BASE_INPUT,
+      surface: 'general',
+      conversationalContext: { timeOfDayBand: 'night' },
+    });
+
+    expect(systemMessageOf(create)).toContain('The parent has time to reflect.');
+  });
+
+  it('omits the Conversational Context block when conversationalContext is absent', async () => {
+    const { openai, create } = buildFakeOpenAI('ok');
+    const agent = new LumiAgent(openai);
+
+    await agent.respond({ ...BASE_INPUT, surface: 'planning' });
+
+    expect(systemMessageOf(create)).not.toContain('# Conversational Context');
+  });
+
+  it('keeps the base persona, snapshot, and recent-actions blocks ahead of the context block', async () => {
+    const { openai, create } = buildFakeOpenAI('ok');
+    const agent = new LumiAgent(openai);
+    const snapshot = 'Family: The Garcias';
+
+    await agent.respond({
+      ...BASE_INPUT,
+      surface: 'meal-detail',
+      householdSnapshot: snapshot,
+      contextSignal: {
+        surface: 'meal-detail',
+        recent_actions: ['swapped Monday Main'],
+      },
+      conversationalContext: { timeOfDayBand: 'morning' },
+    });
+
+    const sys = systemMessageOf(create);
+    const personaIdx = sys.indexOf(LUMI_BASE_PERSONA.trim());
+    const snapshotIdx = sys.indexOf('# Household Snapshot');
+    const recentIdx = sys.indexOf('# Recent Actions');
+    const contextIdx = sys.indexOf('# Conversational Context');
+
+    expect(personaIdx).toBeGreaterThanOrEqual(0);
+    expect(snapshotIdx).toBeGreaterThan(personaIdx);
+    expect(recentIdx).toBeGreaterThan(snapshotIdx);
+    expect(contextIdx).toBeGreaterThan(recentIdx);
+  });
+});
+
 describe('LumiAgent.respond — conversation history', () => {
   it('threads prior user/lumi turns before the current user message', async () => {
     const { openai, create } = buildFakeOpenAI('ok');

@@ -1,5 +1,10 @@
 # Deferred Work Log
 
+## Deferred from: code review of 5-s11-adaptive-lumi-tone-length (2026-06-09)
+
+- **D-5S11-CR1: `new Date()` inline in `submitTextTurn` is non-deterministic for service tests** — `getTimeOfDayBand(new Date())` is called at the `agent.respond()` call site; any future service-level test asserting on prompt content will need `vi.setSystemTime()`. Pattern is consistent with `getWeekStart(new Date())` elsewhere; no correctness issue. [`apps/api/src/modules/lumi/lumi.service.ts`]
+- **D-5S11-CR2: No integration test verifying `submitTextTurn` wires `conversationalContext` to `agent.respond`** — story explicitly scoped to unit-only tests for the helper and agent layers; the one-line wiring is trivial; component tests cover both sides independently. Add a spy-based test if regression risk grows. [`apps/api/src/modules/lumi/lumi.service.ts`]
+
 ## Deferred from: code review of 5-s16-voice-tier-cap (2026-06-09)
 
 - **D-5S16-CR1: TOCTOU — HTTP session pre-check + first WS utterance both pass near-cap boundary** — `POST /voice/sessions` reads usage and allows the session; the first WS utterance reads the same value (increment not yet committed) and also passes. The user gets one extra utterance above the cap. Aligns with D-5S16-1; acceptable at beta scale. Epic 8 subscription-tier enforcement makes this moot. [`apps/api/src/modules/lumi/lumi.routes.ts`, `apps/api/src/modules/lumi/lumi.service.ts`]

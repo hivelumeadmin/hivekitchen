@@ -206,7 +206,10 @@ export const AllergenDeclareInputSchema = z
   );
 
 export const AllergenDeclareOutputSchema = z.object({
-  child_allergen_id: z.string().uuid(),
+  // uuid() is too strict — the HouseholdAllergensRepository adapter returns ''
+  // for the conflict path (row exists, id not re-fetched). The agent doesn't
+  // use this field for follow-up calls; it's audit-log context only.
+  child_allergen_id: z.string(),
   was_existing: z.boolean(),
 });
 

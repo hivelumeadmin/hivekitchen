@@ -3,17 +3,16 @@
  * Dev-only database + Redis reset.
  *
  * Truncates all household/session data so you can start fresh. Preserves:
- *   - users + refresh_tokens (auth identity survives; browser stays logged in)
+ *   - auth.users (Supabase identity — credentials remain valid)
  *   - Static vocabulary tables: allergen_tags, dietary_tags, cuisine_tags,
  *     cultural_tags, cultural_calendar_observances,
  *     curated_baseline_items
  *
  * Also flushes Redis (removes stale kitchen-map cache + BullMQ job queues).
  *
- * After reset the user lands on the onboarding flow because
- * users.current_household_id is nulled. To also see the login screen, clear
- * the httpOnly refresh-token cookie from browser DevTools → Application →
- * Cookies.
+ * After reset: clear the browser's httpOnly sb-* cookie (DevTools → Application
+ * → Cookies), then log in normally — the next login recreates public.users and
+ * a fresh household, routing you straight through onboarding from scratch.
  *
  * Hard gates:
  *   1. NODE_ENV must be 'development'
@@ -145,22 +144,27 @@ async function main(): Promise<void> {
   await clearTable(supabase, 'invites');
   await clearTable(supabase, 'children');
 
-  // Null users.current_household_id before deleting households to avoid FK violation
+  // Null current_household_id first to drop the FK before deleting households.
   const { error: nullErr } = await supabase
     .from('users')
     .update({ current_household_id: null })
     .not('id', 'is', null);
   if (nullErr) die(`nulling users.current_household_id failed: ${nullErr.message}`);
-  log('nulled users.current_household_id');
 
   await clearTable(supabase, 'households');
+
+  // Delete public.users so the next login is treated as a first login:
+  // auth.users is untouched (credentials still valid), but findUserByAuthId
+  // returns null → createHouseholdAndUser runs cleanly → fresh onboarding.
+  // Without this step login throws "Session invalid" because the row exists
+  // with current_household_id = null but no household to attach to.
+  await clearTable(supabase, 'users');
 
   // Flush Redis: removes stale kitchen-map cache entries and BullMQ job queues
   await flushRedis(redisUrl);
   log('flushed Redis (kitchen-map cache + BullMQ queues cleared)');
 
-  log('Done. Vocabulary tables and users untouched.');
-  log('Tip: to also see the login screen, clear the refresh-token cookie in browser DevTools → Application → Cookies.');
+  log('Done. Clear the browser sb-* cookie then log in — fresh onboarding will start.');
 }
 
 main().catch((err: unknown) => {

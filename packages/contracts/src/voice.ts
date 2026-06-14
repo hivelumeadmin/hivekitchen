@@ -115,6 +115,37 @@ export const WsServerMessageSchema = z.discriminatedUnion('type', [
   WsErrorSchema,
 ]);
 
+// POST /v1/voice/stt/token — browser-direct STT via ElevenLabs Scribe WebSocket.
+// The HK API mints a short-lived single-use token; the browser opens the Scribe
+// WebSocket directly at wss://api.elevenlabs.io/v1/speech-to-text/realtime?token=<token>
+// and streams PCM audio. Audio never transits the HK API.
+export const SttTokenResponseSchema = z.object({
+  token: z.string().min(1),
+});
+
+// POST /v1/voice/turns — REST onboarding voice turn (replaces GET /v1/voice/ws proxy).
+// The browser transcribes via ElevenLabs Scribe WS (token from POST /v1/voice/stt/token),
+// then submits the transcript here. The response includes the agent reply for TTS
+// (browser fetches its own TTS token via POST /v1/voice/tts/token).
+export const VoiceTurnRequestSchema = z.object({
+  session_id: z.string().uuid(),
+  transcript: z.string().trim().min(1).max(4000),
+});
+
+export const VoiceTurnSummarySchema = z.object({
+  cultural_templates: z.array(z.string()),
+  palate_notes: z.array(z.string()),
+  allergens_mentioned: z.array(z.string()),
+  family_rhythms: z.array(z.string()),
+});
+
+export const VoiceTurnResponseSchema = z.object({
+  reply: z.string(),
+  complete: z.boolean(),
+  summary: VoiceTurnSummarySchema.optional(),
+  cultural_priors_detected: z.boolean().optional(),
+});
+
 // Types
 export type WsErrorCode = z.infer<typeof WsErrorCodeSchema>;
 export type VoiceSessionCreate = z.infer<typeof VoiceSessionCreateSchema>;
@@ -130,3 +161,7 @@ export type WsResponseEnd = z.infer<typeof WsResponseEndSchema>;
 export type WsResponseEarlyAck = z.infer<typeof WsResponseEarlyAckSchema>;
 export type WsSessionSummary = z.infer<typeof WsSessionSummarySchema>;
 export type WsError = z.infer<typeof WsErrorSchema>;
+export type SttTokenResponse = z.infer<typeof SttTokenResponseSchema>;
+export type VoiceTurnRequest = z.infer<typeof VoiceTurnRequestSchema>;
+export type VoiceTurnSummary = z.infer<typeof VoiceTurnSummarySchema>;
+export type VoiceTurnResponse = z.infer<typeof VoiceTurnResponseSchema>;

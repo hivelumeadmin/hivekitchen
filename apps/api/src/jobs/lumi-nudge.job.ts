@@ -111,8 +111,6 @@ const lumiNudgePlugin: FastifyPluginAsync = async (fastify) => {
     repository,
     redis: fastify.redis,
     logger: fastify.log,
-    elevenLabsApiKey: fastify.env.ELEVENLABS_API_KEY,
-    voiceId: fastify.env.ELEVENLABS_VOICE_ID,
     openai: fastify.openai,
     childrenRepository,
     householdAllergensRepository,

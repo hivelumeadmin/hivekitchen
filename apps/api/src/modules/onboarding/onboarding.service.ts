@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import type { FastifyBaseLogger } from 'fastify';
 import type { Queue } from 'bullmq';
-import { OPENING_GREETING, type ChipConfig, type ChipOption } from '@hivekitchen/contracts';
+import { OPENING_GREETING, M1_HINT_CHIPS, type ChipConfig, type ChipOption } from '@hivekitchen/contracts';
 import type { KitchenMap } from '@hivekitchen/types';
 import {
   CATALOG_SEED_JOB_OPTS,
@@ -22,6 +22,7 @@ import type { HouseholdRulesRepository } from '../household-rules/household-rule
 import type { HouseholdsService } from '../households/households.service.js';
 import type { CuratedBaselineMaterializationService } from '../catalog/curated-baseline.service.js';
 import type { CatalogProjectionService } from '../catalog/catalog-projection.service.js';
+import type { HouseholdAllergensRepository } from '../households/household-allergens.repository.js';
 import type { KitchenMapService } from '../kitchen-map/kitchen-map.service.js';
 import type { MemoryService } from '../memory/memory.service.js';
 import type { VocabularyService } from '../vocabulary/vocabulary.service.js';
@@ -89,6 +90,9 @@ export interface OnboardingServiceDeps {
   // with provenance. Optional: legacy tests that don't wire the catalog still
   // pass; when absent, M5 chip_config falls back to null (deleted static set).
   catalogProjection?: CatalogProjectionService;
+  // M5 personalization — reads declared allergens so allergen-conflicting
+  // recipes are excluded from the chip set before it is shown to the parent.
+  householdAllergensRepository?: HouseholdAllergensRepository;
 }
 
 export interface SubmitTextTurnInput {
@@ -181,6 +185,41 @@ interface ElevationPrompt {
   tag_label: string;
 }
 
+// M3 chip keys — the full set of cuisine/dietary keys the parent can tap in
+// moment 3. Used by the M3 auto-advance safety net to detect when the agent
+// forgot to emit [NEXT_MOMENT:m4_bag] after a chip submission.
+const M3_CHIP_KEYS = new Set([
+  'halal', 'kosher', 'vegetarian', 'vegan', 'pescatarian', 'gluten_free', 'dairy_free',
+  'south_indian', 'north_indian', 'east_african', 'caribbean', 'levantine', 'italian',
+  'mexican', 'japanese', 'chinese', 'mediterranean',
+]);
+
+// M4 bag chip keys — the four bag-composition patterns the parent can select
+// in moment 4. Used by the M4 auto-advance safety net.
+const M4_BAG_CHIP_KEYS = new Set([
+  'main_only', 'main_plus_snack', 'main_plus_extra', 'main_plus_snack_plus_extra',
+]);
+
+// Parse the `[Chips selected: key1, key2]` prefix from a user message string.
+// Returns an empty array when no chip prefix is present.
+function parseChipKeys(message: string): string[] {
+  const match = /\[Chips selected:\s*([^\]]+)\]/.exec(message);
+  if (match === null) return [];
+  return match[1]!.split(',').map((k) => k.trim()).filter((k) => k.length > 0);
+}
+
+// M5 chip keys are recipe UUIDs (8-4-4-4-12). All other moment chip keys
+// are short human-readable slugs (e.g. 'peanut', 'south_indian'). Used to
+// detect M5 chip turns without needing the moment state at message-parse time.
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+// M1 household-name hint chips — swapped in when Lumi emits
+// [CHIP_PROMPT:household_name] while asking "What should I call your household?"
+const HOUSEHOLD_NAME_HINT_CHIPS: ChipConfig = {
+  mode: 'hint',
+  hints: ['Menon Kitchen', 'The Khan Family', 'Smith Household'],
+};
+
 // Slice 2.5-s7 — optional M3-only elevation directive emitted alongside the
 // regular [NEXT_MOMENT:] when the parent's language signals strong enforcement
 // and the agent wants explicit ratification. Format:
@@ -250,16 +289,7 @@ function parseMomentKey(value: string | null, fromMoment?: CurrentMoment): Curre
 export function momentToChipConfig(moment: CurrentMoment): ChipConfig | null {
   switch (moment) {
     case 'm1_table':
-      // Slice 2.5-s5 — M1 is a broad open question; hint chips are illustrative
-      // examples (non-selectable). Copy verbatim from Moment1Page.tsx mock.
-      return {
-        mode: 'hint',
-        hints: [
-          'Khan-Patel family kitchen — two kids, Layla 10 and Adam 12',
-          'Sharma kitchen — three girls aged 5, 7, and 11',
-          'Just my son Aarav, 8 years old',
-        ],
-      };
+      return M1_HINT_CHIPS;
     case 'm2_safe':
       // Slice 2.5-s6 — M2 is the safety wall: multi-select allergen chips
       // with an explicit "No known allergens" exclusive option. Labels copied
@@ -281,18 +311,33 @@ export function momentToChipConfig(moment: CurrentMoment): ChipConfig | null {
         ],
       };
     case 'm3_taste':
-      // Slice 2.5-s7 — M3 is the densest moment: a broad open question
-      // capturing cultural / religious identity, dietary, cuisine, and food
-      // preferences in ONE rich free-text response. Hint chips are
-      // illustrative (non-selectable); the parent free-types. M3 is OPTIONAL,
-      // so the Skip chip is first-class via skip_label. Copy verbatim from
-      // Moment3Page.tsx scenario 'broad-hint'.
+      // M3 — multi-select dietary + cuisine choice chips. Keys match the
+      // vocabulary table keys that dietary.declare and cuisine.declare accept.
+      // Parent taps any that apply (optionally adds free text); the agent
+      // fires the appropriate tool per chip key. M3 is optional, so
+      // skip_label remains first-class.
       return {
-        mode: 'hint',
-        hints: [
-          'Halal Punjabi household, mostly home-cooked Indian',
-          'Italian heritage, kids love pasta — dairy-light for the youngest',
-          'Hindu vegetarian — South Indian for me, Mexican for them',
+        mode: 'choice',
+        options: [
+          // Dietary identity
+          { key: 'halal', label: 'Halal' },
+          { key: 'kosher', label: 'Kosher' },
+          { key: 'vegetarian', label: 'Vegetarian' },
+          { key: 'vegan', label: 'Vegan' },
+          { key: 'pescatarian', label: 'Pescatarian' },
+          { key: 'gluten_free', label: 'Gluten-free' },
+          { key: 'dairy_free', label: 'Dairy-free' },
+          // Cuisine identity
+          { key: 'south_indian', label: 'South Indian' },
+          { key: 'north_indian', label: 'North Indian' },
+          { key: 'east_african', label: 'East African' },
+          { key: 'caribbean', label: 'Caribbean' },
+          { key: 'levantine', label: 'Levantine' },
+          { key: 'italian', label: 'Italian' },
+          { key: 'mexican', label: 'Mexican' },
+          { key: 'japanese', label: 'Japanese' },
+          { key: 'chinese', label: 'Chinese' },
+          { key: 'mediterranean', label: 'Mediterranean' },
         ],
         skip_label: 'Skip this moment',
       };
@@ -364,6 +409,8 @@ export class OnboardingService {
   private readonly catalogSeedQueue?: Queue<CatalogSeedJobData>;
   // Slice 2.6-s4 — M5 personalized chip projection
   private readonly catalogProjection?: CatalogProjectionService;
+  // M5 personalization — allergen filter
+  private readonly householdAllergensRepository?: HouseholdAllergensRepository;
 
   constructor(deps: OnboardingServiceDeps) {
     this.threads = deps.threads;
@@ -386,6 +433,7 @@ export class OnboardingService {
     this.curatedBaseline = deps.curatedBaseline;
     this.catalogSeedQueue = deps.catalogSeedQueue;
     this.catalogProjection = deps.catalogProjection;
+    this.householdAllergensRepository = deps.householdAllergensRepository;
   }
 
   /**
@@ -492,12 +540,71 @@ export class OnboardingService {
       .replace(/\[CHIP_PROMPT:elevation:[a-z0-9_]+:[^\]]+\]/g, '')
       .trim();
 
+    // M5 chip UUID resolution: the M5 chip card uses recipe IDs (UUIDs) as
+    // chip keys. When the parent selects chips, the client sends those UUIDs
+    // in the [Chips selected: ...] header. Resolve them to canonical recipe
+    // names here, before the DB write and the agent call, so:
+    //   a) the stored turn has readable names (conversation history stays clean)
+    //   b) the agent receives readable names it can pass to favorite_lunch.add
+    // Detection: UUID shape distinguishes M5 recipe keys from all other moment
+    // chip keys (allergen slugs, cuisine slugs, bag patterns, etc. are short
+    // human-readable tokens — never UUID-shaped).
+    let resolvedUserMessage = userMessage;
+    if (this.recipesRepository !== undefined) {
+      const chipKeys = parseChipKeys(userMessage);
+      const uuidChipKeys = chipKeys.filter((k) => UUID_RE.test(k));
+      if (uuidChipKeys.length > 0) {
+        const recipesRepo = this.recipesRepository;
+        const resolvedNames = new Map<string, string>();
+        await Promise.all(
+          uuidChipKeys.map(async (uuid) => {
+            try {
+              const recipe = await recipesRepo.findById(uuid);
+              if (recipe !== null) resolvedNames.set(uuid, recipe.canonical_name);
+            } catch (err) {
+              this.logger.warn(
+                {
+                  err,
+                  module: 'onboarding',
+                  action: 'onboarding.m5_chip_uuid_resolve_failed',
+                  household_id: input.householdId,
+                  uuid,
+                },
+                'm5 chip UUID resolution failed — keeping UUID in message',
+              );
+            }
+          }),
+        );
+        if (resolvedNames.size > 0) {
+          resolvedUserMessage = userMessage.replace(
+            /\[Chips selected:\s*([^\]]+)\]/,
+            (_: string, inner: string) => {
+              const resolved = inner
+                .split(',')
+                .map((k) => k.trim())
+                .map((k) => resolvedNames.get(k) ?? k);
+              return `[Chips selected: ${resolved.join(', ')}]`;
+            },
+          );
+          this.logger.info(
+            {
+              module: 'onboarding',
+              action: 'onboarding.m5_chip_uuid_resolved',
+              household_id: input.householdId,
+              resolved_count: resolvedNames.size,
+            },
+            'm5 chip UUIDs resolved to canonical names',
+          );
+        }
+      }
+    }
+
     const lastTurn: TurnRow | undefined = existingTurns[existingTurns.length - 1];
     const isOrphanedUserTurn =
       lastTurn !== undefined &&
       lastTurn.role === 'user' &&
       lastTurn.body.type === 'message' &&
-      lastTurn.body.content === userMessage;
+      lastTurn.body.content === resolvedUserMessage;
 
     let userTurn: TurnRow;
     let agentInput: LlmMessage[];
@@ -519,10 +626,10 @@ export class OnboardingService {
       userTurn = await this.threads.appendTurnNext({
         threadId: thread.id,
         role: 'user',
-        body: { type: 'message', content: userMessage },
+        body: { type: 'message', content: resolvedUserMessage },
         modality: TEXT_MODALITY,
       });
-      agentInput = [...history, { role: 'user', content: userMessage }];
+      agentInput = [...history, { role: 'user', content: resolvedUserMessage }];
     }
 
     // R2-P5 — first text turn has no agent-side history of the opening
@@ -582,6 +689,27 @@ export class OnboardingService {
         );
       }
     }
+    this.logger.info(
+      {
+        module: 'onboarding',
+        action: 'onboarding.tool_loop_check',
+        household_id: input.householdId,
+        tool_loop_available: this.toolLoopAvailable,
+        agent_tools_enabled: this.agentToolsEnabled,
+        has_children_service: this.childrenService !== undefined,
+        has_cultural_prior_repo: this.culturalPriorRepository !== undefined,
+        has_households_service: this.householdsService !== undefined,
+        has_kitchen_map: this.kitchenMapService !== undefined,
+        has_vocabulary: this.vocabularyService !== undefined,
+        has_memory_service: this.memoryService !== undefined,
+        has_child_allergens_repo: this.childAllergensRepository !== undefined,
+        has_dietary_prefs_repo: this.dietaryPreferencesRepository !== undefined,
+        has_food_prefs_repo: this.foodPreferencesRepository !== undefined,
+        has_household_rules_repo: this.householdRulesRepository !== undefined,
+        has_recipes_repo: this.recipesRepository !== undefined,
+      },
+      'onboarding tool loop check',
+    );
     try {
       if (
         this.toolLoopAvailable &&
@@ -690,12 +818,17 @@ export class OnboardingService {
       allDirectiveMatches.length > 0
         ? (allDirectiveMatches[allDirectiveMatches.length - 1]?.[1] ?? null)
         : null;
+    // Detect [CHIP_PROMPT:household_name] before stripping — M1 household name
+    // hint swap. Uses includes() to avoid /g lastIndex statefulness.
+    const householdNameChipRequested = lumiText.includes('[CHIP_PROMPT:household_name]');
+
     // Slice 2.5-s7 — extract optional elevation prompt before stripping; the
     // returned `cleaned` text has neither directive remaining. Order with
     // NEXT_MOMENT_STRIP_RE does not matter — both regexes are independent.
     const elevation = extractElevationPrompt(lumiText);
     const lumiTextWithoutDirective = elevation.cleaned
       .replace(NEXT_MOMENT_STRIP_RE, '')
+      .replace(/\[CHIP_PROMPT:household_name\]/g, '')
       .trimEnd();
 
     // R2-P8 — defense-in-depth: TEXT_RULES instructs the model not to emit
@@ -771,6 +904,86 @@ export class OnboardingService {
           nextCurrentMoment = 'summary';
         }
 
+        // Kitchen-map inference: when there is no prior moment state row
+        // (fresh session, reset, or row missing) and the agent didn't emit a
+        // directive, the pre_start → m1_table fallback fires regardless of
+        // what data already exists. This strands a reset session at M1 hint
+        // chips while the agent (seeing a populated kitchen map) asks M4
+        // questions. Re-anchor to the correct moment using the DB counts.
+        //
+        // The "no known allergens" path writes no child_allergens row, so a
+        // zero count is ambiguous (may mean "not yet answered" or "all clear").
+        // We only skip past M2 when allergen rows are present.
+        if (
+          preTurnMomentState === null &&
+          advancedKey === null &&
+          nextCurrentMoment === 'm1_table'
+        ) {
+          const m1Done = counts.household_name_set && counts.child_count > 0;
+          const m2Done = counts.child_allergen_count > 0;
+          if (m1Done && m2Done) {
+            nextCurrentMoment = 'm4_bag'; // M3 is optional; jump straight to M4
+          } else if (m1Done) {
+            nextCurrentMoment = 'm2_safe';
+          }
+          // M1 not done → stay at m1_table
+        }
+
+        // M3 safety net: advance to m4_bag when the parent has already
+        // answered M3 but the agent forgot [NEXT_MOMENT:m4_bag]. Two cases:
+        //
+        // A) Current turn: chips are all valid M3 cuisine/dietary keys (or
+        //    the skip sentinel) — the parent just answered M3 this turn.
+        // B) Prior turn: an earlier message in the thread contained M3 chip
+        //    selections — the parent already answered M3 and the agent
+        //    kept the moment at m3_taste across multiple turns (e.g. when
+        //    the user sent "try again" after the first submission).
+        //
+        // M3 is optional — any chip selection is a complete answer; the LLM
+        // sometimes bridges to M4 in prose but forgets the directive.
+        if (nextCurrentMoment === 'm3_taste' && advancedKey === null) {
+          const submittedChips = parseChipKeys(userMessage);
+          const currentTurnHasM3Chips =
+            submittedChips.length > 0 &&
+            submittedChips.every((k) => M3_CHIP_KEYS.has(k) || k === 'skip');
+
+          const priorTurnHasM3Chips =
+            !currentTurnHasM3Chips &&
+            existingTurns.some(
+              (t) =>
+                t.role === 'user' &&
+                t.body.type === 'message' &&
+                parseChipKeys(t.body.content).some((k) => M3_CHIP_KEYS.has(k)),
+            );
+
+          if (currentTurnHasM3Chips || priorTurnHasM3Chips) {
+            nextCurrentMoment = 'm4_bag';
+          }
+        }
+
+        // M4 safety net: advance to m5_starting_line when the parent has submitted
+        // a valid bag-composition chip but the agent forgot [NEXT_MOMENT:m5_starting_line].
+        // Same two-case logic as the M3 safety net.
+        if (nextCurrentMoment === 'm4_bag' && advancedKey === null) {
+          const submittedChips = parseChipKeys(userMessage);
+          const currentTurnHasM4Chips =
+            submittedChips.length > 0 &&
+            submittedChips.every((k) => M4_BAG_CHIP_KEYS.has(k));
+
+          const priorTurnHasM4Chips =
+            !currentTurnHasM4Chips &&
+            existingTurns.some(
+              (t) =>
+                t.role === 'user' &&
+                t.body.type === 'message' &&
+                parseChipKeys(t.body.content).some((k) => M4_BAG_CHIP_KEYS.has(k)),
+            );
+
+          if (currentTurnHasM4Chips || priorTurnHasM4Chips) {
+            nextCurrentMoment = 'm5_starting_line';
+          }
+        }
+
         const advancedOutOfM2 =
           nextCurrentMoment !== 'm2_safe' &&
           previousMoment === 'm2_safe';
@@ -809,11 +1022,46 @@ export class OnboardingService {
               );
             }
           }
+
+          let allergenFilter: string[] = [];
+          if (this.householdAllergensRepository !== undefined) {
+            try {
+              const allergenRows = await this.householdAllergensRepository.findByHouseholdId(
+                input.householdId,
+              );
+              allergenFilter = allergenRows.map((r) => r.allergen);
+            } catch (err) {
+              this.logger.warn(
+                { err, module: 'onboarding', action: 'catalog.m5.allergen_read_failed', household_id: input.householdId },
+                'm5 allergen read failed — allergen filter skipped',
+              );
+            }
+          }
+
+          let requiredDietaryFlags: string[] = [];
+          if (this.dietaryPreferencesRepository !== undefined) {
+            try {
+              const dietaryRows = await this.dietaryPreferencesRepository.findByHouseholdId(
+                input.householdId,
+              );
+              requiredDietaryFlags = dietaryRows
+                .filter((r) => r.enforcement === 'non_negotiable')
+                .map((r) => r.tag);
+            } catch (err) {
+              this.logger.warn(
+                { err, module: 'onboarding', action: 'catalog.m5.dietary_read_failed', household_id: input.householdId },
+                'm5 dietary read failed — dietary filter skipped',
+              );
+            }
+          }
+
           try {
             const { chips: personalizedChips, coldStartReason } =
               await this.catalogProjection.getM5Chips(
                 input.householdId,
                 declaredCuisineTags,
+                allergenFilter,
+                requiredDietaryFlags,
               );
             m5ProjectionResult = {
               chips: personalizedChips,
@@ -1006,6 +1254,14 @@ export class OnboardingService {
           'onboarding moment state updated',
         );
       } catch (err) {
+        // If the moment block fails on the very first turn (pre_start → nothing
+        // written), nextCurrentMoment stays at 'pre_start', which produces a
+        // null chip_config and an invisible conversation start.  Advance to
+        // m1_table as a best-effort fallback so the client always renders the
+        // M1 hint chips even when the DB is temporarily unavailable.
+        if (nextCurrentMoment === 'pre_start') {
+          nextCurrentMoment = 'm1_table';
+        }
         this.logger.warn(
           {
             err,
@@ -1019,10 +1275,6 @@ export class OnboardingService {
       }
     }
 
-    // Slice 2.5-s7 — when the agent emitted an elevation prompt, override the
-    // default chip_config with the 3-option action chip set (no skip — the
-    // parent must pick one; the soft path is 'just-context'). tag_label is
-    // already echoed by the agent in the prose; here we only ship the keys.
     let chip_config: ChipConfig | null = momentToChipConfig(nextCurrentMoment);
 
     // Slice 2.6-s4 — assemble chip_config from the catalog projection run
@@ -1051,6 +1303,17 @@ export class OnboardingService {
     // the moment block above.
     void m5ProjectionFailed;
 
+    // M1 household-name chip swap: Lumi asked "what should I call your household?"
+    // and emitted [CHIP_PROMPT:household_name] — replace the child/age hints with
+    // household-name format examples.
+    if (householdNameChipRequested) {
+      chip_config = HOUSEHOLD_NAME_HINT_CHIPS;
+    }
+
+    // Slice 2.5-s7 — when the agent emitted an elevation prompt, override the
+    // default chip_config with the 3-option action chip set (no skip — the
+    // parent must pick one; the soft path is 'just-context'). tag_label is
+    // already echoed by the agent in the prose; here we only ship the keys.
     if (elevation.prompt !== null) {
       chip_config = {
         mode: 'action',
@@ -1257,29 +1520,42 @@ export class OnboardingService {
 
     const history = this.turnsToLlmMessages(turns);
 
-    // F06 — propagate classifier failures as upstream errors instead of
-    // silently coercing them into a "not ready" 409. Hiding an OpenAI
-    // outage as a finalize-not-ready response misleads the client and
-    // hides a real incident. R2-P7 — generic detail; raw err logged only.
-    let confirmed: boolean;
-    try {
-      confirmed = await this.agent.isSummaryConfirmed(history);
-    } catch (err) {
-      this.logger.error(
-        {
-          err,
-          module: 'onboarding',
-          action: 'onboarding.finalize_classifier_failed',
-          thread_id: thread.id,
-          household_id: input.householdId,
-        },
-        'isSummaryConfirmed failed during finalize — surfacing as upstream error',
-      );
-      throw new UpstreamError('Onboarding readiness check failed');
-    }
-    if (!confirmed) {
-      // F17 — distinct message from the empty-thread case.
-      throw new ConflictError('summary not yet confirmed — keep talking with Lumi');
+    // F06 — the LLM classifier is the safety net when the structured moment-
+    // state gate could not run (momentRepository absent or DB read failed).
+    // When the structured gate already passed (current_moment='summary' AND
+    // required_set_complete=true), the parent tapping Finalize IS their
+    // confirmation — skip the classifier to avoid blocking on an unanswered
+    // "Does this sound right?" turn. The classifier still runs on the legacy
+    // path (no moment tracking) and the read-failed fallback path.
+    const structuredGatePassed =
+      finalizeState !== null &&
+      finalizeState.current_moment === 'summary' &&
+      finalizeState.required_set_status.m1_household_name &&
+      finalizeState.required_set_status.m1_child_declared &&
+      finalizeState.required_set_status.m2_allergen_response &&
+      finalizeState.required_set_status.m5_complete;
+
+    if (!structuredGatePassed) {
+      let confirmed: boolean;
+      try {
+        confirmed = await this.agent.isSummaryConfirmed(history);
+      } catch (err) {
+        this.logger.error(
+          {
+            err,
+            module: 'onboarding',
+            action: 'onboarding.finalize_classifier_failed',
+            thread_id: thread.id,
+            household_id: input.householdId,
+          },
+          'isSummaryConfirmed failed during finalize — surfacing as upstream error',
+        );
+        throw new UpstreamError('Onboarding readiness check failed');
+      }
+      if (!confirmed) {
+        // F17 — distinct message from the empty-thread case.
+        throw new ConflictError('summary not yet confirmed — keep talking with Lumi');
+      }
     }
 
     // 3. Run extraction. R2-P3 — on failure do NOT persist an empty summary

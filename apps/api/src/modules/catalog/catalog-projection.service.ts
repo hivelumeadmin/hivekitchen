@@ -32,9 +32,6 @@ const TARGET_CHIPS = 18;
 const UNDERFLOW_THRESHOLD = 12;
 const DIVERSITY_CAP_PRIMARY = 3;
 const DIVERSITY_CAP_RELAXED = 5;
-// 2.6-s6 — per-cuisine floor: any declared cuisine bucket with fewer than
-// this many catalog-seeded recipes triggers the conversational fallback.
-const PER_CUISINE_FLOOR_THRESHOLD = 5;
 
 export type ColdStartReason =
   | 'per_cuisine_floor'
@@ -79,6 +76,8 @@ interface CatalogRow {
   canonical_name: string;
   cuisine_tags: string[];
   cultural_tags: string[];
+  allergen_flags: string[];
+  dietary_flags: string[];
   catalog_provenance: CatalogProvenance;
   confidence_score: number;
   is_household_favorite: boolean;
@@ -107,23 +106,28 @@ export class CatalogProjectionService {
   async getM5Chips(
     householdId: string,
     declaredCuisineTags: string[] = [],
+    allergenFilter: string[] = [],
+    requiredDietaryFlags: string[] = [],
   ): Promise<M5ChipResult> {
     try {
       // Step 1 — Stage 1 wait (polling).
       const { timedOut } = await this.waitForStage1(householdId);
 
       // Step 2 — single read.
-      const rows: CatalogRow[] =
+      const allRows: CatalogRow[] =
         await this.recipesRepository.findCatalogProjectionForHousehold(householdId);
 
-      // Step 6 (early gate) — cold-start determination on the raw rows. We
-      // run this BEFORE diversity capping so the floor reflects what the
-      // catalog actually holds, not what shape the chip card would take.
-      const coldStartReason = this.deriveColdStartReason(
-        rows,
-        declaredCuisineTags,
-        timedOut,
-      );
+      // Step 2b — personalization filter: exclude allergen conflicts and
+      // recipes that don't satisfy non-negotiable dietary requirements.
+      const rows = this.filterByPersonalization(allRows, allergenFilter, requiredDietaryFlags);
+
+      // Step 3 (early gate) — cold-start only when catalog is truly empty.
+      // The per-cuisine floor check was removed: cultural_priors stores both
+      // broad cultural keys (south_asian) and sub-cuisine keys (south_indian,
+      // halal) from cuisine.declare. Sub-cuisines have < 5 baseline items and
+      // dietary/religious keys have 0 cuisine_tag matches — both triggered
+      // spurious cold-starts with 50 perfectly usable chips in the catalog.
+      const coldStartReason = this.deriveColdStartReason(rows);
       if (coldStartReason !== null) {
         this.logger.info(
           {
@@ -139,8 +143,9 @@ export class CatalogProjectionService {
         return { chips: [], coldStartReason };
       }
 
-      // Step 3 — stable sort (TS).
-      const sorted = this.sortCandidates(rows);
+      // Step 4 — stable sort: declared-cuisine matches first, then favorites,
+      // then provenance priority, then confidence, then id.
+      const sorted = this.sortCandidates(rows, declaredCuisineTags);
 
       // Step 4 — diversity cap (3 per cuisine_tag).
       let picked = this.pickWithDiversityCap(sorted, DIVERSITY_CAP_PRIMARY);
@@ -237,45 +242,39 @@ export class CatalogProjectionService {
   }
 
   /**
-   * Determine whether the M5 chip path should fall through to the
-   * conversational cold-start tail. Order:
-   *   - empty catalog (total_rows === 0)         → 'stage2_terminal'
-   *   - any declared cuisine below per-bucket floor → 'per_cuisine_floor'
-   *     ('stage1_timeout' takes precedence when timed out)
-   *   - otherwise null (normal chip card)
-   *
-   * `declaredCuisineTags` empty → per-cuisine check is skipped (parent
-   * skipped M3). stage1_timeout alone with non-empty catalog does NOT
-   * trigger cold-start — the catalog might be from Stage 0 baseline.
+   * Cold-start only when the personalized catalog has 0 rows. Shows chips
+   * whenever anything exists, even if a declared sub-cuisine has few matches.
    */
   private deriveColdStartReason(
     rows: ReadonlyArray<CatalogRow>,
-    declaredCuisineTags: ReadonlyArray<string>,
-    timedOut: boolean,
   ): ColdStartReason | null {
-    if (rows.length === 0) {
-      return 'stage2_terminal';
-    }
-    if (declaredCuisineTags.length === 0) {
-      return null;
-    }
-    let belowFloor = false;
-    for (const tag of declaredCuisineTags) {
-      let count = 0;
-      for (const row of rows) {
-        if (row.cuisine_tags.includes(tag)) count += 1;
-      }
-      if (count < PER_CUISINE_FLOOR_THRESHOLD) {
-        belowFloor = true;
-        break;
-      }
-    }
-    if (!belowFloor) return null;
-    return timedOut ? 'stage1_timeout' : 'per_cuisine_floor';
+    return rows.length === 0 ? 'stage2_terminal' : null;
   }
 
-  private sortCandidates(rows: ReadonlyArray<CatalogRow>): CatalogRow[] {
+  private filterByPersonalization(
+    rows: ReadonlyArray<CatalogRow>,
+    allergenFilter: ReadonlyArray<string>,
+    requiredDietaryFlags: ReadonlyArray<string>,
+  ): CatalogRow[] {
+    if (allergenFilter.length === 0 && requiredDietaryFlags.length === 0) return [...rows];
+    return rows.filter((row) => {
+      if (allergenFilter.some((a) => row.allergen_flags.includes(a))) return false;
+      if (requiredDietaryFlags.some((d) => !row.dietary_flags.includes(d))) return false;
+      return true;
+    });
+  }
+
+  private sortCandidates(
+    rows: ReadonlyArray<CatalogRow>,
+    declaredCuisineTags: ReadonlyArray<string> = [],
+  ): CatalogRow[] {
+    const hasDeclared = declaredCuisineTags.length > 0;
     return [...rows].sort((a, b) => {
+      if (hasDeclared) {
+        const aMatch = a.cuisine_tags.some((t) => declaredCuisineTags.includes(t)) ? 1 : 0;
+        const bMatch = b.cuisine_tags.some((t) => declaredCuisineTags.includes(t)) ? 1 : 0;
+        if (aMatch !== bMatch) return bMatch - aMatch;
+      }
       if (a.is_household_favorite !== b.is_household_favorite) {
         return a.is_household_favorite ? -1 : 1;
       }

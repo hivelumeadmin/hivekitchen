@@ -1,9 +1,17 @@
-import { defineConfig } from "vite";
+import { defineConfig, createLogger } from "vite";
 import react from "@vitejs/plugin-react";
 import path from "path";
 import { VitePWA } from "vite-plugin-pwa";
 
+const logger = createLogger();
+const loggerWarn = logger.warn.bind(logger);
+logger.warn = (msg, options) => {
+  if (msg.includes("vad-react") && msg.includes("sourcemap")) return;
+  loggerWarn(msg, options);
+};
+
 export default defineConfig({
+  customLogger: logger,
   plugins: [
     react(),
     VitePWA({
