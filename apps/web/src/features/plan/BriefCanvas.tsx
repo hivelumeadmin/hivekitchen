@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import type {
-  ChildResponse,
   ClearedAllergyEntry,
   PlanTileSummary,
   ProposeSwapResponse,
@@ -9,10 +8,7 @@ import type {
 } from '@hivekitchen/types';
 import { hkFetch } from '@/lib/fetch.js';
 import { useAuthStore } from '@/stores/auth.store.js';
-import { useComplianceStore } from '@/stores/compliance.store.js';
 import { PageHeader } from '@/components/PageHeader.js';
-import { AddChildForm } from '@/features/children/AddChildForm.js';
-import { BagCompositionCard } from '@/features/children/BagCompositionCard.js';
 import { PendingChildRequests } from '@/features/child-requests/PendingChildRequests.js';
 import { AllergyClearedBadge } from './AllergyClearedBadge.js';
 import {
@@ -123,9 +119,6 @@ export function BriefCanvas() {
     }
     return out;
   }, [planData]);
-  const [showAddChild, setShowAddChild] = useState(false);
-  const [addedChild, setAddedChild] = useState<ChildResponse | null>(null);
-  const [savedChildren, setSavedChildren] = useState<ChildResponse[]>([]);
   // Story 3.12 — picker / swap-in-progress UI state.
   const [activeSwapDay, setActiveSwapDay] = useState<PlanTileSummary['day'] | null>(null);
   const [swappingItemId, setSwappingItemId] = useState<string | null>(null);
@@ -347,55 +340,9 @@ export function BriefCanvas() {
   if (!isLoading && brief === null && !isError) {
     return (
       <main className="mx-auto w-full max-w-7xl flex-grow flex items-center justify-center px-6 pt-12 pb-24">
-        {showAddChild && addedChild === null ? (
-          <AddChildForm
-            householdId={householdId ?? ''}
-            onSuccess={(child) => setAddedChild(child)}
-            onCancel={() => setShowAddChild(false)}
-            onParentalNoticeRequired={() => {
-              useComplianceStore.getState().setAcknowledgmentState(null, null);
-            }}
-          />
-        ) : showAddChild && addedChild !== null ? (
-          <BagCompositionCard
-            childId={addedChild.id}
-            childName={addedChild.name}
-            onSaved={(savedChild) => {
-              setSavedChildren((prev) => [...prev, savedChild]);
-              setAddedChild(null);
-              setShowAddChild(false);
-            }}
-            onSkip={() => {
-              setSavedChildren((prev) => addedChild ? [...prev, addedChild] : prev);
-              setAddedChild(null);
-              setShowAddChild(false);
-            }}
-          />
-        ) : (
-          <div className="flex flex-col items-center gap-6">
-            {savedChildren.length > 0 && (
-              <ul className="w-full max-w-sm space-y-2">
-                {savedChildren.map((child) => (
-                  <li key={child.id} className="text-sm text-fg-muted">
-                    {child.name} — {child.age_band}
-                  </li>
-                ))}
-              </ul>
-            )}
-            <div className="text-center">
-              <p className="max-w-sm text-base text-fg-muted">
-                Lumi is preparing your first plan. Check back Sunday evening.
-              </p>
-              <button
-                type="button"
-                onClick={() => setShowAddChild(true)}
-                className="mt-3 text-sm text-amber-warm underline underline-offset-2 hover:text-amber transition-colors motion-reduce:transition-none"
-              >
-                Add your first child
-              </button>
-            </div>
-          </div>
-        )}
+        <p className="max-w-sm text-base text-fg-muted text-center">
+          Lumi is preparing your first plan. Check back Sunday evening.
+        </p>
       </main>
     );
   }
