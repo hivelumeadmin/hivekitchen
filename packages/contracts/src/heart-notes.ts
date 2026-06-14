@@ -75,7 +75,7 @@ export const HeartNotesListQuerySchema = z.object({
       if (!v) return undefined;
       const result = z.array(HeartNoteStatusSchema).safeParse(v.split(','));
       if (!result.success) {
-        result.error.issues.forEach((issue) => ctx.addIssue(issue));
+        result.error.issues.forEach((issue) => ctx.addIssue({ code: 'custom', message: issue.message }));
         return z.NEVER;
       }
       return result.data;

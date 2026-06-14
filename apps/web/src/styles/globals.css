@@ -6,3 +6,11 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+/* Slice 5-S12 — sacred-plum proposal-pending pulse on PlanTile. Reduced-motion
+   suppression is handled at the call site via Tailwind's motion-reduce variant
+   (compiles to @media (prefers-reduced-motion: reduce)). */
+@keyframes hk-sacred-plum-pulse {
+  0%, 100% { opacity: 0.6; }
+  50%      { opacity: 1; }
+}

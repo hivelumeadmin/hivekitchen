@@ -153,6 +153,7 @@ function renderPicker(
       onSwapStarted={props.onSwapStarted ?? onSwapStarted}
       onSwapSettled={props.onSwapSettled ?? onSwapSettled}
       onRegenDay={props.onRegenDay}
+      onProposeSwap={props.onProposeSwap}
     />,
     { wrapper },
   );
@@ -345,6 +346,103 @@ describe('DisambiguationPicker — L3 variation submit', () => {
       const alert = screen.getByRole('alert');
       expect(alert.textContent).toMatch(/Swap failed/i);
     });
+  });
+});
+
+describe('DisambiguationPicker — Swap Main / L3 proposal flow', () => {
+  it('shows Swap Main when a main slot is present and onProposeSwap is provided', () => {
+    renderPicker({ dayView: singleSlotDayView(), onProposeSwap: vi.fn() });
+    expect(screen.getByRole('button', { name: /Swap Main/i })).toBeDefined();
+  });
+
+  it('hides Swap Main when onProposeSwap is not provided', () => {
+    renderPicker({ dayView: singleSlotDayView() });
+    expect(screen.queryByRole('button', { name: /Swap Main/i })).toBeNull();
+  });
+
+  it('hides Swap Main when the day has no main slot', () => {
+    const view = singleSlotDayView();
+    const snackOnly: DayTreeView = {
+      ...view,
+      slots: [
+        {
+          slot_kind: 'snack',
+          plan_slot_id: SLOT_SNACK,
+          recipe_id: '00000000-0000-4000-8000-000000000040',
+          main_assignment_id: null,
+          extra_kind: null,
+          variations: [],
+        },
+      ],
+      mainSlot: null,
+    };
+    renderPicker({ dayView: snackOnly, onProposeSwap: vi.fn() });
+    expect(screen.queryByRole('button', { name: /Swap Main/i })).toBeNull();
+  });
+
+  it('transitions to L3 (breadcrumb + focused input) on Swap Main click', () => {
+    renderPicker({ dayView: singleSlotDayView(), onProposeSwap: vi.fn() });
+    fireEvent.click(screen.getByRole('button', { name: /Swap Main/i }));
+    expect(screen.getByText(/Continuing from Monday/i)).toBeDefined();
+    const input = screen.getByLabelText('What should Lumi swap it for?');
+    expect(input).toBeDefined();
+    expect(document.activeElement).toBe(input);
+  });
+
+  it('submits the proposal and fires onSwapStarted + onDismiss', async () => {
+    const onProposeSwap = vi.fn().mockResolvedValue('proposal-uuid');
+    const { onSwapStarted, onDismiss } = renderPicker({
+      dayView: singleSlotDayView(),
+      onProposeSwap,
+    });
+    fireEvent.click(screen.getByRole('button', { name: /Swap Main/i }));
+    const input = screen.getByLabelText('What should Lumi swap it for?') as HTMLInputElement;
+    fireEvent.change(input, { target: { value: 'something lighter' } });
+    fireEvent.click(screen.getByRole('button', { name: /Ask Lumi/i }));
+
+    await waitFor(() => {
+      expect(onSwapStarted).toHaveBeenCalledWith('proposal-uuid');
+      expect(onDismiss).toHaveBeenCalled();
+    });
+    expect(onProposeSwap).toHaveBeenCalledWith('monday', 'something lighter');
+  });
+
+  it('submits on Enter key', async () => {
+    const onProposeSwap = vi.fn().mockResolvedValue('proposal-uuid');
+    renderPicker({ dayView: singleSlotDayView(), onProposeSwap });
+    fireEvent.click(screen.getByRole('button', { name: /Swap Main/i }));
+    const input = screen.getByLabelText('What should Lumi swap it for?') as HTMLInputElement;
+    fireEvent.change(input, { target: { value: 'a wrap' } });
+    fireEvent.keyDown(input, { key: 'Enter' });
+
+    await waitFor(() => {
+      expect(onProposeSwap).toHaveBeenCalledWith('monday', 'a wrap');
+    });
+  });
+
+  it('shows an error and stays on L3 when the proposal fails', async () => {
+    const onProposeSwap = vi.fn().mockRejectedValue(new Error('boom'));
+    const { onDismiss } = renderPicker({
+      dayView: singleSlotDayView(),
+      onProposeSwap,
+    });
+    fireEvent.click(screen.getByRole('button', { name: /Swap Main/i }));
+    const input = screen.getByLabelText('What should Lumi swap it for?') as HTMLInputElement;
+    fireEvent.change(input, { target: { value: 'something lighter' } });
+    fireEvent.click(screen.getByRole('button', { name: /Ask Lumi/i }));
+
+    await waitFor(() => {
+      expect(screen.getByRole('alert').textContent).toMatch(/Could not send/i);
+    });
+    expect(onDismiss).not.toHaveBeenCalled();
+  });
+
+  it('Back on L3 returns to L1', () => {
+    renderPicker({ dayView: singleSlotDayView(), onProposeSwap: vi.fn() });
+    fireEvent.click(screen.getByRole('button', { name: /Swap Main/i }));
+    expect(screen.getByLabelText('What should Lumi swap it for?')).toBeDefined();
+    fireEvent.click(screen.getByRole('button', { name: 'Back' }));
+    expect(screen.getByText('What would you like to do?')).toBeDefined();
   });
 });
 

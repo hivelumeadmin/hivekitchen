@@ -41,7 +41,8 @@ type PickerLevel =
   | 'l3-variation-ingredients'
   | 'l2-select-slot-override' // pick which slot to override
   | 'l4-override'
-  | 'l2-select-pause-child';
+  | 'l2-select-pause-child'
+  | 'l3-propose-swap';      // Slice 5-S12 — conversational swap proposal
 
 interface DisambiguationPickerProps {
   planId: string;
@@ -65,6 +66,10 @@ interface DisambiguationPickerProps {
   // Story 3.13 — when provided, L1 surfaces a "redo this day" affordance that
   // delegates to the parent (BriefCanvas) which fires the regeneration mutation.
   onRegenDay?: (day: Weekday) => void;
+  // Slice 5-S12 — when provided, L1 surfaces a "Swap Main" affordance that opens
+  // the conversational L3 proposal. Resolves to the proposal_id returned by the
+  // API; the caller stores it to drive the tile's proposal-pending pulse.
+  onProposeSwap?: (day: Weekday, content: string) => Promise<string>;
 }
 
 // Simple allergen check: does any new ingredient contain a declared allergen string?
@@ -164,12 +169,21 @@ export function DisambiguationPicker({
   onSwapStarted,
   onSwapSettled,
   onRegenDay,
+  onProposeSwap,
 }: DisambiguationPickerProps) {
   const [level, setLevel] = useState<PickerLevel>('l1');
   const [selectedVariation, setSelectedVariation] = useState<VariationWithSlot | null>(null);
   const [selectedOverrideSlot, setSelectedOverrideSlot] = useState<DaySlotView | null>(null);
   const [ingredientInput, setIngredientInput] = useState('');
   const [error, setError] = useState<string | null>(null);
+  // Slice 5-S12 — conversational swap proposal state.
+  const [proposalInput, setProposalInput] = useState('');
+  const [isProposing, setIsProposing] = useState(false);
+  const proposalRef = useRef<HTMLInputElement>(null);
+  // Synchronous guard: `isProposing` is async state, so a same-tick Enter + click
+  // (or double Enter) can both pass before the re-render lands. The ref blocks
+  // the second dispatch immediately, preventing duplicate proposal turns.
+  const isSubmittingProposalRef = useRef(false);
 
   const inputRef = useRef<HTMLInputElement>(null);
   const pickerId = useId();
@@ -188,6 +202,10 @@ export function DisambiguationPicker({
   useEffect(() => {
     if (level === 'l3-variation-ingredients') {
       inputRef.current?.focus();
+    }
+    // Slice 5-S12 — focus the proposal input when entering the swap-proposal L3.
+    if (level === 'l3-propose-swap') {
+      proposalRef.current?.focus();
     }
   }, [level]);
 
@@ -314,8 +332,31 @@ export function DisambiguationPicker({
     }
   }
 
+  async function handleProposalSubmit() {
+    if (onProposeSwap === undefined || proposalInput.trim().length === 0) return;
+    if (isSubmittingProposalRef.current) return;
+    isSubmittingProposalRef.current = true;
+    setIsProposing(true);
+    setError(null);
+    try {
+      const proposalId = await onProposeSwap(day, proposalInput.trim());
+      onSwapStarted(proposalId);
+      onDismiss();
+    } catch {
+      setError('Could not send. Please try again.');
+    } finally {
+      setIsProposing(false);
+      isSubmittingProposalRef.current = false;
+    }
+  }
+
   const dayDisabled = dayView.paused;
   const sickDayDisabled = isPending || dayDisabled;
+  // Slice 5-S12 — "Swap Main" is offered only when the day has a main slot with
+  // a committed assignment and the parent wired the conversational handler.
+  const hasMainSlot = dayView.slots.some(
+    (s) => s.slot_kind === 'main' && s.main_assignment_id !== null,
+  );
 
   return (
     // eslint-disable-next-line jsx-a11y/no-noninteractive-element-interactions
@@ -346,6 +387,16 @@ export function DisambiguationPicker({
             >
               Change an item
             </button>
+            {hasMainSlot && onProposeSwap !== undefined && (
+              <button
+                type="button"
+                onClick={() => { setError(null); setLevel('l3-propose-swap'); }}
+                disabled={isPending}
+                className="rounded-full border border-stone-300 px-3 py-1.5 text-[13px] text-stone-700 hover:bg-stone-50 transition-colors motion-reduce:transition-none disabled:opacity-50 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-stone-400"
+              >
+                Swap Main
+              </button>
+            )}
             <button
               type="button"
               onClick={handleOverrideIntent}
@@ -553,6 +604,53 @@ export function DisambiguationPicker({
               type="button"
               onClick={() => setLevel(variations.length > 1 ? 'l2-select-variation' : 'l1')}
               disabled={isPending}
+              className="text-[12px] text-stone-400 hover:text-stone-600 underline underline-offset-2 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-stone-300"
+            >
+              Back
+            </button>
+          </div>
+        </>
+      )}
+
+      {level === 'l3-propose-swap' && (
+        <>
+          <p className="text-[11px] text-stone-400 uppercase tracking-wide">
+            Continuing from {DAY_LABEL[day]}&rsquo;s dinner
+          </p>
+          <label htmlFor={`${pickerId}-propose`} className="text-stone-500 text-[13px]">
+            What should Lumi swap it for?
+          </label>
+          <input
+            ref={proposalRef}
+            id={`${pickerId}-propose`}
+            type="text"
+            value={proposalInput}
+            onChange={(e) => setProposalInput(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && !isProposing) { void handleProposalSubmit(); }
+            }}
+            placeholder="e.g. something lighter, maybe a wrap"
+            aria-describedby={error !== null ? `${pickerId}-propose-error` : undefined}
+            className="w-full rounded-md border border-stone-300 px-3 py-2 text-[14px] text-stone-900 placeholder:text-stone-400 focus:outline-none focus:ring-1 focus:ring-stone-400"
+          />
+          {error !== null && (
+            <p id={`${pickerId}-propose-error`} role="alert" className="text-[12px] text-red-600">
+              {error}
+            </p>
+          )}
+          <div className="flex gap-2">
+            <button
+              type="button"
+              onClick={() => { void handleProposalSubmit(); }}
+              disabled={isProposing || proposalInput.trim().length === 0}
+              className="rounded-full bg-stone-900 px-4 py-1.5 text-[13px] text-white hover:bg-stone-700 transition-colors motion-reduce:transition-none disabled:opacity-50 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-stone-400"
+            >
+              {isProposing ? 'Sending…' : 'Ask Lumi'}
+            </button>
+            <button
+              type="button"
+              onClick={() => { setError(null); setLevel('l1'); }}
+              disabled={isProposing}
               className="text-[12px] text-stone-400 hover:text-stone-600 underline underline-offset-2 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-stone-300"
             >
               Back

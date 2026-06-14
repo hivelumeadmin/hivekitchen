@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   UserProfileSchema,
   UpdateProfileRequestSchema,
+  UpdateAccessibilityRequestSchema,
   PasswordResetRequestSchema,
   PasswordResetCompleteRequestSchema,
   NotificationPrefsSchema,
@@ -29,7 +30,32 @@ describe('UserProfileSchema', () => {
     parental_notice_acknowledged_version: null,
     is_onboarded: false,
     is_onboarding_in_progress: false,
+    caption_only_mode: false,
+    voice_retention_mode: 'standard' as const,
   };
+
+  it('parses caption_only_mode (Slice 5-S13)', () => {
+    const parsed = UserProfileSchema.parse({ ...validProfile, caption_only_mode: true });
+    expect(parsed.caption_only_mode).toBe(true);
+  });
+
+  it('parses voice_retention_mode for both modes (Slice 5-S15)', () => {
+    expect(UserProfileSchema.parse({ ...validProfile, voice_retention_mode: 'standard' }).voice_retention_mode).toBe('standard');
+    expect(
+      UserProfileSchema.parse({ ...validProfile, voice_retention_mode: 'immediate_delete' })
+        .voice_retention_mode,
+    ).toBe('immediate_delete');
+  });
+
+  it('rejects a profile missing voice_retention_mode (Slice 5-S15)', () => {
+    const { voice_retention_mode: _omit, ...withoutMode } = validProfile;
+    expect(UserProfileSchema.safeParse(withoutMode).success).toBe(false);
+  });
+
+  it('rejects a profile missing caption_only_mode', () => {
+    const { caption_only_mode: _omit, ...withoutFlag } = validProfile;
+    expect(UserProfileSchema.safeParse(withoutFlag).success).toBe(false);
+  });
 
   it('accepts a valid profile with email provider', () => {
     expect(UserProfileSchema.safeParse(validProfile).success).toBe(true);
@@ -123,6 +149,24 @@ describe('UpdateProfileRequestSchema', () => {
 
   it('rejects preferred_language shorter than 2 chars', () => {
     expect(UpdateProfileRequestSchema.safeParse({ preferred_language: 'e' }).success).toBe(false);
+  });
+});
+
+describe('UpdateAccessibilityRequestSchema', () => {
+  it('accepts caption_only_mode boolean', () => {
+    expect(UpdateAccessibilityRequestSchema.parse({ caption_only_mode: true })).toEqual({
+      caption_only_mode: true,
+    });
+  });
+
+  it('rejects an empty body (missing field)', () => {
+    expect(UpdateAccessibilityRequestSchema.safeParse({}).success).toBe(false);
+  });
+
+  it('rejects a non-boolean value', () => {
+    expect(UpdateAccessibilityRequestSchema.safeParse({ caption_only_mode: 'yes' }).success).toBe(
+      false,
+    );
   });
 });
 

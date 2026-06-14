@@ -14,6 +14,10 @@ export interface UserProfileRow {
   cultural_language: string;
   parental_notice_acknowledged_at: string | null;
   parental_notice_acknowledged_version: string | null;
+  // Slice 5-S13 — caption-only accessibility preference.
+  caption_only_mode: boolean;
+  // Slice 5-S15 — voice retention preference.
+  voice_retention_mode: 'standard' | 'immediate_delete';
 }
 
 // parental_notice_acknowledged_at / _version are intentionally excluded —
@@ -28,10 +32,12 @@ export type UpdateUserProfileInput = Partial<{
     proactive_lumi_nudges?: boolean;
   };
   cultural_language: string;
+  caption_only_mode: boolean;
+  voice_retention_mode: 'standard' | 'immediate_delete';
 }>;
 
 const PROFILE_COLUMNS =
-  'id, email, display_name, preferred_language, role, notification_prefs, cultural_language, parental_notice_acknowledged_at, parental_notice_acknowledged_version';
+  'id, email, display_name, preferred_language, role, notification_prefs, cultural_language, parental_notice_acknowledged_at, parental_notice_acknowledged_version, caption_only_mode, voice_retention_mode';
 
 export class UserRepository extends BaseRepository {
   async findUserById(id: string): Promise<UserProfileRow | null> {

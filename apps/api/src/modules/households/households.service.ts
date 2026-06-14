@@ -3,6 +3,11 @@ import type {
   HouseholdProfilePatchBody,
   HouseholdProfileResponse,
 } from '@hivekitchen/contracts';
+import type {
+  HouseholdGeolocationConsent,
+  UpdateGeolocationConsentRequest,
+} from '@hivekitchen/types';
+import { NotFoundError } from '../../common/errors.js';
 import type { HouseholdsRepository } from './households.repository.js';
 import type { VocabularyService } from '../vocabulary/vocabulary.service.js';
 
@@ -112,5 +117,31 @@ export class HouseholdsService {
       id: householdId,
       ...updated,
     };
+  }
+
+  // Slice 5-S14 — household-level geolocation consent (FR74, NFR-PRIV-3).
+  async getGeolocationConsent(householdId: string): Promise<HouseholdGeolocationConsent> {
+    const consent = await this.deps.repository.getGeolocationConsent(householdId);
+    if (!consent) throw new NotFoundError(`Household ${householdId} not found`);
+    return consent;
+  }
+
+  async updateGeolocationConsent(
+    householdId: string,
+    input: UpdateGeolocationConsentRequest,
+  ): Promise<HouseholdGeolocationConsent> {
+    const updatePayload: Parameters<
+      typeof this.deps.repository.updateGeolocationConsent
+    >[1] = {
+      geolocation_enabled: input.geolocation_enabled,
+      geolocation_purpose: input.geolocation_enabled
+        ? (input.geolocation_purpose ?? 'cultural_supplier_routing')
+        : null,
+    };
+    if (input.geolocation_enabled) {
+      updatePayload.geolocation_consented_at = new Date().toISOString();
+    }
+    // geolocation_consented_at is NOT cleared on opt-out (preserved as historical record).
+    return this.deps.repository.updateGeolocationConsent(householdId, updatePayload);
   }
 }

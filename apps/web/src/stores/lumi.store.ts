@@ -39,6 +39,11 @@ interface LumiState {
   // without a new store. Hydrated from /v1/users/me wherever it is read (account
   // page); defaults to opted-in.
   proactiveNudges: boolean;
+
+  // Slice 5-S13 — mirrors users.caption_only_mode. When true, the voice-session
+  // hook skips TTS playback; captions still stream. Hydrated from /v1/users/me
+  // at account page load (same pattern as proactiveNudges).
+  captionOnlyMode: boolean;
 }
 
 interface LumiActions {
@@ -58,6 +63,7 @@ interface LumiActions {
   endTalkSession: () => void;
   setNudge: (turn: Turn | null) => void;
   setProactiveNudges: (value: boolean) => void;
+  setCaptionOnlyMode: (value: boolean) => void;
   reset: () => void;
 }
 
@@ -84,6 +90,7 @@ const INITIAL_STATE: LumiState = {
 
   pendingNudge: null,
   proactiveNudges: true,
+  captionOnlyMode: false,
 };
 
 export const useLumiStore = create<LumiState & LumiActions>()((set) => ({
@@ -166,6 +173,8 @@ export const useLumiStore = create<LumiState & LumiActions>()((set) => ({
   setNudge: (turn) => set({ pendingNudge: turn }),
 
   setProactiveNudges: (value) => set({ proactiveNudges: value }),
+
+  setCaptionOnlyMode: (value) => set({ captionOnlyMode: value }),
 
   reset: () => set({ ...INITIAL_STATE }),
 }));

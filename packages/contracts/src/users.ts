@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { AuthUserSchema } from './auth.js';
+import { VoiceRetentionModeSchema } from './voice-retention.js';
 
 // ---- Notification preferences (Story 2.5) ---------------------------------
 // Heart Note anti-pattern (Story 4.13): NO heart_note_* field of any kind.
@@ -70,6 +71,21 @@ export const UserProfileSchema = z.object({
   // 2-S26 — mirrors LoginResponse.is_onboarding_in_progress so route-guards
   // and the /onboarding page can detect resumability after a /me refresh.
   is_onboarding_in_progress: z.boolean(),
+  // Slice 5-S13 — "Text only" accessibility preference. When true, the ambient
+  // Lumi voice hook skips TTS playback (captions still stream). Mirrors
+  // users.caption_only_mode (DB default false).
+  caption_only_mode: z.boolean(),
+  // Slice 5-S15 — voice transcript retention preference. Controls whether
+  // transcripts are kept (standard → 90-day expiry) or immediately deleted.
+  // Mirrors users.voice_retention_mode (DB default 'standard').
+  voice_retention_mode: VoiceRetentionModeSchema,
+});
+
+// ---- PATCH /v1/users/me/accessibility request body ------------------------
+// Slice 5-S13 — single-field update for the caption-only accessibility pref.
+// A missing field is rejected (Zod requires it), so an empty body returns 400.
+export const UpdateAccessibilityRequestSchema = z.object({
+  caption_only_mode: z.boolean(),
 });
 
 // ---- PATCH /v1/users/me request body --------------------------------------

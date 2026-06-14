@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
-import { GetChildResponseSchema } from '@hivekitchen/contracts';
+import { GetChildResponseSchema, bagCompositionFromPattern } from '@hivekitchen/contracts';
 import type { ChildResponse } from '@hivekitchen/types';
 import { BagCompositionForm } from '@/features/children/BagCompositionForm.js';
 import { hkFetch, HkApiError } from '@/lib/fetch.js';
@@ -56,13 +56,14 @@ export default function ChildBagCompositionPage() {
   }
 
   const childName = child.name;
+  const bagComposition = bagCompositionFromPattern(child.bag_composition_pattern);
   return (
     <main className="mx-auto w-full max-w-7xl flex-grow px-6 pt-12 pb-24">
       <BagCompositionForm
         childId={child.id}
         childName={childName}
-        initialSnack={child.bag_composition.snack}
-        initialExtra={child.bag_composition.extra}
+        initialSnack={bagComposition.snack}
+        initialExtra={bagComposition.extra}
       />
     </main>
   );

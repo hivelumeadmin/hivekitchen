@@ -3,6 +3,8 @@ import {
   BriefStatePayloadSchema,
   LearningMomentCalloutSchema,
   PlanComposeTreeOutputSchema,
+  ProposeSwapInputSchema,
+  ProposeSwapResponseSchema,
   RespondToLearningMomentRequestSchema,
 } from './plan.js';
 
@@ -120,5 +122,51 @@ describe('PlanComposeTreeOutputSchema — 5-S9 reasoning', () => {
       reasoning: 'x'.repeat(601),
     });
     expect(result.success).toBe(false);
+  });
+});
+
+// Slice 5-S12 — conversational swap proposal contract round-trips.
+
+describe('ProposeSwapInputSchema', () => {
+  it('accepts a valid weekday + content', () => {
+    const input = ProposeSwapInputSchema.parse({
+      day: 'wednesday',
+      content: 'something lighter, maybe a wrap',
+    });
+    expect(input.day).toBe('wednesday');
+  });
+
+  it('rejects empty content', () => {
+    expect(
+      ProposeSwapInputSchema.safeParse({ day: 'monday', content: '' }).success,
+    ).toBe(false);
+  });
+
+  it('rejects content longer than 500 chars', () => {
+    expect(
+      ProposeSwapInputSchema.safeParse({ day: 'monday', content: 'x'.repeat(501) })
+        .success,
+    ).toBe(false);
+  });
+
+  it('rejects an invalid weekday', () => {
+    expect(
+      ProposeSwapInputSchema.safeParse({ day: 'someday', content: 'ok' }).success,
+    ).toBe(false);
+  });
+});
+
+describe('ProposeSwapResponseSchema', () => {
+  it('accepts a uuid proposal_id', () => {
+    const out = ProposeSwapResponseSchema.parse({
+      proposal_id: '44444444-4444-4444-8444-444444444444',
+    });
+    expect(out.proposal_id).toBeDefined();
+  });
+
+  it('rejects a non-uuid proposal_id', () => {
+    expect(ProposeSwapResponseSchema.safeParse({ proposal_id: 'nope' }).success).toBe(
+      false,
+    );
   });
 });

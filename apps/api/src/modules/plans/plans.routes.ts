@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import fp from 'fastify-plugin';
 import { z } from 'zod';
 import type { FastifyPluginAsync } from 'fastify';
@@ -25,6 +26,8 @@ import {
   SetPlanDayContextInputSchema,
   SetPlanDayContextResponseSchema,
   ConfirmVariantProposalInputSchema,
+  ProposeSwapInputSchema,
+  ProposeSwapResponseSchema,
 } from '@hivekitchen/contracts';
 import type {
   GetPlansQuery,
@@ -36,11 +39,12 @@ import type {
   RegeneratePlanQuery,
   SetPlanDayContextInput,
   ConfirmVariantProposalInput,
+  ProposeSwapInput,
   Weekday,
   VariantProposal,
   FlaggedCompoundItem,
 } from '@hivekitchen/types';
-import { ValidationError } from '../../common/errors.js';
+import { ValidationError, NotFoundError } from '../../common/errors.js';
 import { authorize } from '../../middleware/authorize.hook.js';
 
 // Story 3.12 — Idempotency-Key: UUIDv4 format, max 128 chars (architecture §Idempotency).
@@ -277,6 +281,58 @@ const plansRoutesPlugin: FastifyPluginAsync = async (fastify) => {
       });
 
       return reply.status(200).send({ main_assignment: updated });
+    },
+  );
+
+  // POST /v1/plans/:planId/swap-proposals
+  //
+  // Slice 5-S12 — conversational swap proposal (L3 DisambiguationPicker). Stores
+  // the user's free-text intent as a TurnBodyProposal turn in the household's
+  // family thread (lazily created). Lumi's resolution (swapMain + plan_diff
+  // turn) is a deferred agent step (D-5S12-2).
+  fastify.post(
+    '/v1/plans/:planId/swap-proposals',
+    {
+      preHandler: requireMember,
+      schema: {
+        params: z.object({ planId: z.string().uuid() }),
+        body: ProposeSwapInputSchema,
+        response: { 201: ProposeSwapResponseSchema },
+      },
+    },
+    async (request, reply) => {
+      requireIdempotencyKey(request.headers['idempotency-key']);
+      const { planId } = request.params as { planId: string };
+      const body = request.body as ProposeSwapInput;
+      const householdId = request.user.household_id;
+
+      // Verify the plan belongs to this household.
+      const plan = await fastify.plansService.findById(planId, householdId);
+      if (plan === null) throw new NotFoundError(`plan ${planId}`);
+
+      // Ensure there is an active family thread (create if absent).
+      const thread =
+        (await fastify.threadRepository.findActiveThreadByHousehold(
+          householdId,
+          'family',
+          'text',
+        )) ??
+        (await fastify.threadRepository.createThread(householdId, 'family', 'text'));
+
+      const proposalId = randomUUID();
+      await fastify.threadRepository.appendTurnNext({
+        threadId: thread.id,
+        role: 'user',
+        body: {
+          type: 'proposal',
+          proposal_id: proposalId,
+          day: body.day,
+          content: body.content,
+        },
+        modality: 'text',
+      });
+
+      return reply.status(201).send({ proposal_id: proposalId });
     },
   );
 

@@ -171,7 +171,7 @@ function signAccessToken(
   if (overrides.hh !== null) {
     payload.hh = overrides.hh ?? SAMPLE_HOUSEHOLD_ID;
   }
-  return app.jwt.sign(payload);
+  return app.jwt.sign(payload as { sub: string; hh: string; role: 'primary_parent' | 'secondary_caregiver' | 'guest_author' | 'ops' });
 }
 
 // Manually craft an HS256 JWT so we can set `exp` directly in the payload (the

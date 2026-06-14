@@ -21,6 +21,7 @@ import { FoodPreferencesRepository } from '../food-preferences/food-preferences.
 import { RecipesRepository } from '../recipe/recipes.repository.js';
 import { HouseholdRulesRepository } from '../household-rules/household-rules.repository.js';
 import { HouseholdsRepository } from '../households/households.repository.js';
+import { HouseholdAllergensRepository } from '../households/household-allergens.repository.js';
 import { HouseholdsService } from '../households/households.service.js';
 import { AllergyGuardrailRepository } from '../allergy-guardrail/allergy-guardrail.repository.js';
 import { CuratedBaselineRepository } from '../catalog/curated-baseline.repository.js';
@@ -127,6 +128,8 @@ const onboardingRoutesPlugin: FastifyPluginAsync = async (fastify) => {
     logger: fastify.log,
   });
 
+  const householdAllergensRepository = new HouseholdAllergensRepository(fastify.supabase, kek);
+
   const service = new OnboardingService({
     threads,
     agent,
@@ -148,6 +151,7 @@ const onboardingRoutesPlugin: FastifyPluginAsync = async (fastify) => {
     curatedBaseline,
     catalogSeedQueue,
     catalogProjection,
+    householdAllergensRepository,
   });
 
   // Slice 2-S26 — fire-and-forget audit writer for resume / reset events.

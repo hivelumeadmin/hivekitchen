@@ -614,7 +614,7 @@ describe('BriefStateComposer.respondToLearningMoment — preserves plan_reasonin
 
     await composer.respondToLearningMoment(HOUSEHOLD_ID, 'confirm', REQUEST_ID);
 
-    const upsertPayload = (upsert.mock.calls[0]![0] as { payload: { plan_reasoning: string | null } }).payload;
+    const upsertPayload = (upsert.mock.calls[0]![0] as { payload: { plan_reasoning: string | null; learning_moment_callout: unknown } }).payload;
     expect(upsertPayload.plan_reasoning).toBe('Pasta for batch-prep this week.');
     expect(upsertPayload.learning_moment_callout).toBeNull();
   });

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   OPENING_GREETING,
+  M1_HINT_CHIPS,
   TextOnboardingTurnResponseSchema,
   TextOnboardingFinalizeResponseSchema,
   type ChipConfig,
@@ -213,9 +214,12 @@ const NAME_STOP_WORDS = new Set([
   // pronouns / determiners
   'she', 'he', 'they', 'it', 'we', 'my', 'your', 'our', 'the', 'that', 'this',
   'these', 'those', 'them', 'their', 'his', 'her',
-  // conjunctions / prepositions
-  'and', 'but', 'or', 'so', 'for', 'with', 'from', 'into', 'onto', 'about',
+  // conjunctions / prepositions (short ones omitted from the original set were
+  // being extracted by the "noted/have" echo heuristic — e.g. "noted down",
+  // "have in", "have on", "added up")
+  'and', 'but', 'or', 'so', 'for', 'with', 'from', 'in', 'into', 'onto', 'about',
   'after', 'before', 'during', 'over', 'under', 'through', 'between',
+  'down', 'up', 'out', 'off', 'on', 'by', 'at', 'to', 'of', 'no', 'go',
   // verbs
   'is', 'are', 'was', 'has', 'had', 'have', 'been', 'will', 'can', 'did',
   // numbers as words
@@ -227,6 +231,33 @@ const NAME_STOP_WORDS = new Set([
   'that', 'some', 'any', 'all', 'both', 'more', 'most', 'other', 'such',
   'information', 'details', 'notes', 'profile', 'household', 'family',
   'allergy', 'allergen', 'preference', 'diet', 'cultural',
+  // M4 bag-composition words — Lumi echoes these when confirming the bag
+  // pattern ("I've noted Main and snack") which would otherwise be parsed
+  // as child names by the "added/noted" echo heuristic below.
+  'main', 'mains', 'meal', 'meals', 'snack', 'snacks', 'sides', 'extra', 'extras', 'full', 'bag', 'only', 'plus',
+  // M5 control words
+  'fewer', 'swap', 'override',
+  // Common Lumi acknowledgement words and sentence-starters. These must be
+  // blocked because turns are joined with '\n', so the echo heuristic
+  // (/\b(?:noted|have)\s+([A-Za-z]+)/) can match across turn boundaries —
+  // e.g. a Lumi turn ending "I've noted" + next turn starting "Got it!" →
+  // "noted\nGot" → "Got" extracted as a child name.
+  'done', 'set', 'saved', 'great', 'okay', 'yes', 'got', 'sure', 'thanks',
+  'perfect', 'wonderful', 'lovely', 'sounds', 'right', 'absolutely', 'let',
+  'now', 'well', 'good', 'nice', 'cool', 'noted',
+  // Allergen words — Lumi echoes these after M2 ("Noted, peanut and tree nut")
+  // which would otherwise be parsed as child names by the echo heuristic.
+  'peanut', 'peanuts', 'nut', 'nuts', 'tree', 'dairy', 'milk', 'egg', 'eggs',
+  'wheat', 'gluten', 'soy', 'soya', 'sesame', 'shellfish', 'fish', 'allergies',
+  // Indefinite pronouns — "we have everything covered" fires the echo heuristic
+  // and extracts "everything" as a child name without this guard.
+  'everything', 'anything', 'something', 'nothing', 'everyone', 'anyone', 'someone',
+  // Food/dish words — Lumi echoes M5 favourites ("I've noted Chicken Burger, Beef Burger…")
+  // which fires the "noted" echo heuristic and extracts the first word as a child name.
+  'chicken', 'beef', 'lamb', 'pork', 'burger', 'burgers', 'grilled', 'cheese', 'sausage',
+  'shawarma', 'biriyani', 'biryani', 'fried', 'slider', 'sliders', 'wrap', 'wraps',
+  'taco', 'tacos', 'sushi', 'curry', 'stew', 'bread', 'salad', 'soup', 'seafood',
+  'pizza', 'toast', 'noodles', 'rice', 'nuggets', 'panini',
 ]);
 
 function extractChildren(turns: Turn[]): ChildInfo[] {
@@ -250,6 +281,11 @@ function extractChildren(turns: Turn[]): ChildInfo[] {
     }
   };
 
+  // "Adi 14 and Ani 11" — two named children with bare space-separated ages
+  for (const m of allText.matchAll(/\b([A-Za-z]{2,15})\s+(\d{1,2})\s+and\s+([A-Za-z]{2,15})\s+(\d{1,2})\b/gi)) {
+    add(m[1]!, Number(m[2]));
+    add(m[3]!, Number(m[4]));
+  }
   // "Maya (8)" or "maya(8)"
   for (const m of allText.matchAll(/\b([A-Za-z]{2,15})\s*\((\d{1,2})\)/g)) {
     add(m[1]!, Number(m[2]));
@@ -402,13 +438,27 @@ interface AllergyProfile { childName: string; allergens: string[]; allClear: boo
 function extractAllergyProfiles(turns: Turn[], children: ChildInfo[]): AllergyProfile[] {
   const allText = turns.map((t) => t.content).join('\n');
 
+  // Build forward-only context from each name occurrence, stopping at the first
+  // mention of any OTHER child's name. Backward context (the old -150 window)
+  // caused cross-child contamination: in "Adi has fish allergy and Ani has
+  // peanut", Ani's backward window picked up "fish" from Adi's clause.
+  const escapedOtherNames = (name: string) =>
+    children
+      .filter((c) => c.name.toLowerCase() !== name.toLowerCase())
+      .map((c) => c.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+
   const contextFor = (name: string): string => {
+    const others = escapedOtherNames(name);
+    const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     const chunks: string[] = [];
-    const re = new RegExp(`\\b${name}\\b`, 'gi');
-    for (const m of allText.matchAll(re)) {
-      const s = Math.max(0, m.index! - 150);
-      const e = Math.min(allText.length, m.index! + 300);
-      chunks.push(allText.slice(s, e));
+    for (const m of allText.matchAll(new RegExp(`\\b${escaped}\\b`, 'gi'))) {
+      const pos = m.index!;
+      let end = Math.min(allText.length, pos + 200);
+      for (const esc of others) {
+        const om = new RegExp(`\\b${esc}\\b`, 'i').exec(allText.slice(pos + name.length));
+        if (om !== null) end = Math.min(end, pos + name.length + om.index!);
+      }
+      chunks.push(allText.slice(pos, end));
     }
     return chunks.join(' ');
   };
@@ -436,6 +486,53 @@ function extractAllergyProfiles(turns: Turn[], children: ChildInfo[]): AllergyPr
   return [];
 }
 
+// ─── Starting-line dishes extraction ─────────────────────────────────────────
+
+function extractStartingLineDishes(turns: Turn[]): string[] {
+  const seen = new Set<string>();
+  const dishes: string[] = [];
+
+  const addItems = (text: string) => {
+    for (const raw of text.split(/[,\n]|\band\b/i)) {
+      const item = raw.replace(/[.!?—–-].*$/, '').trim();
+      if (item.length < 2 || item.length > 50) continue;
+      const display = item.charAt(0).toUpperCase() + item.slice(1);
+      if (!seen.has(display.toLowerCase())) {
+        dishes.push(display);
+        seen.add(display.toLowerCase());
+      }
+    }
+  };
+
+  // Primary: Lumi echoes the confirmed list — "I've noted X, Y, and Z as favorites"
+  for (const { role, content } of turns) {
+    if (role !== 'lumi') continue;
+    const m = content.match(/noted\s+(.+?)\s+as (?:your |their )?favorites?/i);
+    if (m) addItems(m[1]!);
+  }
+
+  // Secondary: user turns after Lumi asks for favourite dishes (M5 trigger)
+  let m5Active = false;
+  for (const { role, content } of turns) {
+    if (role === 'lumi') {
+      if (/(?:ten|10).{0,30}(?:favourite|favorite)|(?:favourite|favorite).{0,30}(?:dish|meal|lunch)/i.test(content)) {
+        m5Active = true;
+      }
+    } else if (m5Active) {
+      const items = content.split(/[,\n]+/).map((s) => s.trim()).filter((s) => s.length >= 2 && s.length <= 50 && !s.includes('?'));
+      for (const item of items) {
+        const display = item.charAt(0).toUpperCase() + item.slice(1);
+        if (!seen.has(display.toLowerCase())) {
+          dishes.push(display);
+          seen.add(display.toLowerCase());
+        }
+      }
+    }
+  }
+
+  return dishes;
+}
+
 // ─── Household name extraction ────────────────────────────────────────────────
 
 // Slice 2.5-s5 — pull a household label out of Lumi's echo of the parent's
@@ -452,7 +549,10 @@ function extractHouseholdName(turns: Turn[]): string | null {
     .join('\n');
   const quoted = allLumi.match(/"([^"]{2,60})"/)?.[1];
   if (quoted !== undefined) return quoted;
-  const phrase = allLumi.match(/the\s+([A-Z][a-z]+ (?:family|kitchen))/)?.[1];
+  // Match "the Menons Kitchen" or "the Smiths family" — allow one optional extra
+  // capitalized word before the trailing keyword, and match keyword case-insensitively
+  // so "Kitchen" (capitalized as part of a household name) is found.
+  const phrase = allLumi.match(/the\s+([A-Z][a-zA-Z]*(?: [A-Z][a-zA-Z]*)? (?:family|kitchen|Family|Kitchen))/)?.[1];
   return phrase ?? null;
 }
 
@@ -486,6 +586,7 @@ function KitchenProfilePanel({
   const schedule = extractSchedule(turns);
   const culturalPrefs = extractCulturalPrefs(turns);
   const householdName = extractHouseholdName(turns);
+  const startingLineDishes = extractStartingLineDishes(turns);
   const coveredCount = TOPIC_CONFIG.filter((t) => topics[t.key]).length;
   const questionsComplete = Math.round((coveredCount / TOPIC_CONFIG.length) * 8);
 
@@ -685,6 +786,9 @@ function KitchenProfilePanel({
               </div>
             );
           }
+
+          // M5 (starting line) covers food preferences — hide this legacy card when M5 is active
+          if (key === 'preferences' && m5StartingLine.state !== 'none') return null;
 
           if (isActive && key === 'preferences') {
             const { likes, dislikes } = foodPrefs;
@@ -895,18 +999,18 @@ function KitchenProfilePanel({
             key="m5-starting-line"
             data-testid="m5-starting-line-card"
             className={
-              m5StartingLine.state === 'capturing'
+              m5StartingLine.state === 'capturing' && startingLineDishes.length === 0
                 ? 'rounded-xl p-4 flex items-center gap-3.5'
                 : 'rounded-xl p-5'
             }
             style={{
               background:
-                m5StartingLine.state === 'capturing'
+                m5StartingLine.state === 'capturing' && startingLineDishes.length === 0
                   ? 'var(--surface)'
                   : 'var(--surface-2, var(--surface))',
             }}
           >
-            {m5StartingLine.state === 'capturing' ? (
+            {m5StartingLine.state === 'capturing' && startingLineDishes.length === 0 ? (
               <>
                 <div
                   className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full"
@@ -925,10 +1029,28 @@ function KitchenProfilePanel({
                   <IcoSeed cls="h-4 w-4 shrink-0 text-amber-soft" />
                   <h3 className="font-serif text-base text-fg">Lumi&apos;s starting line</h3>
                 </div>
-                <p className="font-sans text-xs italic text-foliage">
-                  {m5StartingLine.count} lunches — Lumi has a starting line.
-                  {m5StartingLine.overridden ? ' (started with fewer)' : ''}
-                </p>
+                {startingLineDishes.length > 0 ? (
+                  <div className="flex flex-wrap gap-1.5">
+                    {startingLineDishes.map((dish) => (
+                      <span
+                        key={dish}
+                        className="rounded-md px-2.5 py-1 font-sans text-xs"
+                        style={{
+                          background: 'color-mix(in srgb, var(--amber) 14%, var(--surface-2, var(--surface)))',
+                          color: 'var(--amber-soft, var(--amber))',
+                        }}
+                      >
+                        {dish}
+                      </span>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="font-sans text-xs italic text-foliage">
+                    {m5StartingLine.state === 'captured'
+                      ? `${m5StartingLine.count > 0 ? `${m5StartingLine.count} lunches` : 'Lunches'} — Lumi has a starting line.${(m5StartingLine as { state: 'captured'; count: number; overridden: boolean }).overridden ? ' (started with fewer)' : ''}`
+                      : 'Saving favourites…'}
+                  </p>
+                )}
               </>
             )}
           </div>
@@ -999,7 +1121,13 @@ export function OnboardingText({ onFinalized, initialTurns }: OnboardingTextProp
   // textarea draft on the next turn and cleared on every successful
   // submission. Backend hardcodes `chip_config: null` until 2.5-s4 ships
   // the agent prompt that emits configs.
-  const [chipConfig, setChipConfig] = useState<ChipConfig | null>(null);
+  // M1 hint chips are shown immediately with the opening greeting (before any turn).
+  // In resume mode (initialTurns provided) the parent is mid-flow — the M1
+  // hints are wrong context. Start null so no stale chips show; the correct
+  // chip_config arrives on the first submitted turn.
+  const [chipConfig, setChipConfig] = useState<ChipConfig | null>(
+    initialTurns !== undefined ? null : M1_HINT_CHIPS,
+  );
   const [chipSelections, setChipSelections] = useState<string[]>([]);
   // Slice 2.5-s5 — server-emitted moment key (e.g. 'm1_table'). Starts null
   // until the first turn response arrives; in resume mode the panel falls
@@ -1016,7 +1144,29 @@ export function OnboardingText({ onFinalized, initialTurns }: OnboardingTextProp
   // Slice 2.5-s8 — Moment 4 bag composition state for the "What goes in the
   // bag" card. Same lean approach as M3; structured per-child read lives in
   // 2.5-s11. Required-response gate, so no 'skipped' variant.
-  const [m4BagCapture, setM4BagCapture] = useState<M4BagCaptureState>({ state: 'none' });
+  // Lazy initializer: seed from prior turns (resume mode) so the card shows
+  // 'captured' when the page reloads after M4 is already complete, rather
+  // than disappearing because the moment has advanced past m4_bag.
+  const [m4BagCapture, setM4BagCapture] = useState<M4BagCaptureState>(() => {
+    const M4_KEYS = new Set<string>([
+      'main_only', 'main_plus_snack', 'main_plus_extra', 'main_plus_snack_plus_extra',
+    ]);
+    if (initialTurns !== undefined) {
+      for (const t of initialTurns) {
+        if (t.role !== 'user') continue;
+        const chipMatch = /\[Chips selected:\s*([^\]]+)\]/.exec(t.content);
+        if (chipMatch === null) continue;
+        const keys = chipMatch[1]!.split(',').map((k) => k.trim()).filter((k) => k.length > 0);
+        if (keys.length === 1 && M4_KEYS.has(keys[0]!)) {
+          return { state: 'captured', mode: 'household', pattern: keys[0] as BagCompositionPattern };
+        }
+        if (keys.length > 0 && keys.every((k) => M4_KEYS.has(k))) {
+          return { state: 'captured', mode: 'per-child', children: [] };
+        }
+      }
+    }
+    return { state: 'none' };
+  });
   // Slice 2.5-s9 — Moment 5 starting-line state. Session-only count tally for
   // the profile card; the true count lives in favorite_lunches and is read
   // back in 2.5-s11. Required-response gate, no 'skipped' variant.
@@ -1371,6 +1521,10 @@ export function OnboardingText({ onFinalized, initialTurns }: OnboardingTextProp
                   if (meta !== undefined && meta.number > 0) {
                     return `Moment ${Math.min(meta.number, 5)} of 5 · ${meta.name}`;
                   }
+                  // In resume mode, stepNumber is inflated by initialTurns and
+                  // gives a misleading "Step 8 of ~8". Show nothing until the
+                  // first turn fires and currentMomentKey is known.
+                  if (initialTurns !== undefined && initialTurns.length > 0) return '';
                   return `Step ${stepNumber} of ~8`;
                 })()}
               </span>
@@ -1634,13 +1788,14 @@ export function OnboardingText({ onFinalized, initialTurns }: OnboardingTextProp
             </p>
           )}
 
-          {/* Slice 2.5-s10 — Summary finalize gate replaces the input bar when
-              the agent has advanced into the summary moment. The legacy
-              isComplete CTA and pill-shaped input bar render in the other
-              branches so 2-7 / 2-s24 (non-summary) flows are unaffected. */}
-          {currentMomentKey === 'summary' ? (
-            <div className="shrink-0 px-6 md:px-8 pb-10 pt-3">
-              <div className="mx-auto flex max-w-2xl flex-col gap-3">
+          {/* Slice 2.5-s10 — Summary finalize gate. In summary mode the gate
+              appears ABOVE the input bar (not replacing it) — Lumi asks
+              "Does this sound like your kitchen?" and the parent needs to
+              be able to respond (confirm, correct, ask a question) before
+              tapping Finalize. The input bar remains visible in all moments. */}
+          {currentMomentKey === 'summary' && (
+            <div className="shrink-0 px-6 md:px-8 pt-3 pb-1">
+              <div className="mx-auto flex max-w-2xl flex-col gap-2">
                 <div
                   className="flex items-center gap-3 rounded-2xl border border-border/30 bg-surface/50 px-4 py-3 backdrop-blur-md shadow-lg"
                   data-testid="finalize-gate"
@@ -1680,10 +1835,16 @@ export function OnboardingText({ onFinalized, initialTurns }: OnboardingTextProp
                 </p>
               </div>
             </div>
-          ) : (
-            <>
-          {/* Completion CTA — F07: keep visible even when error is set */}
-          {isComplete && (
+          )}
+          {/* Input bar — always visible so the parent can confirm, correct,
+              or ask questions in summary mode before tapping Finalize. */}
+          <>
+          {/* Legacy completion CTA — only shown when moment tracking is absent
+              (currentMomentKey === null = pre-chaptered-moments flow). In the
+              chaptered flow the summary moment's own finalize gate handles this.
+              Guarding on currentMomentKey prevents the classifier's false
+              positives at M2→M3 from hiding the input and blocking the user. */}
+          {isComplete && currentMomentKey === null && (
             <div className="shrink-0 flex flex-col items-center gap-2 px-6 md:px-8 pt-2 pb-6">
               <button
                 type="button"
@@ -1697,9 +1858,8 @@ export function OnboardingText({ onFinalized, initialTurns }: OnboardingTextProp
             </div>
           )}
 
-          {/* Input bar — pill-shaped */}
-          {!isComplete && (
-            <form onSubmit={handleSubmit} className="shrink-0 px-6 md:px-8 pb-10 pt-4">
+          {/* Input bar — always visible in non-summary moments */}
+          <form onSubmit={handleSubmit} className="shrink-0 px-6 md:px-8 pb-10 pt-4">
               <label htmlFor="onboarding-message" className="sr-only">
                 Your message to Lumi
               </label>
@@ -1868,9 +2028,7 @@ export function OnboardingText({ onFinalized, initialTurns }: OnboardingTextProp
               {/* Visible send label for screen-readers / tests */}
               <span className="sr-only">Send</span>
             </form>
-          )}
-            </>
-          )}
+          </>
         </section>
 
         {/* RIGHT: Profile panel (desktop only, 40%) */}

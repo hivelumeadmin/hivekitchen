@@ -44,6 +44,8 @@ function parentRow(proactive?: boolean): UserProfileRow {
     cultural_language: 'default',
     parental_notice_acknowledged_at: null,
     parental_notice_acknowledged_version: null,
+    caption_only_mode: false,
+    voice_retention_mode: 'standard',
   };
 }
 

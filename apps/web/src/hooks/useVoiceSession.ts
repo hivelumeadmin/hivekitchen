@@ -2,14 +2,10 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useMicVAD } from '@ricky0123/vad-react';
 import {
   VoiceSessionCreateResponseSchema,
-  WsServerMessageSchema,
-  type WsServerMessage,
+  TtsTokenResponseSchema,
+  SttTokenResponseSchema,
 } from '@hivekitchen/contracts';
 import { hkFetch } from '@/lib/fetch.js';
-import { encodeWav } from '@/lib/encodeWav.js';
-import { useAuthStore } from '@/stores/auth.store.js';
-
-const WS_BASE_URL = import.meta.env.VITE_API_WS_URL;
 
 export type VoiceSessionStatus =
   | 'idle'
@@ -36,9 +32,100 @@ export interface UseVoiceSessionResult {
   stop: () => void;
 }
 
-interface ChunkBuffer {
-  seq: number;
-  chunks: Uint8Array[];
+// Float32 PCM (VAD output) → Int16 PCM base64 (ElevenLabs Scribe WS input).
+// Chunk-based encoding avoids stack overflow on large audio arrays.
+function float32ToPcm16Base64(audio: Float32Array): string {
+  const pcm = new Int16Array(audio.length);
+  for (let i = 0; i < audio.length; i++) {
+    const s = Math.max(-1, Math.min(1, audio[i]));
+    pcm[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
+  }
+  const bytes = new Uint8Array(pcm.buffer);
+  let binary = '';
+  const CHUNK = 8192;
+  for (let i = 0; i < bytes.length; i += CHUNK) {
+    binary += String.fromCharCode(...(bytes.subarray(i, i + CHUNK) as unknown as number[]));
+  }
+  return btoa(binary);
+}
+
+// Browser sends PCM audio directly to ElevenLabs Scribe WS; audio never
+// transits the HK API. Returns the committed transcript text.
+async function transcribeAudio(audio: Float32Array): Promise<string> {
+  const raw = await hkFetch<unknown>('/v1/voice/stt/token', { method: 'POST' });
+  const { token } = SttTokenResponseSchema.parse(raw);
+
+  return new Promise((resolve, reject) => {
+    const ws = new WebSocket(
+      `wss://api.elevenlabs.io/v1/speech-to-text/realtime?token=${encodeURIComponent(token)}`,
+    );
+    let settled = false;
+    const settle = (text: string) => {
+      if (settled) return;
+      settled = true;
+      try { ws.close(); } catch { /* noop */ }
+      resolve(text);
+    };
+
+    ws.addEventListener('open', () => {
+      ws.send(JSON.stringify({
+        message_type: 'input_audio_chunk',
+        audio_base_64: float32ToPcm16Base64(audio),
+        commit: true,
+        sample_rate: 16000,
+      }));
+    });
+    ws.addEventListener('message', (ev) => {
+      try {
+        const msg = JSON.parse(ev.data as string) as { message_type?: string; text?: string };
+        if (msg.message_type === 'committed_transcript') settle(msg.text ?? '');
+      } catch { /* noop */ }
+    });
+    ws.addEventListener('error', () => { if (!settled) reject(new Error('STT failed')); });
+    // Server closes after delivering the transcript; resolve with whatever we got.
+    ws.addEventListener('close', () => { if (!settled) settle(''); });
+  });
+}
+
+// Browser requests TTS audio directly from ElevenLabs TTS WS; audio never
+// transits the HK API. Returns accumulated MP3 chunks.
+async function fetchTtsChunks(text: string): Promise<Uint8Array[]> {
+  const raw = await hkFetch<unknown>('/v1/voice/tts/token', { method: 'POST' });
+  const { token, voice_id, model_id } = TtsTokenResponseSchema.parse(raw);
+
+  return new Promise((resolve, reject) => {
+    const chunks: Uint8Array[] = [];
+    const ws = new WebSocket(
+      `wss://api.elevenlabs.io/v1/text-to-speech/${voice_id}/stream-input` +
+        `?single_use_token=${token}&model_id=${model_id}&output_format=mp3_44100_128`,
+    );
+
+    ws.addEventListener('open', () => {
+      ws.send(JSON.stringify({
+        text: ' ',
+        voice_settings: { stability: 0.5, similarity_boost: 0.8 },
+        generation_config: { chunk_length_schedule: [50] },
+      }));
+      ws.send(JSON.stringify({ text }));
+      ws.send(JSON.stringify({ text: '' }));
+    });
+    ws.addEventListener('message', (ev) => {
+      try {
+        const msg = JSON.parse(ev.data as string) as { audio?: string; isFinal?: boolean };
+        if (msg.audio) {
+          const bytes = Uint8Array.from(atob(msg.audio), (c) => c.charCodeAt(0));
+          chunks.push(bytes);
+        }
+        if (msg.isFinal) {
+          try { ws.close(); } catch { /* noop */ }
+          resolve(chunks);
+        }
+      } catch { /* noop */ }
+    });
+    ws.addEventListener('error', () => reject(new Error('TTS failed')));
+    // Resolve with whatever chunks arrived if the connection closes early.
+    ws.addEventListener('close', () => resolve(chunks));
+  });
 }
 
 export function useVoiceSession(callbacks: VoiceSessionCallbacks): UseVoiceSessionResult {
@@ -47,13 +134,12 @@ export function useVoiceSession(callbacks: VoiceSessionCallbacks): UseVoiceSessi
   const [lumiLines, setLumiLines] = useState<string[]>([]);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
-  const wsRef = useRef<WebSocket | null>(null);
-  const audioBufferRef = useRef<ChunkBuffer | null>(null);
   const playingAudioRef = useRef<HTMLAudioElement | null>(null);
   const statusRef = useRef<VoiceSessionStatus>('idle');
   const startedRef = useRef(false);
+  const sessionIdRef = useRef<string | null>(null);
+  const processingRef = useRef(false);
   const callbacksRef = useRef(callbacks);
-  const stopRef = useRef<() => void>(() => {});
   useEffect(() => { callbacksRef.current = callbacks; });
 
   const setStatusBoth = useCallback((next: VoiceSessionStatus) => {
@@ -61,65 +147,36 @@ export function useVoiceSession(callbacks: VoiceSessionCallbacks): UseVoiceSessi
     setStatus(next);
   }, []);
 
-  const playBufferedAudio = useCallback(() => {
-    const buf = audioBufferRef.current;
-    if (!buf) return;
-    if (buf.chunks.length === 0) {
-      if (statusRef.current === 'processing') setStatusBoth('ready');
-      return;
-    }
-    if (playingAudioRef.current) {
-      try { playingAudioRef.current.pause(); } catch { /* noop */ }
-      playingAudioRef.current = null;
-    }
-    const blob = new Blob(buf.chunks as BlobPart[], { type: 'audio/mpeg' });
-    const url = URL.createObjectURL(blob);
-    const audio = new Audio(url);
-    playingAudioRef.current = audio;
-    setStatusBoth('speaking');
-    audio.addEventListener('ended', () => {
-      URL.revokeObjectURL(url);
-      playingAudioRef.current = null;
-      if (statusRef.current === 'speaking') setStatusBoth('ready');
-    });
-    audio.addEventListener('error', () => {
-      URL.revokeObjectURL(url);
-      playingAudioRef.current = null;
-    });
-    void audio.play().catch(() => {
-      URL.revokeObjectURL(url);
-      playingAudioRef.current = null;
-    });
-    audioBufferRef.current = null;
-  }, [setStatusBoth]);
-
-  const handleServerMessage = useCallback(
-    (msg: WsServerMessage) => {
-      switch (msg.type) {
-        case 'session.ready':
-          setStatusBoth('ready');
-          return;
-        case 'transcript':
-          setTranscriptLines((prev) => [...prev, msg.text]);
-          return;
-        case 'response.start':
-          audioBufferRef.current = { seq: msg.seq, chunks: [] };
-          return;
-        case 'response.end':
-          setLumiLines((prev) => [...prev, msg.text]);
-          playBufferedAudio();
-          return;
-        case 'session.summary':
-          setStatusBoth('closing');
-          callbacksRef.current.onComplete({ cultural_priors_detected: msg.cultural_priors_detected });
-          return;
-        case 'error':
-          setErrorMessage(msg.message);
-          callbacksRef.current.onError?.(msg.message);
-          return;
+  const playAudioChunks = useCallback(
+    (chunks: Uint8Array[]) => {
+      if (chunks.length === 0) {
+        if (statusRef.current === 'speaking') setStatusBoth('ready');
+        return;
       }
+      if (playingAudioRef.current) {
+        try { playingAudioRef.current.pause(); } catch { /* noop */ }
+        playingAudioRef.current = null;
+      }
+      const blob = new Blob(chunks as BlobPart[], { type: 'audio/mpeg' });
+      const url = URL.createObjectURL(blob);
+      const audio = new Audio(url);
+      playingAudioRef.current = audio;
+      setStatusBoth('speaking');
+      audio.addEventListener('ended', () => {
+        URL.revokeObjectURL(url);
+        playingAudioRef.current = null;
+        if (statusRef.current === 'speaking') setStatusBoth('ready');
+      });
+      audio.addEventListener('error', () => {
+        URL.revokeObjectURL(url);
+        playingAudioRef.current = null;
+      });
+      void audio.play().catch(() => {
+        URL.revokeObjectURL(url);
+        playingAudioRef.current = null;
+      });
     },
-    [playBufferedAudio, setStatusBoth],
+    [setStatusBoth],
   );
 
   const vad = useMicVAD({
@@ -128,19 +185,64 @@ export function useVoiceSession(callbacks: VoiceSessionCallbacks): UseVoiceSessi
       if (statusRef.current === 'ready') setStatusBoth('listening');
     },
     onSpeechEnd: (audio: Float32Array) => {
-      const ws = wsRef.current;
-      if (ws === null || ws.readyState !== WebSocket.OPEN) return;
-      // Server-side concurrent-frame protection (Story 2.6b AC4) is the
-      // authoritative guard; this is a defensive client-side guard so we do
-      // not stream audio while Lumi is mid-response.
+      if (!startedRef.current || processingRef.current) return;
       if (statusRef.current !== 'listening' && statusRef.current !== 'ready') return;
-      const wav = encodeWav(audio, 16000);
-      // Copy into a fresh ArrayBuffer so WS.send receives a plain ArrayBuffer
-      // (Uint8Array.buffer can be a SharedArrayBuffer in some runtimes).
-      const ab = new ArrayBuffer(wav.byteLength);
-      new Uint8Array(ab).set(wav);
-      ws.send(ab);
+      processingRef.current = true;
       setStatusBoth('processing');
+
+      void (async () => {
+        try {
+          let transcript: string;
+          try {
+            transcript = await transcribeAudio(audio);
+          } catch {
+            setStatusBoth('ready');
+            return;
+          }
+          if (transcript.trim().length === 0) {
+            setStatusBoth('ready');
+            return;
+          }
+          setTranscriptLines((prev) => [...prev, transcript]);
+
+          const sessionId = sessionIdRef.current;
+          if (!sessionId || !startedRef.current) { setStatusBoth('ready'); return; }
+
+          let result: {
+            reply: string;
+            complete: boolean;
+            summary?: unknown;
+            cultural_priors_detected?: boolean;
+          };
+          try {
+            result = await hkFetch<typeof result>('/v1/voice/turns', {
+              method: 'POST',
+              body: { session_id: sessionId, transcript },
+            });
+          } catch {
+            setStatusBoth('ready');
+            return;
+          }
+
+          setLumiLines((prev) => [...prev, result.reply]);
+
+          let chunks: Uint8Array[] = [];
+          try {
+            chunks = await fetchTtsChunks(result.reply);
+          } catch { /* TTS failed — caption still shown */ }
+
+          if (result.complete) {
+            setStatusBoth('closing');
+            callbacksRef.current.onComplete({
+              cultural_priors_detected: result.cultural_priors_detected ?? false,
+            });
+          } else {
+            playAudioChunks(chunks);
+          }
+        } finally {
+          processingRef.current = false;
+        }
+      })();
     },
     positiveSpeechThreshold: 0.8,
     negativeSpeechThreshold: 0.6,
@@ -151,24 +253,14 @@ export function useVoiceSession(callbacks: VoiceSessionCallbacks): UseVoiceSessi
   const stop = useCallback(() => {
     if (!startedRef.current) return;
     startedRef.current = false;
-    try {
-      vad.pause();
-    } catch {
-      /* noop */
+    try { vad.pause(); } catch { /* noop */ }
+    const sessionId = sessionIdRef.current;
+    sessionIdRef.current = null;
+    if (sessionId) {
+      void hkFetch<unknown>(`/v1/voice/sessions/${sessionId}`, { method: 'DELETE' }).catch(() => {});
     }
-    const ws = wsRef.current;
-    if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) {
-      try {
-        ws.close(1000, 'client end');
-      } catch {
-        /* noop */
-      }
-    }
-    wsRef.current = null;
     setStatusBoth('closed');
   }, [setStatusBoth, vad]);
-
-  useEffect(() => { stopRef.current = stop; });
 
   const start = useCallback(async () => {
     if (startedRef.current) return;
@@ -176,65 +268,14 @@ export function useVoiceSession(callbacks: VoiceSessionCallbacks): UseVoiceSessi
     setErrorMessage(null);
     setStatusBoth('connecting');
     try {
-      if (!WS_BASE_URL) {
-        throw new Error('VITE_API_WS_URL is not configured');
-      }
       const raw = await hkFetch<unknown>('/v1/voice/sessions', {
         method: 'POST',
         body: { context: 'onboarding' },
       });
       if (!startedRef.current) return;
       const { session_id } = VoiceSessionCreateResponseSchema.parse(raw);
-      const accessToken = useAuthStore.getState().accessToken;
-      if (accessToken === null) {
-        throw new Error('Missing access token');
-      }
-      const ws = new WebSocket(
-        `${WS_BASE_URL}/v1/voice/ws?session_id=${encodeURIComponent(session_id)}&token=${encodeURIComponent(accessToken)}`,
-      );
-      ws.binaryType = 'arraybuffer';
-      wsRef.current = ws;
-
-      ws.addEventListener('message', (ev) => {
-        if (typeof ev.data === 'string') {
-          let parsed: unknown;
-          try {
-            parsed = JSON.parse(ev.data);
-          } catch {
-            return;
-          }
-          const result = WsServerMessageSchema.safeParse(parsed);
-          if (!result.success) return;
-          handleServerMessage(result.data);
-          return;
-        }
-        // Binary — MP3 chunk for the in-flight Lumi response
-        const buf = audioBufferRef.current;
-        if (!buf) return;
-        if (ev.data instanceof ArrayBuffer) {
-          if (audioBufferRef.current?.seq === buf.seq) {
-            buf.chunks.push(new Uint8Array(ev.data));
-          }
-        } else if (ev.data instanceof Blob) {
-          void ev.data.arrayBuffer().then((ab) => {
-            const b = audioBufferRef.current;
-            if (b && b.seq === buf.seq) b.chunks.push(new Uint8Array(ab));
-          });
-        }
-      });
-
-      ws.addEventListener('close', () => {
-        if (statusRef.current !== 'closing' && statusRef.current !== 'closed') {
-          setStatusBoth('closed');
-        }
-      });
-
-      ws.addEventListener('error', () => {
-        setErrorMessage('Voice connection error');
-        setStatusBoth('error');
-        callbacksRef.current.onError?.('Voice connection error');
-      });
-
+      sessionIdRef.current = session_id;
+      setStatusBoth('ready');
       vad.start();
     } catch (err) {
       startedRef.current = false;
@@ -244,21 +285,17 @@ export function useVoiceSession(callbacks: VoiceSessionCallbacks): UseVoiceSessi
       setStatusBoth('error');
       callbacksRef.current.onError?.(message);
     }
-  }, [handleServerMessage, setStatusBoth, vad]);
+  }, [setStatusBoth, vad]);
 
   useEffect(() => {
     return () => {
-      if (startedRef.current) stopRef.current();
+      if (startedRef.current) stop();
       if (playingAudioRef.current) {
-        try {
-          playingAudioRef.current.pause();
-        } catch {
-          /* noop */
-        }
+        try { playingAudioRef.current.pause(); } catch { /* noop */ }
         playingAudioRef.current = null;
       }
     };
-  }, []);
+  }, [stop]);
 
   return { status, transcriptLines, lumiLines, errorMessage, start, stop };
 }

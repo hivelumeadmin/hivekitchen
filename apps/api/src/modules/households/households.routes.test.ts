@@ -26,13 +26,20 @@ interface AuditRow {
   created_at: string;
 }
 
+interface HouseholdMockRow {
+  id: string;
+  created_at: string;
+  tile_ghost_timestamp_enabled: boolean;
+  // Slice 5-S14 — geolocation consent columns.
+  geolocation_enabled: boolean;
+  geolocation_consented_at: string | null;
+  geolocation_purpose: 'cultural_supplier_routing' | null;
+}
+
 interface MockState {
   audit: AuditRow[];
   // Maps householdId → row.
-  households: Map<
-    string,
-    { id: string; created_at: string; tile_ghost_timestamp_enabled: boolean }
-  >;
+  households: Map<string, HouseholdMockRow>;
 }
 
 // Targeted in-memory Supabase mock — only models the audit_log + households
@@ -129,11 +136,28 @@ function householdsTable(state: MockState) {
           const id = filters.id as string | undefined;
           if (id) {
             const row = state.households.get(id);
-            if (row && typeof patch.tile_ghost_timestamp_enabled === 'boolean') {
-              row.tile_ghost_timestamp_enabled = patch.tile_ghost_timestamp_enabled;
+            if (row) {
+              if (typeof patch.tile_ghost_timestamp_enabled === 'boolean') {
+                row.tile_ghost_timestamp_enabled = patch.tile_ghost_timestamp_enabled;
+              }
+              // Slice 5-S14 — Supabase .update() writes only the fields present
+              // in the payload, so an opt-out (no geolocation_consented_at key)
+              // leaves the timestamp untouched.
+              if (typeof patch.geolocation_enabled === 'boolean') {
+                row.geolocation_enabled = patch.geolocation_enabled;
+              }
+              if ('geolocation_purpose' in patch) {
+                row.geolocation_purpose = patch.geolocation_purpose as
+                  | 'cultural_supplier_routing'
+                  | null;
+              }
+              if ('geolocation_consented_at' in patch) {
+                row.geolocation_consented_at = patch.geolocation_consented_at as string;
+              }
             }
           }
-          // Return a chain that supports .select().maybeSingle() for setTileGhostFlag.
+          // Return a chain that supports .select().maybeSingle() for setTileGhostFlag
+          // and .select().single() for updateGeolocationConsent.
           return {
             select(_cols: string) {
               return {
@@ -142,6 +166,19 @@ function householdsTable(state: MockState) {
                   if (!rowId) return { data: null, error: null };
                   const r = state.households.get(rowId);
                   return r ? { data: { id: r.id }, error: null } : { data: null, error: null };
+                },
+                single: async () => {
+                  const rowId = filters.id as string | undefined;
+                  const r = rowId ? state.households.get(rowId) : undefined;
+                  if (!r) return { data: null, error: { message: 'no rows returned' } };
+                  return {
+                    data: {
+                      geolocation_enabled: r.geolocation_enabled,
+                      geolocation_consented_at: r.geolocation_consented_at,
+                      geolocation_purpose: r.geolocation_purpose,
+                    },
+                    error: null,
+                  };
                 },
               };
             },
@@ -222,7 +259,15 @@ async function buildTestApp(opts: BuildAppOpts): Promise<FastifyInstance> {
   return app;
 }
 
-function freshState(opts: { householdAgeMs?: number; tileGhostEnabled?: boolean } = {}): MockState {
+function freshState(
+  opts: {
+    householdAgeMs?: number;
+    tileGhostEnabled?: boolean;
+    geolocationEnabled?: boolean;
+    geolocationConsentedAt?: string | null;
+    geolocationPurpose?: 'cultural_supplier_routing' | null;
+  } = {},
+): MockState {
   const ageMs = opts.householdAgeMs ?? 1000 * 60 * 60; // 1h old by default
   return {
     audit: [],
@@ -233,6 +278,9 @@ function freshState(opts: { householdAgeMs?: number; tileGhostEnabled?: boolean 
           id: SAMPLE_HOUSEHOLD_ID,
           created_at: new Date(Date.now() - ageMs).toISOString(),
           tile_ghost_timestamp_enabled: opts.tileGhostEnabled ?? false,
+          geolocation_enabled: opts.geolocationEnabled ?? false,
+          geolocation_consented_at: opts.geolocationConsentedAt ?? null,
+          geolocation_purpose: opts.geolocationPurpose ?? null,
         },
       ],
     ]),
@@ -453,7 +501,8 @@ describe('GET /v1/households/:householdId/brief', () => {
   async function buildBriefApp(getBriefResult: unknown): Promise<FastifyInstance> {
     return buildTestApp({
       state: freshState(),
-      plansService: { getBrief: async (_id: string) => getBriefResult },
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      plansService: { getBrief: async (_id: string) => getBriefResult as any },
     });
   }
 
@@ -3033,6 +3082,171 @@ describe('POST /v1/households/:householdId/brief/learning-moment', () => {
       url: `/v1/households/${SAMPLE_HOUSEHOLD_ID}/brief/learning-moment`,
       headers: { authorization: `Bearer ${token}` },
       payload: { action: 'banana' },
+    });
+
+    expect(res.statusCode).toBe(400);
+  });
+});
+
+// ===========================================================================
+// Slice 5-S14 — geolocation consent (household-level opt-in)
+// ===========================================================================
+
+describe('GET /v1/households/:id/geolocation-consent', () => {
+  let app: FastifyInstance;
+
+  afterEach(async () => {
+    if (app) await app.close();
+  });
+
+  it('returns 200 with the current consent for a household member', async () => {
+    app = await buildTestApp({ state: freshState() });
+    const token = signPrimary(app);
+
+    const res = await app.inject({
+      method: 'GET',
+      url: `/v1/households/${SAMPLE_HOUSEHOLD_ID}/geolocation-consent`,
+      headers: { authorization: `Bearer ${token}` },
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual({
+      geolocation_enabled: false,
+      geolocation_consented_at: null,
+      geolocation_purpose: null,
+    });
+  });
+
+  it('returns 403 on cross-household access', async () => {
+    app = await buildTestApp({ state: freshState() });
+    const OTHER_HOUSEHOLD = '99999999-9999-4999-8999-999999999999';
+    const token = signPrimary(app, SAMPLE_HOUSEHOLD_ID);
+
+    const res = await app.inject({
+      method: 'GET',
+      url: `/v1/households/${OTHER_HOUSEHOLD}/geolocation-consent`,
+      headers: { authorization: `Bearer ${token}` },
+    });
+
+    expect(res.statusCode).toBe(403);
+  });
+
+  it('returns 401 without a token', async () => {
+    app = await buildTestApp({ state: freshState() });
+
+    const res = await app.inject({
+      method: 'GET',
+      url: `/v1/households/${SAMPLE_HOUSEHOLD_ID}/geolocation-consent`,
+    });
+
+    expect(res.statusCode).toBe(401);
+  });
+});
+
+describe('PATCH /v1/households/:id/geolocation-consent', () => {
+  let app: FastifyInstance;
+
+  afterEach(async () => {
+    if (app) await app.close();
+  });
+
+  it('200 — enables geolocation and stamps consented_at', async () => {
+    const state = freshState();
+    app = await buildTestApp({ state });
+    const token = signPrimary(app);
+
+    const res = await app.inject({
+      method: 'PATCH',
+      url: `/v1/households/${SAMPLE_HOUSEHOLD_ID}/geolocation-consent`,
+      headers: { authorization: `Bearer ${token}` },
+      payload: { geolocation_enabled: true, geolocation_purpose: 'cultural_supplier_routing' },
+    });
+
+    expect(res.statusCode).toBe(200);
+    const body = res.json();
+    expect(body.geolocation_enabled).toBe(true);
+    expect(body.geolocation_purpose).toBe('cultural_supplier_routing');
+    expect(typeof body.geolocation_consented_at).toBe('string');
+    expect(state.households.get(SAMPLE_HOUSEHOLD_ID)?.geolocation_enabled).toBe(true);
+  });
+
+  it('200 — disables geolocation, clears purpose, preserves consented_at', async () => {
+    const consentedAt = '2026-10-22T10:00:00.000Z';
+    const state = freshState({
+      geolocationEnabled: true,
+      geolocationConsentedAt: consentedAt,
+      geolocationPurpose: 'cultural_supplier_routing',
+    });
+    app = await buildTestApp({ state });
+    const token = signPrimary(app);
+
+    const res = await app.inject({
+      method: 'PATCH',
+      url: `/v1/households/${SAMPLE_HOUSEHOLD_ID}/geolocation-consent`,
+      headers: { authorization: `Bearer ${token}` },
+      payload: { geolocation_enabled: false },
+    });
+
+    expect(res.statusCode).toBe(200);
+    const body = res.json();
+    expect(body.geolocation_enabled).toBe(false);
+    expect(body.geolocation_purpose).toBeNull();
+    // Historical record preserved on opt-out.
+    expect(body.geolocation_consented_at).toBe(consentedAt);
+  });
+
+  it('200 — accepts secondary_caregiver', async () => {
+    app = await buildTestApp({ state: freshState() });
+    const token = signSecondary(app);
+
+    const res = await app.inject({
+      method: 'PATCH',
+      url: `/v1/households/${SAMPLE_HOUSEHOLD_ID}/geolocation-consent`,
+      headers: { authorization: `Bearer ${token}` },
+      payload: { geolocation_enabled: true, geolocation_purpose: 'cultural_supplier_routing' },
+    });
+
+    expect(res.statusCode).toBe(200);
+  });
+
+  it('403 — cross-household', async () => {
+    app = await buildTestApp({ state: freshState() });
+    const OTHER_HOUSEHOLD = '99999999-9999-4999-8999-999999999999';
+    const token = signPrimary(app, SAMPLE_HOUSEHOLD_ID);
+
+    const res = await app.inject({
+      method: 'PATCH',
+      url: `/v1/households/${OTHER_HOUSEHOLD}/geolocation-consent`,
+      headers: { authorization: `Bearer ${token}` },
+      payload: { geolocation_enabled: true, geolocation_purpose: 'cultural_supplier_routing' },
+    });
+
+    expect(res.statusCode).toBe(403);
+  });
+
+  it('403 — guest_author is blocked', async () => {
+    app = await buildTestApp({ state: freshState() });
+    const token = signGuest(app);
+
+    const res = await app.inject({
+      method: 'PATCH',
+      url: `/v1/households/${SAMPLE_HOUSEHOLD_ID}/geolocation-consent`,
+      headers: { authorization: `Bearer ${token}` },
+      payload: { geolocation_enabled: true, geolocation_purpose: 'cultural_supplier_routing' },
+    });
+
+    expect(res.statusCode).toBe(403);
+  });
+
+  it('400 — enable without purpose', async () => {
+    app = await buildTestApp({ state: freshState() });
+    const token = signPrimary(app);
+
+    const res = await app.inject({
+      method: 'PATCH',
+      url: `/v1/households/${SAMPLE_HOUSEHOLD_ID}/geolocation-consent`,
+      headers: { authorization: `Bearer ${token}` },
+      payload: { geolocation_enabled: true },
     });
 
     expect(res.statusCode).toBe(400);

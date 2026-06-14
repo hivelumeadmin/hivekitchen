@@ -1,7 +1,14 @@
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { HouseholdMembersResponseSchema } from '@hivekitchen/contracts';
-import type { HouseholdMember, CreateInviteResponse } from '@hivekitchen/types';
+import {
+  HouseholdMembersResponseSchema,
+  HouseholdGeolocationConsentSchema,
+} from '@hivekitchen/contracts';
+import type {
+  HouseholdMember,
+  CreateInviteResponse,
+  HouseholdGeolocationConsent,
+} from '@hivekitchen/types';
 import { hkFetch, HkApiError } from '@/lib/fetch.js';
 import { useLumiContext } from '@/hooks/useLumiContext.js';
 import { useAuthStore } from '@/stores/auth.store.js';
@@ -34,6 +41,13 @@ export default function HouseholdSettingsRoute() {
   const [inviteError, setInviteError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
 
+  // Slice 5-S14 — household-level geolocation opt-in. Consent-only: enabling
+  // requests browser permission but never sends coordinates to the server.
+  const didLoadGeolocation = useRef(false);
+  const [geolocationEnabled, setGeolocationEnabled] = useState(false);
+  const [geolocationLoading, setGeolocationLoading] = useState(false);
+  const [geolocationError, setGeolocationError] = useState<string | null>(null);
+
   useEffect(() => {
     if (!accessToken) {
       navigate('/auth/login?next=/app/household/settings', { replace: true });
@@ -64,6 +78,83 @@ export default function HouseholdSettingsRoute() {
     })();
     return () => controller.abort();
   }, [accessToken, householdId, navigate]);
+
+  // Load current geolocation consent on mount (caregivers only — guest_author
+  // never sees the section). Fail-open: a load failure leaves the toggle off.
+  useEffect(() => {
+    if (!accessToken || householdId === null || role === 'guest_author') return;
+    if (didLoadGeolocation.current) return;
+    didLoadGeolocation.current = true;
+    void (async () => {
+      try {
+        const raw = await hkFetch<unknown>(
+          `/v1/households/${householdId}/geolocation-consent`,
+          { method: 'GET' },
+        );
+        const consent = HouseholdGeolocationConsentSchema.parse(raw);
+        setGeolocationEnabled(consent.geolocation_enabled);
+      } catch {
+        // fail-open: default to false renders the toggle in a safe disabled state
+      }
+    })();
+  }, [accessToken, householdId, role]);
+
+  async function handleGeolocationToggle(checked: boolean) {
+    if (householdId === null) return;
+    setGeolocationError(null);
+
+    if (checked) {
+      setGeolocationLoading(true);
+      try {
+        // Request browser permission BEFORE calling the API. The
+        // GeolocationPosition is intentionally discarded — no coordinates are
+        // ever sent to the server (NFR-PRIV-3).
+        await new Promise<GeolocationPosition>((resolve, reject) => {
+          navigator.geolocation.getCurrentPosition(resolve, reject);
+        });
+        const raw = await hkFetch<unknown>(
+          `/v1/households/${householdId}/geolocation-consent`,
+          {
+            method: 'PATCH',
+            body: { geolocation_enabled: true, geolocation_purpose: 'cultural_supplier_routing' },
+          },
+        );
+        const consent = HouseholdGeolocationConsentSchema.parse(raw);
+        setGeolocationEnabled(consent.geolocation_enabled);
+      } catch (err) {
+        // GeolocationPositionError.code === 1 is PERMISSION_DENIED. Checked by
+        // shape (not instanceof) so denial is detectable under jsdom too.
+        const isDenied =
+          typeof err === 'object' && err !== null && (err as { code?: number }).code === 1;
+        setGeolocationError(
+          isDenied
+            ? 'Location access was denied. Enable it in your browser settings.'
+            : 'Could not update location setting. Please try again.',
+        );
+        setGeolocationEnabled(false);
+      } finally {
+        setGeolocationLoading(false);
+      }
+    } else {
+      // Opt-out: no browser permission needed. Optimistic UI with revert.
+      const previous = geolocationEnabled;
+      setGeolocationEnabled(false);
+      setGeolocationLoading(true);
+      try {
+        const raw = await hkFetch<unknown>(`/v1/households/${householdId}/geolocation-consent`, {
+          method: 'PATCH',
+          body: { geolocation_enabled: false },
+        });
+        const consent = HouseholdGeolocationConsentSchema.parse(raw);
+        setGeolocationEnabled(consent.geolocation_enabled);
+      } catch {
+        setGeolocationEnabled(previous);
+        setGeolocationError('Could not update location setting. Please try again.');
+      } finally {
+        setGeolocationLoading(false);
+      }
+    }
+  }
 
   async function handleGenerateInvite(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -187,6 +278,36 @@ export default function HouseholdSettingsRoute() {
                     {copied ? 'Copied' : 'Copy'}
                   </button>
                 </div>
+              )}
+            </section>
+          )}
+
+          {/* Geolocation opt-in — primary_parent and secondary_caregiver only */}
+          {(role === 'primary_parent' || role === 'secondary_caregiver') && (
+            <section className="mt-12 border-t border-border pt-8">
+              <h2 className="font-serif text-xl text-fg">Location</h2>
+              <label className="mt-4 flex items-start justify-between gap-4 py-1">
+                <span>
+                  <span className="block text-sm text-fg">Find cultural suppliers near me</span>
+                  <span className="mt-1 block text-sm text-fg-muted leading-relaxed">
+                    Lumi uses your location to suggest nearby cultural grocery stores and suppliers.
+                  </span>
+                </span>
+                <input
+                  type="checkbox"
+                  role="switch"
+                  aria-label="Find cultural suppliers near me"
+                  aria-checked={geolocationEnabled}
+                  checked={geolocationEnabled}
+                  disabled={geolocationLoading}
+                  onChange={(e) => void handleGeolocationToggle(e.target.checked)}
+                  className="mt-1 h-4 w-4 shrink-0"
+                />
+              </label>
+              {geolocationError && (
+                <p role="alert" className="mt-2 text-sm text-safety-red">
+                  {geolocationError}
+                </p>
               )}
             </section>
           )}

@@ -7,6 +7,8 @@ import {
   type NotificationPrefs,
   type CulturalLanguagePreference,
   type KitchenMap,
+  type VoiceTranscriptItem,
+  type VoiceRetentionMode,
   CULTURAL_LANGUAGE_VALUES,
 } from '@hivekitchen/types';
 import { hkFetch, hkFetchBlob, HkApiError } from '@/lib/fetch.js';
@@ -73,6 +75,17 @@ export default function AccountPage() {
   const [culturalSaving, setCulturalSaving] = useState(false);
   const [culturalError, setCulturalError] = useState<string | null>(null);
 
+  // Slice 5-S13 — caption-only (Text only) accessibility preference.
+  const [captionOnlyMode, setCaptionOnlyModeLocal] = useState(false);
+  const [captionOnlySaving, setCaptionOnlySaving] = useState(false);
+  const [captionOnlyError, setCaptionOnlyError] = useState<string | null>(null);
+
+  // Slice 5-S15 — voice transcript retention controls.
+  const [voiceRetentionMode, setVoiceRetentionMode] = useState<VoiceRetentionMode>('standard');
+  const [voiceTranscripts, setVoiceTranscripts] = useState<VoiceTranscriptItem[]>([]);
+  const [voiceRetentionLoading, setVoiceRetentionLoading] = useState(false);
+  const [voiceRetentionError, setVoiceRetentionError] = useState<string | null>(null);
+
   const [downloading, setDownloading] = useState<'json' | 'pdf' | null>(null);
   const [downloadError, setDownloadError] = useState<string | null>(null);
 
@@ -106,11 +119,28 @@ export default function AccountPage() {
         // the canonical value loaded here.
         useLumiStore.getState().setProactiveNudges(result.notification_prefs.proactive_lumi_nudges);
         setCulturalLanguage(result.cultural_language);
+        // Slice 5-S13 — hydrate the local toggle + the lumi store flag the
+        // voice hook reads (same pattern as proactiveNudges above).
+        setCaptionOnlyModeLocal(result.caption_only_mode);
+        useLumiStore.getState().setCaptionOnlyMode(result.caption_only_mode);
+        // Slice 5-S15 — hydrate the toggle from the profile (instant), then refine
+        // mode + load the transcript list from the dedicated endpoint.
+        setVoiceRetentionMode(result.voice_retention_mode);
         setAcknowledgmentState(
           result.parental_notice_acknowledged_at,
           result.parental_notice_acknowledged_version,
         );
         setLoadState('ready');
+        try {
+          const voiceData = await hkFetch<{
+            transcripts: VoiceTranscriptItem[];
+            voice_retention_mode: VoiceRetentionMode;
+          }>('/v1/users/me/voice-transcripts', { method: 'GET' });
+          setVoiceRetentionMode(voiceData.voice_retention_mode ?? 'standard');
+          setVoiceTranscripts(voiceData.transcripts ?? []);
+        } catch {
+          // fail-open: the Voice Data section renders with defaults
+        }
       } catch {
         setLoadState('error');
       }
@@ -228,6 +258,60 @@ export default function AccountPage() {
       }
     } finally {
       setCulturalSaving(false);
+    }
+  }
+
+  // Slice 5-S13 — toggle the caption-only accessibility preference. Optimistic
+  // UI: flip the local + store state immediately, reconcile from the response,
+  // revert on error (mirrors handleCulturalLanguageChange / notification toggles).
+  async function handleAccessibilityToggle(checked: boolean) {
+    if (!profile) return;
+    const previous = captionOnlyMode;
+    setCaptionOnlyError(null);
+    setCaptionOnlySaving(true);
+    setCaptionOnlyModeLocal(checked);
+    useLumiStore.getState().setCaptionOnlyMode(checked);
+    try {
+      const updated = await hkFetch<UserProfile>('/v1/users/me/accessibility', {
+        method: 'PATCH',
+        body: { caption_only_mode: checked },
+      });
+      setProfile(updated);
+      setCaptionOnlyModeLocal(updated.caption_only_mode);
+      useLumiStore.getState().setCaptionOnlyMode(updated.caption_only_mode);
+    } catch {
+      setCaptionOnlyModeLocal(previous);
+      useLumiStore.getState().setCaptionOnlyMode(previous);
+      setCaptionOnlyError('Could not update accessibility setting. Please try again.');
+    } finally {
+      setCaptionOnlySaving(false);
+    }
+  }
+
+  // Slice 5-S15 — toggle voice retention mode. Optimistic: flip the mode and (on
+  // immediate-delete) clear the transcript list immediately, then PATCH. Revert
+  // both on failure (AC10).
+  async function handleVoiceRetentionToggle(immediate: boolean) {
+    setVoiceRetentionError(null);
+    const newMode: VoiceRetentionMode = immediate ? 'immediate_delete' : 'standard';
+    const prevMode = voiceRetentionMode;
+    const prevTranscripts = voiceTranscripts;
+
+    setVoiceRetentionMode(newMode);
+    if (newMode === 'immediate_delete') setVoiceTranscripts([]);
+
+    setVoiceRetentionLoading(true);
+    try {
+      await hkFetch('/v1/users/me/voice-retention', {
+        method: 'PATCH',
+        body: { voice_retention_mode: newMode },
+      });
+    } catch {
+      setVoiceRetentionMode(prevMode);
+      setVoiceTranscripts(prevTranscripts);
+      setVoiceRetentionError('Could not update voice data setting. Please try again.');
+    } finally {
+      setVoiceRetentionLoading(false);
     }
   }
 
@@ -484,6 +568,84 @@ export default function AccountPage() {
           </label>
           {notifError && (
             <p role="alert" className="text-sm text-safety-red">{notifError}</p>
+          )}
+        </section>
+
+        <section className="space-y-3 border-t border-border pt-6">
+          <h2 className="font-serif text-xl text-fg">Accessibility</h2>
+          <p className="text-sm text-fg-muted">
+            Captions stream normally — Lumi&apos;s voice reply won&apos;t auto-play.
+          </p>
+          <label className="flex items-center justify-between gap-3 py-1">
+            <span className="text-sm">Text only — captions without audio</span>
+            <input
+              type="checkbox"
+              role="switch"
+              aria-label="Text only — captions without audio"
+              checked={captionOnlyMode}
+              onChange={(e) => void handleAccessibilityToggle(e.target.checked)}
+              disabled={captionOnlySaving}
+              className="h-4 w-4"
+            />
+          </label>
+          {captionOnlyError && (
+            <p role="alert" className="text-sm text-safety-red">{captionOnlyError}</p>
+          )}
+        </section>
+
+        <section className="space-y-3 border-t border-border pt-6">
+          <h2 className="font-serif text-xl text-fg">Voice Data</h2>
+          <p className="text-sm text-fg-muted">
+            When on, Lumi forgets your voice turns as soon as they&apos;re processed. When off,
+            transcripts are kept for 90 days.
+          </p>
+          <label className="flex items-center justify-between gap-3 py-1">
+            <span className="text-sm">Delete transcripts immediately</span>
+            <input
+              type="checkbox"
+              role="switch"
+              aria-label="Delete transcripts immediately"
+              checked={voiceRetentionMode === 'immediate_delete'}
+              onChange={(e) => void handleVoiceRetentionToggle(e.target.checked)}
+              disabled={voiceRetentionLoading}
+              className="h-4 w-4"
+            />
+          </label>
+          {voiceRetentionError && (
+            <p role="alert" className="text-sm text-safety-red">{voiceRetentionError}</p>
+          )}
+
+          {voiceRetentionMode === 'standard' && voiceTranscripts.length > 0 && (
+            <div className="space-y-2 pt-2">
+              <p className="text-sm text-fg-muted">Recent voice transcripts</p>
+              <ul className="space-y-2">
+                {voiceTranscripts.map((t) => {
+                  const daysLeft = Math.ceil(
+                    (new Date(t.retention_until).getTime() - Date.now()) / (1000 * 60 * 60 * 24),
+                  );
+                  return (
+                    <li key={t.id} className="rounded border border-border p-3 text-sm text-fg">
+                      <p className="line-clamp-2">{t.transcript}</p>
+                      <p className="mt-1 text-fg-muted">
+                        {daysLeft > 0
+                          ? `Expires in ${daysLeft} day${daysLeft === 1 ? '' : 's'}`
+                          : 'Expiring soon'}
+                      </p>
+                    </li>
+                  );
+                })}
+              </ul>
+            </div>
+          )}
+
+          {voiceRetentionMode === 'standard' && voiceTranscripts.length === 0 && (
+            <p className="pt-1 text-sm text-fg-muted">No voice transcripts yet.</p>
+          )}
+
+          {voiceRetentionMode === 'immediate_delete' && (
+            <p className="pt-1 text-sm text-fg-muted">
+              Your voice transcripts are deleted immediately and not stored.
+            </p>
           )}
         </section>
 

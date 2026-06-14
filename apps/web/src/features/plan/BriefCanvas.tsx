@@ -1,11 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
-import type { ChildResponse, ClearedAllergyEntry, PlanTileSummary } from '@hivekitchen/types';
+import type {
+  ClearedAllergyEntry,
+  PlanTileSummary,
+  ProposeSwapResponse,
+  Weekday,
+} from '@hivekitchen/types';
+import { hkFetch } from '@/lib/fetch.js';
 import { useAuthStore } from '@/stores/auth.store.js';
-import { useComplianceStore } from '@/stores/compliance.store.js';
 import { PageHeader } from '@/components/PageHeader.js';
-import { AddChildForm } from '@/features/children/AddChildForm.js';
-import { BagCompositionCard } from '@/features/children/BagCompositionCard.js';
 import { PendingChildRequests } from '@/features/child-requests/PendingChildRequests.js';
 import { AllergyClearedBadge } from './AllergyClearedBadge.js';
 import {
@@ -116,12 +119,17 @@ export function BriefCanvas() {
     }
     return out;
   }, [planData]);
-  const [showAddChild, setShowAddChild] = useState(false);
-  const [addedChild, setAddedChild] = useState<ChildResponse | null>(null);
-  const [savedChildren, setSavedChildren] = useState<ChildResponse[]>([]);
   // Story 3.12 — picker / swap-in-progress UI state.
   const [activeSwapDay, setActiveSwapDay] = useState<PlanTileSummary['day'] | null>(null);
   const [swappingItemId, setSwappingItemId] = useState<string | null>(null);
+  // Slice 5-S12 — tracks an in-flight conversational swap proposal; the matching
+  // tile pulses (sacred-plum) until Lumi resolves it. The day is captured here
+  // (not via onSwapStarted, which only carries the id) so the right tile pulses.
+  const [pendingProposal, setPendingProposal] = useState<{
+    id: string;
+    day: PlanTileSummary['day'];
+  } | null>(null);
+  const lastProposalRef = useRef<{ id: string; day: PlanTileSummary['day'] } | null>(null);
   // Slice 5-S9 — "Why this?" inline reasoning panel. One panel per canvas
   // (reasoning is household-level, not tile-specific), local + dismissable.
   const [showReasoning, setShowReasoning] = useState(false);
@@ -263,6 +271,24 @@ export function BriefCanvas() {
     );
   }
 
+  // Slice 5-S12 — capture the parent's free-text swap intent as a proposal turn
+  // in the family thread. Returns the proposal_id so the picker can fire
+  // onSwapStarted; the day is stashed in lastProposalRef so onSwapStarted knows
+  // this id is a proposal (pulse the tile) rather than a variation (spinner).
+  async function handleProposeSwap(day: Weekday, content: string): Promise<string> {
+    if (planId === null) throw new Error('No plan');
+    const res = await hkFetch<ProposeSwapResponse>(
+      `/v1/plans/${planId}/swap-proposals`,
+      {
+        method: 'POST',
+        body: { day, content },
+        headers: { 'Idempotency-Key': crypto.randomUUID() },
+      },
+    );
+    lastProposalRef.current = { id: res.proposal_id, day };
+    return res.proposal_id;
+  }
+
   // Story pre-4-s3 — banner-driven recovery. In hard-fail state planId is null
   // (no plan committed); fall back to invalidating plan + brief queries so the
   // UI picks up backend recovery on the next poll cycle.
@@ -314,55 +340,9 @@ export function BriefCanvas() {
   if (!isLoading && brief === null && !isError) {
     return (
       <main className="mx-auto w-full max-w-7xl flex-grow flex items-center justify-center px-6 pt-12 pb-24">
-        {showAddChild && addedChild === null ? (
-          <AddChildForm
-            householdId={householdId ?? ''}
-            onSuccess={(child) => setAddedChild(child)}
-            onCancel={() => setShowAddChild(false)}
-            onParentalNoticeRequired={() => {
-              useComplianceStore.getState().setAcknowledgmentState(null, null);
-            }}
-          />
-        ) : showAddChild && addedChild !== null ? (
-          <BagCompositionCard
-            childId={addedChild.id}
-            childName={addedChild.name}
-            onSaved={(savedChild) => {
-              setSavedChildren((prev) => [...prev, savedChild]);
-              setAddedChild(null);
-              setShowAddChild(false);
-            }}
-            onSkip={() => {
-              setSavedChildren((prev) => addedChild ? [...prev, addedChild] : prev);
-              setAddedChild(null);
-              setShowAddChild(false);
-            }}
-          />
-        ) : (
-          <div className="flex flex-col items-center gap-6">
-            {savedChildren.length > 0 && (
-              <ul className="w-full max-w-sm space-y-2">
-                {savedChildren.map((child) => (
-                  <li key={child.id} className="text-sm text-fg-muted">
-                    {child.name} — {child.age_band}
-                  </li>
-                ))}
-              </ul>
-            )}
-            <div className="text-center">
-              <p className="max-w-sm text-base text-fg-muted">
-                Lumi is preparing your first plan. Check back Sunday evening.
-              </p>
-              <button
-                type="button"
-                onClick={() => setShowAddChild(true)}
-                className="mt-3 text-sm text-amber-warm underline underline-offset-2 hover:text-amber transition-colors motion-reduce:transition-none"
-              >
-                Add your first child
-              </button>
-            </div>
-          </div>
-        )}
+        <p className="max-w-sm text-base text-fg-muted text-center">
+          Lumi is preparing your first plan. Check back Sunday evening.
+        </p>
       </main>
     );
   }
@@ -457,11 +437,13 @@ export function BriefCanvas() {
               const tileState: PlanTileState =
                 summary.paused
                   ? 'paused'
-                  : summary.items.some((i) => i.plan_item_id === swappingItemId)
-                    ? 'swap-in-progress'
-                    : activeSwapDay === summary.day
-                      ? 'pending-input'
-                      : 'decided';
+                  : pendingProposal !== null && summary.day === pendingProposal.day
+                    ? 'proposal-pending'
+                    : summary.items.some((i) => i.plan_item_id === swappingItemId)
+                      ? 'swap-in-progress'
+                      : activeSwapDay === summary.day
+                        ? 'pending-input'
+                        : 'decided';
 
               return (
                 <div key={summary.day} className="flex flex-col gap-2">
@@ -533,8 +515,19 @@ export function BriefCanvas() {
                 }))}
                 childNames={childNames}
                 onDismiss={dismissPicker}
-                onSwapStarted={(variationId) => {
-                  setSwappingItemId(variationId);
+                onProposeSwap={canSwap ? handleProposeSwap : undefined}
+                onSwapStarted={(id) => {
+                  // 5-S12 — a proposal flow returns a proposal_id (tracked in
+                  // lastProposalRef). It pulses the matching tile but must NOT
+                  // set swappingItemId, which would lock the rest of the canvas.
+                  if (lastProposalRef.current?.id === id) {
+                    setPendingProposal(lastProposalRef.current);
+                    lastProposalRef.current = null;
+                    swapTriggerRef.current = null;
+                    setActiveSwapDay(null);
+                    return;
+                  }
+                  setSwappingItemId(id);
                   swapTriggerRef.current = null;
                   setActiveSwapDay(null);
                 }}

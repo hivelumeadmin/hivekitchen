@@ -60,7 +60,6 @@ async function main(): Promise<void> {
   // --- Create eval ---
   process.stdout.write(`Creating eval "${def.name}"...\n`);
 
-  // @ts-expect-error — Evals API is not yet typed in the openai SDK; use raw fetch via client.
   const evalResponse = await client.post('/v1/evals', {
     body: {
       name: def.name,
@@ -75,7 +74,6 @@ async function main(): Promise<void> {
   // --- Create run ---
   process.stdout.write('Starting run...\n');
 
-  // @ts-expect-error
   const runResponse = await client.post(`/v1/evals/${evalId}/runs`, {
     body: {
       // Runs against the stored-completions dataset defined in the eval config.
@@ -91,7 +89,6 @@ async function main(): Promise<void> {
   for (let attempt = 0; attempt < MAX_POLL_ATTEMPTS; attempt++) {
     await new Promise<void>((r) => setTimeout(r, POLL_INTERVAL_MS));
 
-    // @ts-expect-error
     const poll = await client.get(`/v1/evals/${evalId}/runs/${runId}`) as {
       status: string;
       result_counts?: { passed: number; failed: number; total: number };

@@ -28,8 +28,14 @@ describe('TurnBodyPlanDiff', () => {
 
 describe('TurnBodyProposal', () => {
   it('parses valid proposal body', () => {
-    const r = TurnBodyProposal.safeParse({ type: 'proposal', proposal_id: UUID1, content: 'Try this' });
+    const r = TurnBodyProposal.safeParse({ type: 'proposal', proposal_id: UUID1, day: 'wednesday', content: 'Try this' });
     expect(r.success).toBe(true);
+  });
+
+  it('rejects a proposal body without a day', () => {
+    expect(
+      TurnBodyProposal.safeParse({ type: 'proposal', proposal_id: UUID1, content: 'Try this' }).success,
+    ).toBe(false);
   });
 });
 

@@ -1,5 +1,6 @@
 import type OpenAI from 'openai';
 import type { LumiSurface, LumiContextSignal, NudgeTrigger, Turn } from '@hivekitchen/types';
+import type { TimeOfDayBand } from '../common/time-of-day.js';
 import { LUMI_BASE_PERSONA } from './prompts/lumi-base.prompt.js';
 import { getSurfacePrompt } from './prompts/surfaces/index.js';
 
@@ -10,6 +11,12 @@ export interface LumiAgentRespondInput {
   conversationHistory: Turn[]; // prior turns, up to last 20 (S8 getThreadTurns)
   householdSnapshot: string; // assembled by LumiService.fetchHouseholdSnapshot()
   modality: 'text' | 'voice';
+  // 5-S11 — server-derived time-of-day band; when present, adds a length/tone
+  // modifier on top of the surface prompt (morning/afternoon = brief, evening/
+  // night = reflective). Absent for callers that don't compute it.
+  conversationalContext?: {
+    timeOfDayBand: TimeOfDayBand;
+  };
 }
 
 // Story 12-S11 — input for a one-shot proactive nudge (no conversation history;
@@ -128,6 +135,15 @@ export class LumiAgent {
           `\n# Recent Actions\n${input.contextSignal.recent_actions.map((a) => `- ${a}`).join('\n')}`,
         );
       }
+    }
+
+    if (input.conversationalContext !== undefined) {
+      const { timeOfDayBand } = input.conversationalContext;
+      const instruction =
+        timeOfDayBand === 'morning' || timeOfDayBand === 'afternoon'
+          ? 'The parent is likely in a hurry. Keep your reply to one or two sentences — direct and warm, not terse.'
+          : 'The parent has time to reflect. A warm 2–4 sentence reply is welcome — be specific to this family, not generic.';
+      parts.push(`\n# Conversational Context\nTime of day: ${timeOfDayBand}\n${instruction}`);
     }
 
     return parts.join('\n');

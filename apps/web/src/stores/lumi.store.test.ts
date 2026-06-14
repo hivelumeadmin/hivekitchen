@@ -38,6 +38,14 @@ describe('useLumiStore', () => {
     expect(s.panelMode).toBe('text');
     expect(s.talkSessionId).toBeNull();
     expect(s.voiceStatus).toBe('idle');
+    expect(s.captionOnlyMode).toBe(false);
+  });
+
+  it('setCaptionOnlyMode toggles captionOnlyMode (Slice 5-S13)', () => {
+    useLumiStore.getState().setCaptionOnlyMode(true);
+    expect(useLumiStore.getState().captionOnlyMode).toBe(true);
+    useLumiStore.getState().setCaptionOnlyMode(false);
+    expect(useLumiStore.getState().captionOnlyMode).toBe(false);
   });
 
   it('setContext updates surface + signal, clears turns + isHydrating; preserves talk session (AC #4)', () => {

@@ -178,9 +178,6 @@ interface EncryptedChildRow {
   id: string;
   name: string;
   age_band: 'toddler' | 'child' | 'preteen' | 'teen';
-  declared_allergens: string;
-  cultural_identifiers: string;
-  dietary_preferences: string;
   bag_composition_pattern: BagCompositionPattern;
   extra_rules: { pins?: unknown; bans?: unknown } | null;
 }
@@ -239,10 +236,15 @@ interface EncryptedHouseholdRuleRow {
 // ---------------------------------------------------------------------------
 
 const HOUSEHOLD_COLUMNS =
-  'id, tier, tier_variant, timezone, kitchen_map_version, display_name, cultural_identifiers, dietary_preferences, declared_allergens';
+  'id, tier, tier_variant, timezone, kitchen_map_version, display_name';
 const CAREGIVER_COLUMNS = 'id, role, display_name, cultural_language';
-const CHILD_COLUMNS =
-  'id, name, age_band, declared_allergens, cultural_identifiers, dietary_preferences, bag_composition_pattern, extra_rules';
+// Story 3-DM-B2 — declared_allergens, cultural_identifiers, dietary_preferences
+// were dropped from children (migration 20261008000100); per-child values now
+// come from household_allergens / household_cultural_identifiers /
+// dietary_preferences satellite tables.
+const CHILD_COLUMNS = 'id, name, age_band, bag_composition_pattern, extra_rules';
+const HOUSEHOLD_CULTURAL_COLUMNS = 'cultural_tag';
+const HOUSEHOLD_ALLERGEN_COLUMNS = 'allergen, source';
 const CULTURAL_PRIOR_COLUMNS = 'key, label, tier, state, confidence, presence, enforcement';
 const MEMORY_COLUMNS = 'node_type, facet, prose_text, subject_child_id';
 const SCHOOL_POLICY_COLUMNS = 'child_id, policy_type, policy_description, slot_scope';
@@ -296,6 +298,8 @@ export class KitchenMapRepository extends BaseRepository {
       foodPreferencesRes,
       dietaryRes,
       rulesRes,
+      householdCulturalRes,
+      householdAllergensRes,
     ] = await Promise.all([
       this.client.from('households').select(HOUSEHOLD_COLUMNS).eq('id', householdId).maybeSingle(),
       this.client.from('users').select(CAREGIVER_COLUMNS).eq('current_household_id', householdId),
@@ -316,10 +320,15 @@ export class KitchenMapRepository extends BaseRepository {
         .from('household_recipe_usage')
         .select(USAGE_JOIN_COLUMNS)
         .eq('household_id', householdId),
+      // Per-child allergens only; household-wide (child_id IS NULL) are in householdAllergensRes.
       this.client.from('household_allergens').select(CHILD_ALLERGEN_COLUMNS).eq('household_id', householdId).not('child_id', 'is', null),
       this.client.from('food_preferences').select(FOOD_PREFERENCE_COLUMNS).eq('household_id', householdId),
       this.client.from('dietary_preferences').select(DIETARY_COLUMNS).eq('household_id', householdId),
       this.client.from('household_rules').select(HOUSEHOLD_RULE_COLUMNS).eq('household_id', householdId),
+      // Story 3-DM-B2 — household_cultural_identifiers replaces households.cultural_identifiers.
+      this.client.from('household_cultural_identifiers').select(HOUSEHOLD_CULTURAL_COLUMNS).eq('household_id', householdId),
+      // Story 3-DM-B2 — household-wide allergens (child_id IS NULL) replace households.declared_allergens.
+      this.client.from('household_allergens').select(HOUSEHOLD_ALLERGEN_COLUMNS).eq('household_id', householdId).is('child_id', null),
     ]);
 
     if (householdRes.error) throw householdRes.error;
@@ -333,6 +342,8 @@ export class KitchenMapRepository extends BaseRepository {
     if (foodPreferencesRes.error) throw foodPreferencesRes.error;
     if (dietaryRes.error) throw dietaryRes.error;
     if (rulesRes.error) throw rulesRes.error;
+    if (householdCulturalRes.error) throw householdCulturalRes.error;
+    if (householdAllergensRes.error) throw householdAllergensRes.error;
 
     if (householdRes.data === null) {
       return null;
@@ -349,10 +360,6 @@ export class KitchenMapRepository extends BaseRepository {
       householdId,
     );
 
-    // Slice 2-s27 — decrypt the three household-level columns. NULL on
-    // any column reads back as []. A decrypt failure is logged and treated
-    // as [] (mirror of the children decrypt-skip pattern) — never crash the
-    // whole map on a single corrupt cell.
     const householdRaw = householdRes.data as {
       id: string;
       tier: string;
@@ -360,10 +367,25 @@ export class KitchenMapRepository extends BaseRepository {
       timezone: string;
       kitchen_map_version: number;
       display_name: string | null;
-      cultural_identifiers: string | null;
-      dietary_preferences: string | null;
-      declared_allergens: string | null;
     };
+
+    // Story 3-DM-B2 — household identity now comes from satellite tables,
+    // not from the dropped encrypted columns on households.
+    const householdCulturalTags = (householdCulturalRes.data ?? []) as Array<{ cultural_tag: string }>;
+    const householdAllergenRows = (householdAllergensRes.data ?? []) as Array<{ allergen: string; source: RawAllergenRow['source'] }>;
+    const dietaryAllRows = (dietaryRes.data ?? []) as DietaryRow[];
+
+    const householdDeclaredAllergens: string[] = [];
+    for (const r of householdAllergenRows) {
+      try {
+        householdDeclaredAllergens.push(decryptField<string>(r.allergen, dek));
+      } catch (err) {
+        this.logger.warn(
+          { err, module: 'kitchen-map', action: 'kitchen_map.household_allergen_decrypt_failed', household_id: householdId },
+          'kitchen-map household allergen decryption failed — row skipped',
+        );
+      }
+    }
 
     return {
       household: {
@@ -373,24 +395,9 @@ export class KitchenMapRepository extends BaseRepository {
         timezone: householdRaw.timezone,
         kitchen_map_version: householdRaw.kitchen_map_version,
         display_name: householdRaw.display_name,
-        cultural_identifiers: this.decryptHouseholdArrayColumn(
-          householdRaw.cultural_identifiers,
-          dek,
-          'cultural_identifiers',
-          householdId,
-        ),
-        dietary_preferences: this.decryptHouseholdArrayColumn(
-          householdRaw.dietary_preferences,
-          dek,
-          'dietary_preferences',
-          householdId,
-        ),
-        declared_allergens: this.decryptHouseholdArrayColumn(
-          householdRaw.declared_allergens,
-          dek,
-          'declared_allergens',
-          householdId,
-        ),
+        cultural_identifiers: householdCulturalTags.map((r) => r.cultural_tag),
+        dietary_preferences: dietaryAllRows.filter((r) => r.child_id === null).map((r) => r.tag),
+        declared_allergens: householdDeclaredAllergens,
       },
       caregivers: ((caregiversRes.data ?? []) as Array<{
         id: string;
@@ -406,11 +413,8 @@ export class KitchenMapRepository extends BaseRepository {
       children: this.decryptChildren(
         (childrenRes.data ?? []) as EncryptedChildRow[],
         dek,
-        // Slice 2.6-s8 — declared_allergens come from the child_allergens
-        // projection (grouped per child) instead of the legacy children
-        // column. The legacy column is still selected for shape parity but
-        // its plaintext is discarded.
         decryptedAllergens,
+        dietaryAllRows,
       ),
       cultural_priors: (culturalRes.data ?? []) as RawCulturalPriorRow[],
       memory_nodes: (memoryRes.data ?? []) as RawMemoryNodeRow[],
@@ -422,7 +426,7 @@ export class KitchenMapRepository extends BaseRepository {
       // a warn log, matching the children decryption skip pattern.
       // Slice 2.6-s8 — decryptedAllergens is computed above and reused.
       allergens: decryptedAllergens,
-      dietary: (dietaryRes.data ?? []) as DietaryRow[],
+      dietary: dietaryAllRows,
       food_preferences: this.decryptFoodPreferences(
         (foodPreferencesRes.data ?? []) as EncryptedFoodPreferenceRow[],
         dek,
@@ -477,16 +481,8 @@ export class KitchenMapRepository extends BaseRepository {
     rows: EncryptedChildRow[],
     dek: Buffer | null,
     childAllergens: RawAllergenRow[],
+    dietaryRows: DietaryRow[],
   ): RawChildRow[] {
-    // decryptField() handles both real AES-GCM ciphertext (dek required) and
-    // NOOP-prefixed dev-mode rows (dek may be null) internally — call it
-    // unconditionally rather than branching on dek === null, otherwise
-    // NOOP-prefixed payloads get JSON.parse'd as a literal string.
-    //
-    // Slice 2.6-s8 — declared_allergens is sourced from the structured
-    // child_allergens projection (grouped per child), NOT the legacy
-    // children.declared_allergens column (still selected for shape parity
-    // but value discarded).
     const allergensByChild = new Map<string, string[]>();
     for (const r of childAllergens) {
       const list = allergensByChild.get(r.child_id) ?? [];
@@ -494,21 +490,58 @@ export class KitchenMapRepository extends BaseRepository {
       allergensByChild.set(r.child_id, list);
     }
 
+    // Story 3-DM-B2 — per-child dietary prefs come from the dietary_preferences
+    // table (child_id non-null rows) rather than the dropped children column.
+    const dietaryByChild = new Map<string, string[]>();
+    for (const r of dietaryRows) {
+      if (r.child_id === null) continue;
+      const list = dietaryByChild.get(r.child_id) ?? [];
+      list.push(r.tag);
+      dietaryByChild.set(r.child_id, list);
+    }
+
     const out: RawChildRow[] = [];
     for (const row of rows) {
       try {
+        // Story 3-DM-B2 — ChildrenRepository.insert() now stores name as raw
+        // plaintext (no encryptField call). Pre-3-DM-B2 rows may still hold
+        // AES-GCM ciphertext or NOOP-encoded values.
+        //   1. Try decryptField: handles NOOP and AES when the DEK is present.
+        //   2. If that throws AND the value looks like a plain human-readable
+        //      name (no base64 padding, short), use it directly — this is the
+        //      post-3-DM-B2 plaintext case.
+        //   3. If the value looks like opaque ciphertext (contains '=' padding
+        //      or is suspiciously long) and we have no DEK, skip the row so
+        //      the agent doesn't see garbled text.
+        let name: string;
+        try {
+          name = decryptField<string>(row.name, dek);
+        } catch {
+          // Heuristic: AES-GCM ciphertext stored as base64 is always ≥ 40
+          // chars and typically contains '+', '/', or '=' padding. A child
+          // name is short and human-readable. If the raw value fails both
+          // checks it is stale encrypted data we cannot recover — skip.
+          const looksLikeCiphertext = row.name.length > 60 ||
+            row.name.includes('+') || row.name.includes('/') || row.name.includes('=');
+          if (looksLikeCiphertext) {
+            throw new Error(
+              `child name appears to be encrypted ciphertext but DEK is unavailable (child_id=${row.id}). ` +
+              'Set ENVELOPE_ENCRYPTION_MASTER_KEY or delete the stale row.',
+            );
+          }
+          name = row.name;
+        }
         out.push({
           id: row.id,
-          name: decryptField<string>(row.name, dek),
+          name,
           age_band: row.age_band,
           declared_allergens: allergensByChild.get(row.id) ?? [],
-          cultural_identifiers: decryptField<string[]>(row.cultural_identifiers, dek),
-          dietary_preferences: decryptField<string[]>(row.dietary_preferences, dek),
+          cultural_identifiers: [],
+          dietary_preferences: dietaryByChild.get(row.id) ?? [],
           bag_composition_pattern: row.bag_composition_pattern,
           extra_rules: this.normaliseExtraRules(row.extra_rules),
         });
       } catch (err) {
-        // Single corrupt row — skip rather than crash the whole map.
         this.logger.error(
           { err, module: 'kitchen-map', action: 'kitchen_map.child_decrypt_failed', child_id: row.id },
           'kitchen-map child decryption failed — row skipped',

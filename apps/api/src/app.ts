@@ -41,6 +41,7 @@ import { catalogSeedJobPlugin } from './jobs/catalog-seed.job.js';
 import { catalogRecoveryJobPlugin } from './jobs/catalog-recovery.job.js';
 import { heartNoteDeliveryJobPlugin } from './jobs/heart-note-delivery.job.js';
 import { memoryForgetJobPlugin } from './jobs/memory-forget.job.js';
+import { voiceTranscriptPurgeJobPlugin } from './jobs/voice-transcript-purge.job.js';
 import { dataExportJobPlugin } from './jobs/data-export.job.js';
 import { accountDeletionJobPlugin } from './jobs/account-deletion.job.js';
 import { lumiNudgeJobPlugin } from './jobs/lumi-nudge.job.js';
@@ -151,6 +152,10 @@ export async function buildApp(opts: BuildAppOptions) {
   // soft-forgotten more than 30 days ago (the soft→hard promotion / feature
   // MVP wall). Depends on supabase + bullmq + auditService (auditHook above).
   await app.register(memoryForgetJobPlugin);
+  // Slice 5-S15 — nightly 04:00 UTC purge of voice_transcripts whose
+  // retention_until has passed. Runs 1h after memory-forget. Depends on
+  // supabase + bullmq.
+  await app.register(voiceTranscriptPurgeJobPlugin);
   // Slice 7-S10 — on-demand data-portability export worker (no scheduler). The
   // POST /v1/households/:id/export route enqueues; this worker composes the
   // snapshot, uploads to Supabase Storage, and emails a signed URL. Depends on

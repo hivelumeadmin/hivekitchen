@@ -91,7 +91,7 @@ describe('HouseholdAllergensRepository.declareIfNew', () => {
     expect(call.payload.household_id).toBe(HOUSEHOLD_ID);
     expect(call.payload.child_id).toBe(CHILD_ID);
     expect(call.payload.source).toBe('onboarding_declared');
-    expect(call.onConflict).toBe('household_allergens_scope_hash_uniq');
+    expect(call.onConflict).toBe('household_id,child_id,allergen_hash');
     expect(call.ignoreDuplicates).toBe(true);
     // NOOP-encrypted under null DEK; plaintext must not appear in the payload.
     expect(call.payload.allergen).toMatch(/^NOOP:/);

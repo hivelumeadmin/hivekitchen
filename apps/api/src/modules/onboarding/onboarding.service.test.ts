@@ -290,15 +290,15 @@ describe('momentToChipConfig', () => {
     expect(config?.hints).toBeUndefined();
   });
 
-  it('returns hint chips with first-class Skip for m3_taste (Slice 2.5-s7)', () => {
+  it('returns choice chips with first-class Skip for m3_taste (Slice 2.5-s7)', () => {
     const config = momentToChipConfig('m3_taste');
     expect(config).not.toBeNull();
-    expect(config?.mode).toBe('hint');
-    expect(config?.hints).toHaveLength(3);
+    expect(config?.mode).toBe('choice');
+    expect(config?.options).toBeDefined();
     // M3 is OPTIONAL — skip is first-class.
     expect(config?.skip_label).toBe('Skip this moment');
-    // M3 is broad-hint, NOT choice/action mode.
-    expect(config?.options).toBeUndefined();
+    // M3 is choice mode, not hint mode.
+    expect(config?.hints).toBeUndefined();
   });
 });
 
@@ -489,10 +489,9 @@ describe('OnboardingService.submitTextTurn — chip_config passthrough', () => {
       householdId: HOUSEHOLD_ID,
       message: 'x',
     });
-    // Slice 2.6-s6 — getM5Chips now takes a (householdId, declaredCuisineTags)
-    // signature; tags default to [] when the optional CulturalPriorRepository
-    // dep is absent (legacy/test path).
-    expect(getM5Chips).toHaveBeenCalledWith(HOUSEHOLD_ID, []);
+    // getM5Chips now takes (householdId, cuisineTags, allergenFilter, requiredDietaryFlags);
+    // all three filter arrays default to [] when optional repos are absent (test path).
+    expect(getM5Chips).toHaveBeenCalledWith(HOUSEHOLD_ID, [], [], []);
     expect(result.chip_config?.mode).toBe('choice');
     expect(result.chip_config?.options).toEqual(personalized);
     expect(result.cold_start_mode).toBe(false);
@@ -917,7 +916,7 @@ describe('OnboardingService.submitTextTurn — elevation directive (Slice 2.5-s7
     );
   });
 
-  it('without CHIP_PROMPT: falls through to the default M3 hint chip config', async () => {
+  it('without CHIP_PROMPT: falls through to the default M3 choice chip config', async () => {
     const { service } = buildService({
       agentText: 'Tell me about your kitchen. [NEXT_MOMENT:m3_taste]',
       preTurnMomentState: m3State,
@@ -929,8 +928,8 @@ describe('OnboardingService.submitTextTurn — elevation directive (Slice 2.5-s7
       message: 'x',
     });
 
-    expect(result.chip_config?.mode).toBe('hint');
-    expect(result.chip_config?.hints).toHaveLength(3);
+    expect(result.chip_config?.mode).toBe('choice');
+    expect(result.chip_config?.options).toBeDefined();
     expect(result.chip_config?.skip_label).toBe('Skip this moment');
   });
 
@@ -966,7 +965,7 @@ describe('OnboardingService.submitTextTurn — elevation directive (Slice 2.5-s7
       message: 'x',
     });
 
-    expect(result.chip_config?.mode).toBe('hint');
+    expect(result.chip_config?.mode).toBe('choice');
   });
 });
 

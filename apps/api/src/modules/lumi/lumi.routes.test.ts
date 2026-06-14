@@ -68,6 +68,8 @@ interface SupabaseMockOpts {
 
   // POST /voice/sessions fixtures
   householdTier?: 'standard' | 'premium' | null;
+  // 5-S16 — current-week voice_usage.ms_consumed for the cap pre-check.
+  voiceUsageMsConsumed?: number | null;
   activeAmbientThread?: ThreadRowFixture | null;
   insertedAmbientThread?: ThreadRowFixture;
   insertedTalkSession?: TalkSessionRowFixture;
@@ -252,6 +254,25 @@ function buildMockSupabase(opts: SupabaseMockOpts) {
         return {
           select: () => ({
             eq: vi.fn().mockResolvedValue({ data: [], error: null }),
+          }),
+        };
+      }
+
+      if (table === 'voice_usage') {
+        // 5-S16 — getWeeklyUsage: .select('ms_consumed').eq().eq().maybeSingle()
+        return {
+          select: () => ({
+            eq: () => ({
+              eq: () => ({
+                maybeSingle: vi.fn().mockResolvedValue({
+                  data:
+                    opts.voiceUsageMsConsumed === undefined || opts.voiceUsageMsConsumed === null
+                      ? null
+                      : { ms_consumed: opts.voiceUsageMsConsumed },
+                  error: null,
+                }),
+              }),
+            }),
           }),
         };
       }
@@ -809,6 +830,26 @@ describe('POST /v1/lumi/turns', () => {
 
     expect(res.statusCode).toBe(401);
   });
+
+  // 5-S16 AC6/AC11 — text turns must never be affected by the voice cap.
+  it('201 even when weekly voice usage is at the cap (AC6 — text turns unaffected)', async () => {
+    app = await buildTestApp({
+      supabase: buildMockSupabase({
+        activeAmbientThread: null,
+        voiceUsageMsConsumed: 600_000, // exactly at the cap
+      }),
+    });
+    const token = signToken(app);
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/v1/lumi/turns',
+      headers: { authorization: `Bearer ${token}` },
+      payload: { message: 'What should I pack?', context_signal: VALID_CONTEXT_SIGNAL_PLANNING },
+    });
+
+    expect(res.statusCode).toBe(201);
+  });
 });
 
 describe('POST /v1/lumi/voice/sessions', () => {
@@ -991,6 +1032,50 @@ describe('POST /v1/lumi/voice/sessions', () => {
     });
 
     expect(res.statusCode).toBe(401);
+  });
+
+  // 5-S16 — standard-tier weekly voice cap pre-check.
+  it('429 when the user is at or over the weekly voice cap', async () => {
+    app = await buildTestApp({
+      supabase: buildMockSupabase({
+        householdTier: 'premium',
+        activeAmbientThread: null,
+        voiceUsageMsConsumed: 600_000, // exactly at the cap
+      }),
+    });
+    const token = signToken(app);
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/v1/lumi/voice/sessions',
+      headers: { authorization: `Bearer ${token}` },
+      payload: { context_signal: VALID_CONTEXT_SIGNAL_PLANNING },
+    });
+
+    expect(res.statusCode).toBe(429);
+    const body = JSON.parse(res.body) as { code: string; message: string };
+    expect(body.code).toBe('voice_cap_reached');
+    expect(body.message).toBe("You've used this week's voice time. Text still works.");
+  });
+
+  it('201 when weekly usage is under the cap', async () => {
+    app = await buildTestApp({
+      supabase: buildMockSupabase({
+        householdTier: 'premium',
+        activeAmbientThread: null,
+        voiceUsageMsConsumed: 300_000, // under the cap
+      }),
+    });
+    const token = signToken(app);
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/v1/lumi/voice/sessions',
+      headers: { authorization: `Bearer ${token}` },
+      payload: { context_signal: VALID_CONTEXT_SIGNAL_PLANNING },
+    });
+
+    expect(res.statusCode).toBe(201);
   });
 });
 

@@ -583,6 +583,8 @@ export class RecipesRepository extends BaseRepository {
       canonical_name: string;
       cuisine_tags: string[];
       cultural_tags: string[];
+      allergen_flags: string[];
+      dietary_flags: string[];
       catalog_provenance: CatalogProvenance;
       confidence_score: number;
       is_household_favorite: boolean;
@@ -591,7 +593,7 @@ export class RecipesRepository extends BaseRepository {
     const { data, error } = await this.client
       .from('household_recipe_usage')
       .select(
-        'catalog_provenance, confidence_score, is_household_favorite, recipes!inner(id, canonical_name, cuisine_tags, cultural_tags, is_active)',
+        'catalog_provenance, confidence_score, is_household_favorite, recipes!inner(id, canonical_name, cuisine_tags, cultural_tags, allergen_flags, dietary_flags, is_active)',
       )
       .eq('household_id', householdId)
       .eq('is_household_banned', false);
@@ -602,6 +604,8 @@ export class RecipesRepository extends BaseRepository {
       canonical_name: string;
       cuisine_tags: string[];
       cultural_tags: string[];
+      allergen_flags: string[];
+      dietary_flags: string[];
       catalog_provenance: CatalogProvenance;
       confidence_score: number;
       is_household_favorite: boolean;
@@ -616,6 +620,8 @@ export class RecipesRepository extends BaseRepository {
             canonical_name: string;
             cuisine_tags: string[] | null;
             cultural_tags: string[] | null;
+            allergen_flags: string[] | null;
+            dietary_flags: string[] | null;
             is_active: boolean;
           }>
         | {
@@ -623,6 +629,8 @@ export class RecipesRepository extends BaseRepository {
             canonical_name: string;
             cuisine_tags: string[] | null;
             cultural_tags: string[] | null;
+            allergen_flags: string[] | null;
+            dietary_flags: string[] | null;
             is_active: boolean;
           }
         | null;
@@ -637,6 +645,8 @@ export class RecipesRepository extends BaseRepository {
         canonical_name: joined.canonical_name,
         cuisine_tags: joined.cuisine_tags ?? [],
         cultural_tags: joined.cultural_tags ?? [],
+        allergen_flags: joined.allergen_flags ?? [],
+        dietary_flags: joined.dietary_flags ?? [],
         catalog_provenance: raw.catalog_provenance,
         confidence_score: raw.confidence_score,
         is_household_favorite: raw.is_household_favorite,

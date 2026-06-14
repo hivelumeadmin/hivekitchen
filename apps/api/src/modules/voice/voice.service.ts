@@ -1,19 +1,12 @@
-import { Buffer } from 'node:buffer';
 import type { FastifyBaseLogger } from 'fastify';
-import type { WebSocket } from '@fastify/websocket';
-import { ConflictError, UpstreamError } from '../../common/errors.js';
+import { ConflictError, ForbiddenError, NotFoundError, UpstreamError } from '../../common/errors.js';
 import { stripExpressionTags } from '../../common/strip-expression-tags.js';
-import { transcribeWav, streamTtsToWs } from './elevenlabs-audio.js';
 import type { OnboardingAgent, LlmMessage } from '../../agents/onboarding.agent.js';
 import type { CulturalPriorService } from '../cultural-priors/cultural-prior.service.js';
 import type { MemoryService } from '../memory/memory.service.js';
 import type { VoiceRepository, TurnRow } from './voice.repository.js';
 
 const SESSION_TIMEOUT_MS = 10 * 60 * 1000;
-
-const WS_CLOSE_NORMAL = 1000;
-const WS_CLOSE_AUTH_FAILED = 4001;
-const WS_CLOSE_NOT_FOUND = 4004;
 
 type CloseReason = 'completed' | 'timed_out' | 'client_disconnect';
 
@@ -24,14 +17,13 @@ interface OnboardingSummary {
   family_rhythms: string[];
 }
 
-interface WsSession {
+// In-memory per-session state. At beta scale a per-instance Map is sufficient.
+interface Session {
   sessionId: string;
   userId: string;
   householdId: string;
   threadId: string;
-  seq: number;
   messages: LlmMessage[];
-  isProcessing: boolean;
   startedAt: Date;
   timeoutHandle: ReturnType<typeof setTimeout> | null;
 }
@@ -42,24 +34,11 @@ export interface VoiceServiceDeps {
   culturalPriorService: CulturalPriorService;
   elevenLabsApiKey: string;
   voiceId: string;
-  // Slice 2-S20 — model used by the browser-direct TTS WebSocket. Wired
-  // through env (ELEVENLABS_TTS_MODEL_ID, default `eleven_flash_v2_5`).
   ttsModelId: string;
   logger: FastifyBaseLogger;
   memoryService?: MemoryService;
 }
 
-export class WsAuthFailedError extends Error {
-  readonly code = WS_CLOSE_AUTH_FAILED;
-}
-
-export class WsSessionNotFoundError extends Error {
-  readonly code = WS_CLOSE_NOT_FOUND;
-}
-
-// In-memory WS session store. At beta scale (150 concurrent HH) a per-instance
-// Map is sufficient. See deferred-work.md for the Redis-backed upgrade once
-// the API runs behind a load balancer.
 export class VoiceService {
   private readonly repository: VoiceRepository;
   private readonly agent: OnboardingAgent;
@@ -69,7 +48,7 @@ export class VoiceService {
   private readonly ttsModelId: string;
   private readonly logger: FastifyBaseLogger;
   private readonly memoryService?: MemoryService;
-  private readonly sessions = new Map<string, WsSession>();
+  private readonly sessions = new Map<string, Session>();
 
   constructor(deps: VoiceServiceDeps) {
     this.repository = deps.repository;
@@ -82,21 +61,30 @@ export class VoiceService {
     this.memoryService = deps.memoryService;
   }
 
-  async createSession(
-    userId: string,
-    householdId: string,
-  ): Promise<{ sessionId: string }> {
+  async createSession(userId: string, householdId: string): Promise<{ sessionId: string }> {
     const existing = await this.repository.findActiveSessionForHousehold(householdId);
     if (existing !== null) {
-      throw new ConflictError(
-        'Active voice session already exists for this household — close it before creating a new one',
-      );
+      const ageMs = Date.now() - new Date(existing.started_at).getTime();
+      if (ageMs < SESSION_TIMEOUT_MS) {
+        throw new ConflictError(
+          'Active voice session already exists for this household — close it before creating a new one',
+        );
+      }
+      // Orphaned row from a server restart — the in-memory timeout never fired.
+      // Expire both the session and its thread so the new session can proceed.
+      await Promise.allSettled([
+        this.repository.updateVoiceSession(existing.id, {
+          status: 'timed_out',
+          ended_at: new Date().toISOString(),
+        }),
+        this.repository.closeThread(existing.thread_id),
+      ]);
     }
 
     const thread = await this.repository.createThread(householdId, 'onboarding', 'voice');
-    let session: Awaited<ReturnType<typeof this.repository.createVoiceSession>>;
+    let dbSession: Awaited<ReturnType<typeof this.repository.createVoiceSession>>;
     try {
-      session = await this.repository.createVoiceSession({
+      dbSession = await this.repository.createVoiceSession({
         userId,
         householdId,
         threadId: thread.id,
@@ -107,321 +95,80 @@ export class VoiceService {
       throw err;
     }
 
-    return { sessionId: session.id };
-  }
-
-  async openWsSession(sessionId: string, userId: string, ws: WebSocket): Promise<void> {
-    const session = await this.repository.findVoiceSession(sessionId);
-    if (session === null || session.status !== 'active') {
-      throw new WsSessionNotFoundError(`voice session ${sessionId} not found or not active`);
-    }
-    if (session.user_id !== userId) {
-      throw new WsAuthFailedError('JWT user does not match session owner');
-    }
-
-    const wsSession: WsSession = {
-      sessionId: session.id,
-      userId: session.user_id,
-      householdId: session.household_id,
-      threadId: session.thread_id,
-      seq: 0,
+    const session: Session = {
+      sessionId: dbSession.id,
+      userId,
+      householdId,
+      threadId: thread.id,
       messages: [],
-      isProcessing: false,
-      startedAt: new Date(session.started_at),
+      startedAt: new Date(dbSession.started_at),
       timeoutHandle: null,
     };
+    session.timeoutHandle = setTimeout(() => {
+      void this.handleTimeout(dbSession.id);
+    }, SESSION_TIMEOUT_MS);
+    this.sessions.set(dbSession.id, session);
 
-    const staleSession = this.sessions.get(sessionId);
-    if (staleSession?.timeoutHandle != null) {
-      clearTimeout(staleSession.timeoutHandle);
-    }
-
-    const remainingMs = Math.max(0, SESSION_TIMEOUT_MS - (Date.now() - new Date(session.started_at).getTime()));
-    wsSession.timeoutHandle = setTimeout(() => {
-      void this.handleTimeout(sessionId, ws);
-    }, remainingMs);
-
-    this.sessions.set(sessionId, wsSession);
-    // session.ready is sent by the route handler after message/close listeners
-    // are registered to eliminate any theoretical race between receipt and handling.
+    return { sessionId: dbSession.id };
   }
 
-  async processAudioChunk(sessionId: string, audioBuffer: Buffer, ws: WebSocket): Promise<void> {
+  async deleteSession(sessionId: string, userId: string): Promise<void> {
     const session = this.sessions.get(sessionId);
-    if (!session) {
-      this.logger.warn(
-        { module: 'voice', action: 'voice.audio_chunk_unknown_session', session_id: sessionId },
-        'audio chunk arrived for unknown session — dropping',
-      );
-      return;
-    }
-
-    if (session.isProcessing) {
-      this.logger.warn(
-        {
-          module: 'voice',
-          action: 'voice.turn_dropped_concurrent',
-          session_id: sessionId,
-        },
-        'binary frame dropped — turn already in flight',
-      );
-      return;
-    }
-
-    const MAX_AUDIO_BYTES = 2 * 1024 * 1024; // 60s × 16kHz × 2B ≈ 1.9 MB
-    if (audioBuffer.length > MAX_AUDIO_BYTES) {
-      this.logger.warn(
-        { module: 'voice', action: 'voice.audio_too_large', session_id: sessionId, bytes: audioBuffer.length },
-        'audio chunk exceeds size limit — dropping',
-      );
-      this.sendText(ws, {
-        type: 'error',
-        code: 'stt_failed',
-        message: 'Audio too long — please try a shorter utterance',
-      });
-      return;
-    }
-
-    if (Date.now() - session.startedAt.getTime() >= SESSION_TIMEOUT_MS) {
-      if (session.timeoutHandle !== null) {
-        clearTimeout(session.timeoutHandle);
-        session.timeoutHandle = null;
-      }
-      await this.handleTimeout(sessionId, ws);
-      return;
-    }
-
-    session.isProcessing = true;
-    const seq = ++session.seq;
-
-    try {
-      // STT
-      let transcript: string;
-      try {
-        transcript = await this.transcribe(audioBuffer);
-      } catch (err) {
-        this.logger.warn(
-          { err, module: 'voice', action: 'voice.stt_failed', session_id: sessionId },
-          'ElevenLabs STT failed — sending non-fatal error frame',
-        );
-        this.sendText(ws, {
-          type: 'error',
-          code: 'stt_failed',
-          message: 'Could not hear that — try again',
-        });
-        return;
-      }
-
-      this.sendText(ws, { type: 'transcript', seq, text: transcript });
-      session.messages.push({ role: 'user', content: transcript });
-
-      // Agent
-      let agentReply: { text: string; complete: boolean };
-      try {
-        agentReply = await this.agent.respond(session.messages, { modality: 'voice' });
-      } catch (err) {
-        session.messages.pop(); // revert the user push so the next turn has a balanced history
-        this.logger.warn(
-          { err, module: 'voice', action: 'voice.agent_failed', session_id: sessionId },
-          'OnboardingAgent.respond failed — sending non-fatal error frame',
-        );
-        this.sendText(ws, {
-          type: 'error',
-          code: 'agent_failed',
-          message: "I'm having a little trouble — could you say that again?",
-        });
-        return;
-      }
-
-      this.sendText(ws, { type: 'response.start', seq });
-
-      try {
-        await this.streamTts(agentReply.text, ws);
-      } catch (err) {
-        session.messages.pop(); // revert user push so next turn history stays balanced
-        this.logger.warn(
-          { err, module: 'voice', action: 'voice.tts_failed', session_id: sessionId },
-          'ElevenLabs TTS streaming failed mid-stream — sending non-fatal error frame',
-        );
-        // Close the open turn so the client can recover, then report the error.
-        // Pass the stripped text so the client can display it per the error message.
-        this.sendText(ws, { type: 'response.end', seq, text: stripExpressionTags(agentReply.text) });
-        this.sendText(ws, {
-          type: 'error',
-          code: 'tts_failed',
-          message: 'Voice unavailable — please read the response instead',
-        });
-        return;
-      }
-
-      const strippedText = stripExpressionTags(agentReply.text);
-      this.sendText(ws, { type: 'response.end', seq, text: strippedText });
-
-      await this.repository.appendTurnNext({
-        threadId: session.threadId,
-        role: 'user',
-        body: { type: 'message', content: transcript },
-        modality: 'voice',
-      });
-      await this.repository.appendTurnNext({
-        threadId: session.threadId,
-        role: 'lumi',
-        body: { type: 'message', content: strippedText },
-        modality: 'voice',
-      });
-      // Push to in-memory history only after both DB writes succeed so the
-      // history stays balanced if a write fails (the user turn remains on disk;
-      // the next audio chunk retries from the correct in-memory state).
-      session.messages.push({ role: 'assistant', content: strippedText });
-
-      if (agentReply.complete) {
-        session.isProcessing = false;
-        await this.closeSession(sessionId, ws, 'completed');
-        return;
-      }
-    } finally {
-      const stillOpen = this.sessions.get(sessionId);
-      if (stillOpen) stillOpen.isProcessing = false;
-    }
+    if (!session) return; // already completed or expired — idempotent
+    if (session.userId !== userId) throw new ForbiddenError('Not authorized to close this session');
+    await this.closeSession(sessionId, 'client_disconnect');
   }
 
-  async onWsClose(sessionId: string): Promise<void> {
-    const session = this.sessions.get(sessionId);
-    if (!session) return;
-    await this.closeSession(sessionId, null, 'client_disconnect');
-  }
-
-  private async handleTimeout(sessionId: string, ws: WebSocket, attempt = 0): Promise<void> {
-    const session = this.sessions.get(sessionId);
-    if (!session) return;
-
-    if (session.isProcessing) {
-      const MAX_RESCHEDULE_ATTEMPTS = 6; // 30 s cap beyond the 10-min mark
-      if (attempt >= MAX_RESCHEDULE_ATTEMPTS) {
-        this.logger.error(
-          { module: 'voice', action: 'voice.timeout_processing_stuck', session_id: sessionId, attempt },
-          'session stuck in isProcessing 30 s past timeout — forcing close',
-        );
-        session.isProcessing = false;
-      } else {
-        session.timeoutHandle = setTimeout(() => {
-          void this.handleTimeout(sessionId, ws, attempt + 1);
-        }, 5000);
-        return;
-      }
-    }
-
-    const seq = ++session.seq;
-    const closingText = this.agent.closingPhrase();
-    this.sendText(ws, { type: 'response.start', seq });
-    try {
-      await this.streamTts(closingText, ws);
-    } catch (err) {
-      this.logger.warn(
-        { err, module: 'voice', action: 'voice.tts_failed_on_timeout', session_id: sessionId },
-        'TTS streaming failed during timeout closing phrase — closing without audio',
-      );
-    }
-    const strippedText = stripExpressionTags(closingText);
-    this.sendText(ws, { type: 'response.end', seq, text: strippedText });
-
-    try {
-      await this.repository.appendTurnNext({
-        threadId: session.threadId,
-        role: 'user',
-        body: { type: 'message', content: '[session timed out]' },
-        modality: 'voice',
-      });
-    } catch (err) {
-      this.logger.warn(
-        { err, module: 'voice', action: 'voice.timeout_user_turn_persist_failed', session_id: sessionId },
-        'failed to persist timeout user turn — continuing to close',
-      );
-    }
-
-    try {
-      await this.repository.appendTurnNext({
-        threadId: session.threadId,
-        role: 'lumi',
-        body: { type: 'message', content: strippedText },
-        modality: 'voice',
-      });
-    } catch (err) {
-      this.logger.warn(
-        { err, module: 'voice', action: 'voice.timeout_turn_persist_failed', session_id: sessionId },
-        'failed to persist timeout closing phrase — continuing to close',
-      );
-    }
-
-    await this.closeSession(sessionId, ws, 'timed_out');
-  }
-
-  private async closeSession(
+  // REST-based onboarding voice turn (replaces the old WS binary audio proxy).
+  // The browser transcribes audio via ElevenLabs Scribe WS (using a token from
+  // issueSttToken), then calls this endpoint with the transcript text. The agent
+  // processes it and returns the reply. When complete: true, summary + priors
+  // are included and the session is automatically closed.
+  async processTextTurn(
     sessionId: string,
-    ws: WebSocket | null,
-    reason: CloseReason,
-  ): Promise<void> {
+    userId: string,
+    transcript: string,
+  ): Promise<{
+    reply: string;
+    complete: boolean;
+    summary?: OnboardingSummary;
+    cultural_priors_detected?: boolean;
+  }> {
     const session = this.sessions.get(sessionId);
-    if (!session) return;
-    this.sessions.delete(sessionId);
+    if (!session) throw new NotFoundError('voice session not found or already closed');
+    if (session.userId !== userId) throw new ForbiddenError('auth failed');
 
-    if (session.timeoutHandle !== null) {
-      clearTimeout(session.timeoutHandle);
-      session.timeoutHandle = null;
+    session.messages.push({ role: 'user', content: transcript });
+
+    let agentReply: { text: string; complete: boolean };
+    try {
+      agentReply = await this.agent.respond(session.messages, { modality: 'voice' });
+    } catch (err) {
+      session.messages.pop(); // revert so next turn has balanced history
+      throw err;
     }
 
-    const dbStatus = reason === 'completed' ? 'closed' : reason === 'timed_out' ? 'timed_out' : 'disconnected';
+    const strippedText = stripExpressionTags(agentReply.text);
 
-    // For timed_out and client_disconnect: close the thread and voice session
-    // without writing an onboarding.summary event. This keeps
-    // householdHasCompletedOnboarding returning false so the household can
-    // re-enter onboarding via a new voice session.
-    if (reason !== 'completed') {
-      try {
-        await this.repository.closeThread(session.threadId);
-      } catch (err) {
-        this.logger.warn(
-          { err, module: 'voice', action: 'voice.close_thread_failed', session_id: sessionId },
-          'failed to close onboarding thread on incomplete session',
-        );
-      }
-      try {
-        await this.repository.updateVoiceSession(session.sessionId, {
-          status: dbStatus,
-          ended_at: new Date().toISOString(),
-        });
-      } catch (err) {
-        this.logger.error(
-          { err, module: 'voice', action: 'voice.update_session_failed', session_id: sessionId },
-          'failed to update voice session status during close',
-        );
-      }
-      if (ws !== null) {
-        try {
-          ws.close(WS_CLOSE_NORMAL);
-        } catch (err) {
-          this.logger.warn(
-            { err, module: 'voice', action: 'voice.ws_close_failed', session_id: sessionId },
-            'WebSocket close call threw',
-          );
-        }
-      }
-      this.logger.info(
-        {
-          module: 'voice',
-          action: 'voice.session_ended',
-          session_id: sessionId,
-          user_id: session.userId,
-          household_id: session.householdId,
-          reason,
-          turn_count: session.messages.length,
-        },
-        'voice session ended without summary',
-      );
-      return;
+    await this.repository.appendTurnNext({
+      threadId: session.threadId,
+      role: 'user',
+      body: { type: 'message', content: transcript },
+      modality: 'voice',
+    });
+    await this.repository.appendTurnNext({
+      threadId: session.threadId,
+      role: 'lumi',
+      body: { type: 'message', content: strippedText },
+      modality: 'voice',
+    });
+    session.messages.push({ role: 'assistant', content: strippedText });
+
+    if (!agentReply.complete) {
+      return { reply: strippedText, complete: false };
     }
 
-    // reason === 'completed': extract summary and persist onboarding data.
+    // Session complete — extract summary, persist, then close
     const transcriptTurns = session.messages.map((m) => ({
       role: m.role === 'assistant' ? 'agent' : m.role,
       message: m.content,
@@ -431,61 +178,12 @@ export class VoiceService {
     try {
       summary = await this.agent.extractSummary(transcriptTurns);
     } catch (err) {
-      // Refuse to persist an empty summary (text path equivalent protection).
-      // Close thread so householdHasCompletedOnboarding stays false and the
-      // household can re-onboard — the summary event is absent so the check
-      // returns false even on a closed thread.
       this.logger.error(
         { err, module: 'voice', action: 'voice.summary_extraction_failed', session_id: sessionId },
-        'onboarding summary extraction failed — refusing to persist empty summary',
+        'onboarding summary extraction failed — closing without summary',
       );
-      if (ws !== null) {
-        this.sendText(ws, {
-          type: 'error',
-          code: 'summary_failed',
-          message: 'Could not save your onboarding summary — please try again',
-        });
-      }
-      try {
-        await this.repository.closeThread(session.threadId);
-      } catch (closeErr) {
-        this.logger.warn(
-          { err: closeErr, module: 'voice', action: 'voice.close_thread_failed', session_id: sessionId },
-          'failed to close thread after summary extraction failure',
-        );
-      }
-      try {
-        await this.repository.updateVoiceSession(session.sessionId, {
-          status: 'closed',
-          ended_at: new Date().toISOString(),
-        });
-      } catch (updateErr) {
-        this.logger.error(
-          { err: updateErr, module: 'voice', action: 'voice.update_session_failed', session_id: sessionId },
-          'failed to update voice session after summary extraction failure',
-        );
-      }
-      if (ws !== null) {
-        try {
-          ws.close(1011);
-        } catch {
-          /* noop */
-        }
-      }
-      this.logger.info(
-        {
-          module: 'voice',
-          action: 'voice.session_ended',
-          session_id: sessionId,
-          user_id: session.userId,
-          household_id: session.householdId,
-          reason,
-          outcome: 'summary_extraction_failed',
-          turn_count: session.messages.length,
-        },
-        'voice session ended with summary extraction failure',
-      );
-      return;
+      await this.closeSession(sessionId, 'timed_out');
+      throw new UpstreamError('Onboarding summary extraction failed — please try again');
     }
 
     let summaryTurn: TurnRow | null = null;
@@ -500,28 +198,11 @@ export class VoiceService {
         },
         modality: 'voice',
       });
-    } catch (firstErr) {
+    } catch (err) {
       this.logger.warn(
-        { firstErr, module: 'voice', action: 'voice.summary_turn_persist_failed', session_id: sessionId },
-        'failed to persist onboarding.summary system_event turn — retrying',
+        { err, module: 'voice', action: 'voice.summary_turn_persist_failed', session_id: sessionId },
+        'failed to persist onboarding.summary system_event turn',
       );
-      try {
-        summaryTurn = await this.repository.appendTurnNext({
-          threadId: session.threadId,
-          role: 'system',
-          body: {
-            type: 'system_event',
-            event: 'onboarding.summary',
-            payload: { ...summary } as Record<string, unknown>,
-          },
-          modality: 'voice',
-        });
-      } catch (err) {
-        this.logger.warn(
-          { err, module: 'voice', action: 'voice.summary_turn_persist_failed_retry', session_id: sessionId },
-          'failed to persist onboarding.summary system_event turn after retry — seeding will be skipped',
-        );
-      }
     }
 
     let culturalPriorsDetected = false;
@@ -535,49 +216,127 @@ export class VoiceService {
     } catch (err) {
       this.logger.warn(
         { err, module: 'voice', action: 'voice.cultural_inference_failed', session_id: sessionId },
-        'cultural prior inference failed during voice close — silence-mode fallback',
+        'cultural prior inference failed — silence-mode fallback',
       );
     }
 
-    // Story 2.13 — seed visible memory nodes from the disclosed onboarding
-    // summary. Silence-mode: any failure is logged WARN and never blocks
-    // session close. Skipped when the summary turn failed to persist (no
-    // turn id to anchor provenance to).
     if (this.memoryService && summaryTurn !== null) {
       try {
-        const { nodeCount } = await this.memoryService.seedFromOnboarding({
+        await this.memoryService.seedFromOnboarding({
           householdId: session.householdId,
           userId: session.userId,
           threadId: session.threadId,
           summaryTurnId: summaryTurn.id,
           summary,
         });
-        if (nodeCount > 0) {
-          this.logger.info(
-            {
-              module: 'voice',
-              action: 'voice.memory_seeded',
-              session_id: sessionId,
-              household_id: session.householdId,
-              thread_id: session.threadId,
-              node_count: nodeCount,
-            },
-            'memory nodes seeded from voice onboarding',
-          );
-        }
       } catch (err) {
         this.logger.warn(
-          {
-            err,
-            module: 'voice',
-            action: 'voice.memory_seed_failed',
-            session_id: sessionId,
-            household_id: session.householdId,
-          },
-          'memory seed failed during voice close — silence-mode fallback',
+          { err, module: 'voice', action: 'voice.memory_seed_failed', session_id: sessionId },
+          'memory seed failed — silence-mode fallback',
         );
       }
     }
+
+    await this.closeSession(sessionId, 'completed');
+    return { reply: strippedText, complete: true, summary, cultural_priors_detected: culturalPriorsDetected };
+  }
+
+  // Slice 2-S20 — TTS single-use token (browser-direct TTS WebSocket).
+  async issueTtsToken(): Promise<{ token: string; voice_id: string; model_id: string }> {
+    const url = 'https://api.elevenlabs.io/v1/single-use-token/tts_websocket';
+    let res: Response;
+    try {
+      res = await fetch(url, {
+        method: 'POST',
+        headers: { 'xi-api-key': this.elevenLabsApiKey },
+      });
+    } catch (err) {
+      throw new UpstreamError(
+        `ElevenLabs TTS token request failed: ${err instanceof Error ? err.message : 'network error'}`,
+      );
+    }
+    if (!res.ok) {
+      const body = await res.text().catch(() => '<unreadable>');
+      this.logger.error(
+        { module: 'voice', action: 'tts.token_mint_failed', status: res.status, body },
+        'ElevenLabs TTS single-use-token mint failed',
+      );
+      throw new UpstreamError(
+        `ElevenLabs TTS token mint failed: HTTP ${res.status} — ${body.slice(0, 300)}`,
+      );
+    }
+    let json: { token?: unknown };
+    try {
+      json = (await res.json()) as { token?: unknown };
+    } catch {
+      throw new UpstreamError('ElevenLabs TTS token response was not valid JSON');
+    }
+    if (typeof json.token !== 'string' || json.token.length === 0) {
+      throw new UpstreamError('ElevenLabs TTS token response missing token');
+    }
+    return { token: json.token, voice_id: this.voiceId, model_id: this.ttsModelId };
+  }
+
+  // STT single-use token for browser-direct ElevenLabs Scribe WebSocket.
+  // Browser connects to wss://api.elevenlabs.io/v1/speech-to-text/realtime?token=<token>
+  // and streams PCM audio directly. Audio never transits the HK API.
+  async issueSttToken(): Promise<{ token: string }> {
+    const url = 'https://api.elevenlabs.io/v1/single-use-token/realtime_scribe';
+    let res: Response;
+    try {
+      res = await fetch(url, {
+        method: 'POST',
+        headers: { 'xi-api-key': this.elevenLabsApiKey },
+      });
+    } catch (err) {
+      throw new UpstreamError(
+        `ElevenLabs STT token request failed: ${err instanceof Error ? err.message : 'network error'}`,
+      );
+    }
+    if (!res.ok) {
+      const body = await res.text().catch(() => '<unreadable>');
+      this.logger.error(
+        { module: 'voice', action: 'stt.token_mint_failed', status: res.status, body },
+        'ElevenLabs STT single-use-token mint failed',
+      );
+      throw new UpstreamError(
+        `ElevenLabs STT token mint failed: HTTP ${res.status} — ${body.slice(0, 300)}`,
+      );
+    }
+    let json: { token?: unknown };
+    try {
+      json = (await res.json()) as { token?: unknown };
+    } catch {
+      throw new UpstreamError('ElevenLabs STT token response was not valid JSON');
+    }
+    if (typeof json.token !== 'string' || json.token.length === 0) {
+      throw new UpstreamError('ElevenLabs STT token response missing token');
+    }
+    return { token: json.token };
+  }
+
+  private async handleTimeout(sessionId: string): Promise<void> {
+    const session = this.sessions.get(sessionId);
+    if (!session) return;
+    this.logger.info(
+      { module: 'voice', action: 'voice.session_timeout', session_id: sessionId },
+      'voice session timed out after 10 minutes of inactivity',
+    );
+    await this.closeSession(sessionId, 'timed_out');
+  }
+
+  private async closeSession(sessionId: string, reason: CloseReason): Promise<void> {
+    const session = this.sessions.get(sessionId);
+    if (!session) return;
+    this.sessions.delete(sessionId);
+
+    if (session.timeoutHandle !== null) {
+      clearTimeout(session.timeoutHandle);
+      session.timeoutHandle = null;
+    }
+
+    const dbStatus =
+      reason === 'completed' ? 'closed' : reason === 'timed_out' ? 'timed_out' : 'disconnected';
 
     try {
       await this.repository.closeThread(session.threadId);
@@ -590,7 +349,7 @@ export class VoiceService {
 
     try {
       await this.repository.updateVoiceSession(session.sessionId, {
-        status: 'closed',
+        status: dbStatus,
         ended_at: new Date().toISOString(),
       });
     } catch (err) {
@@ -598,22 +357,6 @@ export class VoiceService {
         { err, module: 'voice', action: 'voice.update_session_failed', session_id: sessionId },
         'failed to update voice session status during close',
       );
-    }
-
-    if (ws !== null) {
-      this.sendText(ws, {
-        type: 'session.summary',
-        summary,
-        cultural_priors_detected: culturalPriorsDetected,
-      });
-      try {
-        ws.close(WS_CLOSE_NORMAL);
-      } catch (err) {
-        this.logger.warn(
-          { err, module: 'voice', action: 'voice.ws_close_failed', session_id: sessionId },
-          'WebSocket close call threw',
-        );
-      }
     }
 
     this.logger.info(
@@ -625,84 +368,8 @@ export class VoiceService {
         household_id: session.householdId,
         reason,
         turn_count: session.messages.length,
-        cultural_priors_detected: culturalPriorsDetected,
       },
       'voice session ended',
     );
-  }
-
-  private async transcribe(audioBuffer: Buffer): Promise<string> {
-    // Shared with the ambient Lumi voice path (Story 5-S5b) — one Scribe impl.
-    return transcribeWav(this.elevenLabsApiKey, audioBuffer);
-  }
-
-  // Slice 2-S20 — browser-direct TTS via single-use token.
-  // Mints a short-lived single-use token from ElevenLabs and returns it
-  // alongside the voice_id and model_id the browser should use when opening
-  // the TTS WebSocket directly at
-  //   wss://api.elevenlabs.io/v1/text-to-speech/{voice_id}/stream-input
-  //     ?single_use_token=<token>&model_id=<model>&output_format=pcm_16000
-  // Raw audio never transits the HK API. Token TTL is 15 minutes,
-  // single-use (consumed on connect), so the long-lived xi-api-key stays
-  // server-side.
-  //
-  // Why the TTS WebSocket: for one-shot narration we don't need a hosted
-  // conversational agent — TTS is cheaper (character billing vs minute
-  // billing), simpler (no first_message override hack, no response-close
-  // detection), and the voice is selected by voice_id rather than by a
-  // dashboard-configured agent.
-  async issueTtsToken(): Promise<{ token: string; voice_id: string; model_id: string }> {
-    const url = 'https://api.elevenlabs.io/v1/single-use-token/tts_websocket';
-    let res: Response;
-    try {
-      res = await fetch(url, {
-        method: 'POST',
-        headers: { 'xi-api-key': this.elevenLabsApiKey },
-      });
-    } catch (err) {
-      throw new UpstreamError(
-        `ElevenLabs single-use-token request failed: ${err instanceof Error ? err.message : 'network error'}`,
-      );
-    }
-    if (!res.ok) {
-      const body = await res.text().catch(() => '<unreadable>');
-      this.logger.error(
-        { module: 'voice', action: 'tts.token_mint_failed', status: res.status, body },
-        'ElevenLabs single-use-token mint failed',
-      );
-      throw new UpstreamError(
-        `ElevenLabs single-use-token mint failed: HTTP ${res.status} — ${body.slice(0, 300)}`,
-      );
-    }
-    let json: { token?: unknown };
-    try {
-      json = (await res.json()) as { token?: unknown };
-    } catch {
-      throw new UpstreamError('ElevenLabs single-use-token response was not valid JSON');
-    }
-    if (typeof json.token !== 'string' || json.token.length === 0) {
-      throw new UpstreamError('ElevenLabs single-use-token response missing token');
-    }
-    return {
-      token: json.token,
-      voice_id: this.voiceId,
-      model_id: this.ttsModelId,
-    };
-  }
-
-  private async streamTts(text: string, ws: WebSocket): Promise<void> {
-    // Shared with the ambient Lumi voice path (Story 5-S5b) — one TTS impl.
-    return streamTtsToWs(this.elevenLabsApiKey, this.voiceId, text, ws);
-  }
-
-  private sendText(ws: WebSocket, payload: object): void {
-    try {
-      ws.send(JSON.stringify(payload));
-    } catch (err) {
-      this.logger.warn(
-        { err, module: 'voice', action: 'voice.ws_send_failed' },
-        'WebSocket send failed (client likely disconnected)',
-      );
-    }
   }
 }

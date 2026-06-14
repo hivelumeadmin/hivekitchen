@@ -124,6 +124,121 @@ describe('HouseholdSettingsRoute (5-S2)', () => {
     });
   });
 
+  it('renders the geolocation section for a primary_parent', async () => {
+    setAuth('primary_parent');
+    hkFetchMock.mockImplementation((path: string) => {
+      if (path.endsWith('/members')) return Promise.resolve({ household_display_name: null, members });
+      if (path.endsWith('/geolocation-consent'))
+        return Promise.resolve({
+          geolocation_enabled: false,
+          geolocation_consented_at: null,
+          geolocation_purpose: null,
+        });
+      throw new Error(`unexpected path ${path}`);
+    });
+    renderRoute();
+
+    expect(await screen.findByText('Find cultural suppliers near me')).toBeDefined();
+    expect(screen.getByRole('switch')).toBeDefined();
+  });
+
+  it('does not render the geolocation section for a guest_author', async () => {
+    useAuthStore.setState({
+      accessToken: 'token',
+      user: {
+        id: SECONDARY_ID,
+        email: 'kid@example.com',
+        display_name: 'Kid',
+        current_household_id: HOUSEHOLD_ID,
+        role: 'guest_author',
+      },
+    });
+    hkFetchMock.mockResolvedValue({ household_display_name: null, members });
+    renderRoute();
+
+    await screen.findByText('Alex');
+    expect(screen.queryByText('Find cultural suppliers near me')).toBeNull();
+    expect(screen.queryByRole('switch')).toBeNull();
+  });
+
+  it('calls PATCH with enabled+purpose when browser permission is granted', async () => {
+    const getCurrentPosition = vi.fn((success: PositionCallback) =>
+      success({ coords: {} as GeolocationCoordinates, timestamp: 0 } as GeolocationPosition),
+    );
+    Object.defineProperty(navigator, 'geolocation', {
+      value: { getCurrentPosition },
+      configurable: true,
+    });
+    setAuth('primary_parent');
+    hkFetchMock.mockImplementation((path: string, init?: { method?: string }) => {
+      if (path.endsWith('/members')) return Promise.resolve({ household_display_name: null, members });
+      if (path.endsWith('/geolocation-consent') && (!init || init.method === 'GET'))
+        return Promise.resolve({
+          geolocation_enabled: false,
+          geolocation_consented_at: null,
+          geolocation_purpose: null,
+        });
+      if (path.endsWith('/geolocation-consent') && init?.method === 'PATCH')
+        return Promise.resolve({
+          geolocation_enabled: true,
+          geolocation_consented_at: '2026-10-22T10:00:00.000Z',
+          geolocation_purpose: 'cultural_supplier_routing',
+        });
+      throw new Error(`unexpected path ${path}`);
+    });
+    renderRoute();
+
+    const toggle = await screen.findByRole('switch');
+    fireEvent.click(toggle);
+
+    await waitFor(() => {
+      const patchCall = hkFetchMock.mock.calls.find(
+        (c) => String(c[0]).endsWith('/geolocation-consent') && (c[1] as { method?: string })?.method === 'PATCH',
+      );
+      expect(patchCall).toBeDefined();
+      expect((patchCall![1] as { body: unknown }).body).toMatchObject({
+        geolocation_enabled: true,
+        geolocation_purpose: 'cultural_supplier_routing',
+      });
+    });
+  });
+
+  it('shows an error and reverts when browser permission is denied', async () => {
+    const getCurrentPosition = vi.fn((_success: PositionCallback, error?: PositionErrorCallback) =>
+      error?.({ code: 1, message: 'User denied Geolocation' } as unknown as GeolocationPositionError),
+    );
+    Object.defineProperty(navigator, 'geolocation', {
+      value: { getCurrentPosition },
+      configurable: true,
+    });
+    setAuth('primary_parent');
+    hkFetchMock.mockImplementation((path: string) => {
+      if (path.endsWith('/members')) return Promise.resolve({ household_display_name: null, members });
+      if (path.endsWith('/geolocation-consent'))
+        return Promise.resolve({
+          geolocation_enabled: false,
+          geolocation_consented_at: null,
+          geolocation_purpose: null,
+        });
+      throw new Error(`unexpected path ${path}`);
+    });
+    renderRoute();
+
+    const toggle = await screen.findByRole('switch');
+    fireEvent.click(toggle);
+
+    expect(
+      await screen.findByText('Location access was denied. Enable it in your browser settings.'),
+    ).toBeDefined();
+    // Toggle must be unchecked after denial (reverted to off state).
+    expect((toggle as HTMLInputElement).checked).toBe(false);
+    // No PATCH was attempted — the API is never called when permission is denied.
+    const patchCall = hkFetchMock.mock.calls.find(
+      (c) => String(c[0]).endsWith('/geolocation-consent') && (c[1] as { method?: string })?.method === 'PATCH',
+    );
+    expect(patchCall).toBeUndefined();
+  });
+
   it('copies the invite URL to the clipboard', async () => {
     const writeText = vi.fn().mockResolvedValue(undefined);
     Object.defineProperty(navigator, 'clipboard', {

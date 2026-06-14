@@ -35,6 +35,8 @@ type Row = {
   canonical_name: string;
   cuisine_tags: string[];
   cultural_tags: string[];
+  allergen_flags: string[];
+  dietary_flags: string[];
   catalog_provenance: CatalogProvenance;
   confidence_score: number;
   is_household_favorite: boolean;
@@ -53,6 +55,8 @@ function makeRow(
     canonical_name,
     cuisine_tags,
     cultural_tags: [],
+    allergen_flags: [],
+    dietary_flags: [],
     catalog_provenance: provenance,
     confidence_score,
     is_household_favorite,
@@ -328,33 +332,31 @@ describe('CatalogProjectionService.getM5Chips', () => {
 });
 
 // ===========================================================================
-// Slice 2.6-s6 — Cold-start fallback determination
+// Cold-start fallback — only stage2_terminal (empty catalog after filter)
 // ===========================================================================
 //
-// Tests for the per-cuisine floor check and the three coldStartReason
-// dispositions ('per_cuisine_floor' / 'stage1_timeout' / 'stage2_terminal').
+// The per-cuisine floor check was removed: cultural_priors stores both
+// broad cultural keys (south_asian) and sub-cuisine/dietary keys (south_indian,
+// halal). Sub-cuisines have < 5 baseline items and dietary keys have 0
+// cuisine_tag matches — both triggered spurious cold-starts. Cold-start now
+// fires only when the personalized catalog has 0 rows (stage2_terminal).
 
 describe('CatalogProjectionService.getM5Chips — cold-start fallback (Slice 2.6-s6)', () => {
-  it('per_cuisine_floor fires when any declared cuisine has < 5 items', async () => {
+  it('no cold-start when a declared cuisine has < 5 items but catalog is non-empty', async () => {
     const rows: Row[] = [];
     // 22 English rows
     for (let i = 0; i < 22; i++) {
       rows.push(makeRow(`en-${i}`, `English ${i}`, ['english'], 'inferred', 50, false));
     }
-    // Only 2 Tibetan rows — below floor of 5
+    // Only 2 Tibetan rows — previously triggered per_cuisine_floor; now chips show
     rows.push(makeRow('tb-1', 'Tibetan 1', ['tibetan'], 'inferred', 50, false));
     rows.push(makeRow('tb-2', 'Tibetan 2', ['tibetan'], 'inferred', 50, false));
 
-    const { service, logger } = buildService({ rows, stage1At: '2026-05-25T00:00:00Z' });
+    const { service } = buildService({ rows, stage1At: '2026-05-25T00:00:00Z' });
     const result = await service.getM5Chips(HOUSEHOLD_ID, ['english', 'tibetan']);
 
-    expect(result.coldStartReason).toBe('per_cuisine_floor');
-    expect(result.chips).toEqual([]);
-    const trigLog = logger.calls.find(
-      (c) => c.payload['action'] === 'catalog.m5.cold_start_triggered',
-    );
-    expect(trigLog?.payload['cold_start_reason']).toBe('per_cuisine_floor');
-    expect(trigLog?.payload['declared_cuisine_count']).toBe(2);
+    expect(result.coldStartReason).toBeNull();
+    expect(result.chips.length).toBeGreaterThan(0);
   });
 
   it('per_cuisine_floor does NOT fire when all declared cuisines meet the floor', async () => {
@@ -372,9 +374,9 @@ describe('CatalogProjectionService.getM5Chips — cold-start fallback (Slice 2.6
     expect(result.chips.length).toBeGreaterThan(0);
   });
 
-  it('stage1_timeout triggers cold-start when timed out AND per-cuisine below floor', async () => {
-    // Stage 1 timeout AND a declared cuisine below floor → 'stage1_timeout'
-    // (timeout precedence over per_cuisine_floor).
+  it('stage1 timeout + sparse cuisine → chips still returned (no cold-start)', async () => {
+    // Previously: timeout + per-cuisine below floor → stage1_timeout cold-start.
+    // Now: per-cuisine floor removed; chips show whenever catalog is non-empty.
     const rows: Row[] = [
       makeRow('tb-1', 'Tibetan 1', ['tibetan'], 'inferred', 50, false),
       makeRow('tb-2', 'Tibetan 2', ['tibetan'], 'inferred', 50, false),
@@ -390,8 +392,8 @@ describe('CatalogProjectionService.getM5Chips — cold-start fallback (Slice 2.6
     const result = await service.getM5Chips(HOUSEHOLD_ID, ['tibetan']);
     Date.now = realNow;
 
-    expect(result.coldStartReason).toBe('stage1_timeout');
-    expect(result.chips).toEqual([]);
+    expect(result.coldStartReason).toBeNull();
+    expect(result.chips.length).toBeGreaterThan(0);
   });
 
   it('stage2_terminal triggers when total catalog is empty (rows=[])', async () => {

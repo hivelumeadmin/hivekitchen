@@ -44,6 +44,7 @@ describe('PackerAssignmentDialog (5-S3)', () => {
         day="tuesday"
         date={DATE}
         householdId={HOUSEHOLD_ID}
+        initialPackerUserId={null}
         open
         onClose={vi.fn()}
       />,
@@ -67,6 +68,7 @@ describe('PackerAssignmentDialog (5-S3)', () => {
         day="tuesday"
         date={DATE}
         householdId={HOUSEHOLD_ID}
+        initialPackerUserId={null}
         open
         onClose={onClose}
       />,
@@ -96,6 +98,7 @@ describe('PackerAssignmentDialog (5-S3)', () => {
         day="tuesday"
         date={DATE}
         householdId={HOUSEHOLD_ID}
+        initialPackerUserId={null}
         open
         onClose={vi.fn()}
       />,

@@ -465,6 +465,13 @@ export class PlansService {
   // 'extra' which the tree distinguishes via plan_slots.slot_kind + the
   // variation patch shape).
 
+  // Slice 5-S12 — lightweight household-ownership check for the conversational
+  // swap-proposal route. Returns null when the plan does not exist or belongs
+  // to another household so the route can map it to a 404.
+  async findById(planId: string, householdId: string): Promise<PlanRow | null> {
+    return this.repo.findByIdForPresentation({ planId, householdId });
+  }
+
   // Story 3.13 / Phase 9 — fetch the current (non-archived) plan tree for
   // a plan, with household ownership check. Used by plan-regeneration.job
   // for the day-scope merge (keep other days' subtrees, replace the target

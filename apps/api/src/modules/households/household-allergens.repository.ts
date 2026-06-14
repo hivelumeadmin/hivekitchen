@@ -3,6 +3,19 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { decryptField, encryptField, normalizedHash } from '../../lib/envelope-encryption.js';
 import { getHouseholdDek, getOrCreateHouseholdDek } from '../../lib/household-key.js';
 
+// The unique index on household_allergens uses COALESCE(child_id, sentinel),
+// which is a functional expression. Supabase upsert's onConflict can fail with
+// 42P10 when Postgres cannot infer the functional index from plain column names.
+// Same pattern as dietary-preferences.repository.ts.
+const UNIQUE_VIOLATION_CODE = '23505';
+const NO_UNIQUE_CONSTRAINT_CODE = '42P10';
+
+function pgErrorCode(err: unknown): string | undefined {
+  if (typeof err !== 'object' || err === null) return undefined;
+  const code = (err as { code?: unknown }).code;
+  return typeof code === 'string' ? code : undefined;
+}
+
 // Story 3-DM-B2 — single-source store for household-shared allergens.
 // Absorbs the prior child_allergens table + households.declared_allergens
 // encrypted JSONB column. `child_id` is nullable: NULL = household-wide rule;
@@ -42,6 +55,9 @@ export class HouseholdAllergensRepository {
     const ciphertext = encryptField(params.allergen, dek);
     const hash = normalizedHash(params.allergen);
 
+    // Primary path: column-name conflict target. Postgres resolves this against
+    // the functional unique index on some PostgREST versions; will fail with
+    // 42P10 where it cannot (COALESCE sentinel not inferrable from column names).
     const { data, error } = await this.client
       .from('household_allergens')
       .upsert(
@@ -54,17 +70,47 @@ export class HouseholdAllergensRepository {
           updated_at: new Date().toISOString(),
         },
         {
-          onConflict: 'household_allergens_scope_hash_uniq',
+          onConflict: 'household_id,child_id,allergen_hash',
           ignoreDuplicates: true,
         },
       )
       .select('id')
       .maybeSingle();
 
-    if (error !== null && error !== undefined) {
+    if (error === null || error === undefined) {
+      return { inserted: data !== null };
+    }
+
+    if (pgErrorCode(error) !== NO_UNIQUE_CONSTRAINT_CODE) {
       throw new Error(`household_allergens.declareIfNew: ${error.message}`);
     }
-    return { inserted: data !== null };
+
+    // Fallback: insert directly; treat 23505 unique violation as "already exists".
+    return this.declareViaInsertFallback(params, ciphertext, hash);
+  }
+
+  private async declareViaInsertFallback(
+    params: { household_id: string; child_id: string | null; source: string },
+    ciphertext: string,
+    hash: string,
+  ): Promise<{ inserted: boolean }> {
+    const { error: insertErr } = await this.client
+      .from('household_allergens')
+      .insert({
+        household_id: params.household_id,
+        child_id: params.child_id,
+        allergen: ciphertext,
+        allergen_hash: hash,
+        source: params.source,
+      });
+
+    if (insertErr === null || insertErr === undefined) {
+      return { inserted: true };
+    }
+    if (pgErrorCode(insertErr) !== UNIQUE_VIOLATION_CODE) {
+      throw new Error(`household_allergens.declareIfNew: ${insertErr.message}`);
+    }
+    return { inserted: false };
   }
 
   /**

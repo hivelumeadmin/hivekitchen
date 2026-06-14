@@ -31,6 +31,13 @@ interface MockOpts {
   // Defaults: no active thread, treat household as fully not-started (in_progress=false).
   activeOnboardingThreadId?: string | null;
   inProgressSummaryTurnCount?: number;
+  // 5-S15: voice_transcripts reads for GET /v1/users/me/voice-transcripts.
+  voiceTranscripts?: Array<{
+    id: string;
+    transcript: string;
+    retention_until: string;
+    created_at: string;
+  }>;
 }
 
 interface AuthAdminMock {
@@ -48,6 +55,7 @@ interface SupabaseMock {
   auth: AuthMock;
   _updateProfileSpy: ReturnType<typeof vi.fn>;
   _updateArgCaptor: ReturnType<typeof vi.fn>;
+  _deleteTranscriptsSpy: ReturnType<typeof vi.fn>;
 }
 
 function defaultUserRow(overrides: Partial<UserProfileRow> = {}): UserProfileRow {
@@ -61,6 +69,8 @@ function defaultUserRow(overrides: Partial<UserProfileRow> = {}): UserProfileRow
     cultural_language: 'default',
     parental_notice_acknowledged_at: null,
     parental_notice_acknowledged_version: null,
+    caption_only_mode: false,
+    voice_retention_mode: 'standard',
     ...overrides,
   };
 }
@@ -76,6 +86,7 @@ function buildMockSupabase(opts: MockOpts): SupabaseMock {
     error: opts.updateUserError ?? null,
   });
   const updateArgCaptor = vi.fn();
+  const deleteTranscriptsSpy = vi.fn().mockResolvedValue({ error: null });
 
   return {
     from(table: string) {
@@ -99,6 +110,23 @@ function buildMockSupabase(opts: MockOpts): SupabaseMock {
               }),
             };
           },
+        };
+      }
+      if (table === 'voice_transcripts') {
+        // 5-S15: findByUserId (select→eq→order→limit) + deleteByUserId (delete→eq).
+        return {
+          select: () => ({
+            eq: () => ({
+              order: () => ({
+                limit: vi
+                  .fn()
+                  .mockResolvedValue({ data: opts.voiceTranscripts ?? [], error: null }),
+              }),
+            }),
+          }),
+          delete: () => ({
+            eq: deleteTranscriptsSpy,
+          }),
         };
       }
       if (table === 'children') {
@@ -166,6 +194,7 @@ function buildMockSupabase(opts: MockOpts): SupabaseMock {
     },
     _updateProfileSpy: updateProfileSpy,
     _updateArgCaptor: updateArgCaptor,
+    _deleteTranscriptsSpy: deleteTranscriptsSpy,
   };
 }
 
@@ -618,6 +647,209 @@ describe('PATCH /v1/users/me/preferences', () => {
       method: 'PATCH',
       url: '/v1/users/me/preferences',
       payload: { cultural_language: 'south_asian' },
+    });
+
+    expect(res.statusCode).toBe(401);
+  });
+});
+
+describe('PATCH /v1/users/me/accessibility', () => {
+  let app: FastifyInstance;
+
+  afterEach(async () => {
+    if (app) await app.close();
+  });
+
+  it('updates caption_only_mode=true → 200 with updated value', async () => {
+    const supabaseMock = buildMockSupabase({
+      updateUserResult: defaultUserRow({ caption_only_mode: true }),
+    });
+    app = await buildTestApp(supabaseMock);
+    const token = signAccessToken(app);
+
+    const res = await app.inject({
+      method: 'PATCH',
+      url: '/v1/users/me/accessibility',
+      headers: { authorization: `Bearer ${token}` },
+      payload: { caption_only_mode: true },
+    });
+
+    expect(res.statusCode).toBe(200);
+    const body = JSON.parse(res.body) as { caption_only_mode: boolean };
+    expect(body.caption_only_mode).toBe(true);
+    expect(supabaseMock._updateArgCaptor).toHaveBeenCalledWith(
+      expect.objectContaining({ caption_only_mode: true }),
+    );
+  });
+
+  it('empty body (missing field) → 400 ValidationError', async () => {
+    const supabaseMock = buildMockSupabase({});
+    app = await buildTestApp(supabaseMock);
+    const token = signAccessToken(app);
+
+    const res = await app.inject({
+      method: 'PATCH',
+      url: '/v1/users/me/accessibility',
+      headers: { authorization: `Bearer ${token}` },
+      payload: {},
+    });
+
+    expect(res.statusCode).toBe(400);
+    const body = JSON.parse(res.body) as { type: string };
+    expect(body.type).toBe('/errors/validation');
+    expect(supabaseMock._updateProfileSpy).not.toHaveBeenCalled();
+  });
+
+  it('unauthenticated → 401', async () => {
+    const supabaseMock = buildMockSupabase({});
+    app = await buildTestApp(supabaseMock);
+
+    const res = await app.inject({
+      method: 'PATCH',
+      url: '/v1/users/me/accessibility',
+      payload: { caption_only_mode: true },
+    });
+
+    expect(res.statusCode).toBe(401);
+  });
+});
+
+describe('GET /v1/users/me/voice-transcripts', () => {
+  let app: FastifyInstance;
+
+  afterEach(async () => {
+    if (app) await app.close();
+  });
+
+  it('200 — returns transcripts and mode for authenticated user', async () => {
+    const supabaseMock = buildMockSupabase({
+      voiceTranscripts: [
+        {
+          id: '33333333-3333-4333-8333-333333333333',
+          transcript: 'What is for lunch today?',
+          retention_until: '2026-11-01T00:00:00.000Z',
+          created_at: '2026-10-23T10:00:00.000Z',
+        },
+      ],
+    });
+    app = await buildTestApp(supabaseMock);
+    const token = signAccessToken(app);
+
+    const res = await app.inject({
+      method: 'GET',
+      url: '/v1/users/me/voice-transcripts',
+      headers: { authorization: `Bearer ${token}` },
+    });
+
+    expect(res.statusCode).toBe(200);
+    const body = JSON.parse(res.body) as {
+      transcripts: Array<{ id: string; transcript: string }>;
+      voice_retention_mode: string;
+    };
+    expect(body.transcripts).toHaveLength(1);
+    expect(body.transcripts[0].transcript).toBe('What is for lunch today?');
+    expect(body.voice_retention_mode).toBe('standard');
+  });
+
+  it('200 — returns empty array when no transcripts', async () => {
+    const supabaseMock = buildMockSupabase({ voiceTranscripts: [] });
+    app = await buildTestApp(supabaseMock);
+    const token = signAccessToken(app);
+
+    const res = await app.inject({
+      method: 'GET',
+      url: '/v1/users/me/voice-transcripts',
+      headers: { authorization: `Bearer ${token}` },
+    });
+
+    expect(res.statusCode).toBe(200);
+    const body = JSON.parse(res.body) as { transcripts: unknown[] };
+    expect(body.transcripts).toHaveLength(0);
+  });
+
+  it('unauthenticated → 401', async () => {
+    const supabaseMock = buildMockSupabase({});
+    app = await buildTestApp(supabaseMock);
+
+    const res = await app.inject({ method: 'GET', url: '/v1/users/me/voice-transcripts' });
+
+    expect(res.statusCode).toBe(401);
+  });
+});
+
+describe('PATCH /v1/users/me/voice-retention', () => {
+  let app: FastifyInstance;
+
+  afterEach(async () => {
+    if (app) await app.close();
+  });
+
+  it('200 — switches to immediate_delete and deletes transcripts', async () => {
+    const supabaseMock = buildMockSupabase({
+      updateUserResult: defaultUserRow({ voice_retention_mode: 'immediate_delete' }),
+    });
+    app = await buildTestApp(supabaseMock);
+    const token = signAccessToken(app);
+
+    const res = await app.inject({
+      method: 'PATCH',
+      url: '/v1/users/me/voice-retention',
+      headers: { authorization: `Bearer ${token}` },
+      payload: { voice_retention_mode: 'immediate_delete' },
+    });
+
+    expect(res.statusCode).toBe(200);
+    const body = JSON.parse(res.body) as { voice_retention_mode: string };
+    expect(body.voice_retention_mode).toBe('immediate_delete');
+    expect(supabaseMock._deleteTranscriptsSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('200 — switches to standard without deleting transcripts', async () => {
+    const supabaseMock = buildMockSupabase({
+      updateUserResult: defaultUserRow({ voice_retention_mode: 'standard' }),
+    });
+    app = await buildTestApp(supabaseMock);
+    const token = signAccessToken(app);
+
+    const res = await app.inject({
+      method: 'PATCH',
+      url: '/v1/users/me/voice-retention',
+      headers: { authorization: `Bearer ${token}` },
+      payload: { voice_retention_mode: 'standard' },
+    });
+
+    expect(res.statusCode).toBe(200);
+    const body = JSON.parse(res.body) as { voice_retention_mode: string };
+    expect(body.voice_retention_mode).toBe('standard');
+    expect(supabaseMock._deleteTranscriptsSpy).not.toHaveBeenCalled();
+  });
+
+  it('invalid mode → 400 ValidationError', async () => {
+    const supabaseMock = buildMockSupabase({});
+    app = await buildTestApp(supabaseMock);
+    const token = signAccessToken(app);
+
+    const res = await app.inject({
+      method: 'PATCH',
+      url: '/v1/users/me/voice-retention',
+      headers: { authorization: `Bearer ${token}` },
+      payload: { voice_retention_mode: 'never' },
+    });
+
+    expect(res.statusCode).toBe(400);
+    const body = JSON.parse(res.body) as { type: string };
+    expect(body.type).toBe('/errors/validation');
+    expect(supabaseMock._deleteTranscriptsSpy).not.toHaveBeenCalled();
+  });
+
+  it('unauthenticated → 401', async () => {
+    const supabaseMock = buildMockSupabase({});
+    app = await buildTestApp(supabaseMock);
+
+    const res = await app.inject({
+      method: 'PATCH',
+      url: '/v1/users/me/voice-retention',
+      payload: { voice_retention_mode: 'immediate_delete' },
     });
 
     expect(res.statusCode).toBe(401);

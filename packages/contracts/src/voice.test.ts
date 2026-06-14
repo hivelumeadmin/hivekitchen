@@ -195,7 +195,14 @@ describe('WsServerMessageSchema — union routing', () => {
 
 describe('WsErrorCodeSchema', () => {
   it('accepts all known error codes', () => {
-    for (const code of ['stt_failed', 'agent_failed', 'tts_failed', 'summary_failed', 'audio_too_large'] as const) {
+    for (const code of [
+      'stt_failed',
+      'agent_failed',
+      'tts_failed',
+      'summary_failed',
+      'audio_too_large',
+      'voice_cap_reached', // 5-S16
+    ] as const) {
       expect(WsErrorCodeSchema.safeParse(code).success).toBe(true);
     }
   });
