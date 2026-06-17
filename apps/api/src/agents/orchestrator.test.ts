@@ -7,6 +7,7 @@ import {
   buildCulturalContextLines,
   buildExtraProposalLines,
   buildExtraRulesLines,
+  renderPlannerKitchenMapBlock,
 } from './orchestrator.js';
 import type {
   OrchestratorServices,
@@ -16,6 +17,7 @@ import type {
   PlannerExtraProposal,
   PlannerExtraRules,
 } from './orchestrator.js';
+import type { KitchenMap } from '@hivekitchen/types';
 import { TOOL_MANIFEST } from './tools.manifest.js';
 import type { ToolSpec } from './tools.manifest.js';
 import type { LLMProvider, LLMResponse } from './providers/llm-provider.interface.js';
@@ -1005,6 +1007,502 @@ describe('DomainOrchestrator', () => {
         (c: Array<{ event_type: string }>) => c[0]?.event_type === 'llm.provider.recovered',
       );
       expect(recoveredCall).toBeUndefined();
+    });
+  });
+
+  // Story 3-S32 — KitchenMap renderer + planWeek injection tests
+  describe('renderPlannerKitchenMapBlock', () => {
+    const CHILD_A_ID = '22222222-2222-4222-8222-222222222222';
+    const CHILD_B_ID = '33333333-3333-4333-8333-333333333333';
+
+    function buildMinimalKitchenMap(overrides: Partial<KitchenMap> = {}): KitchenMap {
+      return {
+        household: {
+          id: HOUSEHOLD_ID,
+          tier: 'standard',
+          tier_variant: 'control',
+          timezone: 'America/Toronto',
+          display_name: 'The Sharma Family',
+          cultural_identifiers: ['south_asian', 'hindu_vegetarian'],
+          dietary_preferences: [],
+          declared_allergens: ['peanuts'],
+        },
+        caregivers: [],
+        children: [
+          {
+            id: CHILD_A_ID,
+            name: 'Layla',
+            age_band: 'child',
+            declared_allergens: ['tree_nuts', 'sesame'],
+            cultural_identifiers: [],
+            dietary_preferences: ['vegetarian'],
+            bag_composition: { main: true, snack: true, extra: true },
+            bag_composition_pattern: null,
+            school_policies: ['no_heating:main'],
+            extra_rules: { pinned: ['fruit pouch'], banned: [] },
+          },
+          {
+            id: CHILD_B_ID,
+            name: 'Zara',
+            age_band: 'toddler',
+            declared_allergens: [],
+            cultural_identifiers: [],
+            dietary_preferences: [],
+            bag_composition: { main: true, snack: true, extra: false },
+            bag_composition_pattern: null,
+            school_policies: [],
+            extra_rules: { pinned: [], banned: [] },
+          },
+        ],
+        cultural: {
+          active: [
+            {
+              key: 'hindu_vegetarian',
+              label: 'Hindu Vegetarian',
+              state: 'active',
+              tier: 'L1',
+              confidence: 90,
+              presence: 85,
+              enforcement: 'non_negotiable',
+            },
+          ],
+          suggested: [],
+        },
+        memory: {
+          nodes: [
+            {
+              node_type: 'rhythm',
+              facet: 'vinegar-avoidance',
+              prose_text: 'Layla refuses anything with strong vinegar taste (enforcement: strong)',
+              subject_child_id: CHILD_A_ID,
+            },
+          ],
+        },
+        household_extras: { library: [] },
+        recipes: {
+          favourites: [
+            {
+              recipe_id: '44444444-4444-4444-8444-444444444444',
+              canonical_name: 'Chana Masala Wraps',
+              primary_ingredient_key: 'chickpea',
+              cuisine_tags: ['indian'],
+              confidence_score: 92,
+              is_household_favorite: true,
+              catalog_provenance: 'declared',
+              use_count: 5,
+              last_used_at: '2026-06-10T00:00:00.000Z',
+            },
+            {
+              recipe_id: '55555555-5555-4555-8555-555555555555',
+              canonical_name: 'Dosa with Sambar',
+              primary_ingredient_key: 'rice',
+              cuisine_tags: ['south_indian'],
+              confidence_score: 88,
+              is_household_favorite: true,
+              catalog_provenance: 'declared',
+              use_count: 3,
+              last_used_at: '2026-05-20T00:00:00.000Z',
+            },
+          ],
+          banned: [],
+        },
+        allergens: [],
+        dietary: [],
+        food_preferences: [
+          {
+            child_id: CHILD_A_ID,
+            item: 'paneer',
+            valence: 'loves',
+            enforcement: 'strong',
+            source: 'onboarding_declared',
+          },
+        ],
+        favorite_lunches: [],
+        rules: [
+          {
+            rule_type: 'no_beef',
+            custom_label: null,
+            enforcement: 'non_negotiable',
+            source: 'onboarding_declared',
+          },
+          {
+            rule_type: 'custom',
+            custom_label: 'Soft textures only for Zara',
+            enforcement: 'strong',
+            source: 'onboarding_declared',
+          },
+        ],
+        meta: {
+          composed_at: '2026-06-17T00:00:00.000Z',
+          map_version: 1,
+          schema_version: '1.1.0',
+          is_complete: true,
+          required_set_complete: true,
+        },
+        ...overrides,
+      };
+    }
+
+    it('returns empty string when children array is empty (incomplete onboarding guard)', () => {
+      const map = buildMinimalKitchenMap({ children: [] });
+      expect(renderPlannerKitchenMapBlock(map)).toBe('');
+    });
+
+    it('includes <user_profile> with YAML household, children, cultural, and recipes', () => {
+      const map = buildMinimalKitchenMap();
+      const block = renderPlannerKitchenMapBlock(map);
+
+      expect(block).toContain('<user_profile>');
+      expect(block).toContain('</user_profile>');
+      expect(block).toContain('The Sharma Family');
+      expect(block).toContain('America/Toronto');
+      expect(block).toContain('peanuts');
+      expect(block).toContain('Layla');
+      expect(block).toContain('Zara');
+      expect(block).toContain('hindu_vegetarian');
+      expect(block).toContain('Chana Masala Wraps');
+      expect(block).toContain('confidence: 92');
+    });
+
+    it('includes only non_negotiable and strong rules in the YAML', () => {
+      const map = buildMinimalKitchenMap();
+      const block = renderPlannerKitchenMapBlock(map);
+
+      // Both rules are non_negotiable/strong, so both appear
+      expect(block).toContain('no_beef');
+      expect(block).toContain('Soft textures only for Zara');
+    });
+
+    it('omits soft rules from the YAML', () => {
+      const map = buildMinimalKitchenMap({
+        rules: [
+          {
+            rule_type: 'no_overnight_leftovers',
+            custom_label: null,
+            enforcement: 'soft',
+            source: 'onboarding_declared',
+          },
+        ],
+      });
+      const block = renderPlannerKitchenMapBlock(map);
+      expect(block).not.toContain('no_overnight_leftovers');
+    });
+
+    it('includes <household_memory> with memory nodes grouped by type', () => {
+      const map = buildMinimalKitchenMap();
+      const block = renderPlannerKitchenMapBlock(map);
+
+      expect(block).toContain('<household_memory>');
+      expect(block).toContain('</household_memory>');
+      expect(block).toContain('Layla refuses anything with strong vinegar taste');
+    });
+
+    it('includes <household_memory> per-child food preferences', () => {
+      const map = buildMinimalKitchenMap();
+      const block = renderPlannerKitchenMapBlock(map);
+
+      expect(block).toContain('Layla');
+      expect(block).toContain('loves paneer');
+    });
+
+    it('does not duplicate the PER-CHILD FOOD PREFERENCES header when child_obsession nodes and food_preferences both exist', () => {
+      const map = buildMinimalKitchenMap({
+        memory: {
+          nodes: [
+            {
+              node_type: 'child_obsession',
+              facet: 'pasta-obsession',
+              prose_text: 'Layla only wants pasta lately',
+              subject_child_id: CHILD_A_ID,
+            },
+          ],
+        },
+        // food_preferences (paneer) comes from the base fixture
+      });
+      const block = renderPlannerKitchenMapBlock(map);
+
+      const headerCount = block.split('PER-CHILD FOOD PREFERENCES:').length - 1;
+      expect(headerCount).toBe(1);
+      // child_obsession nodes render under their own distinct header
+      expect(block).toContain('CHILD OBSESSIONS:');
+      expect(block).toContain('Layla only wants pasta lately');
+    });
+
+    it('escapes quotes and newlines in free-text scalars so the block stays well-formed', () => {
+      const map = buildMinimalKitchenMap({
+        household: {
+          id: HOUSEHOLD_ID,
+          tier: 'standard',
+          tier_variant: 'control',
+          timezone: 'America/Toronto',
+          display_name: 'The "Best" Family',
+          cultural_identifiers: [],
+          dietary_preferences: [],
+          declared_allergens: [],
+        },
+        children: [
+          {
+            id: CHILD_A_ID,
+            name: 'Mary "Mae"',
+            age_band: 'child',
+            declared_allergens: [],
+            cultural_identifiers: [],
+            dietary_preferences: [],
+            bag_composition: { main: true, snack: true, extra: false },
+            bag_composition_pattern: null,
+            school_policies: [],
+            extra_rules: { pinned: [], banned: [] },
+          },
+        ],
+        memory: {
+          nodes: [
+            {
+              node_type: 'rhythm',
+              facet: 'multiline',
+              prose_text: 'Line one\nLine two with "quotes"',
+              subject_child_id: null,
+            },
+          ],
+        },
+      });
+      const block = renderPlannerKitchenMapBlock(map);
+
+      // Quotes are escaped in the YAML scalar (JSON.stringify form)
+      expect(block).toContain('name: "Mary \\"Mae\\""');
+      expect(block).toContain('display_name: "The \\"Best\\" Family"');
+      // The multiline prose is collapsed onto a single markdown-list line
+      expect(block).toContain('- Line one Line two with "quotes"');
+      // No raw newline split the memory entry into two list items
+      expect(block).not.toContain('- Line two with');
+    });
+
+    it('includes <memory_policy> with all 5 precedence rules', () => {
+      const map = buildMinimalKitchenMap();
+      const block = renderPlannerKitchenMapBlock(map);
+
+      expect(block).toContain('<memory_policy>');
+      expect(block).toContain('</memory_policy>');
+      expect(block).toContain('1. Per-child declared_allergens');
+      expect(block).toContain('5. Absence of a signal does NOT mean dislike');
+    });
+
+    it('caps favourites at top 10 by confidence_score', () => {
+      const manyFavourites = Array.from({ length: 15 }, (_, i) => ({
+        recipe_id: `${i}0000000-0000-4000-8000-000000000000`,
+        canonical_name: `Recipe ${i}`,
+        primary_ingredient_key: null,
+        cuisine_tags: [],
+        confidence_score: 50 + i,
+        is_household_favorite: true,
+        catalog_provenance: 'declared' as const,
+        use_count: 1,
+        last_used_at: '2026-01-01T00:00:00.000Z',
+      }));
+      const map = buildMinimalKitchenMap({ recipes: { favourites: manyFavourites, banned: [] } });
+      const block = renderPlannerKitchenMapBlock(map);
+
+      // Top 10 by confidence = recipes 14,13,12,...5 (confidence 64..55)
+      // Recipe 14 should be present, Recipe 4 (confidence 54) should not
+      expect(block).toContain('Recipe 14');
+      expect(block).toContain('Recipe 5');
+      expect(block).not.toContain('Recipe 4');
+    });
+
+    it('uses only the date part (YYYY-MM-DD) for last_used_at', () => {
+      const map = buildMinimalKitchenMap();
+      const block = renderPlannerKitchenMapBlock(map);
+
+      expect(block).toContain('2026-06-10');
+      expect(block).not.toContain('T00:00:00');
+    });
+  });
+
+  describe('planWeek KitchenMap injection (Story 3-S32)', () => {
+    let savedComposeSpec: ToolSpec;
+
+    beforeEach(() => {
+      savedComposeSpec = TOOL_MANIFEST.get('plan.compose')!;
+    });
+
+    afterEach(() => {
+      TOOL_MANIFEST.set('plan.compose', savedComposeSpec);
+    });
+
+    const MINIMAL_PLAN_OUTPUT_KM = {
+      plan_id: '99999999-9999-4999-8999-999999999911',
+      household_id: HOUSEHOLD_ID,
+      week_of: '2026-11-09',
+      prompt_version: 'v2.5.0',
+      main_assignments: [{ sequence: 1, recipe_id: '33333333-3333-4333-8333-333333333311' }],
+      days: [
+        {
+          day: 'monday',
+          slots: [
+            {
+              slot_kind: 'main',
+              main_assignment_sequence: 1,
+              variations: [{ child_id: CHILD_ID }],
+            },
+          ],
+        },
+      ],
+    };
+
+    function buildKitchenMapFixture(): KitchenMap {
+      return {
+        household: {
+          id: HOUSEHOLD_ID,
+          tier: 'standard',
+          tier_variant: 'control',
+          timezone: 'UTC',
+          display_name: 'Test Family',
+          cultural_identifiers: [],
+          dietary_preferences: [],
+          declared_allergens: [],
+        },
+        caregivers: [],
+        children: [
+          {
+            id: CHILD_ID,
+            name: 'Asha',
+            age_band: 'child',
+            declared_allergens: [],
+            cultural_identifiers: [],
+            dietary_preferences: [],
+            bag_composition: { main: true, snack: true, extra: false },
+            bag_composition_pattern: null,
+            school_policies: [],
+            extra_rules: { pinned: [], banned: [] },
+          },
+        ],
+        cultural: { active: [], suggested: [] },
+        memory: { nodes: [] },
+        household_extras: { library: [] },
+        recipes: { favourites: [], banned: [] },
+        allergens: [],
+        dietary: [],
+        food_preferences: [],
+        favorite_lunches: [],
+        rules: [],
+        meta: {
+          composed_at: '2026-06-17T00:00:00.000Z',
+          map_version: 1,
+          schema_version: '1.1.0',
+          is_complete: true,
+          required_set_complete: true,
+        },
+      };
+    }
+
+    it('prepends <user_profile> block as the first content in user message when kitchenMap is supplied', async () => {
+      let capturedUserContent: string | undefined;
+
+      const provider = buildProvider('primary', {
+        completeWithMessages: vi.fn().mockImplementation(
+          (messages: Array<{ role: string; content: unknown }>) => {
+            const userMsg = messages.find((m) => m.role === 'user');
+            capturedUserContent = userMsg?.content as string | undefined;
+            return Promise.resolve({
+              content: null,
+              toolCalls: [{ id: 'tc-km', name: 'plan.compose', arguments: MINIMAL_PLAN_OUTPUT_KM }],
+              finishReason: 'tool_calls',
+              usage: { promptTokens: 1, completionTokens: 1, cachedPromptTokens: 0 },
+            });
+          },
+        ),
+      });
+
+      const { orchestrator } = buildOrchestrator([provider]);
+      const composeSpec = TOOL_MANIFEST.get('plan.compose')!;
+      TOOL_MANIFEST.set('plan.compose', {
+        ...composeSpec,
+        fn: vi.fn().mockResolvedValue(MINIMAL_PLAN_OUTPUT_KM),
+      });
+
+      await orchestrator.planWeek({
+        householdId: HOUSEHOLD_ID,
+        weekOf: '2026-11-09',
+        requestId: 'req-km',
+        kitchenMap: buildKitchenMapFixture(),
+      });
+
+      expect(capturedUserContent).toBeDefined();
+      expect(capturedUserContent!.trimStart()).toMatch(/^<user_profile>/);
+      expect(capturedUserContent).toContain('<household_memory>');
+      expect(capturedUserContent).toContain('<memory_policy>');
+    });
+
+    it('starts user message with "Household ID:" when kitchenMap is undefined', async () => {
+      let capturedUserContent: string | undefined;
+
+      const provider = buildProvider('primary', {
+        completeWithMessages: vi.fn().mockImplementation(
+          (messages: Array<{ role: string; content: unknown }>) => {
+            const userMsg = messages.find((m) => m.role === 'user');
+            capturedUserContent = userMsg?.content as string | undefined;
+            return Promise.resolve({
+              content: null,
+              toolCalls: [{ id: 'tc-no-km', name: 'plan.compose', arguments: MINIMAL_PLAN_OUTPUT_KM }],
+              finishReason: 'tool_calls',
+              usage: { promptTokens: 1, completionTokens: 1, cachedPromptTokens: 0 },
+            });
+          },
+        ),
+      });
+
+      const { orchestrator } = buildOrchestrator([provider]);
+      const composeSpec = TOOL_MANIFEST.get('plan.compose')!;
+      TOOL_MANIFEST.set('plan.compose', {
+        ...composeSpec,
+        fn: vi.fn().mockResolvedValue(MINIMAL_PLAN_OUTPUT_KM),
+      });
+
+      await orchestrator.planWeek({
+        householdId: HOUSEHOLD_ID,
+        weekOf: '2026-11-09',
+        requestId: 'req-no-km',
+      });
+
+      expect(capturedUserContent).toBeDefined();
+      expect(capturedUserContent!.trimStart()).toMatch(/^Household ID:/);
+    });
+
+    it('omits <user_profile> block when kitchenMap.children is empty', async () => {
+      let capturedUserContent: string | undefined;
+
+      const provider = buildProvider('primary', {
+        completeWithMessages: vi.fn().mockImplementation(
+          (messages: Array<{ role: string; content: unknown }>) => {
+            const userMsg = messages.find((m) => m.role === 'user');
+            capturedUserContent = userMsg?.content as string | undefined;
+            return Promise.resolve({
+              content: null,
+              toolCalls: [{ id: 'tc-empty', name: 'plan.compose', arguments: MINIMAL_PLAN_OUTPUT_KM }],
+              finishReason: 'tool_calls',
+              usage: { promptTokens: 1, completionTokens: 1, cachedPromptTokens: 0 },
+            });
+          },
+        ),
+      });
+
+      const { orchestrator } = buildOrchestrator([provider]);
+      const composeSpec = TOOL_MANIFEST.get('plan.compose')!;
+      TOOL_MANIFEST.set('plan.compose', {
+        ...composeSpec,
+        fn: vi.fn().mockResolvedValue(MINIMAL_PLAN_OUTPUT_KM),
+      });
+
+      const emptyChildrenMap = { ...buildKitchenMapFixture(), children: [] };
+      await orchestrator.planWeek({
+        householdId: HOUSEHOLD_ID,
+        weekOf: '2026-11-09',
+        requestId: 'req-empty',
+        kitchenMap: emptyChildrenMap,
+      });
+
+      expect(capturedUserContent).toBeDefined();
+      expect(capturedUserContent).not.toContain('<user_profile>');
+      expect(capturedUserContent!.trimStart()).toMatch(/^Household ID:/);
     });
   });
 

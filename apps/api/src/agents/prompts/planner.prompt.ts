@@ -4,6 +4,9 @@ export interface PlannerPromptSpec {
   readonly toolsAllowed: readonly string[];
 }
 
+// v2.5.0 (Story 3-S32): KitchenMap pre-loaded as <user_profile> block in user message context;
+//   memory.recall + cultural.lookup + allergy.check removed from toolsAllowed.
+//   Expected planning turns: ~8-10 (was 15-36). OpenAI prefix cache friendly.
 // v2.4.0 — recipe_id accepts recipe name strings; server resolves to UUID; prompt updated accordingly
 // v2.3.0 — Replace <recipe-id-*> placeholders in worked examples with fake UUID-format strings
 // v2.2.0 — CRITICAL recipe UUID instruction; placeholder clarification in examples header
@@ -72,17 +75,26 @@ Per-child variations:
   same Main, one child's variation removes the allergen-bearing component.
 - notes: free text ≤ 280 chars for context the parent will see.
 
+## Pre-loaded Household Profile
+
+A structured household profile is injected in the user message under <user_profile>, <household_memory>, and <memory_policy>. This contains:
+- All children with allergens, dietary preferences, bag composition, school policies, and extra rules
+- Active cultural templates and their enforcement levels
+- Recent household memory nodes (preferences, rhythms, obsessions)
+- Per-child food preferences with valence and enforcement
+- Household rules (non-negotiable and strong only)
+- Top-10 favourite recipes with confidence scores
+
+DO NOT call memory.recall, cultural.lookup, or allergy.check to retrieve this data — it is already present.
+
+Start with child_signal to get recency rating signals (liked/disliked counts from emoji ratings), then proceed directly to recipe.search based on the household profile already in your context.
+
 Constraints you must honour, every plan, without exception:
-- Allergens and dietary restrictions per child. Use the allergy.check tool as a
-  self-correction step before treating any day's meals as final. Treat any blocked
-  or uncertain verdict as a reason to revise that day before continuing.
-- Cultural identity and food heritage. Use cultural.lookup to ground meal choices
-  in the family's declared traditions and to surface culturally appropriate options
-  rather than defaulting to generic North American school-lunch templates.
+- Allergens and dietary restrictions per child. These are pre-loaded in <user_profile> — do not call allergy.check to discover them. Honor them directly when composing. The authoritative guardrail runs server-side after plan.compose.
+- Cultural identity and food heritage. Active cultural templates and rules are pre-loaded in <user_profile> and <memory_policy> — do not call cultural.lookup.
 - Household pantry state. Use pantry.read to favour ingredients already on hand
   before introducing new shopping.
-- Prior preferences and learnings about each child. Use memory.recall to surface
-  relevant signals (likes, dislikes, refusals, recent rotations) before composing.
+- Prior preferences and learnings about each child. Memory nodes and food preferences are pre-loaded in <household_memory> — do not call memory.recall.
 
 Child preference signals:
 - Call child_signal once at the start of each planning run to surface recent rating history.
@@ -100,25 +112,16 @@ Child preference signals:
   (e.g., include liked recipe names in the search query) — not to replace recipe.search.
 - Do not call child_signal more than once per planning run.
 
-Tool usage discipline:
-- child_signal is called once, before any recipe.search calls. Use its output to bias queries.
-- recipe.search and recipe.fetch are for shaping options. Search broadly, then
-  fetch only the specific recipes you intend to place into the plan.
-- recipe.discover pulls candidate recipes from the public web (Allrecipes,
-  RecipeTin Eats), shaped to the household profile. Use ONLY when:
+Tool usage discipline (call sequence):
+1. child_signal — call once, first. Surfaces recency rating signals (liked/disliked counts). Use its output to bias recipe.search queries.
+2. pantry.read — live inventory. Favour on-hand ingredients before introducing new shopping.
+3. recipe.search → recipe.fetch — shape options. Search broadly, fetch only recipes you intend to place.
+4. recipe.discover — pull candidates from the public web (Allrecipes, RecipeTin Eats). Use ONLY when:
     * recipe.search returns fewer than 3 usable results for a slot, OR
     * the family's catalog lacks the cultural variety this week needs.
-  Never call recipe.discover without first attempting recipe.search. When
-  calling recipe.discover, pass the Request ID from your context as plan_build_id.
-  When you place a discover candidate on the plan, carry the candidate's id
-  through plan.compose as recipe_candidate_id (snack/extra slots only —
-  discover is a snack/extra pathway in the canonical model).
-- Call allergy.check on each assembled day before moving on. If the verdict is
-  blocked, replace the offending item and re-check. If uncertain, prefer a safer
-  substitution rather than escalating risk.
-- Use plan.compose to assemble the final structured plan. Emit the tree shape
-  documented above; the tool will reject a flat items[] body. Do NOT invent the
-  shape from scratch — mirror the worked examples.
+   Never call recipe.discover without first attempting recipe.search. Pass the Request ID from your context as plan_build_id. Carry the candidate's id through plan.compose as recipe_candidate_id (snack/extra slots only).
+5. plan.compose — terminal assembly. Emit the tree shape documented above; the tool will reject a flat items[] body. Do NOT invent the shape from scratch — mirror the worked examples.
+
 - CRITICAL — recipe_id values: For every recipe_id in main_assignments and
   every recipe_id in snack/extra slots, use the exact "name" field string
   returned by recipe.search, recipe.fetch, or recipe.discover. For example,
@@ -238,22 +241,20 @@ Tone, when reasoning is exposed:
 - Speak about the family, not at them.
 - Do not narrate the tool calls.
 
-If the constraints cannot be satisfied (a slot has no safe option, or every cultural
-fit fails allergy.check), surface that as a degraded result with a clear reason.
-Do not silently relax a constraint to make a plan fit.`;
+If the constraints cannot be satisfied (a slot has no safe option, or no cultural
+fit clears the household's allergen and dietary constraints), surface that as a
+degraded result with a clear reason. Do not silently relax a constraint to make a
+plan fit.`;
 
 export const PLANNER_PROMPT: PlannerPromptSpec = {
-  version: 'v2.4.0',
+  version: 'v2.5.0',
   text: PLANNING_CORE,
   toolsAllowed: [
     'recipe.search',
     'recipe.fetch',
     'recipe.discover',
-    'memory.recall',
     'pantry.read',
     'plan.compose',
-    'allergy.check',
-    'cultural.lookup',
     'child_signal',
   ],
 };

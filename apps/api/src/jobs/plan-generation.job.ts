@@ -151,6 +151,11 @@ const planGenerationPlugin: FastifyPluginAsync = async (fastify) => {
       'planGenerationPlugin requires supabase decorator — register supabasePlugin first',
     );
   }
+  if (!fastify.kitchenMapService) {
+    throw new Error(
+      'planGenerationPlugin requires kitchenMapService decorator — register kitchenMapPlugin first',
+    );
+  }
 
   const scheduleQueue = fastify.bullmq.getQueue(SCHEDULE_QUEUE);
   const generateQueue = fastify.bullmq.getQueue(GENERATE_QUEUE);
@@ -346,6 +351,14 @@ const planGenerationPlugin: FastifyPluginAsync = async (fastify) => {
         }
       }
 
+      const kitchenMap = await fastify.kitchenMapService.get(household_id).catch((err: unknown) => {
+        fastify.log.warn(
+          { err, householdId: household_id },
+          'kitchenMap load failed — proceeding without pre-loaded context',
+        );
+        return undefined;
+      });
+
       const composeOutput = await fastify.orchestrator.planWeek({
         householdId: household_id,
         weekOf: week_of,
@@ -357,6 +370,7 @@ const planGenerationPlugin: FastifyPluginAsync = async (fastify) => {
         extraProposals,
         variantEligibleChildren,
         sovereigntyMode,
+        kitchenMap,
       });
       const commitInput = buildCommitInputTree(composeOutput, request_id);
 
@@ -431,6 +445,7 @@ const planGenerationPlugin: FastifyPluginAsync = async (fastify) => {
             uncertainContext,
             variantEligibleChildren,
             sovereigntyMode,
+            kitchenMap,
           });
           const retryCommit = buildCommitInputTree(retryOutput, request_id);
           lastAttemptCommit = retryCommit;

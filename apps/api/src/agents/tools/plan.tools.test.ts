@@ -47,8 +47,8 @@ function buildPlansServiceStub(): PlansService & {
 }
 
 describe('PLANNER_PROMPT', () => {
-  it('declares v2.4.0 and includes plan.compose in toolsAllowed', () => {
-    expect(PLANNER_PROMPT.version).toBe('v2.4.0');
+  it('declares v2.5.0 and includes plan.compose in toolsAllowed', () => {
+    expect(PLANNER_PROMPT.version).toBe('v2.5.0');
     expect(PLANNER_PROMPT.toolsAllowed).toContain('plan.compose');
   });
 

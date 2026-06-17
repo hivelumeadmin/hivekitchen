@@ -1,5 +1,5 @@
-import { describe, it, expect } from 'vitest';
-import type { PlanComposeTreeOutput } from '@hivekitchen/types';
+import { describe, it, expect, vi } from 'vitest';
+import type { PlanComposeTreeOutput, KitchenMap } from '@hivekitchen/types';
 import {
   buildCommitInputTree,
   deriveWeekId,
@@ -201,5 +201,112 @@ describe('buildCommitInputTree', () => {
   it('does not surface a flat items field (legacy CommitPlanInput shape)', () => {
     const input = buildCommitInputTree(buildOutput(), REQUEST_ID);
     expect(input).not.toHaveProperty('items');
+  });
+});
+
+// Story 3-S32: kitchenMap loading behavior in the plan-generation worker.
+// The worker calls kitchenMapService.get() with a .catch fallback so a
+// KitchenMap load failure never blocks plan generation.
+// These tests verify the fallback contract using the same inline pattern
+// as the worker (AC 12).
+describe('kitchenMap loading fallback (AC 12 — Story 3-S32)', () => {
+  function buildMinimalKitchenMap(): KitchenMap {
+    return {
+      household: {
+        id: HOUSEHOLD_ID,
+        tier: 'standard',
+        tier_variant: 'control',
+        timezone: 'UTC',
+        display_name: 'Test Family',
+        cultural_identifiers: [],
+        dietary_preferences: [],
+        declared_allergens: [],
+      },
+      caregivers: [],
+      children: [
+        {
+          id: CHILD_A,
+          name: 'Asha',
+          age_band: 'child',
+          declared_allergens: [],
+          cultural_identifiers: [],
+          dietary_preferences: [],
+          bag_composition: { main: true, snack: true, extra: false },
+          bag_composition_pattern: null,
+          school_policies: [],
+          extra_rules: { pinned: [], banned: [] },
+        },
+      ],
+      cultural: { active: [], suggested: [] },
+      memory: { nodes: [] },
+      household_extras: { library: [] },
+      recipes: { favourites: [], banned: [] },
+      allergens: [],
+      dietary: [],
+      food_preferences: [],
+      favorite_lunches: [],
+      rules: [],
+      meta: {
+        composed_at: '2026-06-17T00:00:00.000Z',
+        map_version: 1,
+        schema_version: '1.1.0',
+        is_complete: true,
+        required_set_complete: true,
+      },
+    };
+  }
+
+  it('resolves with the KitchenMap when kitchenMapService.get succeeds', async () => {
+    const fixture = buildMinimalKitchenMap();
+    const kitchenMapService = { get: vi.fn().mockResolvedValue(fixture) };
+    const logger = { warn: vi.fn() };
+
+    const result = await kitchenMapService.get(HOUSEHOLD_ID).catch((err: unknown) => {
+      logger.warn({ err, householdId: HOUSEHOLD_ID }, 'kitchenMap load failed — proceeding without pre-loaded context');
+      return undefined;
+    });
+
+    expect(kitchenMapService.get).toHaveBeenCalledWith(HOUSEHOLD_ID);
+    expect(result).toBe(fixture);
+  });
+
+  it('resolves with undefined and logs warn when kitchenMapService.get rejects', async () => {
+    const error = new Error('Redis connection timeout');
+    const kitchenMapService = { get: vi.fn().mockRejectedValue(error) };
+    const logger = { warn: vi.fn() };
+
+    const result = await kitchenMapService.get(HOUSEHOLD_ID).catch((err: unknown) => {
+      logger.warn({ err, householdId: HOUSEHOLD_ID }, 'kitchenMap load failed — proceeding without pre-loaded context');
+      return undefined;
+    });
+
+    expect(kitchenMapService.get).toHaveBeenCalledWith(HOUSEHOLD_ID);
+    expect(result).toBeUndefined();
+    expect(logger.warn).toHaveBeenCalledOnce();
+    expect(logger.warn).toHaveBeenCalledWith(
+      { err: error, householdId: HOUSEHOLD_ID },
+      'kitchenMap load failed — proceeding without pre-loaded context',
+    );
+  });
+
+  it('kitchenMap from successful load is passed through to planWeek opts', async () => {
+    const fixture = buildMinimalKitchenMap();
+    const kitchenMapService = { get: vi.fn().mockResolvedValue(fixture) };
+    const planWeek = vi.fn().mockResolvedValue({
+      plan_id: PLAN_ID,
+      household_id: HOUSEHOLD_ID,
+      week_of: '2026-11-09',
+      prompt_version: 'v2.5.0',
+      main_assignments: [],
+      days: [],
+    });
+
+    const kitchenMap = await kitchenMapService.get(HOUSEHOLD_ID).catch(() => undefined);
+
+    await planWeek({ householdId: HOUSEHOLD_ID, weekOf: '2026-11-09', requestId: REQUEST_ID, kitchenMap });
+
+    expect(planWeek).toHaveBeenCalledWith(
+      expect.objectContaining({ kitchenMap: fixture }),
+    );
   });
 });

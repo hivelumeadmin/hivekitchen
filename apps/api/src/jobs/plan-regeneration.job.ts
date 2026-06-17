@@ -79,6 +79,11 @@ const planRegenerationPlugin: FastifyPluginAsync = async (fastify) => {
       'planRegenerationPlugin requires supabase decorator — register supabasePlugin first',
     );
   }
+  if (!fastify.kitchenMapService) {
+    throw new Error(
+      'planRegenerationPlugin requires kitchenMapService decorator — register kitchenMapPlugin first',
+    );
+  }
 
   // Story 3.18 — cultural context loaders shared with the generation job.
   // Day-scope and rejection-retry paths both reuse the snapshot captured at
@@ -162,6 +167,19 @@ const planRegenerationPlugin: FastifyPluginAsync = async (fastify) => {
         ),
       ]);
 
+      // Story 3-S32 — pre-load the KitchenMap so the planner has memory/cultural/
+      // allergen context in its prompt. memory.recall + cultural.lookup +
+      // allergy.check were removed from the planner's tool set in v2.5.0, so
+      // regeneration must inject this block too (mirrors plan-generation.job.ts).
+      // The .catch keeps a load failure from blocking regeneration.
+      const kitchenMap = await fastify.kitchenMapService.get(household_id).catch((err: unknown) => {
+        fastify.log.warn(
+          { err, householdId: household_id },
+          'kitchenMap load failed — proceeding without pre-loaded context',
+        );
+        return undefined;
+      });
+
       // Run the planner. For scope='day', pass dayScope so the prompt instructs
       // the agent to only plan for that day. The compose output may include only
       // that day's items (agent-guided) or the full week (if the LLM doesn't
@@ -179,6 +197,7 @@ const planRegenerationPlugin: FastifyPluginAsync = async (fastify) => {
         slotScopeContext,
         variantEligibleChildren,
         sovereigntyMode,
+        kitchenMap,
       });
 
       // For day-scope: filter the output to only include items for the target day.
@@ -292,6 +311,7 @@ const planRegenerationPlugin: FastifyPluginAsync = async (fastify) => {
             uncertainContext,
             variantEligibleChildren,
             sovereigntyMode,
+            kitchenMap,
           });
 
           const filteredRetry =

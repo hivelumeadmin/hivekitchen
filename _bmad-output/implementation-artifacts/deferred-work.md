@@ -1,5 +1,10 @@
 # Deferred Work Log
 
+## Deferred from: code review of 3-s32-planner-kitchenmap-context-injection (2026-06-17)
+
+- **D-3S32-CR1: Partial-onboarding map (`meta.is_complete=false`) renders a full block as authoritative** — `renderPlannerKitchenMapBlock` gates only on `children.length===0`, not `meta.is_complete`/`required_set_complete`. A household mid-onboarding with ≥1 child but un-captured allergens gets a partial profile injected as authoritative context. Deferred: the spec deliberately chose `children.length===0` as the gate, and the post-compose deterministic guardrail (`plansService.commit`) enforces allergen safety bag-wide regardless of pre-loaded context completeness. The weekly job also only fans out to active households. Revisit if mid-onboarding households can reach the planner. [`apps/api/src/agents/orchestrator.ts:1148`]
+- **D-3S32-CR2: AC 12 test re-implements the `.catch` snippet rather than driving the real worker** — `plan-generation.job.test.ts` asserts on a local copy of the kitchenMap-load logic; it does not invoke the real `planGenerationPlugin` worker, nor assert `kitchenMapService.get()` is called "once per household before `orchestrator.planWeek()`" (no `invocationCallOrder` ordering assertion). Deferred: the behavior is verified correct by reading the worker, and this test file contains only pure-function unit tests (no BullMQ/fastify worker harness). Upgrade to a real worker integration test if regression risk grows. [`apps/api/src/jobs/plan-generation.job.test.ts`]
+
 ## Deferred from: code review of 5-s11-adaptive-lumi-tone-length (2026-06-09)
 
 - **D-5S11-CR1: `new Date()` inline in `submitTextTurn` is non-deterministic for service tests** — `getTimeOfDayBand(new Date())` is called at the `agent.respond()` call site; any future service-level test asserting on prompt content will need `vi.setSystemTime()`. Pattern is consistent with `getWeekStart(new Date())` elsewhere; no correctness issue. [`apps/api/src/modules/lumi/lumi.service.ts`]

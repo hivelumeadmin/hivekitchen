@@ -40,6 +40,7 @@ import type {
   CulturalObservance,
   CulturalTemplateKey,
 } from '../services/cultural-calendar.service.js';
+import type { KitchenMap } from '@hivekitchen/types';
 
 // Story 3.18 — cultural context the planner agent receives alongside household
 // + week metadata. Empty arrays = silence-mode household → no cultural lines
@@ -135,6 +136,7 @@ export interface PlanWeekOptions {
   uncertainContext?: string;
   variantEligibleChildren?: readonly PlannerVariantEligibleChild[];
   sovereigntyMode?: 'unified' | 'alternating';
+  kitchenMap?: KitchenMap;
 }
 
 export interface OrchestratorServices {
@@ -338,11 +340,14 @@ export class DomainOrchestrator {
       uncertainContext,
       variantEligibleChildren,
       sovereigntyMode,
+      kitchenMap,
     } = opts;
-    // Minimum serial iterations for a 5-day main+snack+extra household is ~36
-    // (child_signal + recall + cultural + pantry + 3×search + 3×fetch +
-    // 10×discover + 5×allergy.check + plan.compose). 80 gives 2× headroom for
-    // any model inefficiency or allergy-check retries.
+    // Story 3-S32 — memory.recall + cultural.lookup + allergy.check are no longer
+    // in the planner's tool loop (household profile is pre-loaded via the
+    // KitchenMap block). Minimum serial iterations for a 5-day main+snack+extra
+    // household is now ~8-10 (child_signal + pantry + 3×search + 3×fetch +
+    // plan.compose, plus discover only when search is thin). 80 keeps generous
+    // headroom for model inefficiency and discover fan-out.
     const MAX_PLAN_ITERATIONS = 80;
     // Story 3-31 — recipe.discover needs the per-run requestId in its deps
     // closure (for audit correlation), so we override the manifest's stub
@@ -372,7 +377,10 @@ export class DomainOrchestrator {
     const variantEligibilityLines = buildVariantEligibilityLines(variantEligibleChildren);
     const sovereigntyLines = buildSovereigntyContextLines(sovereigntyMode, culturalContext);
 
+    const kitchenMapBlock = kitchenMap ? renderPlannerKitchenMapBlock(kitchenMap) : '';
+
     const contextLines = [
+      kitchenMapBlock || undefined,
       `Household ID: ${householdId}`,
       `Planning week starting: ${weekOf} (Monday)`,
       `Request ID: ${requestId}`,
@@ -388,7 +396,7 @@ export class DomainOrchestrator {
       rejectionContext !== undefined && rejectionContext.length > 0
         ? `Previous attempt was blocked by the allergy guardrail. Blocked ingredients/reasons:\n${rejectionContext}\nCompose a revised plan that avoids these.`
         : 'This is the first generation attempt for this household and week.',
-    ].filter((line): line is string => line !== undefined);
+    ].filter((line): line is string => !!line);
 
     // Story 3.23 — slot-scoped regen takes priority over all other framing so
     // the planner treats it as the primary constraint. The bag-wide allergy
@@ -1131,5 +1139,169 @@ export function buildVariantEligibilityLines(
       'ONE proposal MAXIMUM per plan. Do NOT propose ingredient substitutions — variants are preparation-method ' +
       'changes only.',
   ];
+}
+
+// Story 3-S32 — renders the household's KitchenMap as a structured context
+// block injected as the first element of the planner's user message. Placing
+// it first maximises OpenAI auto-prefix cache hit rate across turns within
+// the same planning loop (stable content at the leading edge of the cache
+// prefix window). Returns '' when children is empty (incomplete onboarding).
+export function renderPlannerKitchenMapBlock(map: KitchenMap): string {
+  if (map.children.length === 0) return '';
+
+  // Escape free-text scalars so quotes/newlines can't break the YAML block.
+  // JSON.stringify yields a double-quoted, fully-escaped string that is also
+  // valid YAML (YAML is a JSON superset). `oneLine` collapses newlines for the
+  // markdown-list lines in <household_memory>, which aren't quoted.
+  const yamlStr = (s: string): string => JSON.stringify(s);
+  const oneLine = (s: string): string => s.replace(/\s*\n\s*/g, ' ').trim();
+
+  // Build household YAML section
+  const strongRules = map.rules
+    .filter((r) => r.enforcement === 'non_negotiable' || r.enforcement === 'strong')
+    .map((r) => {
+      const type = r.rule_type === 'custom' && r.custom_label ? r.custom_label : r.rule_type;
+      return `    - { type: ${yamlStr(type)}, enforcement: "${r.enforcement}" }`;
+    });
+
+  const childNameById = new Map(map.children.map((c) => [c.id, c.name]));
+
+  const childrenYaml = map.children.map((c) => {
+    const lines: string[] = [
+      `  - id: "${c.id}"`,
+      `    name: ${yamlStr(c.name)}`,
+      `    age_band: "${c.age_band}"`,
+      `    bag_composition: { snack: ${c.bag_composition.snack}, extra: ${c.bag_composition.extra} }`,
+      `    declared_allergens: ${JSON.stringify(c.declared_allergens)}`,
+      `    dietary_preferences: ${JSON.stringify(c.dietary_preferences)}`,
+      `    school_policies: ${JSON.stringify(c.school_policies)}`,
+      `    extra_rules: { pinned: ${JSON.stringify(c.extra_rules.pinned)}, banned: ${JSON.stringify(c.extra_rules.banned)} }`,
+    ];
+    return lines.join('\n');
+  });
+
+  const culturalActive = map.cultural.active.map((p) => yamlStr(p.key)).join(', ');
+
+  // Top 10 favourites by confidence_score
+  const topFavourites = [...map.recipes.favourites]
+    .sort((a, b) => b.confidence_score - a.confidence_score)
+    .slice(0, 10)
+    .map((r) => {
+      const lastUsed = r.last_used_at.slice(0, 10);
+      return `    - { name: ${yamlStr(r.canonical_name)}, cuisine_tags: ${JSON.stringify(r.cuisine_tags)}, confidence: ${r.confidence_score}, last_used_at: "${lastUsed}" }`;
+    });
+
+  // Banned recipe names (cap at 20)
+  const bannedNames = map.recipes.banned.slice(0, 20).map((r) => r.canonical_name);
+
+  const householdSection = [
+    'household:',
+    `  display_name: ${map.household.display_name !== null ? yamlStr(map.household.display_name) : 'null'}`,
+    `  timezone: "${map.household.timezone}"`,
+    `  declared_allergens: ${JSON.stringify(map.household.declared_allergens)}`,
+    `  dietary_preferences: ${JSON.stringify(map.household.dietary_preferences)}`,
+    `  cultural_identifiers: ${JSON.stringify(map.household.cultural_identifiers)}`,
+    strongRules.length > 0 ? `  rules:\n${strongRules.join('\n')}` : '  rules: []',
+  ].join('\n');
+
+  const childrenSection = `children:\n${childrenYaml.join('\n')}`;
+
+  const culturalSection = [
+    'cultural:',
+    `  active: [${culturalActive}]`,
+    '  suggested: []',
+  ].join('\n');
+
+  const recipesSection = [
+    'recipes:',
+    ...(topFavourites.length > 0 ? ['  favourites:', ...topFavourites] : ['  favourites: []']),
+    `  banned: ${JSON.stringify(bannedNames)}`,
+  ].join('\n');
+
+  const userProfile = [
+    '<user_profile>',
+    '---',
+    householdSection,
+    '',
+    childrenSection,
+    '',
+    culturalSection,
+    '',
+    recipesSection,
+    '---',
+    '</user_profile>',
+  ].join('\n');
+
+  // Build household_memory section
+  const memoryLines: string[] = [];
+
+  // Group memory nodes by type
+  const rhythmNodes = map.memory.nodes.filter((n) => n.node_type === 'rhythm' && n.prose_text);
+  const obsessionNodes = map.memory.nodes.filter((n) => n.node_type === 'child_obsession' && n.prose_text);
+  const otherNodes = map.memory.nodes.filter((n) => n.node_type === 'other' && n.prose_text);
+
+  const allNodes = [...rhythmNodes, ...obsessionNodes, ...otherNodes].slice(0, 20);
+
+  if (allNodes.length > 0) {
+    const byType = new Map<string, typeof allNodes>();
+    for (const node of allNodes) {
+      // 'CHILD OBSESSIONS' (not 'PER-CHILD FOOD PREFERENCES') so this memory-node
+      // group does not collide with the food_preferences header pushed below.
+      const group = node.node_type === 'rhythm'
+        ? 'PREFERENCES AND RHYTHMS'
+        : node.node_type === 'child_obsession'
+        ? 'CHILD OBSESSIONS'
+        : 'OTHER';
+      if (!byType.has(group)) byType.set(group, []);
+      byType.get(group)!.push(node);
+    }
+    for (const [group, nodes] of byType) {
+      memoryLines.push(`${group}:`);
+      for (const n of nodes) {
+        memoryLines.push(`- ${oneLine(n.prose_text)}`);
+      }
+    }
+  }
+
+  // Per-child food preferences
+  const prefsByChild = new Map<string | null, typeof map.food_preferences>();
+  for (const fp of map.food_preferences) {
+    const key = fp.child_id;
+    if (!prefsByChild.has(key)) prefsByChild.set(key, []);
+    prefsByChild.get(key)!.push(fp);
+  }
+
+  const childPrefLines: string[] = [];
+  for (const [childId, prefs] of prefsByChild) {
+    if (childId === null) continue;
+    const childName = childNameById.get(childId) ?? childId;
+    for (const p of prefs) {
+      childPrefLines.push(`- ${oneLine(childName)}: ${p.valence} ${oneLine(p.item)} (enforcement: ${p.enforcement})`);
+    }
+  }
+
+  if (childPrefLines.length > 0) {
+    memoryLines.push('PER-CHILD FOOD PREFERENCES:');
+    memoryLines.push(...childPrefLines);
+  }
+
+  const householdMemory = [
+    '<household_memory>',
+    ...memoryLines,
+    '</household_memory>',
+  ].join('\n');
+
+  const memoryPolicy = [
+    '<memory_policy>',
+    'Context precedence (highest → lowest):',
+    '1. Per-child declared_allergens and non_negotiable rules — NEVER override. These are absolute.',
+    '2. Rating signals from child_signal tool (current week recency) — override food_preferences for this plan.',
+    '3. food_preferences and memory nodes above — default preference bias.',
+    '4. cultural.active templates — apply to all children unless child has an explicit exception.',
+    '5. Absence of a signal does NOT mean dislike (FR125). Never infer dislike from missing data.',
+    '</memory_policy>',
+  ].join('\n');
+
+  return [userProfile, householdMemory, memoryPolicy].join('\n\n');
 }
 
