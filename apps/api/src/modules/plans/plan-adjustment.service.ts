@@ -38,7 +38,7 @@ export class PlanAdjustmentService {
   }
 
   async triggerAdjustment(trigger: PlanAdjustmentTrigger): Promise<PlanAdjustmentResult> {
-    let futurePlans: Array<{ id: string; week_id: string; week_of: string; revision: number }>;
+    let futurePlans: Array<{ id: string; week_of: string; revision: number }>;
     try {
       futurePlans = await this.plansRepo.findActiveFuturePlanIds(trigger.householdId);
     } catch (err) {
@@ -92,7 +92,7 @@ export class PlanAdjustmentService {
       // rapid successive scope changes (snack → main) produce distinct jobs.
       const slotScopeSegment =
         trigger.slotScope && trigger.slotScope !== 'bag_wide' ? `-${trigger.slotScope}` : '';
-      const jobId = `adjust-${trigger.type}-${trigger.householdId}-${plan.week_id}-${trigger.dayScope ?? 'week'}${slotScopeSegment}`;
+      const jobId = `adjust-${trigger.type}-${trigger.householdId}-${plan.week_of}-${trigger.dayScope ?? 'week'}${slotScopeSegment}`;
       try {
         await this.regenQueue.add(`regen-${trigger.type}`, jobData, {
           attempts: 2,

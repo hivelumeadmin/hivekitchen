@@ -25,7 +25,7 @@ import { plansRoutes } from './plans.routes.js';
 const SAMPLE_USER_ID = '11111111-1111-4111-8111-111111111111';
 const SAMPLE_HOUSEHOLD_ID = '22222222-2222-4222-8222-222222222222';
 const SAMPLE_PLAN_ID = '33333333-3333-4333-8333-333333333333';
-const SAMPLE_WEEK_ID = '77777777-7777-4777-8777-777777777777';
+const SAMPLE_WEEK_OF = '2026-05-04';
 const SAMPLE_MAIN_ASSIGNMENT_ID = '44444444-4444-4444-8444-444444444444';
 const SAMPLE_VARIATION_ID = '55555555-5555-4555-8555-555555555555';
 const SAMPLE_SLOT_ID = '66666666-6666-4666-8666-666666666666';
@@ -551,10 +551,10 @@ describe('GET /v1/plans', () => {
 });
 
 // ---------------------------------------------------------------------------
-// GET /v1/plans/:weekId/history (tree-shape response)
+// GET /v1/plans/:weekOf/history (tree-shape response)
 // ---------------------------------------------------------------------------
 
-describe('GET /v1/plans/:weekId/history', () => {
+describe('GET /v1/plans/:weekOf/history', () => {
   let app: FastifyInstance;
   afterEach(async () => {
     if (app) await app.close();
@@ -564,7 +564,7 @@ describe('GET /v1/plans/:weekId/history', () => {
     app = await buildTestApp();
     const res = await app.inject({
       method: 'GET',
-      url: `/v1/plans/${SAMPLE_WEEK_ID}/history`,
+      url: `/v1/plans/${SAMPLE_WEEK_OF}/history`,
     });
     expect(res.statusCode).toBe(401);
   });
@@ -574,13 +574,13 @@ describe('GET /v1/plans/:weekId/history', () => {
     const token = signOps(app);
     const res = await app.inject({
       method: 'GET',
-      url: `/v1/plans/${SAMPLE_WEEK_ID}/history`,
+      url: `/v1/plans/${SAMPLE_WEEK_OF}/history`,
       headers: { authorization: `Bearer ${token}` },
     });
     expect(res.statusCode).toBe(403);
   });
 
-  it('returns 400 when weekId is not a valid UUID', async () => {
+  it('returns 400 when weekOf is not a valid date', async () => {
     app = await buildTestApp();
     const token = signPrimary(app);
     const res = await app.inject({
@@ -595,13 +595,13 @@ describe('GET /v1/plans/:weekId/history', () => {
     const plansService = buildPlansService({
       getPlanHistoryTree: vi
         .fn()
-        .mockRejectedValue(new NotFoundError(`plan for week ${SAMPLE_WEEK_ID}`)),
+        .mockRejectedValue(new NotFoundError(`plan for week ${SAMPLE_WEEK_OF}`)),
     });
     app = await buildTestApp({ plansService });
     const token = signPrimary(app);
     const res = await app.inject({
       method: 'GET',
-      url: `/v1/plans/${SAMPLE_WEEK_ID}/history`,
+      url: `/v1/plans/${SAMPLE_WEEK_OF}/history`,
       headers: { authorization: `Bearer ${token}` },
     });
     expect(res.statusCode).toBe(404);
@@ -616,7 +616,7 @@ describe('GET /v1/plans/:weekId/history', () => {
     const token = signPrimary(app);
     const res = await app.inject({
       method: 'GET',
-      url: `/v1/plans/${SAMPLE_WEEK_ID}/history`,
+      url: `/v1/plans/${SAMPLE_WEEK_OF}/history`,
       headers: { authorization: `Bearer ${token}` },
     });
     expect(res.statusCode).toBe(200);
@@ -638,7 +638,7 @@ describe('GET /v1/plans/:weekId/history', () => {
     expect(body.ratings).toEqual({});
     expect(plansService.getPlanHistoryTree).toHaveBeenCalledWith({
       householdId: SAMPLE_HOUSEHOLD_ID,
-      weekId: SAMPLE_WEEK_ID,
+      weekOf: SAMPLE_WEEK_OF,
     });
   });
 
@@ -647,7 +647,7 @@ describe('GET /v1/plans/:weekId/history', () => {
     const token = signSecondary(app);
     const res = await app.inject({
       method: 'GET',
-      url: `/v1/plans/${SAMPLE_WEEK_ID}/history`,
+      url: `/v1/plans/${SAMPLE_WEEK_OF}/history`,
       headers: { authorization: `Bearer ${token}` },
     });
     expect(res.statusCode).toBe(200);

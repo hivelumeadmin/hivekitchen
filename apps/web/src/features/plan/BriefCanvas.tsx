@@ -36,6 +36,33 @@ import { adaptPlansResponse, type DayTreeView } from './tree-adapter.js';
 
 const CHILD_COLORS: readonly ChildDotColor[] = ['foliage', 'lumi-terracotta'];
 
+function DevTriggerButton() {
+  const [status, setStatus] = useState<'idle' | 'loading' | 'done' | 'error'>('idle');
+
+  async function handleClick() {
+    setStatus('loading');
+    try {
+      await hkFetch('/v1/dev/trigger-plan-generation', { method: 'POST' });
+      setStatus('done');
+    } catch {
+      setStatus('error');
+    }
+  }
+
+  return (
+    <button
+      onClick={handleClick}
+      disabled={status === 'loading' || status === 'done'}
+      className="text-xs text-fg-muted underline underline-offset-2 disabled:opacity-50"
+    >
+      {status === 'loading' && 'Triggering…'}
+      {status === 'done' && 'Job queued — refresh in a moment'}
+      {status === 'error' && 'Failed — check API logs'}
+      {status === 'idle' && '[dev] Generate plan now'}
+    </button>
+  );
+}
+
 // Slice 5-S3 — map each weekday name to this week's ISO date (Mon-anchored) so
 // PackerChip can PATCH the right /days/:date/packer. Computed once per mount.
 function getWeekDates(): Record<string, string> {
@@ -340,9 +367,12 @@ export function BriefCanvas() {
   if (!isLoading && brief === null && !isError) {
     return (
       <main className="mx-auto w-full max-w-7xl flex-grow flex items-center justify-center px-6 pt-12 pb-24">
-        <p className="max-w-sm text-base text-fg-muted text-center">
-          Lumi is preparing your first plan. Check back Sunday evening.
-        </p>
+        <div className="flex flex-col items-center gap-4">
+          <p className="max-w-sm text-base text-fg-muted text-center">
+            Lumi is preparing your first plan. Check back Sunday evening.
+          </p>
+          {import.meta.env.DEV && <DevTriggerButton />}
+        </div>
       </main>
     );
   }

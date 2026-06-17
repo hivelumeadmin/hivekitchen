@@ -78,17 +78,15 @@ describe('ForgetCompletedEvent', () => {
 });
 
 describe('NodeTypeSchema', () => {
-  it('accepts every documented node type', () => {
-    for (const t of [
-      'preference',
-      'rhythm',
-      'cultural_rhythm',
-      'allergy',
-      'child_obsession',
-      'school_policy',
-      'other',
-    ] as const) {
+  it('accepts the 3 valid node types (narrowed by migration 20260904000300)', () => {
+    for (const t of ['rhythm', 'child_obsession', 'other'] as const) {
       expect(NodeTypeSchema.safeParse(t).success).toBe(true);
+    }
+  });
+
+  it('rejects the 4 types deprecated by migration 20260904000300', () => {
+    for (const t of ['preference', 'cultural_rhythm', 'allergy', 'school_policy']) {
+      expect(NodeTypeSchema.safeParse(t).success).toBe(false);
     }
   });
 

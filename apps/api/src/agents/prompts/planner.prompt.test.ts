@@ -28,9 +28,8 @@ describe('PLANNER_PROMPT', () => {
     expect(PLANNER_PROMPT.toolsAllowed).not.toContain('memory.note');
   });
 
-  // Story 4-S11 — version bump + child_signal preference-bias block.
-  it('is at version v2.1.0', () => {
-    expect(PLANNER_PROMPT.version).toBe('v2.1.0');
+  it('is at version v2.4.0', () => {
+    expect(PLANNER_PROMPT.version).toBe('v2.4.0');
   });
 
   it('documents the FR125 absence-neutrality rule for child_signal', () => {

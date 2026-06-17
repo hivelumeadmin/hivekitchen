@@ -242,6 +242,9 @@ export default function OnboardingPage() {
           <OnboardingText
             onFinalized={() => setMode('consent')}
             initialTurns={initialTurns}
+            initialHouseholdDisplayName={resumeState?.household_display_name ?? null}
+            initialMomentKey={resumeState?.current_moment ?? null}
+            initialChipConfig={resumeState?.chip_config ?? null}
           />
         </div>
       );

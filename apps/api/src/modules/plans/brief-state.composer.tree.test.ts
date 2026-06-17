@@ -27,7 +27,7 @@ import { buildPlan, buildChild } from '../../../test/factories/index.js';
 
 const HOUSEHOLD_ID = '11111111-1111-4111-8111-111111111111';
 const PLAN_ID = '22222222-2222-4222-8222-222222222222';
-const WEEK_ID = '33333333-3333-4333-8333-333333333333';
+const WEEK_OF = '2026-06-16';
 const CHILD_A = '44444444-4444-4444-8444-444444444444';
 const CHILD_B = '55555555-5555-4555-8555-555555555555';
 const REQUEST_ID = '66666666-6666-4666-8666-666666666666';
@@ -248,7 +248,7 @@ describe('BriefStateComposer.refreshTree — 8-read parallelism + composition', 
 
   it('no-ops gracefully when no cleared plan exists', async () => {
     const { composer, mocks } = buildDeps({ plan: null });
-    await composer.refreshTree(HOUSEHOLD_ID, WEEK_ID, REQUEST_ID);
+    await composer.refreshTree(HOUSEHOLD_ID, WEEK_OF, REQUEST_ID);
     expect(mocks.upsert).not.toHaveBeenCalled();
     expect(mocks.findMainAssignmentsByPlanId).not.toHaveBeenCalled();
   });
@@ -257,7 +257,7 @@ describe('BriefStateComposer.refreshTree — 8-read parallelism + composition', 
   it('sets plan_reasoning from opts.planReasoning when provided', async () => {
     const plan = buildPlan({ id: PLAN_ID, household_id: HOUSEHOLD_ID });
     const { composer, mocks } = buildDeps({ plan });
-    await composer.refreshTree(HOUSEHOLD_ID, WEEK_ID, REQUEST_ID, {
+    await composer.refreshTree(HOUSEHOLD_ID, WEEK_OF, REQUEST_ID, {
       planReasoning: 'Batch-prep pasta chosen for the week.',
     });
     const upsertCall = mocks.upsert.mock.calls[0]![0] as { payload: { plan_reasoning: string | null } };
@@ -276,7 +276,7 @@ describe('BriefStateComposer.refreshTree — 8-read parallelism + composition', 
       },
     };
     const { composer, mocks } = buildDeps({ plan, previousBrief });
-    await composer.refreshTree(HOUSEHOLD_ID, WEEK_ID, REQUEST_ID);
+    await composer.refreshTree(HOUSEHOLD_ID, WEEK_OF, REQUEST_ID);
     const upsertCall = mocks.upsert.mock.calls[0]![0] as { payload: { plan_reasoning: string | null } };
     expect(upsertCall.payload.plan_reasoning).toBe('Carried forward reasoning.');
   });
@@ -284,7 +284,7 @@ describe('BriefStateComposer.refreshTree — 8-read parallelism + composition', 
   it('sets plan_reasoning to null when opts has none and previousBrief has none', async () => {
     const plan = buildPlan({ id: PLAN_ID, household_id: HOUSEHOLD_ID });
     const { composer, mocks } = buildDeps({ plan, previousBrief: null });
-    await composer.refreshTree(HOUSEHOLD_ID, WEEK_ID, REQUEST_ID);
+    await composer.refreshTree(HOUSEHOLD_ID, WEEK_OF, REQUEST_ID);
     const upsertCall = mocks.upsert.mock.calls[0]![0] as { payload: { plan_reasoning: string | null } };
     expect(upsertCall.payload.plan_reasoning).toBeNull();
   });
@@ -299,7 +299,7 @@ describe('BriefStateComposer.refreshTree — 8-read parallelism + composition', 
 
     const { composer, mocks } = buildDeps({ plan, mainAssignments, days, slots, variations, children });
 
-    await composer.refreshTree(HOUSEHOLD_ID, WEEK_ID, REQUEST_ID);
+    await composer.refreshTree(HOUSEHOLD_ID, WEEK_OF, REQUEST_ID);
 
     expect(mocks.findMainAssignmentsByPlanId).toHaveBeenCalledWith(PLAN_ID);
     expect(mocks.findDaysByPlanId).toHaveBeenCalledWith(PLAN_ID);
@@ -336,7 +336,7 @@ describe('BriefStateComposer.refreshTree — 8-read parallelism + composition', 
 
     const { composer, mocks } = buildDeps({ plan, mainAssignments, days, slots, variations, children: [] });
 
-    await composer.refreshTree(HOUSEHOLD_ID, WEEK_ID, REQUEST_ID);
+    await composer.refreshTree(HOUSEHOLD_ID, WEEK_OF, REQUEST_ID);
 
     const upsertCall = mocks.upsert.mock.calls[0]![0] as {
       payload: { tile_summaries: Array<{ day: string; paused: boolean }> };
@@ -353,7 +353,7 @@ describe('BriefStateComposer.refreshTree — 8-read parallelism + composition', 
 
     const { composer, mocks } = buildDeps({ plan, mainAssignments, days, slots, variations, children: [] });
 
-    await composer.refreshTree(HOUSEHOLD_ID, WEEK_ID, REQUEST_ID);
+    await composer.refreshTree(HOUSEHOLD_ID, WEEK_OF, REQUEST_ID);
 
     const upsertCall = mocks.upsert.mock.calls[0]![0] as {
       payload: { tile_summaries: Array<{ day: string; paused: boolean }> };
@@ -367,7 +367,7 @@ describe('BriefStateComposer.refreshTree — 8-read parallelism + composition', 
     mocks.findMainAssignmentsByPlanId.mockRejectedValueOnce(new Error('db-down'));
     mocks.findDaysByPlanId.mockResolvedValue([dayRow({ id: DAY_MON })]);
 
-    await composer.refreshTree(HOUSEHOLD_ID, WEEK_ID, REQUEST_ID);
+    await composer.refreshTree(HOUSEHOLD_ID, WEEK_OF, REQUEST_ID);
 
     expect(mocks.upsert).not.toHaveBeenCalled();
     expect(mocks.write).toHaveBeenCalledWith(
@@ -414,7 +414,7 @@ describe('BriefStateComposer.refreshTree — 8-read parallelism + composition', 
     // Use composerWithLink to access lunch-link path; composer above doesn't.
     void composer; // referenced to keep eslint happy when composer is unused.
 
-    await composerWithLink.refreshTree(HOUSEHOLD_ID, WEEK_ID, REQUEST_ID);
+    await composerWithLink.refreshTree(HOUSEHOLD_ID, WEEK_OF, REQUEST_ID);
 
     const upsertCall = mocks.upsert.mock.calls[0]![0] as {
       payload: { tile_summaries: Array<{ day: string; lunch_link_suppressed_children: string[] }> };
@@ -501,7 +501,7 @@ describe('BriefStateComposer.refreshTree — 5-S8 learning moment', () => {
       ]);
     const { composer, upsert } = buildLMDeps({ memoryRepository: { findRecentTurnSourcedNodes } });
 
-    await composer.refreshTree(HOUSEHOLD_ID, WEEK_ID, REQUEST_ID);
+    await composer.refreshTree(HOUSEHOLD_ID, WEEK_OF, REQUEST_ID);
 
     const payload = calloutFromUpsert(upsert);
     expect(payload.learning_moment_callout).not.toBeNull();
@@ -519,7 +519,7 @@ describe('BriefStateComposer.refreshTree — 5-S8 learning moment', () => {
       .mockResolvedValue([turnNode(TURN_NODE_1, 'a'), turnNode(TURN_NODE_2, 'b')]);
     const { composer, upsert } = buildLMDeps({ memoryRepository: { findRecentTurnSourcedNodes } });
 
-    await composer.refreshTree(HOUSEHOLD_ID, WEEK_ID, REQUEST_ID);
+    await composer.refreshTree(HOUSEHOLD_ID, WEEK_OF, REQUEST_ID);
 
     expect(calloutFromUpsert(upsert).learning_moment_callout).toBeNull();
   });
@@ -540,7 +540,7 @@ describe('BriefStateComposer.refreshTree — 5-S8 learning moment', () => {
       suppressedUntil: future,
     });
 
-    await composer.refreshTree(HOUSEHOLD_ID, WEEK_ID, REQUEST_ID);
+    await composer.refreshTree(HOUSEHOLD_ID, WEEK_OF, REQUEST_ID);
 
     expect(calloutFromUpsert(upsert).learning_moment_callout).toBeNull();
     // The threshold query is short-circuited when suppressed.
@@ -561,7 +561,7 @@ describe('BriefStateComposer.refreshTree — 5-S8 learning moment', () => {
       suppressedUntil: past,
     });
 
-    await composer.refreshTree(HOUSEHOLD_ID, WEEK_ID, REQUEST_ID);
+    await composer.refreshTree(HOUSEHOLD_ID, WEEK_OF, REQUEST_ID);
 
     const payload = calloutFromUpsert(upsert);
     expect(payload.learning_moment_suppressed_until).toBe(past);
@@ -572,7 +572,7 @@ describe('BriefStateComposer.refreshTree — 5-S8 learning moment', () => {
   it('skips buildLearningMomentCallout when memoryRepository is absent', async () => {
     const { composer, upsert } = buildLMDeps({});
 
-    await composer.refreshTree(HOUSEHOLD_ID, WEEK_ID, REQUEST_ID);
+    await composer.refreshTree(HOUSEHOLD_ID, WEEK_OF, REQUEST_ID);
 
     expect(calloutFromUpsert(upsert).learning_moment_callout).toBeNull();
   });

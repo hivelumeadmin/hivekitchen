@@ -13,13 +13,11 @@ export const ForgetCompletedEvent = z.object({
   completed_at: z.string().datetime({ offset: true }),
 });
 
+// Migration 20260904000300 narrowed this enum from 7 values to 3.
+// 'preference', 'cultural_rhythm', 'allergy', 'school_policy' → 'other'.
 export const NodeTypeSchema = z.enum([
-  'preference',
   'rhythm',
-  'cultural_rhythm',
-  'allergy',
   'child_obsession',
-  'school_policy',
   'other',
 ]);
 

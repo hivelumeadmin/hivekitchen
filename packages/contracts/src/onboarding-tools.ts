@@ -196,11 +196,11 @@ export const AllergenDeclareInputSchema = z
     (v) => {
       const hasId = v.child_id !== null && v.child_id !== undefined;
       const hasName = v.child_name !== null && v.child_name !== undefined;
-      return hasId !== hasName; // XOR — exactly one, not both, not neither
+      return !(hasId && hasName); // must NOT supply both — but neither is OK (household scope)
     },
     {
       message:
-        'provide exactly one of child_id (UUID from a prior child.upsert) or child_name (string) — not both, not neither',
+        'provide at most one of child_id or child_name — omit both to declare a household-wide allergen (no child attribution)',
       path: ['child_id'],
     },
   );

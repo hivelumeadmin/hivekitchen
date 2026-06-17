@@ -316,7 +316,7 @@ export class MemoryService {
       const key = `allergy:${facet}`;
       if (seen.has(key)) continue;
       seen.add(key);
-      out.push({ node_type: 'allergy', facet, prose_text: `Declared allergy: ${a}` });
+      out.push({ node_type: 'other', facet, prose_text: `Declared allergy: ${a}` });
     }
 
     for (const template of summary.cultural_templates ?? []) {
@@ -326,7 +326,7 @@ export class MemoryService {
       const key = `cultural_rhythm:${facet}`;
       if (seen.has(key)) continue;
       seen.add(key);
-      out.push({ node_type: 'cultural_rhythm', facet, prose_text: `Cultural identity: ${t}` });
+      out.push({ node_type: 'other', facet, prose_text: `Cultural identity: ${t}` });
     }
 
     for (const note of summary.palate_notes ?? []) {
@@ -336,7 +336,7 @@ export class MemoryService {
       const key = `preference:${facet}`;
       if (seen.has(key)) continue;
       seen.add(key);
-      out.push({ node_type: 'preference', facet, prose_text: n });
+      out.push({ node_type: 'other', facet, prose_text: n });
     }
 
     for (const rhythm of summary.family_rhythms ?? []) {

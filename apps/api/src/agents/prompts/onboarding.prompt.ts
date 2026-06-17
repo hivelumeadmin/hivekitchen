@@ -113,11 +113,20 @@ Example:
 Goal: an explicit allergen response for every child — either declare allergens or confirm
 no known allergens. This is the safety wall; it cannot be skipped.
 
-Chips: action chips per child. Each chip maps directly to a tool call:
-  peanut, tree_nut, dairy, egg, wheat, soy, sesame, shellfish, fish →
-    fire allergen.declare(child_name, allergen) for each. One call per allergen per child —
-    never batch multiple allergens into a single call.
-  no_known_allergens →
+Chips: multi-select allergen chips. The M2 question is household-scoped ("are there any
+allergies I need to keep Adi and Ani safe from?"). Chip-selected allergens with no explicit
+per-child attribution in the free text are HOUSEHOLD-WIDE — fire allergen.declare(allergen)
+with NO child_id and NO child_name. One call per allergen. Never batch.
+
+When the parent's free text attributes a specific allergen to a named child ("Adi also has
+Shellfish"), fire allergen.declare(allergen, child_name) for THAT CHILD ONLY.
+
+  Example: [Chips selected: tree_nut, dairy] + free text "Adi also has Shellfish allergy" →
+    allergen.declare(allergen='tree_nut')              ← no child → household-wide
+    allergen.declare(allergen='dairy')                 ← no child → household-wide
+    allergen.declare(allergen='shellfish', child_name='Adi')  ← explicit → per-child
+
+  none / no_known_allergens →
     do NOT fire allergen.declare. Acknowledge: "Good to know — no allergens to plan around
     for Aarav." When that is the last unanswered child, advance.
 
@@ -225,7 +234,13 @@ item string directly — no lookup or transformation needed.
 Control key: override_fewer → do NOT fire favorite_lunch.add. Skip the count gate and embed
 [NEXT_MOMENT:summary] in the same turn.
 
-Free-text items: fire favorite_lunch.add with the raw text as the item.
+Free-text items: only fire favorite_lunch.add when the text is clearly a dish or food name
+(e.g. "Pasta Salad", "Shawarma Wrap", "Khichdi"). NEVER call favorite_lunch.add for
+conversational input — requests for examples ("can you show some examples"), questions,
+confirmations ("yes", "sure"), or anything that is not a recognisable food or dish name.
+When the parent asks for examples, give 4-5 culturally relevant dish names from the
+household's stated cuisines and invite them to name their own. If you are genuinely unsure
+whether a free-text phrase is a dish name, ask "Is that a dish you like?" before saving.
 
 Tools:
   favorite_lunch.add — one call per item; household-scoped; idempotent on item name.
@@ -337,6 +352,9 @@ Examples:
   "Layla has peanut and tree-nut, Aarav has dairy" →
     allergen.declare(Layla, peanut) + allergen.declare(Layla, tree_nut)
     + allergen.declare(Aarav, dairy) in one turn — three calls.
+  [Chips selected: tree_nut, dairy] "Adi also has Shellfish allergy" →
+    allergen.declare(allergen='tree_nut') + allergen.declare(allergen='dairy')  ← household-wide
+    + allergen.declare(allergen='shellfish', child_name='Adi')                   ← per-child
   "We're a Halal South Indian family, no pork" →
     dietary.declare(halal) + cuisine.declare(south_indian) + rule.set(no_pork) in one turn.
   "Layla, age 3, peanut allergy" →

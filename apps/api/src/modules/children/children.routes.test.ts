@@ -60,7 +60,6 @@ interface SchoolPolicyRowDb {
 interface PlanRowForPropagation {
   id: string;
   household_id: string;
-  week_id: string;
   week_of: string;
   revision: number;
   guardrail_cleared_at: string | null;
@@ -219,7 +218,7 @@ function schoolPoliciesTable(state: MockDbState) {
 }
 
 // In-memory supabase for plans. Only supports the .findActiveFuturePlanIds()
-// query: select('id, week_id, week_of, revision').eq('household_id').gte('week_of').not('guardrail_cleared_at','is',null).
+// query: select('id, week_of, revision').eq('household_id').gte('week_of').not('guardrail_cleared_at','is',null).
 function plansTable(state: MockDbState) {
   return {
     select() {
@@ -244,7 +243,6 @@ function plansTable(state: MockDbState) {
               .filter((p) => !requireClearedNotNull || p.guardrail_cleared_at !== null)
               .map((p) => ({
                 id: p.id,
-                week_id: p.week_id,
                 week_of: p.week_of,
                 revision: p.revision,
               })),
@@ -1418,7 +1416,6 @@ describe('PATCH /v1/children/:id/school-policies', () => {
         {
           id: PLAN_A,
           household_id: SAMPLE_HOUSEHOLD_ID,
-          week_id: '90000000-0000-4000-8000-000000000001',
           week_of: futureWeek,
           revision: 1,
           guardrail_cleared_at: '2099-12-21T11:00:01.000Z',
@@ -1426,7 +1423,6 @@ describe('PATCH /v1/children/:id/school-policies', () => {
         {
           id: PLAN_B,
           household_id: SAMPLE_HOUSEHOLD_ID,
-          week_id: '90000000-0000-4000-8000-000000000002',
           week_of: futureWeek,
           revision: 3,
           guardrail_cleared_at: '2099-12-21T11:00:01.000Z',
@@ -1479,7 +1475,6 @@ describe('PATCH /v1/children/:id/school-policies', () => {
         {
           id: PLAN_A,
           household_id: SAMPLE_HOUSEHOLD_ID,
-          week_id: '90000000-0000-4000-8000-000000000001',
           week_of: futureWeek,
           revision: 1,
           guardrail_cleared_at: '2099-12-21T11:00:01.000Z',

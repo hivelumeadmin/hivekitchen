@@ -28,7 +28,7 @@ import type { RecipesRepository } from '../recipe/recipes.repository.js';
 
 const POLL_INTERVAL_MS = 250;
 const POLL_TIMEOUT_MS = 5_000;
-const TARGET_CHIPS = 18;
+const TARGET_CHIPS = 20;
 const UNDERFLOW_THRESHOLD = 12;
 const DIVERSITY_CAP_PRIMARY = 3;
 const DIVERSITY_CAP_RELAXED = 5;
@@ -101,6 +101,15 @@ export class CatalogProjectionService {
     this.logger = deps.logger;
     this.wait =
       wait ?? ((ms) => new Promise((r) => setTimeout(r, ms)));
+  }
+
+  async isStage1Complete(householdId: string): Promise<boolean> {
+    try {
+      const at = await this.householdsRepository.getStage1CompletedAt(householdId);
+      return at !== null;
+    } catch {
+      return false;
+    }
   }
 
   async getM5Chips(

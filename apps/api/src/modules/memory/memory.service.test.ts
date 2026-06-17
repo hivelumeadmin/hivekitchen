@@ -19,7 +19,7 @@ function makeNodeRow(overrides: Partial<MemoryNodeRow> = {}): MemoryNodeRow {
   return {
     id: '55555555-5555-4555-8555-555555555555',
     household_id: HOUSEHOLD_ID,
-    node_type: 'preference',
+    node_type: 'other',
     facet: 'x',
     subject_child_id: null,
     prose_text: 'x',
@@ -165,17 +165,17 @@ describe('MemoryService.seedFromOnboarding', () => {
     expect(state.insertProvenanceCalls).toHaveLength(5);
 
     const types = state.insertNodeCalls.map((c) => c.node_type);
-    expect(types).toEqual(['allergy', 'allergy', 'cultural_rhythm', 'preference', 'rhythm']);
+    expect(types).toEqual(['other', 'other', 'other', 'other', 'rhythm']);
 
-    const allergyCall = state.insertNodeCalls.find((c) => c.node_type === 'allergy' && c.facet === 'peanut');
+    const allergyCall = state.insertNodeCalls.find((c) => c.node_type === 'other' && c.facet === 'peanut');
     expect(allergyCall?.prose_text).toBe('Declared allergy: peanut');
     expect(allergyCall?.subject_child_id).toBeNull();
 
-    const culturalCall = state.insertNodeCalls.find((c) => c.node_type === 'cultural_rhythm');
-    expect(culturalCall?.prose_text).toBe('Cultural identity: halal');
+    const culturalCall = state.insertNodeCalls.find((c) => c.prose_text === 'Cultural identity: halal');
+    expect(culturalCall?.node_type).toBe('other');
 
-    const palateCall = state.insertNodeCalls.find((c) => c.node_type === 'preference');
-    expect(palateCall?.prose_text).toBe('avoids spicy');
+    const palateCall = state.insertNodeCalls.find((c) => c.prose_text === 'avoids spicy');
+    expect(palateCall?.node_type).toBe('other');
 
     const rhythmCall = state.insertNodeCalls.find((c) => c.node_type === 'rhythm');
     expect(rhythmCall?.prose_text).toBe('friday is leftover night');
@@ -310,7 +310,7 @@ describe('MemoryService.noteFromAgent', () => {
 
     const out = await service.noteFromAgent({
       householdId: HOUSEHOLD_ID,
-      nodeType: 'preference',
+      nodeType: 'other',
       facet: 'avoids spicy peppers',
       proseText: 'Child avoids spicy peppers and chili oil',
       subjectChildId: null,
@@ -332,7 +332,7 @@ describe('MemoryService.noteFromAgent', () => {
 
     await service.noteFromAgent({
       householdId: HOUSEHOLD_ID,
-      nodeType: 'cultural_rhythm',
+      nodeType: 'other',
       facet: 'diwali-2026',
       proseText: 'Diwali is in three weeks.',
       subjectChildId: null,
@@ -356,7 +356,7 @@ describe('MemoryService.noteFromAgent', () => {
 
     await service.noteFromAgent({
       householdId: HOUSEHOLD_ID,
-      nodeType: 'preference',
+      nodeType: 'other',
       facet: 'avoids spicy',
       proseText: 'Avoids spicy food.',
       subjectChildId: null,

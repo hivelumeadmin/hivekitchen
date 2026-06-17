@@ -162,13 +162,9 @@ export class PlansService {
     // Enforce plan_id re-use: if a plan already exists for this household+week,
     // reuse its id so commit_plan's ON CONFLICT (id) upsert path is taken and
     // the (household_id, week_of) unique constraint is never violated.
-    // Until Phase 9c applies the migration, the lookup still goes through the
-    // week_id-keyed flat repository method; weekId is deterministically
-    // derived from week_of so the result is identical.
-    const weekId = deriveWeekId(input.week_of);
     const existing = await this.repo.findActiveByHouseholdAndWeek({
       householdId: input.household_id,
-      weekId,
+      weekOf: input.week_of,
     });
     let current: CommitPlanTreeInput = existing ? { ...input, plan_id: existing.id } : input;
     const planId = current.plan_id;
@@ -179,11 +175,13 @@ export class PlansService {
       lastAttempt = attempt;
       const guardrailItems = buildGuardrailItemsFromTree(current);
 
-      const result = await this.allergyGuardrail.clearOrReject(
-        guardrailItems,
-        current.household_id,
-        requestId,
-      );
+      // No add_ons across any variation — nothing new to check at commit time.
+      // Recipe base-ingredient checking is a follow-up slice; skip the engine
+      // call rather than sending an empty list (which would return uncertain).
+      const result: GuardrailResult =
+        guardrailItems.length === 0
+          ? { verdict: 'cleared', conflicts: [] }
+          : await this.allergyGuardrail.clearOrReject(guardrailItems, current.household_id, requestId);
 
       if (result.verdict === 'cleared') {
         const clearedAt = new Date().toISOString();
@@ -214,7 +212,7 @@ export class PlansService {
         // → audit sequence ordered.
         await this.briefStateComposer.refreshTree(
           current.household_id,
-          weekId,
+          input.week_of,
           requestId,
           { planReasoning },
         );
@@ -627,12 +625,11 @@ export class PlansService {
   }> {
     const weekOf =
       opts.week === 'next' ? getNextWeekMonday() : getCurrentWeekMonday();
-    const weekId = deriveWeekId(weekOf);
     const isDraft = opts.week === 'next';
 
     const plan = await this.repo.findByHouseholdAndWeek({
       householdId: opts.householdId,
-      weekId,
+      weekOf,
     });
     if (!plan) {
       return {
@@ -667,12 +664,12 @@ export class PlansService {
     };
   }
 
-  // Story 3-DM-C1 — tree-shape READ for GET /v1/plans/:weekId/history.
+  // Story 3-DM-C1 — tree-shape READ for GET /v1/plans/:weekOf/history.
   // Same tree shape; swap_history is empty for now (canonical model has no
   // archived plan_items; audit-derived population is a follow-up slice).
   async getPlanHistoryTree(opts: {
     householdId: string;
-    weekId: string;
+    weekOf: string;
   }): Promise<{
     plan: PlanRow;
     mainAssignments: PlanMainAssignmentRow[];
@@ -684,10 +681,10 @@ export class PlansService {
   }> {
     const plan = await this.repo.findByHouseholdAndWeek({
       householdId: opts.householdId,
-      weekId: opts.weekId,
+      weekOf: opts.weekOf,
     });
     if (!plan) {
-      throw new NotFoundError(`plan for week ${opts.weekId}`);
+      throw new NotFoundError(`plan for week ${opts.weekOf}`);
     }
     const [mainAssignments, days, slots] = await Promise.all([
       this.repo.findMainAssignmentsByPlanId(plan.id),
@@ -751,7 +748,7 @@ export class PlansService {
       });
       await this.briefStateComposer.refreshTree(
         opts.householdId,
-        deriveWeekId(tree.plan.week_of),
+        tree.plan.week_of,
         opts.requestId,
         { userInitiated: true },
       );
@@ -805,7 +802,7 @@ export class PlansService {
 
     await this.briefStateComposer.refreshTree(
       opts.householdId,
-      deriveWeekId(tree.plan.week_of),
+      tree.plan.week_of,
       opts.requestId,
       { userInitiated: true },
     );
@@ -905,7 +902,7 @@ export class PlansService {
 
     await this.briefStateComposer.refreshTree(
       opts.householdId,
-      deriveWeekId(tree.plan.week_of),
+      tree.plan.week_of,
       opts.requestId,
       { userInitiated: true },
     );
@@ -1035,7 +1032,7 @@ export class PlansService {
 
     await this.briefStateComposer.refreshTree(
       opts.householdId,
-      deriveWeekId(tree.plan.week_of),
+      tree.plan.week_of,
       opts.requestId,
       { userInitiated: true },
     );
@@ -1092,7 +1089,7 @@ export class PlansService {
 
     await this.briefStateComposer.refreshTree(
       opts.householdId,
-      deriveWeekId(tree.plan.week_of),
+      tree.plan.week_of,
       opts.requestId,
       { userInitiated: true },
     );
@@ -1150,7 +1147,7 @@ export class PlansService {
     if (pausedCount > 0) {
       await this.briefStateComposer.refreshTree(
         opts.householdId,
-        deriveWeekId(tree.plan.week_of),
+        tree.plan.week_of,
         opts.requestId,
         { userInitiated: true },
       );
@@ -1274,11 +1271,12 @@ function buildGuardrailItemsFromTree(input: CommitPlanTreeInput): PlanItemForGua
   for (const day of input.days) {
     for (const slot of day.slots) {
       for (const variation of slot.variations) {
+        if (!variation.add_ons?.length) continue;
         out.push({
           child_id: variation.child_id,
           day: day.day,
           slot: slot.slot_kind,
-          ingredients: [...(variation.add_ons ?? [])],
+          ingredients: [...variation.add_ons],
         });
       }
     }

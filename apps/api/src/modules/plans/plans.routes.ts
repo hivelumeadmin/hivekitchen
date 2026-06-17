@@ -202,7 +202,7 @@ const plansRoutesPlugin: FastifyPluginAsync = async (fastify) => {
     },
   );
 
-  // GET /v1/plans/:weekId/history
+  // GET /v1/plans/:weekOf/history
   //
   // Story 3-DM-C1 Phase 9b part 4 step 3 — tree-shape history response.
   // swap_history is `[]` for now (the canonical model has no archived
@@ -210,7 +210,7 @@ const plansRoutesPlugin: FastifyPluginAsync = async (fastify) => {
   // ratings is keyed by child_id; it stays `{}` until Story 4.14 wires the
   // lunch_link_session projection here.
   fastify.get(
-    '/v1/plans/:weekId/history',
+    '/v1/plans/:weekOf/history',
     {
       preHandler: requireMember,
       schema: {
@@ -219,7 +219,7 @@ const plansRoutesPlugin: FastifyPluginAsync = async (fastify) => {
       },
     },
     async (request, reply) => {
-      const { weekId } = request.params as { weekId: string };
+      const { weekOf } = request.params as { weekOf: string };
       const {
         plan,
         mainAssignments,
@@ -227,10 +227,9 @@ const plansRoutesPlugin: FastifyPluginAsync = async (fastify) => {
         slots,
         variations,
         swapHistory,
-        weekOf,
       } = await fastify.plansService.getPlanHistoryTree({
         householdId: request.user.household_id,
-        weekId,
+        weekOf,
       });
       return reply.status(200).send({
         plan,

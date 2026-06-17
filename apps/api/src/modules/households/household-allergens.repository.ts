@@ -78,7 +78,9 @@ export class HouseholdAllergensRepository {
       .maybeSingle();
 
     if (error === null || error === undefined) {
-      return { inserted: data !== null };
+      const inserted = data !== null;
+      if (inserted) void this.bumpKitchenMapVersion(params.household_id);
+      return { inserted };
     }
 
     if (pgErrorCode(error) !== NO_UNIQUE_CONSTRAINT_CODE) {
@@ -105,6 +107,7 @@ export class HouseholdAllergensRepository {
       });
 
     if (insertErr === null || insertErr === undefined) {
+      void this.bumpKitchenMapVersion(params.household_id);
       return { inserted: true };
     }
     if (pgErrorCode(insertErr) !== UNIQUE_VIOLATION_CODE) {
@@ -168,5 +171,20 @@ export class HouseholdAllergensRepository {
       .eq('household_id', householdId)
       .eq('child_id', childId);
     if (error) throw error;
+    void this.bumpKitchenMapVersion(householdId);
+  }
+
+  // Belt-and-suspenders alongside migration 20261008000200's DB trigger.
+  // Bumps kitchen_map_version so the Redis cache key rotates immediately on
+  // any insert or delete — prevents stale allergens from showing in the panel.
+  // Non-fatal: swallowed so a Supabase hiccup never breaks the write path.
+  private async bumpKitchenMapVersion(householdId: string): Promise<void> {
+    try {
+      await this.client.rpc('bump_kitchen_map_version_for_household', {
+        p_household_id: householdId,
+      });
+    } catch {
+      // non-fatal
+    }
   }
 }

@@ -267,7 +267,7 @@ describe('DomainOrchestrator', () => {
     expect(wired).toBeDefined();
     await wired!.fn({
       household_id: HOUSEHOLD_ID,
-      node_type: 'preference',
+      node_type: 'other',
       facet: 'dislikes-broccoli',
       prose_text: 'No broccoli in lunches.',
       subject_child_id: CHILD_ID,
@@ -277,7 +277,7 @@ describe('DomainOrchestrator', () => {
     expect(memory.noteFromAgent).toHaveBeenCalledTimes(1);
     expect(memory.noteFromAgent).toHaveBeenCalledWith({
       householdId: HOUSEHOLD_ID,
-      nodeType: 'preference',
+      nodeType: 'other',
       facet: 'dislikes-broccoli',
       proseText: 'No broccoli in lunches.',
       subjectChildId: CHILD_ID,

@@ -256,18 +256,18 @@ export class BriefStateComposer {
 
   async refreshTree(
     householdId: string,
-    weekId: string,
+    weekOf: string,
     requestId: string,
     opts: { userInitiated?: boolean; planReasoning?: string | null } = {},
   ): Promise<void> {
     try {
       const plan = await this.plansRepo.findCurrentByHousehold({
         householdId,
-        weekId,
+        weekOf,
       });
       if (!plan) {
         this.logger.debug(
-          { household_id: householdId, week_id: weekId },
+          { household_id: householdId, week_of: weekOf },
           'brief_state refreshTree skipped — no cleared plan found for this week',
         );
         return;
@@ -362,7 +362,7 @@ export class BriefStateComposer {
       );
     } catch (err) {
       this.logger.error(
-        { household_id: householdId, week_id: weekId, err },
+        { household_id: householdId, week_of: weekOf, err },
         'brief_state tree projection refresh failed',
       );
       try {
@@ -371,7 +371,7 @@ export class BriefStateComposer {
           household_id: householdId,
           request_id: requestId,
           metadata: {
-            week_id: weekId,
+            week_of: weekOf,
             error: err instanceof Error ? err.message : String(err),
             path: 'refreshTree',
           },

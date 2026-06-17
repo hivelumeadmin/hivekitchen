@@ -33,7 +33,13 @@ import { NUDGE_QUEUE, type LumiNudgeJobData } from './lumi-nudge.job.js';
 export { deriveWeekId };
 
 const SCHEDULE_QUEUE = 'plan-generation-schedule';
-const GENERATE_QUEUE = 'plan-generation';
+export const GENERATE_QUEUE = 'plan-generation';
+export const GENERATION_JOB_OPTS_BASE = {
+  attempts: 3,
+  backoff: { type: 'exponential' as const, delay: 300_000 },
+  removeOnComplete: { count: 200 },
+  removeOnFail: { count: 48 },
+};
 const SCHEDULE_JOB_ID = 'weekly-plan-generation-fanout';
 
 // Per-job BullMQ options for household plan generation: 3 attempts with
@@ -42,12 +48,7 @@ const SCHEDULE_JOB_ID = 'weekly-plan-generation-fanout';
 // would be attempts:3 BullMQ semantics; AC text reads "3 retries", which we
 // implement as attempts:3 (initial + 2 retries) per BullMQ's count of
 // attemptsMade incrementing on each try.
-const GENERATION_JOB_OPTS = {
-  attempts: 3,
-  backoff: { type: 'exponential' as const, delay: 300_000 },
-  removeOnComplete: { count: 200 },
-  removeOnFail: { count: 48 },
-};
+const GENERATION_JOB_OPTS = GENERATION_JOB_OPTS_BASE;
 
 export interface PlanGenerationJobData {
   household_id: string;

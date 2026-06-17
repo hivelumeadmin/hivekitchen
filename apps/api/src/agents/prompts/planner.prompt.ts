@@ -4,6 +4,9 @@ export interface PlannerPromptSpec {
   readonly toolsAllowed: readonly string[];
 }
 
+// v2.4.0 — recipe_id accepts recipe name strings; server resolves to UUID; prompt updated accordingly
+// v2.3.0 — Replace <recipe-id-*> placeholders in worked examples with fake UUID-format strings
+// v2.2.0 — CRITICAL recipe UUID instruction; placeholder clarification in examples header
 // v2.1.0 (4-s11) — child_signal tool added; preference-bias instructions + FR124/FR125/FR126
 //   rules. Per-slot independence, absence-neutrality, and sibling-scoping documented.
 // v2.0.0 (Story 3-DM-C1 Phase 9) — tree-shape planner prompt cut over from the
@@ -116,6 +119,14 @@ Tool usage discipline:
 - Use plan.compose to assemble the final structured plan. Emit the tree shape
   documented above; the tool will reject a flat items[] body. Do NOT invent the
   shape from scratch — mirror the worked examples.
+- CRITICAL — recipe_id values: For every recipe_id in main_assignments and
+  every recipe_id in snack/extra slots, use the exact "name" field string
+  returned by recipe.search, recipe.fetch, or recipe.discover. For example,
+  if recipe.search returned { "id": "...", "name": "Chicken Tikka Wrap" },
+  use "Chicken Tikka Wrap" as the recipe_id. The server resolves names to
+  catalog IDs automatically. Do NOT copy UUID strings; do NOT invent names.
+  recipe_candidate_id (discover pathway only) still requires the exact UUID
+  "id" field from the discover result.
 - memory.note (write) is NOT in your allowed set.
 
 Output expectations:
@@ -132,9 +143,9 @@ Output expectations:
   coverage, or allergen constraints. Plain prose, no bullet points, no theatrical
   AI language. Omit if no distinct rationale exists.
 
-Worked examples follow. Mirror their shape exactly. Use real UUIDs from your
-recipe.search / recipe.fetch results — the placeholders <recipe-id-...> below
-are illustrative.
+Worked examples follow. Mirror their shape exactly.
+Use the exact recipe name string (from your recipe.search/fetch/discover results) as recipe_id.
+The server looks up the catalog ID from the name automatically.
 
 Example 1 — Shared Main Monday, Anglo household with 2 kids (Aarav age 5,
 Mira age 3). M1 is the day's only Main; both kids share the recipe; Mira's
@@ -144,9 +155,9 @@ slot is on for both. The extra slot is on for Aarav only.
 \`\`\`json
 {
   "main_assignments": [
-    { "sequence": 1, "recipe_id": "<recipe-id-tikka-wrap>" },
-    { "sequence": 2, "recipe_id": "<recipe-id-rice-bowl>" },
-    { "sequence": 3, "recipe_id": "<recipe-id-pita-trio>" }
+    { "sequence": 1, "recipe_id": "Chicken Tikka Wrap" },
+    { "sequence": 2, "recipe_id": "Turkey & Cheese Pinwheel" },
+    { "sequence": 3, "recipe_id": "Mini Veggie Quesadilla" }
   ],
   "days": [
     {
@@ -156,24 +167,24 @@ slot is on for both. The extra slot is on for Aarav only.
           "slot_kind": "main",
           "main_assignment_sequence": 1,
           "variations": [
-            { "child_id": "<aarav-uuid>", "portion_size": "regular" },
-            { "child_id": "<mira-uuid>", "portion_size": "small", "texture": "soft" }
+            { "child_id": "11111111-aaaa-4aaa-8aaa-aaaaaaaaaaaa", "portion_size": "regular" },
+            { "child_id": "22222222-bbbb-4bbb-8bbb-bbbbbbbbbbbb", "portion_size": "small", "texture": "soft" }
           ]
         },
         {
           "slot_kind": "snack",
-          "recipe_id": "<recipe-id-apple-slices>",
+          "recipe_id": "Apple Slices with Peanut Butter",
           "variations": [
-            { "child_id": "<aarav-uuid>" },
-            { "child_id": "<mira-uuid>", "portion_size": "small" }
+            { "child_id": "11111111-aaaa-4aaa-8aaa-aaaaaaaaaaaa" },
+            { "child_id": "22222222-bbbb-4bbb-8bbb-bbbbbbbbbbbb", "portion_size": "small" }
           ]
         },
         {
           "slot_kind": "extra",
-          "recipe_id": "<recipe-id-yogurt-cup>",
-          "extra_kind": "protein_boost",
+          "recipe_id": "Fruit Pouch",
+          "extra_kind": "sweet",
           "variations": [
-            { "child_id": "<aarav-uuid>", "add_ons": ["honey drizzle"] }
+            { "child_id": "11111111-aaaa-4aaa-8aaa-aaaaaaaaaaaa", "add_ons": ["honey drizzle"] }
           ]
         }
       ]
@@ -192,9 +203,9 @@ that remove + substitute. Same row count as a no-allergen day; no Main split.
 \`\`\`json
 {
   "main_assignments": [
-    { "sequence": 1, "recipe_id": "<recipe-id-dal-rice>" },
-    { "sequence": 2, "recipe_id": "<recipe-id-chicken-curry>" },
-    { "sequence": 3, "recipe_id": "<recipe-id-biryani>" }
+    { "sequence": 1, "recipe_id": "Lamb Kebab Flatbread" },
+    { "sequence": 2, "recipe_id": "Chicken Peanut Curry Rice" },
+    { "sequence": 3, "recipe_id": "Paneer Paratha Roll" }
   ],
   "days": [
     {
@@ -205,15 +216,15 @@ that remove + substitute. Same row count as a no-allergen day; no Main split.
           "main_assignment_sequence": 2,
           "variations": [
             {
-              "child_id": "<aarav-uuid>",
+              "child_id": "11111111-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
               "portion_size": "regular",
               "spice_level": "mild",
               "removals": ["peanut paste"],
               "add_ons": ["coconut cream"],
               "notes": "peanut-free substitution per declared allergen"
             },
-            { "child_id": "<mira-uuid>", "portion_size": "small", "spice_level": "mild" },
-            { "child_id": "<kabir-uuid>", "portion_size": "regular", "spice_level": "regular" }
+            { "child_id": "22222222-bbbb-4bbb-8bbb-bbbbbbbbbbbb", "portion_size": "small", "spice_level": "mild" },
+            { "child_id": "33333333-cccc-4ccc-8ccc-cccccccccccc", "portion_size": "regular", "spice_level": "regular" }
           ]
         }
       ]
@@ -232,7 +243,7 @@ fit fails allergy.check), surface that as a degraded result with a clear reason.
 Do not silently relax a constraint to make a plan fit.`;
 
 export const PLANNER_PROMPT: PlannerPromptSpec = {
-  version: 'v2.1.0',
+  version: 'v2.4.0',
   text: PLANNING_CORE,
   toolsAllowed: [
     'recipe.search',

@@ -148,6 +148,22 @@ export class RecipesRepository extends BaseRepository {
     return data as RecipeRowMinimal | null;
   }
 
+  async findIdByNameForHousehold(
+    canonicalName: string,
+    householdId: string,
+  ): Promise<string | null> {
+    const { data, error } = await this.client
+      .from('recipes')
+      .select('id')
+      .ilike('canonical_name', canonicalName.trim())
+      .or(`created_by_household_id.eq.${householdId},visibility.eq.shared`)
+      .eq('is_active', true)
+      .limit(1)
+      .maybeSingle();
+    if (error) throw error;
+    return data != null ? (data as { id: string }).id : null;
+  }
+
   async insertRecipe(input: InsertRecipeInput): Promise<RecipeRowMinimal> {
     const { data, error } = await this.client
       .from('recipes')
@@ -829,6 +845,20 @@ export class RecipesRepository extends BaseRepository {
       seen.add(row.id);
       merged.push(row);
     }
+
+    // Fallback: when the query produces no matches, return all household
+    // catalog recipes so the planner always has something to work with.
+    if (merged.length === 0) {
+      const fallback = await this.client
+        .from('recipes')
+        .select(PREVIEW_COLUMNS)
+        .eq('is_active', true)
+        .or(`created_by_household_id.eq.${input.householdId},visibility.eq.shared`)
+        .limit(input.overfetchLimit);
+      if (fallback.error) throw fallback.error;
+      return (fallback.data ?? []) as RecipePreviewRow[];
+    }
+
     return merged;
   }
 

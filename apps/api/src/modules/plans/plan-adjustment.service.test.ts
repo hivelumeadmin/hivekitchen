@@ -74,8 +74,8 @@ describe('PlanAdjustmentService.triggerAdjustment', () => {
 
   it('enqueues one week-scope job per future plan and audits the fanout', async () => {
     mocks.plansRepo.findActiveFuturePlanIds.mockResolvedValueOnce([
-      { id: PLAN_A, week_id: 'week-a', week_of: '2026-05-04', revision: 2 },
-      { id: PLAN_B, week_id: 'week-b', week_of: '2026-05-11', revision: 1 },
+      { id: PLAN_A, week_of: '2026-05-04', revision: 2 },
+      { id: PLAN_B, week_of: '2026-05-11', revision: 1 },
     ]);
 
     const result = await service.triggerAdjustment(baseTrigger);
@@ -100,7 +100,7 @@ describe('PlanAdjustmentService.triggerAdjustment', () => {
     // jobId dedupes on (type, household, week, dayScope) — request_id excluded
     // so retries collapse to one job.
     expect(jobOpts).toMatchObject({
-      jobId: `adjust-school_policy_changed-${HOUSEHOLD_ID}-week-a-week`,
+      jobId: `adjust-school_policy_changed-${HOUSEHOLD_ID}-2026-05-04-week`,
     });
 
     expect(mocks.auditService.write).toHaveBeenCalledWith(
@@ -122,7 +122,7 @@ describe('PlanAdjustmentService.triggerAdjustment', () => {
 
   it('records dayScope as scope=day with day field and includes it in the dedupe key', async () => {
     mocks.plansRepo.findActiveFuturePlanIds.mockResolvedValueOnce([
-      { id: PLAN_A, week_id: 'week-a', week_of: '2026-05-04', revision: 1 },
+      { id: PLAN_A, week_of: '2026-05-04', revision: 1 },
     ]);
 
     await service.triggerAdjustment({
@@ -139,14 +139,14 @@ describe('PlanAdjustmentService.triggerAdjustment', () => {
       day: 'wednesday',
     });
     expect(jobOpts).toMatchObject({
-      jobId: `adjust-cultural_calendar_event-${HOUSEHOLD_ID}-week-a-wednesday`,
+      jobId: `adjust-cultural_calendar_event-${HOUSEHOLD_ID}-2026-05-04-wednesday`,
     });
   });
 
   it('continues when one queue.add fails — partial success is reported', async () => {
     mocks.plansRepo.findActiveFuturePlanIds.mockResolvedValueOnce([
-      { id: PLAN_A, week_id: 'week-a', week_of: '2026-05-04', revision: 1 },
-      { id: PLAN_B, week_id: 'week-b', week_of: '2026-05-11', revision: 1 },
+      { id: PLAN_A, week_of: '2026-05-04', revision: 1 },
+      { id: PLAN_B, week_of: '2026-05-11', revision: 1 },
     ]);
     mocks.regenQueue.add
       .mockRejectedValueOnce(new Error('redis-flake'))
@@ -170,8 +170,8 @@ describe('PlanAdjustmentService.triggerAdjustment', () => {
 
   it('returns zero queued and audits full failedPlanIds when all enqueues fail', async () => {
     mocks.plansRepo.findActiveFuturePlanIds.mockResolvedValueOnce([
-      { id: PLAN_A, week_id: 'week-a', week_of: '2026-05-04', revision: 1 },
-      { id: PLAN_B, week_id: 'week-b', week_of: '2026-05-11', revision: 1 },
+      { id: PLAN_A, week_of: '2026-05-04', revision: 1 },
+      { id: PLAN_B, week_of: '2026-05-11', revision: 1 },
     ]);
     mocks.regenQueue.add
       .mockRejectedValueOnce(new Error('redis-down'))
@@ -209,7 +209,7 @@ describe('PlanAdjustmentService.triggerAdjustment', () => {
   // Story 3.23 — slot_scope propagation into PlanRegenerationJobData.
   it('slotScope=snack enqueues job with slot_scope=snack', async () => {
     mocks.plansRepo.findActiveFuturePlanIds.mockResolvedValueOnce([
-      { id: PLAN_A, week_id: 'week-a', week_of: '2026-05-04', revision: 1 },
+      { id: PLAN_A, week_of: '2026-05-04', revision: 1 },
     ]);
 
     await service.triggerAdjustment({ ...baseTrigger, slotScope: 'snack' });
@@ -220,7 +220,7 @@ describe('PlanAdjustmentService.triggerAdjustment', () => {
 
   it('slotScope=bag_wide enqueues job without slot_scope field', async () => {
     mocks.plansRepo.findActiveFuturePlanIds.mockResolvedValueOnce([
-      { id: PLAN_A, week_id: 'week-a', week_of: '2026-05-04', revision: 1 },
+      { id: PLAN_A, week_of: '2026-05-04', revision: 1 },
     ]);
 
     await service.triggerAdjustment({ ...baseTrigger, slotScope: 'bag_wide' });
@@ -231,7 +231,7 @@ describe('PlanAdjustmentService.triggerAdjustment', () => {
 
   it('slotScope=null enqueues job without slot_scope field', async () => {
     mocks.plansRepo.findActiveFuturePlanIds.mockResolvedValueOnce([
-      { id: PLAN_A, week_id: 'week-a', week_of: '2026-05-04', revision: 1 },
+      { id: PLAN_A, week_of: '2026-05-04', revision: 1 },
     ]);
 
     await service.triggerAdjustment({ ...baseTrigger, slotScope: null });
@@ -242,7 +242,7 @@ describe('PlanAdjustmentService.triggerAdjustment', () => {
 
   it('does NOT throw when audit write fails — fire-and-forget at this boundary', async () => {
     mocks.plansRepo.findActiveFuturePlanIds.mockResolvedValueOnce([
-      { id: PLAN_A, week_id: 'week-a', week_of: '2026-05-04', revision: 1 },
+      { id: PLAN_A, week_of: '2026-05-04', revision: 1 },
     ]);
     mocks.auditService.write.mockRejectedValueOnce(new Error('audit-down'));
 

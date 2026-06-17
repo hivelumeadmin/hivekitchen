@@ -24,6 +24,7 @@ import {
   RuleSetOutputSchema,
 } from '@hivekitchen/contracts';
 import type { ChildAllergensRepository } from '../../modules/children/child-allergens.repository.js';
+import type { HouseholdAllergensRepository } from '../../modules/households/household-allergens.repository.js';
 import type { ChildrenService } from '../../modules/children/children.service.js';
 import type { CulturalPriorRepository } from '../../modules/cultural-priors/cultural-prior.repository.js';
 import type { DietaryPreferencesRepository } from '../../modules/dietary-preferences/dietary-preferences.repository.js';
@@ -69,6 +70,8 @@ export interface OnboardingToolDeps {
   // allergen.declare / dietary.declare. Required: the tool factories throw
   // at runtime if these are not provided.
   childAllergensRepository: ChildAllergensRepository;
+  // Direct access to household_allergens for household-scope (null child_id) writes.
+  householdAllergensRepository: HouseholdAllergensRepository;
   dietaryPreferencesRepository: DietaryPreferencesRepository;
   // Slice 2.5-s7 — structured food-preference + rule writers for
   // food_preference.declare / rule.set. Cuisine.declare reuses
@@ -176,7 +179,7 @@ export function createChildUpsertToolSpec(
         );
         await deps.memoryService.noteFromAgent({
           householdId: ctx.householdId,
-          nodeType: 'allergy',
+          nodeType: 'other',
           facet: 'allergen',
           proseText: `${parsed.name} has an allergy or sensitivity to ${allergen}.`,
           subjectChildId: result.child.id,
@@ -492,12 +495,13 @@ export function createAllergenDeclareToolSpec(
   return {
     name: 'allergen.declare',
     description:
-      'Declare a per-child medical allergen. One allergen per call (fire one ' +
-      'call per allergen the parent names). Uniform strength — no severity ' +
-      'gradient. Pass child_id from a prior child.upsert call, OR pass ' +
-      'child_name to resolve via case-insensitive name lookup within the ' +
-      "household. Use this for medical allergens only; 'hates X' uses " +
-      'food_preference.declare with valence=refuses.',
+      'Declare an allergen. One allergen per call. ' +
+      'SCOPE: omit child_id and child_name entirely to write a HOUSEHOLD-WIDE row ' +
+      '(applies to all family members — use this for M2 chip selections where the ' +
+      "parent hasn't attributed the allergen to a specific child). " +
+      'Pass child_name (or child_id) ONLY when the parent explicitly attributes ' +
+      'the allergen to one child ("Adi also has shellfish"). ' +
+      "Use this for medical allergens only; 'hates X' uses food_preference.declare.",
     inputSchema: AllergenDeclareInputSchema,
     outputSchema: AllergenDeclareOutputSchema,
     // 2.5-s6: bumped from 120 (stub) to cover DEK fetch + encrypt + DB upsert.
@@ -505,14 +509,44 @@ export function createAllergenDeclareToolSpec(
     fn: async (input: unknown) => {
       const parsed = AllergenDeclareInputSchema.parse(input);
 
-      // Resolve child_id — schema XOR-enforces exactly one of id/name.
+      const hasId = parsed.child_id !== null && parsed.child_id !== undefined;
+      const hasName = parsed.child_name !== null && parsed.child_name !== undefined;
+
+      // Household-scope path: no child attribution → write with child_id = null.
+      if (!hasId && !hasName) {
+        const result = await deps.householdAllergensRepository.declareIfNew({
+          household_id: ctx.householdId,
+          child_id: null,
+          allergen: parsed.allergen,
+          source: parsed.source,
+        });
+        ctx.logger.info(
+          {
+            module: 'onboarding-tools',
+            action: 'allergen.declare',
+            household_id: ctx.householdId,
+            user_id: ctx.userId,
+            scope: 'household',
+            source: parsed.source,
+            inserted: result.inserted,
+            allergen: 'REDACTED',
+          },
+          'allergen.declare (household-scope) handled',
+        );
+        return AllergenDeclareOutputSchema.parse({
+          child_allergen_id: '',
+          was_existing: !result.inserted,
+        });
+      }
+
+      // Per-child path: resolve child_id from id or name.
       let childId: string;
-      if (parsed.child_id !== null && parsed.child_id !== undefined) {
+      if (hasId) {
         // Verify the child belongs to this household. getChild throws NotFoundError
         // when the (householdId, childId) pair doesn't exist in children table,
         // preventing cross-household writes if the agent supplies a stale UUID.
-        await deps.childrenService.getChild({ householdId: ctx.householdId, childId: parsed.child_id });
-        childId = parsed.child_id;
+        await deps.childrenService.getChild({ householdId: ctx.householdId, childId: parsed.child_id as string });
+        childId = parsed.child_id as string;
       } else {
         const resolved = await deps.childrenService.findChildIdByName(
           ctx.householdId,
@@ -543,12 +577,13 @@ export function createAllergenDeclareToolSpec(
           action: 'allergen.declare',
           household_id: ctx.householdId,
           user_id: ctx.userId,
+          scope: 'child',
           child_id: childId,
           source: parsed.source,
           was_existing: result.was_existing,
           allergen: 'REDACTED',
         },
-        'allergen.declare handled',
+        'allergen.declare (child-scope) handled',
       );
 
       return AllergenDeclareOutputSchema.parse({

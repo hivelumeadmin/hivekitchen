@@ -40,7 +40,7 @@ describe('MemoryRepository.insertNode', () => {
     const stored = {
       id: NODE_ID,
       household_id: HOUSEHOLD_ID,
-      node_type: 'allergy',
+      node_type: 'other',
       facet: 'peanut',
       subject_child_id: null,
       prose_text: 'Declared allergy: peanut',
@@ -58,19 +58,19 @@ describe('MemoryRepository.insertNode', () => {
 
     const out = await repo.insertNode({
       household_id: HOUSEHOLD_ID,
-      node_type: 'allergy',
+      node_type: 'other',
       facet: 'peanut',
       prose_text: 'Declared allergy: peanut',
       subject_child_id: null,
     });
 
     expect(out.id).toBe(NODE_ID);
-    expect(out.node_type).toBe('allergy');
+    expect(out.node_type).toBe('other');
     expect(captures).toHaveLength(1);
     expect(captures[0].table).toBe('memory_nodes');
     expect(captures[0].payload).toMatchObject({
       household_id: HOUSEHOLD_ID,
-      node_type: 'allergy',
+      node_type: 'other',
       facet: 'peanut',
     });
   });
@@ -84,7 +84,7 @@ describe('MemoryRepository.insertNode', () => {
     await expect(
       repo.insertNode({
         household_id: HOUSEHOLD_ID,
-        node_type: 'allergy',
+        node_type: 'other',
         facet: 'peanut',
         prose_text: 'x',
         subject_child_id: null,
@@ -155,7 +155,7 @@ function makeNode(overrides: Partial<MemoryNodeRow>): MemoryNodeRow {
   return {
     id: NODE_ID,
     household_id: HOUSEHOLD_ID,
-    node_type: 'preference',
+    node_type: 'other',
     facet: 'x',
     subject_child_id: null,
     prose_text: 'y',
@@ -633,8 +633,8 @@ describe('MemoryRepository.hardDeleteSoftForgotten', () => {
 
   it('returns the deleted rows (id, household_id, node_type) on success', async () => {
     const rows = [
-      { id: NODE_ID, household_id: HOUSEHOLD_ID, node_type: 'preference' },
-      { id: '77777777-7777-4777-8777-777777777777', household_id: HOUSEHOLD_ID, node_type: 'allergy' },
+      { id: NODE_ID, household_id: HOUSEHOLD_ID, node_type: 'other' },
+      { id: '77777777-7777-4777-8777-777777777777', household_id: HOUSEHOLD_ID, node_type: 'other' },
     ];
     const { client } = buildDeleteMockClient({ data: rows, error: null });
     const repo = new MemoryRepository(client);
@@ -937,7 +937,7 @@ describe('MemoryRepository.findRecentTurnSourcedNodes', () => {
       {
         id: NODE_ID,
         prose_text: 'loves spicy food',
-        node_type: 'preference',
+        node_type: 'other',
         created_at: '2026-06-06T00:00:00.000Z',
         memory_provenance: [{ source_type: 'turn' }],
       },
@@ -965,7 +965,7 @@ describe('MemoryRepository.findRecentTurnSourcedNodes', () => {
     expect(capture.order).toEqual({ col: 'created_at', ascending: false });
     // The embedded provenance array is stripped from the mapped output.
     expect(out).toEqual([
-      { id: NODE_ID, prose_text: 'loves spicy food', node_type: 'preference', created_at: '2026-06-06T00:00:00.000Z' },
+      { id: NODE_ID, prose_text: 'loves spicy food', node_type: 'other', created_at: '2026-06-06T00:00:00.000Z' },
       {
         id: '88888888-8888-4888-8888-888888888888',
         prose_text: 'packs lunch on Sundays',

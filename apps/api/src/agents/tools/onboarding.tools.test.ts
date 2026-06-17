@@ -111,6 +111,9 @@ function makeDeps(overrides: Partial<OnboardingToolDeps> = {}): OnboardingToolDe
         was_existing: false,
       }),
     } as unknown as OnboardingToolDeps['childAllergensRepository'],
+    householdAllergensRepository: {
+      declareIfNew: vi.fn().mockResolvedValue({ inserted: true }),
+    } as unknown as OnboardingToolDeps['householdAllergensRepository'],
     dietaryPreferencesRepository: {
       declare: vi.fn().mockResolvedValue({
         dietary_id: DIETARY_ROW_ID,

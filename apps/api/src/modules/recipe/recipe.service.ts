@@ -160,6 +160,11 @@ export class RecipeService {
     return row as unknown as RecipeFetchOutput;
   }
 
+  async findIdByName(name: string, householdId: string): Promise<string | null> {
+    const repo = this.requireRepository('findIdByName');
+    return repo.findIdByNameForHousehold(name, householdId);
+  }
+
   // ---- Story 3-31 — agent-discover read path -----------------------------
 
   /**

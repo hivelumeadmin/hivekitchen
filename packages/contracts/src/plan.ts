@@ -322,9 +322,11 @@ export const HardFailStatusSchema = z.object({
 // main_assignments + days + slots + variations). PlanWeekIdParamSchema
 // stays — it's just a route param schema, shape-neutral.
 
-// Story 3.15 — route param schema for GET /v1/plans/:weekId/history.
+// Story 3.15 — route param schema for GET /v1/plans/:weekOf/history.
+// week_id dropped (migration 20261010000000); canonical param is now the
+// Monday date string (YYYY-MM-DD) that the client derives from its local date.
 export const PlanWeekIdParamSchema = z.object({
-  weekId: z.string().uuid(),
+  weekOf: z.string().date(),
 });
 
 // ===========================================================================
@@ -536,7 +538,8 @@ export const PlannerVariationInputSchema = z.object({
 export const PlannerSlotInputSchema = z.object({
   slot_kind: SlotKindSchema,
   main_assignment_sequence: z.number().int().min(1).max(MAIN_ASSIGNMENT_SEQ_MAX).optional(),
-  recipe_id: z.string().uuid().optional(),
+  // Accepts UUID or recipe name — plan.compose resolves non-UUIDs via name lookup.
+  recipe_id: z.string().min(1).optional(),
   recipe_candidate_id: z.string().uuid().optional(),
   extra_kind: ExtraKindSchema.optional(),
   variations: z.array(PlannerVariationInputSchema).max(VARIATIONS_PER_SLOT_MAX).default([]),
@@ -623,7 +626,9 @@ export const PlannerDayInputSchema = z.object({
 // symbolic handle the slot rows reference via main_assignment_sequence.
 export const PlannerMainAssignmentInputSchema = z.object({
   sequence: z.number().int().min(1).max(MAIN_ASSIGNMENT_SEQ_MAX),
-  recipe_id: z.string().uuid(),
+  // Accepts either a UUID (from id field) or a recipe name string.
+  // plan.compose tool resolves non-UUID values to UUIDs via catalog name lookup.
+  recipe_id: z.string().min(1),
 });
 
 // Full planner tree input — what the agent emits and the orchestrator passes

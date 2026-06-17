@@ -98,6 +98,11 @@ export const TextOnboardingTurnResponseSchema = z.object({
   // renders the conversational tail (no chip card, "3 dishes" gate) instead
   // of the chip catalog. Sticky once true on the client.
   cold_start_mode: z.boolean().optional().default(false),
+  // Household display_name from the kitchen map, included so the profile
+  // panel can show the real DB value instead of regex-scraping Lumi's text.
+  // null when the name hasn't been set yet (M1 turn where household.set_name
+  // just fired) or when kitchenMapService is not wired (test/legacy path).
+  household_display_name: z.string().nullable().optional(),
 });
 
 // POST /v1/onboarding/text/finalize — response (no request body)

@@ -183,7 +183,7 @@ export class DomainOrchestrator {
     TOOL_MANIFEST.set('recipe.search', createRecipeSearchSpec(services.recipe, redis));
     TOOL_MANIFEST.set('recipe.fetch', createRecipeFetchSpec(services.recipe, redis));
     TOOL_MANIFEST.set('pantry.read', createPantryReadSpec(services.pantry, redis));
-    TOOL_MANIFEST.set('plan.compose', createPlanComposeSpec(services.plan, redis));
+    TOOL_MANIFEST.set('plan.compose', createPlanComposeSpec(services.plan, redis, services.recipe));
     TOOL_MANIFEST.set('cultural.lookup', createCulturalLookupSpec(services.culturalPrior, redis));
     TOOL_MANIFEST.set('child_signal', createChildSignalSpec(services.childPrefs, services.children, redis));
 
@@ -256,13 +256,50 @@ export class DomainOrchestrator {
       ? tools.filter((t) => allowedTools.includes(t.name))
       : tools;
 
+    // Retry loop for OpenAI 429 TPM rate limit errors. The SDK's default 2
+    // retries use the `retry-after` header (~3s) but often that's not enough
+    // time for the token window to clear. We read the `x-ratelimit-reset-tokens`
+    // header (seconds until the full TPM window resets) and wait that long.
+    const MAX_RATE_LIMIT_RETRIES = 3;
     let result: LLMResponse;
-    try {
-      result = await provider.completeWithMessages(messages, effectiveTools, options);
-      this.breaker.recordSuccess();
-    } catch (err) {
-      this.breaker.recordFailure();
-      throw err;
+    for (let attempt = 0; ; attempt++) {
+      try {
+        result = await provider.completeWithMessages(messages, effectiveTools, options);
+        this.breaker.recordSuccess();
+        break;
+      } catch (err) {
+        const isRateLimit =
+          err != null &&
+          typeof err === 'object' &&
+          'status' in err &&
+          (err as { status: number }).status === 429;
+        if (isRateLimit && attempt < MAX_RATE_LIMIT_RETRIES) {
+          // Read reset-tokens header if available, else fall back to 90s.
+          const headers =
+            (err as { headers?: Record<string, string> }).headers ?? {};
+          const resetTokensHeader = headers['x-ratelimit-reset-tokens'];
+          // Header formats: "54.726s" (seconds only) or "1m21.587s" (minutes+seconds)
+          let resetSec = 90;
+          if (resetTokensHeader) {
+            const minMatch = /(\d+)m([\d.]+)s/.exec(resetTokensHeader);
+            const secMatch = /^([\d.]+)s$/.exec(resetTokensHeader);
+            if (minMatch) {
+              resetSec = parseInt(minMatch[1], 10) * 60 + parseFloat(minMatch[2]);
+            } else if (secMatch) {
+              resetSec = parseFloat(secMatch[1]);
+            }
+          }
+          const waitMs = Math.ceil(resetSec * 1000) + 1000; // +1s buffer
+          this.logger.warn(
+            { attempt, waitMs, resetTokensHeader },
+            'completeWithMessages: TPM rate limit — waiting for token window reset',
+          );
+          await new Promise<void>((resolve) => setTimeout(resolve, waitMs));
+          continue;
+        }
+        this.breaker.recordFailure();
+        throw err;
+      }
     }
 
     if (allowedTools) {
@@ -302,7 +339,11 @@ export class DomainOrchestrator {
       variantEligibleChildren,
       sovereigntyMode,
     } = opts;
-    const MAX_PLAN_ITERATIONS = 20;
+    // Minimum serial iterations for a 5-day main+snack+extra household is ~36
+    // (child_signal + recall + cultural + pantry + 3×search + 3×fetch +
+    // 10×discover + 5×allergy.check + plan.compose). 80 gives 2× headroom for
+    // any model inefficiency or allergy-check retries.
+    const MAX_PLAN_ITERATIONS = 80;
     // Story 3-31 — recipe.discover needs the per-run requestId in its deps
     // closure (for audit correlation), so we override the manifest's stub
     // spec with a per-run live spec. When recipeAgent isn't wired (legacy
@@ -370,6 +411,7 @@ export class DomainOrchestrator {
     ];
 
     let planComposeResult: PlanComposeTreeOutput | null = null;
+    const toolTrace: Array<{ iteration: number; tools: string[] }> = [];
 
     for (let i = 0; i < MAX_PLAN_ITERATIONS; i++) {
       const response = await this.completeWithMessages(
@@ -387,22 +429,19 @@ export class DomainOrchestrator {
         PLANNER_PROMPT.toolsAllowed,
       );
 
-      // Slice B — observe prompt-cache effectiveness. The planner's system
-      // prompt + the per-household context lines are stable across the
-      // inner iterations of a single planWeek call, so OpenAI's auto-prefix
-      // cache should hit on iterations 2+. Log it so we can confirm in prod.
-      this.logger.debug(
+      const iterationTools = response.toolCalls.map((tc) => tc.name);
+      toolTrace.push({ iteration: i, tools: iterationTools });
+      this.logger.info(
         {
           requestId,
           householdId,
           iteration: i,
-          model_tier: 'flagship',
+          tool_calls: iterationTools,
+          finish_reason: response.finishReason,
           prompt_tokens: response.usage.promptTokens,
-          cached_prompt_tokens: response.usage.cachedPromptTokens,
           completion_tokens: response.usage.completionTokens,
-          tool_call_count: response.toolCalls.length,
         },
-        'planWeek: llm iteration completed',
+        'planWeek: iteration',
       );
 
       messages.push({
@@ -412,7 +451,42 @@ export class DomainOrchestrator {
       });
 
       if (response.finishReason === 'stop' || response.toolCalls.length === 0) {
-        break;
+        if (planComposeResult !== null) break;
+        // Model stopped without calling plan.compose — re-inject with the
+        // actual recipe IDs from this session so it doesn't invent UUIDs.
+        const recipeToolNamesStop = new Set(['recipe.search', 'recipe.fetch', 'recipe.discover']);
+        const knownRecipesStop: Array<{ id: string; name: string }> = [];
+        for (const msg of messages) {
+          if (msg.role !== 'tool' || !recipeToolNamesStop.has(msg.name ?? '')) continue;
+          try {
+            const data = JSON.parse(msg.content as string) as unknown;
+            // recipe.search / recipe.discover return { results: [...] }; recipe.fetch returns a single object
+            const arr =
+              data != null && typeof data === 'object' && 'results' in data && Array.isArray((data as { results: unknown }).results)
+                ? (data as { results: unknown[] }).results
+                : Array.isArray(data) ? data : [data];
+            for (const item of arr) {
+              if (item != null && typeof item === 'object' && 'id' in item && 'name' in item) {
+                knownRecipesStop.push({
+                  id: String((item as { id: unknown }).id),
+                  name: String((item as { name: unknown }).name),
+                });
+              }
+            }
+          } catch { /* non-JSON, skip */ }
+        }
+        const catalogRecipes = knownRecipesStop.filter((r) => r.id !== r.name); // non-discover have real UUIDs
+        const recipeListText = knownRecipesStop.length > 0
+          ? `\n\nRecipes from your tool results:\n` +
+            `  Catalog recipes (use name as recipe_id for main/snack/extra): ${catalogRecipes.map((r) => `"${r.name}"`).join(', ') || 'none'}\n` +
+            `  Discover candidates (use id as recipe_candidate_id for snack/extra only): ${knownRecipesStop.filter((r) => r.id === r.name).length} found — check your recipe.discover result\n\n` +
+            `IMPORTANT: main_assignments[] MUST use catalog recipe names from recipe.search. Do NOT use discover candidates or invented names for main_assignments.`
+          : '\n\nNo catalog recipes found this session. Call recipe.search first before composing the plan.';
+        messages.push({
+          role: 'user',
+          content: `You stopped without calling plan.compose. Text output is NOT a valid plan — the system only accepts a plan.compose tool call. Please call plan.compose now with the complete weekly plan tree (main_assignments + days[].slots[].variations).${recipeListText}`,
+        });
+        continue;
       }
 
       for (const tc of response.toolCalls) {
@@ -429,35 +503,98 @@ export class DomainOrchestrator {
         try {
           result = await spec.fn(tc.arguments);
         } catch (err) {
-          // Non-plan.compose tool errors are surfaced as a JSON result so the
-          // LLM can adapt. plan.compose errors are fatal — no point continuing
-          // without a plan.
-          if (tc.name === 'plan.compose') throw err;
-          result = { error: err instanceof Error ? err.message : String(err) };
+          if (tc.name === 'plan.compose') {
+            // Log the actual args so we can see what non-UUID values the model sent.
+            this.logger.error(
+              {
+                requestId,
+                main_assignment_ids: (tc.arguments as { main_assignments?: Array<{ recipe_id?: unknown }> })?.main_assignments?.map((a) => a?.recipe_id),
+                plan_compose_args: JSON.stringify(tc.arguments).slice(0, 2000),
+              },
+              'plan.compose failed — feeding error back to model',
+            );
+            // Feed validation + recipe-not-found errors back as a tool result so
+            // the model can self-correct. Infrastructure errors (DB, Redis) are
+            // still fatal since the model can't fix those.
+            const isZodError = err != null && typeof err === 'object' && 'issues' in err;
+            const isRecipeNotFound = err instanceof Error && err.message.startsWith('Recipe not found');
+            if (!isZodError && !isRecipeNotFound) throw err;
+            const issues = isZodError
+              ? (err as { issues: Array<{ path: unknown[]; message: string }> }).issues
+              : [{ path: ['recipe_id'], message: (err as Error).message }];
+
+            // Extract valid UUIDs from the conversation history so the model
+            // has them explicitly in the error feedback and doesn't need to
+            // scan back through the tool results itself.
+            const recipeToolNames = new Set(['recipe.search', 'recipe.fetch', 'recipe.discover']);
+            const knownRecipes: Array<{ id: string; name: string; source: string }> = [];
+            for (const msg of messages) {
+              if (msg.role !== 'tool' || !recipeToolNames.has(msg.name ?? '')) continue;
+              try {
+                const data = JSON.parse(msg.content as string) as unknown;
+                const arr =
+                  data != null && typeof data === 'object' && 'results' in data && Array.isArray((data as { results: unknown }).results)
+                    ? (data as { results: unknown[] }).results
+                    : Array.isArray(data) ? data : [data];
+                for (const item of arr) {
+                  if (item != null && typeof item === 'object' && 'id' in item && 'name' in item) {
+                    knownRecipes.push({
+                      id: String((item as { id: unknown }).id),
+                      name: String((item as { name: unknown }).name),
+                      source: msg.name ?? 'recipe',
+                    });
+                  }
+                }
+              } catch {
+                // non-JSON tool result — skip
+              }
+            }
+
+            result = {
+              error: 'plan.compose failed — recipe_id not found in catalog',
+              invalid_paths: issues.map((i) => i.path.join('.')),
+              fix: [
+                'main_assignments[].recipe_id MUST be a recipe name from recipe.search or recipe.fetch results (catalog recipes only).',
+                'snack/extra slots that use recipe.discover results MUST use recipe_candidate_id, NOT recipe_id.',
+                'Do NOT invent recipe names. Only use names from your tool results this session.',
+              ].join(' '),
+              catalog_recipe_names: knownRecipes.filter((r) => r.source !== 'recipe.discover').map((r) => r.name),
+              discover_candidate_names: knownRecipes.filter((r) => r.source === 'recipe.discover').map((r) => r.name),
+            };
+          } else {
+            result = { error: err instanceof Error ? err.message : String(err) };
+          }
         }
 
         if (tc.name === 'plan.compose') {
           // On planner.bad_output rate spike, see
           // _bmad-output/implementation-artifacts/planner-prompt-rollback.md
-          const parseResult = PlanComposeTreeOutputSchema.safeParse(result);
-          if (!parseResult.success) {
-            try {
-              await this.auditService.write({
-                event_type: 'planner.bad_output',
-                household_id: householdId,
-                request_id: requestId,
-                metadata: {
-                  agent: 'planner',
-                  weekOf,
-                  zodIssues: parseResult.error.issues,
-                },
-              });
-            } catch {
-              // audit write failure must not suppress the schema error
+          //
+          // If result is an error object (input-validation failure fed back to
+          // the model for self-correction), skip output parsing — the model
+          // will see the error and retry.
+          const isErrorResult = result != null && typeof result === 'object' && 'error' in result;
+          if (!isErrorResult) {
+            const parseResult = PlanComposeTreeOutputSchema.safeParse(result);
+            if (!parseResult.success) {
+              try {
+                await this.auditService.write({
+                  event_type: 'planner.bad_output',
+                  household_id: householdId,
+                  request_id: requestId,
+                  metadata: {
+                    agent: 'planner',
+                    weekOf,
+                    zodIssues: parseResult.error.issues,
+                  },
+                });
+              } catch {
+                // audit write failure must not suppress the schema error
+              }
+              throw parseResult.error;
             }
-            throw parseResult.error;
+            planComposeResult = parseResult.data;
           }
-          planComposeResult = parseResult.data;
         }
 
         messages.push({
@@ -472,6 +609,15 @@ export class DomainOrchestrator {
     }
 
     if (planComposeResult === null) {
+      // Write tool trace to Redis for debugging (expires in 30 min).
+      try {
+        await this.redis.set(
+          `lumi:debug:tool-trace:${requestId}`,
+          JSON.stringify(toolTrace),
+          'EX',
+          1800,
+        );
+      } catch { /* non-fatal */ }
       throw new Error(
         `planWeek: planner agent did not call plan.compose within ${String(MAX_PLAN_ITERATIONS)} iterations (householdId=${householdId}, weekOf=${weekOf})`,
       );

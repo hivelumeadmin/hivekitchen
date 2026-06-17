@@ -7,14 +7,24 @@ import {
   TextOnboardingFinalizeResponseSchema,
   type ChipConfig,
 } from '@hivekitchen/contracts';
-import type { BagCompositionPattern } from '@hivekitchen/types';
+import type { BagCompositionPattern, KitchenMap } from '@hivekitchen/types';
 import { hkFetch, HkApiError } from '@/lib/fetch.js';
+import { useAuthStore } from '@/stores/auth.store.js';
 import { ChoiceChip } from './components/ChoiceChip.js';
 import { HintChip } from './components/HintChip.js';
 import { SkipChip } from './components/SkipChip.js';
 
 type Turn = { id: string; role: 'lumi' | 'user'; content: string };
 const GREETING_TURN_ID = 'greeting';
+
+// M1 children capture — accumulated from each M1 user message as evidence-gated
+// extraction fires. 'capturing' grows turn-by-turn during the M1 interview;
+// 'captured' is locked when the agent advances out of m1_table. On resume the
+// effect below reconstructs from stored turns using the same evidence function.
+type M1ChildrenCaptureState =
+  | { state: 'none' }
+  | { state: 'capturing'; children: ChildInfo[] }
+  | { state: 'captured'; children: ChildInfo[] };
 
 // Slice 2.5-s6 — M2 capture state for the KitchenProfilePanel safety card.
 // 'none' is the bootstrap state (M2 not yet reached); 'capturing' is set the
@@ -24,7 +34,9 @@ type M2CaptureState =
   | { state: 'none' }
   | { state: 'capturing' }
   | { state: 'all-clear' }
-  | { state: 'declared'; chips: Array<{ key: string; label: string }> };
+  | { state: 'declared'; chips: Array<{ key: string; label: string }> }
+  // Resumed past M2 — chip labels not available; suppress legacy regex extraction.
+  | { state: 'preferences-noted' };
 
 // Slice 2.5-s7 — M3 taste capture state. M3 is OPTIONAL; 'skipped' is the
 // terminal state when the parent taps the Skip chip. 'partial' is set when
@@ -73,6 +85,9 @@ const MOMENT_CONFIG: Record<string, { number: number; name: string }> = {
 export interface OnboardingTextProps {
   onFinalized?: () => void;
   initialTurns?: Array<{ id: string; role: 'lumi' | 'user'; content: string }>;
+  initialHouseholdDisplayName?: string | null;
+  initialMomentKey?: string | null;
+  initialChipConfig?: ChipConfig | null;
 }
 
 // ─── SVG icons ───────────────────────────────────────────────────────────────
@@ -165,6 +180,13 @@ function IcoCheck({ cls }: { cls: string }) {
     </svg>
   );
 }
+function IcoRefresh({ cls }: { cls: string }) {
+  return (
+    <svg className={cls} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.75}>
+      <path strokeLinecap="round" strokeLinejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0l3.181 3.183a8.25 8.25 0 0013.803-3.7M4.031 9.865a8.25 8.25 0 0113.803-3.7l3.181 3.182m0-4.991v4.99" />
+    </svg>
+  );
+}
 
 // ─── Profile panel ────────────────────────────────────────────────────────────
 
@@ -209,117 +231,90 @@ function detectTopics(turns: Turn[]): Record<TopicKey, boolean> {
 
 interface ChildInfo { name: string; age?: number }
 
-// Common words that match name-like patterns but aren't names
-const NAME_STOP_WORDS = new Set([
-  // pronouns / determiners
-  'she', 'he', 'they', 'it', 'we', 'my', 'your', 'our', 'the', 'that', 'this',
-  'these', 'those', 'them', 'their', 'his', 'her',
-  // conjunctions / prepositions (short ones omitted from the original set were
-  // being extracted by the "noted/have" echo heuristic — e.g. "noted down",
-  // "have in", "have on", "added up")
-  'and', 'but', 'or', 'so', 'for', 'with', 'from', 'in', 'into', 'onto', 'about',
-  'after', 'before', 'during', 'over', 'under', 'through', 'between',
-  'down', 'up', 'out', 'off', 'on', 'by', 'at', 'to', 'of', 'no', 'go',
-  // verbs
-  'is', 'are', 'was', 'has', 'had', 'have', 'been', 'will', 'can', 'did',
-  // numbers as words
-  'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten',
-  // domain stop words
-  'lumi', 'kitchen', 'school', 'food', 'lunch', 'dinner', 'monday', 'tuesday',
-  'wednesday', 'thursday', 'friday', 'saturday', 'sunday',
-  // common non-name words that could appear after "added"/"noted"
-  'that', 'some', 'any', 'all', 'both', 'more', 'most', 'other', 'such',
-  'information', 'details', 'notes', 'profile', 'household', 'family',
-  'allergy', 'allergen', 'preference', 'diet', 'cultural',
-  // M4 bag-composition words — Lumi echoes these when confirming the bag
-  // pattern ("I've noted Main and snack") which would otherwise be parsed
-  // as child names by the "added/noted" echo heuristic below.
-  'main', 'mains', 'meal', 'meals', 'snack', 'snacks', 'sides', 'extra', 'extras', 'full', 'bag', 'only', 'plus',
-  // M5 control words
-  'fewer', 'swap', 'override',
-  // Common Lumi acknowledgement words and sentence-starters. These must be
-  // blocked because turns are joined with '\n', so the echo heuristic
-  // (/\b(?:noted|have)\s+([A-Za-z]+)/) can match across turn boundaries —
-  // e.g. a Lumi turn ending "I've noted" + next turn starting "Got it!" →
-  // "noted\nGot" → "Got" extracted as a child name.
-  'done', 'set', 'saved', 'great', 'okay', 'yes', 'got', 'sure', 'thanks',
-  'perfect', 'wonderful', 'lovely', 'sounds', 'right', 'absolutely', 'let',
-  'now', 'well', 'good', 'nice', 'cool', 'noted',
-  // Allergen words — Lumi echoes these after M2 ("Noted, peanut and tree nut")
-  // which would otherwise be parsed as child names by the echo heuristic.
-  'peanut', 'peanuts', 'nut', 'nuts', 'tree', 'dairy', 'milk', 'egg', 'eggs',
-  'wheat', 'gluten', 'soy', 'soya', 'sesame', 'shellfish', 'fish', 'allergies',
-  // Indefinite pronouns — "we have everything covered" fires the echo heuristic
-  // and extracts "everything" as a child name without this guard.
-  'everything', 'anything', 'something', 'nothing', 'everyone', 'anyone', 'someone',
-  // Food/dish words — Lumi echoes M5 favourites ("I've noted Chicken Burger, Beef Burger…")
-  // which fires the "noted" echo heuristic and extracts the first word as a child name.
-  'chicken', 'beef', 'lamb', 'pork', 'burger', 'burgers', 'grilled', 'cheese', 'sausage',
-  'shawarma', 'biriyani', 'biryani', 'fried', 'slider', 'sliders', 'wrap', 'wraps',
-  'taco', 'tacos', 'sushi', 'curry', 'stew', 'bread', 'salad', 'soup', 'seafood',
-  'pizza', 'toast', 'noodles', 'rice', 'nuggets', 'panini',
-]);
+// Hard block — tokens that should never be treated as child names regardless of
+// context. Keep this tiny: the real protection is evidence-gating, not blocking.
+const HARD_INVALID_NAMES = new Set(['lumi', 'hivekitchen', 'selected', 'chips', 'noted', 'lunch', 'named', 'called']);
 
-function extractChildren(turns: Turn[]): ChildInfo[] {
-  // Search ALL turns — Lumi echoes names back, making them more reliably detectable
-  const allText = turns.map((t) => t.content).join('\n');
+// Extracts children from a SINGLE user message using evidence-gated patterns.
+// Only fires when there is positive evidence (name+age co-occurrence or an
+// explicit relationship phrase). Never scans conversation history or Lumi turns.
+//
+// Three evidence groups, ordered by signal strength:
+//   1. Name + age signals  — name paired with an explicit age indicator
+//   2. Relationship phrases — name appears inside a family-establishing phrase
+//   3. Correction patterns  — user corrects a previously stated name or age
+function extractChildrenFromMessage(message: string): ChildInfo[] {
+  // Strip chip selection brackets — not natural language
+  const text = message.replace(/\[Chips selected:[^\]]*\]/g, '').trim();
+  if (!text) return [];
+
   const found: ChildInfo[] = [];
   const seen = new Set<string>();
-
   const isValidAge = (n: number) => n >= 1 && n <= 18;
 
   const add = (rawName: string, age?: number) => {
     const name = rawName.charAt(0).toUpperCase() + rawName.slice(1).toLowerCase();
     if (
       name.length >= 2 &&
+      /^[A-Za-z]+$/.test(name) &&
       !seen.has(name.toLowerCase()) &&
-      !NAME_STOP_WORDS.has(name.toLowerCase()) &&
-      /^[A-Za-z]+$/.test(name)
+      !HARD_INVALID_NAMES.has(name.toLowerCase())
     ) {
       found.push({ name, age: age !== undefined && isValidAge(age) ? age : undefined });
       seen.add(name.toLowerCase());
     }
   };
 
-  // "Adi 14 and Ani 11" — two named children with bare space-separated ages
-  for (const m of allText.matchAll(/\b([A-Za-z]{2,15})\s+(\d{1,2})\s+and\s+([A-Za-z]{2,15})\s+(\d{1,2})\b/gi)) {
+  // ── Group 1: Name + age signals ──────────────────────────────────────────
+  // A token is accepted as a name only when it co-occurs with an explicit age.
+
+  // "Adi 14 and Ani 11"
+  for (const m of text.matchAll(/\b([A-Za-z]{2,15})\s+(\d{1,2})\s+and\s+([A-Za-z]{2,15})\s+(\d{1,2})\b/gi)) {
     add(m[1]!, Number(m[2]));
     add(m[3]!, Number(m[4]));
   }
-  // "Maya (8)" or "maya(8)"
-  for (const m of allText.matchAll(/\b([A-Za-z]{2,15})\s*\((\d{1,2})\)/g)) {
-    add(m[1]!, Number(m[2]));
-  }
-  // "8-year-old Maya"
-  for (const m of allText.matchAll(/\b(\d{1,2})[- ]year[- ]old\s+([A-Za-z]{2,15})/gi)) {
-    add(m[2]!, Number(m[1]));
-  }
-  // "Maya is 8" / "Maya who is 8" / "Maya who's 8" / "Maya aged 8"
-  for (const m of allText.matchAll(/\b([A-Za-z]{2,15}),?\s+(?:who\s+)?(?:is|was|aged|who's)\s+(\d{1,2})\b/gi)) {
-    add(m[1]!, Number(m[2]));
-  }
-  // "Maya, 8" or "Maya - 8" or "Maya – 8" (name then age with separator)
-  for (const m of allText.matchAll(/\b([A-Za-z]{2,15})\s*[,\-–]\s*(\d{1,2})\b/g)) {
+  // "Maya (8)", "Maya, 8", "Maya - 8", "Maya – 8"
+  for (const m of text.matchAll(/\b([A-Za-z]{2,15})\s*[(,\-–]\s*(\d{1,2})\b/g)) {
     const age = Number(m[2]);
     if (isValidAge(age)) add(m[1]!, age);
   }
-  // "8 yo Maya" / "8yo Maya"
-  for (const m of allText.matchAll(/\b(\d{1,2})\s*yo\s+([A-Za-z]{2,15})/gi)) {
+  // "Maya is 8" / "Maya who is 8" / "Maya aged 8" / "Maya who's 8"
+  for (const m of text.matchAll(/\b([A-Za-z]{2,15}),?\s+(?:who\s+)?(?:is|was|aged|who's)\s+(\d{1,2})\b/gi)) {
+    add(m[1]!, Number(m[2]));
+  }
+  // "8-year-old Maya" / "8 year old Maya" / "8yo Maya" / "8 yo Maya"
+  for (const m of text.matchAll(/\b(\d{1,2})\s*(?:year[- ]old|yo)\s+([A-Za-z]{2,15})\b/gi)) {
     add(m[2]!, Number(m[1]));
   }
-  // "my daughter/son/child Maya" or "daughter named Maya"
-  for (const m of allText.matchAll(/\b(?:daughter|son|child|kid|girl|boy)\s+(?:named?\s+)?([A-Za-z]{2,15})\b/gi)) {
+
+  // ── Group 2: Relationship phrases ────────────────────────────────────────
+  // The phrase itself establishes child context, so age is not required.
+
+  // "my son/daughter/child/kid [named/called] Name" / "daughter named Maya"
+  for (const m of text.matchAll(/\b(?:my\s+)?(?:daughter|son|child|kid|girl|boy)\s+(?:named?\s+|called\s+)?([A-Za-z]{2,15})\b/gi)) {
     add(m[1]!);
   }
-  // "I have two kids, Maya and Tom" / "kids are Maya and Tom" — names after "and"/"," in child context
-  for (const m of allText.matchAll(/\b(?:kids?|children|sons?|daughters?)\s+(?:are|is|named?|called)?\s*([A-Za-z]{2,15})(?:\s+and\s+([A-Za-z]{2,15}))?/gi)) {
+  // "kids/children are/named Name [and Name]"
+  for (const m of text.matchAll(/\b(?:kids?|children|sons?|daughters?)\s+(?:are|is|named?|called)?\s*([A-Za-z]{2,15})(?:\s+and\s+([A-Za-z]{2,15}))?/gi)) {
     if (m[1]) add(m[1]!);
     if (m[2]) add(m[2]!);
   }
-  // Lumi confirmation echoes: "added Maya to your profile" / "noted Maya and Tom"
-  for (const m of allText.matchAll(/\b(?:added|noted|recorded|have)\s+([A-Za-z]{2,15})(?:\s+and\s+([A-Za-z]{2,15}))?\b/gi)) {
-    if (m[1] && !NAME_STOP_WORDS.has(m[1]!.toLowerCase())) add(m[1]!);
-    if (m[2] && !NAME_STOP_WORDS.has(m[2]!.toLowerCase())) add(m[2]!);
+  // "I have two kids, Name and Name" / "we have children Name and Name"
+  for (const m of text.matchAll(/\b(?:have|got)\s+(?:\w+\s+)?(?:kids?|children|sons?|daughters?)\s*[,\s]+([A-Za-z]{2,15})(?:\s+and\s+([A-Za-z]{2,15}))?/gi)) {
+    if (m[1]) add(m[1]!);
+    if (m[2]) add(m[2]!);
+  }
+
+  // ── Group 3: Correction patterns ────────────────────────────────────────
+  // Only apply when the user is explicitly correcting a prior answer.
+
+  // "not Aria, it is/it's Arya" / "not Arya, Aria"
+  for (const m of text.matchAll(/\bnot\s+[A-Za-z]{2,15}\s*,\s*(?:it'?s?\s+)?([A-Za-z]{2,15})\b/gi)) {
+    add(m[1]!);
+  }
+  // "Name is actually N" (age correction)
+  for (const m of text.matchAll(/\b([A-Za-z]{2,15})\s+is\s+actually\s+(\d{1,2})\b/gi)) {
+    add(m[1]!, Number(m[2]));
   }
 
   return found;
@@ -414,6 +409,25 @@ function extractCulturalPrefs(turns: Turn[]): string[] {
     if (re.test(allText)) items.push(label);
   }
   return items;
+}
+
+// ─── M2 chip key constants (mirrored from onboarding.service.ts momentToChipConfig)
+// Used both for allergen extraction and for reconstructing m2AllergenCapture
+// state from stored turns during resume or free-text-only M2 scenarios.
+const M2_ALLERGEN_KEYS = new Set([
+  'none', 'peanut', 'tree_nut', 'dairy', 'egg', 'soy', 'wheat', 'fish', 'shellfish', 'sesame',
+]);
+const M2_ALLERGEN_LABELS: Record<string, string> = {
+  peanut: 'Peanut', tree_nut: 'Tree nuts', dairy: 'Dairy', egg: 'Eggs',
+  soy: 'Soy', wheat: 'Wheat / gluten', fish: 'Fish', shellfish: 'Shellfish', sesame: 'Sesame',
+};
+const MOMENTS_PAST_M2 = new Set(['m3_taste', 'm4_bag', 'm5_starting_line', 'summary', 'finalized']);
+
+// Parses "[Chips selected: key1, key2]" prefix from a user turn message.
+function parseBracketChipKeys(msg: string): string[] {
+  const m = /\[Chips selected:\s*([^\]]+)\]/.exec(msg);
+  if (!m) return [];
+  return m[1]!.split(',').map((k) => k.trim()).filter(Boolean);
 }
 
 // ─── Allergen extraction ──────────────────────────────────────────────────────
@@ -519,7 +533,12 @@ function extractStartingLineDishes(turns: Turn[]): string[] {
         m5Active = true;
       }
     } else if (m5Active) {
-      const items = content.split(/[,\n]+/).map((s) => s.trim()).filter((s) => s.length >= 2 && s.length <= 50 && !s.includes('?'));
+      // Strip chip selection brackets before splitting — M5 chip keys are UUIDs
+      // that would otherwise appear verbatim as "dish names" in the panel.
+      const cleanContent = content.replace(/\[Chips selected:[^\]]*\]/g, '').trim();
+      const items = cleanContent
+        ? cleanContent.split(/[,\n]+/).map((s) => s.trim()).filter((s) => s.length >= 2 && s.length <= 50 && !s.includes('?'))
+        : [];
       for (const item of items) {
         const display = item.charAt(0).toUpperCase() + item.slice(1);
         if (!seen.has(display.toLowerCase())) {
@@ -552,7 +571,7 @@ function extractHouseholdName(turns: Turn[]): string | null {
   // Match "the Menons Kitchen" or "the Smiths family" — allow one optional extra
   // capitalized word before the trailing keyword, and match keyword case-insensitively
   // so "Kitchen" (capitalized as part of a household name) is found.
-  const phrase = allLumi.match(/the\s+([A-Z][a-zA-Z]*(?: [A-Z][a-zA-Z]*)? (?:family|kitchen|Family|Kitchen))/)?.[1];
+  const phrase = allLumi.match(/the\s+([A-Z][a-zA-Z]*(?: [A-Z][a-zA-Z]*)? (?:family|kitchen|Family|Kitchen))/i)?.[1];
   return phrase ?? null;
 }
 
@@ -561,32 +580,53 @@ function extractHouseholdName(turns: Turn[]): string | null {
 function KitchenProfilePanel({
   turns,
   currentMomentKey,
+  m1ChildrenCapture,
   m2AllergenCapture,
   m3TasteCapture,
   m4BagCapture,
   m5StartingLine,
+  householdDisplayName,
+  kitchenMap,
+  onSync,
   isSummary,
   isFinalized,
 }: {
   turns: Turn[];
   currentMomentKey: string | null;
+  m1ChildrenCapture: M1ChildrenCaptureState;
   m2AllergenCapture: M2CaptureState;
   m3TasteCapture: M3TasteCaptureState;
   m4BagCapture: M4BagCaptureState;
   m5StartingLine: M5StartingLineState;
+  householdDisplayName: string | null;
+  kitchenMap?: KitchenMap | null;
+  onSync?: () => Promise<void>;
   // Slice 2.5-s10 — summary/finalized moments surface foliage 100% bar.
   // Optional so legacy call sites continue to render the progress footer.
   isSummary?: boolean;
   isFinalized?: boolean;
 }) {
+  const [syncing, setSyncing] = useState(false);
+  const handleSync = async () => {
+    if (!onSync || syncing) return;
+    setSyncing(true);
+    try { await onSync(); } finally { setSyncing(false); }
+  };
   const topics = detectTopics(turns);
-  const children = extractChildren(turns);
+  // Prefer kitchenMap children (server-authoritative) over client-side extraction.
+  const children: ChildInfo[] = kitchenMap?.children && kitchenMap.children.length > 0
+    ? kitchenMap.children.map((c) => ({ name: c.name }))
+    : (m1ChildrenCapture.state !== 'none' ? m1ChildrenCapture.children : []);
   const allergyProfiles = extractAllergyProfiles(turns, children);
   const foodPrefs = extractFoodPreferences(turns);
   const schedule = extractSchedule(turns);
   const culturalPrefs = extractCulturalPrefs(turns);
-  const householdName = extractHouseholdName(turns);
-  const startingLineDishes = extractStartingLineDishes(turns);
+  // Prefer server-provided display_name over regex heuristic.
+  const householdName = kitchenMap?.household.display_name ?? householdDisplayName ?? extractHouseholdName(turns);
+  // Prefer kitchenMap favorite_lunches over transcript regex extraction.
+  const startingLineDishes = kitchenMap?.favorite_lunches && kitchenMap.favorite_lunches.length > 0
+    ? kitchenMap.favorite_lunches.map((f) => f.item)
+    : extractStartingLineDishes(turns);
   const coveredCount = TOPIC_CONFIG.filter((t) => topics[t.key]).length;
   const questionsComplete = Math.round((coveredCount / TOPIC_CONFIG.length) * 8);
 
@@ -616,7 +656,21 @@ function KitchenProfilePanel({
     <div className="flex flex-col h-full overflow-hidden">
       {/* Header */}
       <div className="shrink-0 px-7 pt-8 pb-5">
-        <h2 className="font-serif text-[22px] font-normal leading-tight text-fg">Your Kitchen Profile</h2>
+        <div className="flex items-start justify-between">
+          <h2 className="font-serif text-[22px] font-normal leading-tight text-fg">Your Kitchen Profile</h2>
+          {onSync && (
+            <button
+              type="button"
+              onClick={() => void handleSync()}
+              disabled={syncing}
+              title="Sync kitchen profile"
+              aria-label="Sync kitchen profile"
+              className="mt-0.5 flex h-7 w-7 items-center justify-center rounded-full text-fg-muted/40 transition-colors hover:text-amber disabled:cursor-not-allowed"
+            >
+              <IcoRefresh cls={['h-4 w-4', syncing ? 'animate-spin text-amber' : ''].join(' ')} />
+            </button>
+          )}
+        </div>
         <p className="mt-2 flex items-center gap-1.5 font-sans text-[11px] text-amber">
           <span className="h-1.5 w-1.5 rounded-full bg-amber" />
           Building as we talk…
@@ -667,6 +721,27 @@ function KitchenProfilePanel({
           // Moment 2 (state !== 'none') the safety card reflects their actual
           // chip selections instead of heuristics on the transcript.
           if (key === 'allergens' && m2AllergenCapture.state !== 'none') {
+            // Gather allergens from kitchenMap when available (authoritative source).
+            // household.declared_allergens = household-wide (child_id=null rows in household_allergens).
+            // kitchenMap.allergens = per-child rows (child_id NOT NULL) — primary source.
+            // children[i].declared_allergens = denormalised copy on children table, may be empty.
+            const mapHouseholdAllergens = kitchenMap?.household.declared_allergens ?? [];
+            const childById = new Map((kitchenMap?.children ?? []).map((c) => [c.id, c.name]));
+            const seen = new Set<string>();
+            const mapChildAllergens: Array<{ childName: string; allergen: string }> = [];
+            for (const a of kitchenMap?.allergens ?? []) {
+              const childName = childById.get(a.child_id) ?? a.child_id;
+              const key = `${childName.toLowerCase()}::${a.allergen.toLowerCase()}`;
+              if (!seen.has(key)) { seen.add(key); mapChildAllergens.push({ childName, allergen: a.allergen }); }
+            }
+            for (const c of kitchenMap?.children ?? []) {
+              for (const a of c.declared_allergens) {
+                const key = `${c.name.toLowerCase()}::${a.toLowerCase()}`;
+                if (!seen.has(key)) { seen.add(key); mapChildAllergens.push({ childName: c.name, allergen: a }); }
+              }
+            }
+            const hasMapData = mapHouseholdAllergens.length > 0 || mapChildAllergens.length > 0;
+
             return (
               <div
                 key={key}
@@ -690,17 +765,82 @@ function KitchenProfilePanel({
                   </div>
                 )}
                 {m2AllergenCapture.state === 'declared' && (
-                  <div className="flex flex-wrap gap-1.5">
-                    {m2AllergenCapture.chips.map(({ key: chipKey, label: chipLabel }) => (
-                      <span
-                        key={chipKey}
-                        className="flex items-center gap-1 rounded-md bg-safety-cleared-fill px-2.5 py-1 font-sans text-xs text-safety-cleared"
-                      >
-                        <IcoShield cls="h-3 w-3 shrink-0" />
-                        {chipLabel}
-                      </span>
-                    ))}
-                  </div>
+                  hasMapData ? (
+                    <div className="flex flex-col gap-2">
+                      {mapHouseholdAllergens.length > 0 && (
+                        <div className="flex flex-wrap gap-1.5">
+                          {mapHouseholdAllergens.map((a) => (
+                            <span
+                              key={a}
+                              className="flex items-center gap-1 rounded-md bg-safety-cleared-fill px-2.5 py-1 font-sans text-xs text-safety-cleared"
+                            >
+                              <IcoShield cls="h-3 w-3 shrink-0" />
+                              {a}
+                            </span>
+                          ))}
+                        </div>
+                      )}
+                      {mapChildAllergens.length > 0 && (
+                        <div className="flex flex-col gap-1.5">
+                          {mapChildAllergens.map(({ childName, allergen }) => (
+                            <div key={childName + allergen} className="flex items-center gap-1.5">
+                              <span className="font-sans text-[10px] font-semibold text-fg-muted/60">{childName}</span>
+                              <span className="flex items-center gap-1 rounded-md bg-safety-cleared-fill px-2.5 py-1 font-sans text-xs text-safety-cleared">
+                                <IcoShield cls="h-3 w-3 shrink-0" />
+                                {allergen}
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  ) : (
+                    <div className="flex flex-wrap gap-1.5">
+                      {m2AllergenCapture.chips.map(({ key: chipKey, label: chipLabel }) => (
+                        <span
+                          key={chipKey}
+                          className="flex items-center gap-1 rounded-md bg-safety-cleared-fill px-2.5 py-1 font-sans text-xs text-safety-cleared"
+                        >
+                          <IcoShield cls="h-3 w-3 shrink-0" />
+                          {chipLabel}
+                        </span>
+                      ))}
+                    </div>
+                  )
+                )}
+                {m2AllergenCapture.state === 'preferences-noted' && (
+                  hasMapData ? (
+                    <div className="flex flex-col gap-2">
+                      {mapHouseholdAllergens.length > 0 && (
+                        <div className="flex flex-wrap gap-1.5">
+                          {mapHouseholdAllergens.map((a) => (
+                            <span
+                              key={a}
+                              className="flex items-center gap-1 rounded-md bg-safety-cleared-fill px-2.5 py-1 font-sans text-xs text-safety-cleared"
+                            >
+                              <IcoShield cls="h-3 w-3 shrink-0" />
+                              {a}
+                            </span>
+                          ))}
+                        </div>
+                      )}
+                      {mapChildAllergens.length > 0 && (
+                        <div className="flex flex-col gap-1.5">
+                          {mapChildAllergens.map(({ childName, allergen }) => (
+                            <div key={childName + allergen} className="flex items-center gap-1.5">
+                              <span className="font-sans text-[10px] font-semibold text-fg-muted/60">{childName}</span>
+                              <span className="flex items-center gap-1 rounded-md bg-safety-cleared-fill px-2.5 py-1 font-sans text-xs text-safety-cleared">
+                                <IcoShield cls="h-3 w-3 shrink-0" />
+                                {allergen}
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  ) : (
+                    <p className="font-sans text-xs text-fg-muted">Allergens on file</p>
+                  )
                 )}
               </div>
             );
@@ -935,11 +1075,48 @@ function KitchenProfilePanel({
                 Skipped for now — you can tell Lumi anytime later.
               </p>
             )}
-            {m3TasteCapture.state === 'partial' && (
-              <p className="font-sans text-xs italic text-foliage">
-                Noted — Lumi is building this in the background.
-              </p>
-            )}
+            {m3TasteCapture.state === 'partial' && (() => {
+              const prefs = kitchenMap?.food_preferences ?? [];
+              const liked = prefs.filter((p) => p.valence === 'loves' || p.valence === 'likes');
+              const disliked = prefs.filter((p) => p.valence === 'dislikes' || p.valence === 'refuses');
+              if (prefs.length === 0) {
+                return (
+                  <p className="font-sans text-xs italic text-foliage">
+                    Noted — Lumi is building this in the background.
+                  </p>
+                );
+              }
+              return (
+                <div className="flex flex-col gap-2">
+                  {liked.length > 0 && (
+                    <div className="flex flex-wrap gap-1">
+                      {liked.slice(0, 8).map((p) => (
+                        <span
+                          key={`${p.valence}-${p.item}-${p.child_id ?? 'hh'}`}
+                          className="rounded-md px-2 py-0.5 font-sans text-[11px]"
+                          style={{ background: 'color-mix(in srgb, var(--foliage) 14%, var(--surface-2, var(--surface)))', color: 'var(--foliage)' }}
+                        >
+                          ✓ {p.item}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                  {disliked.length > 0 && (
+                    <div className="flex flex-wrap gap-1">
+                      {disliked.slice(0, 4).map((p) => (
+                        <span
+                          key={`${p.valence}-${p.item}-${p.child_id ?? 'hh'}`}
+                          className="rounded-md px-2 py-0.5 font-sans text-[11px] text-fg-muted/60"
+                          style={{ background: 'var(--surface)' }}
+                        >
+                          ✗ {p.item}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
           </div>
         ) : null}
 
@@ -982,9 +1159,38 @@ function KitchenProfilePanel({
                   <IcoLunchBag cls="h-4 w-4 shrink-0 text-amber-soft" />
                   <h3 className="font-serif text-base text-fg">What goes in the bag</h3>
                 </div>
-                <p className="font-sans text-xs italic text-foliage">
-                  Saved — Lumi knows how lunch travels.
-                </p>
+                {(() => {
+                  const childrenWithBag = (kitchenMap?.children ?? []).filter(
+                    (c) => c.bag_composition_pattern !== null,
+                  );
+                  if (childrenWithBag.length === 0) {
+                    return (
+                      <p className="font-sans text-xs italic text-foliage">
+                        Saved — Lumi knows how lunch travels.
+                      </p>
+                    );
+                  }
+                  const patternLabel: Record<string, string> = {
+                    main_only: 'Main only',
+                    main_plus_snack: 'Main + Snack',
+                    main_plus_extra: 'Main + Extra',
+                    main_plus_snack_plus_extra: 'Main + Snack + Extra',
+                  };
+                  return (
+                    <div className="flex flex-col gap-1.5">
+                      {childrenWithBag.map((c) => (
+                        <div key={c.id} className="flex items-center gap-1.5">
+                          <span className="font-sans text-[10px] font-semibold text-fg-muted/60">
+                            {c.name}
+                          </span>
+                          <span className="font-sans text-xs text-foliage">
+                            {patternLabel[c.bag_composition_pattern!] ?? c.bag_composition_pattern}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  );
+                })()}
               </>
             )}
           </div>
@@ -1099,8 +1305,9 @@ function KitchenProfilePanel({
 // GET /v1/onboarding/state) and the prior real turns render in order beneath
 // it. Without the prop the component renders the fresh-start transcript, so
 // the existing 2-7 test suite and standalone usage are unaffected.
-export function OnboardingText({ onFinalized, initialTurns }: OnboardingTextProps = {}) {
+export function OnboardingText({ onFinalized, initialTurns, initialHouseholdDisplayName, initialMomentKey, initialChipConfig }: OnboardingTextProps = {}) {
   const navigate = useNavigate();
+  const householdId = useAuthStore((s) => s.user?.current_household_id ?? null);
   const [turns, setTurns] = useState<Turn[]>(() => {
     const seed: Turn[] = [{ id: GREETING_TURN_ID, role: 'lumi', content: OPENING_GREETING }];
     if (initialTurns !== undefined) {
@@ -1126,13 +1333,18 @@ export function OnboardingText({ onFinalized, initialTurns }: OnboardingTextProp
   // hints are wrong context. Start null so no stale chips show; the correct
   // chip_config arrives on the first submitted turn.
   const [chipConfig, setChipConfig] = useState<ChipConfig | null>(
-    initialTurns !== undefined ? null : M1_HINT_CHIPS,
+    initialTurns !== undefined ? (initialChipConfig ?? null) : M1_HINT_CHIPS,
   );
   const [chipSelections, setChipSelections] = useState<string[]>([]);
   // Slice 2.5-s5 — server-emitted moment key (e.g. 'm1_table'). Starts null
   // until the first turn response arrives; in resume mode the panel falls
   // back to the topic-detection heuristic until the next turn fires.
-  const [currentMomentKey, setCurrentMomentKey] = useState<string | null>(null);
+  const [currentMomentKey, setCurrentMomentKey] = useState<string | null>(
+    initialTurns !== undefined ? (initialMomentKey ?? null) : null,
+  );
+  // M1 children capture — accumulated from evidence-gated extraction on each M1
+  // user message. Held outside the panel so names survive after M1 is complete.
+  const [m1ChildrenCapture, setM1ChildrenCapture] = useState<M1ChildrenCaptureState>({ state: 'none' });
   // Slice 2.5-s6 — Moment 2 primary capture snapshot for the profile panel.
   // Held outside the panel so the chip-level info (labels chosen) survives
   // moments after the parent advances past M2.
@@ -1185,6 +1397,14 @@ export function OnboardingText({ onFinalized, initialTurns }: OnboardingTextProp
   // be a downgrade signal — it would be a transient drop or carry-forward
   // gap. We refuse to act on it.
   const [coldStartMode, setColdStartMode] = useState<boolean>(false);
+  // Real household display_name from the DB, surfaced by the turn response.
+  // Replaces the extractHouseholdName regex heuristic as the primary source.
+  // null until M2 (name is set by household.set_name during M1's tool calls,
+  // so the map read before M1's tools completes returns null for that turn).
+  const [householdDisplayName, setHouseholdDisplayName] = useState<string | null>(initialHouseholdDisplayName ?? null);
+  // Full kitchen-map snapshot fetched after each turn — authoritative source for
+  // the profile panel. Supersedes all client-side extraction heuristics.
+  const [kitchenMap, setKitchenMap] = useState<KitchenMap | null>(null);
   // Slice 2.6-s6 — tracks free-text dish submissions in cold-start M5. Separate
   // from m5StartingLine.count which only counts chip selections (always 0 in
   // cold-start mode where chip_config is null).
@@ -1219,16 +1439,70 @@ export function OnboardingText({ onFinalized, initialTurns }: OnboardingTextProp
     }
   }, [turns.length, isComplete]);
 
-  // Slice 2.5-s6 — when the agent advances into m2_safe for the first time,
-  // flip the safety card from 'none' (hidden waiting card) to 'capturing'
-  // (visible waiting card with "Waiting on your response…" copy). Subsequent
-  // moments do not roll back the capture state — once the parent has
-  // submitted, the card stays on the terminal state.
+  // M1 children — reconstruct from stored turns on resume (or when m1ChildrenCapture
+  // was never populated because the session started mid-way through). Only runs when
+  // state is still 'none' and the moment has advanced past M1. Scans non-chip user
+  // turns only (M1 is always free text; chip turns belong to M2+).
   useEffect(() => {
-    if (currentMomentKey === 'm2_safe' && m2AllergenCapture.state === 'none') {
-      setM2AllergenCapture({ state: 'capturing' });
+    if (m1ChildrenCapture.state !== 'none') return;
+    if (currentMomentKey === null || currentMomentKey === 'pre_start' || currentMomentKey === 'm1_table') return;
+
+    const merged: ChildInfo[] = [];
+    const seen = new Set<string>();
+    for (const turn of turns) {
+      if (turn.role !== 'user') continue;
+      if (/\[Chips selected:/.test(turn.content)) continue; // M2+ chip turns
+      for (const child of extractChildrenFromMessage(turn.content)) {
+        if (!seen.has(child.name.toLowerCase())) {
+          merged.push(child);
+          seen.add(child.name.toLowerCase());
+        }
+      }
     }
-  }, [currentMomentKey, m2AllergenCapture.state]);
+    setM1ChildrenCapture({ state: 'captured', children: merged });
+  }, [currentMomentKey, m1ChildrenCapture.state, turns]);
+
+  // Slice 2.5-s6 — safety card state machine driven by currentMomentKey and turns.
+  // 'none' → 'capturing' when the agent enters m2_safe.
+  // 'none'|'capturing' → reconstructed terminal state when past M2:
+  //   - scan turns for a chip-bearing user turn whose keys are all M2 allergen keys
+  //   - 'all-clear' if 'none' key present, 'declared' if allergen keys present
+  //   - 'preferences-noted' fallback (free-text-only M2 or no chip turn found)
+  // This handles both resume (page reload mid-session) and active sessions where
+  // the parent completed M2 via free text without tapping chips.
+  useEffect(() => {
+    if (m2AllergenCapture.state !== 'none' && m2AllergenCapture.state !== 'capturing') return;
+
+    if (currentMomentKey === 'm2_safe') {
+      if (m2AllergenCapture.state === 'none') setM2AllergenCapture({ state: 'capturing' });
+      return;
+    }
+
+    if (!MOMENTS_PAST_M2.has(currentMomentKey ?? '')) return;
+
+    // Try to reconstruct M2 state from the stored turns. The M2 user turn is
+    // the only turn whose [Chips selected: ...] keys are all in M2_ALLERGEN_KEYS.
+    for (const turn of turns) {
+      if (turn.role !== 'user') continue;
+      const keys = parseBracketChipKeys(turn.content);
+      if (keys.length === 0 || !keys.every((k) => M2_ALLERGEN_KEYS.has(k))) continue;
+      if (keys.includes('none')) {
+        setM2AllergenCapture({ state: 'all-clear' });
+        return;
+      }
+      const chips = keys
+        .filter((k) => k !== 'none' && M2_ALLERGEN_LABELS[k] !== undefined)
+        .map((k) => ({ key: k, label: M2_ALLERGEN_LABELS[k]! }));
+      if (chips.length > 0) {
+        setM2AllergenCapture({ state: 'declared', chips });
+        return;
+      }
+    }
+
+    // No M2 chip turn found — allergens were declared via free text or the turn
+    // predates this chip system. Suppress the legacy regex extraction path.
+    setM2AllergenCapture({ state: 'preferences-noted' });
+  }, [currentMomentKey, m2AllergenCapture.state, turns]);
 
   // Slice 2.5-s7 — when the agent advances into m3_taste for the first time,
   // flip the taste card from 'none' (hidden) to 'capturing' (visible waiting
@@ -1268,6 +1542,28 @@ export function OnboardingText({ onFinalized, initialTurns }: OnboardingTextProp
     }
   }, [currentMomentKey]);
 
+  // Fire-and-forget after each turn: pull the authoritative kitchen-map so the
+  // panel reflects DB state rather than client-side heuristics. Silent failure
+  // keeps the panel on its best-effort heuristic data — onboarding flow is unaffected.
+  const fetchKitchenMap = useCallback(async () => {
+    if (!householdId) return;
+    try {
+      const map = await hkFetch<KitchenMap>(`/v1/households/${householdId}/kitchen-map`, { method: 'GET' });
+      setKitchenMap(map);
+    } catch {
+      // best-effort
+    }
+  }, [householdId]);
+
+  // On resume (initialTurns present), pre-populate kitchenMap so the profile
+  // panel shows authoritative DB data immediately instead of waiting for the
+  // parent to submit their first new turn.
+  const initialTurnCount = initialTurns?.length ?? 0;
+  useEffect(() => {
+    if (initialTurnCount === 0) return;
+    void fetchKitchenMap();
+  }, [fetchKitchenMap, initialTurnCount]);
+
   // Slice 2.5-s5 — extracted from handleSubmit so the form submit and the
   // SkipChip onClick share the same POST + optimistic-render + rollback path.
   // No duplication; both entry points snapshot their inputs and forward here.
@@ -1282,10 +1578,17 @@ export function OnboardingText({ onFinalized, initialTurns }: OnboardingTextProp
 
       // Optimistic transcript — when chips are present, render them as a
       // prefix on the user turn so the in-page history reflects what the
-      // backend will see. Mirrors the server-side serializer in
-      // apps/api/src/modules/onboarding/onboarding.routes.ts.
+      // backend will see. M5 chip keys are UUIDs; map to labels here so
+      // the history shows readable names. The server resolves UUIDs before
+      // DB write (onboarding.service.ts §m5 UUID resolution), so on reload
+      // the stored turn also has readable names. All other moments use
+      // human-readable keys (allergen slugs, bag patterns) and fall through
+      // to the key verbatim.
+      const chipLabels = chipSelectionsSnapshot.map(
+        (k) => chipConfig?.options?.find((o) => o.key === k)?.label ?? k,
+      );
       const chipPrefix = hasChipSelections
-        ? `[Chips selected: ${chipSelectionsSnapshot.join(', ')}]`
+        ? `[Chips selected: ${chipLabels.join(', ')}]`
         : '';
       const optimisticContent = hasChipSelections
         ? draftSnapshot.length > 0
@@ -1298,6 +1601,25 @@ export function OnboardingText({ onFinalized, initialTurns }: OnboardingTextProp
         content: optimisticContent,
       };
       setTurns((prev) => [...prev, optimisticUserTurn]);
+
+      // M1 — extract children from the current message immediately (optimistic).
+      // currentMomentKey is null on the very first turn (no API response yet) — the
+      // onboarding always starts in M1, so null is treated the same as 'm1_table'.
+      if (currentMomentKey === null || currentMomentKey === 'm1_table') {
+        const extracted = extractChildrenFromMessage(optimisticContent);
+        if (extracted.length > 0) {
+          setM1ChildrenCapture((prev) => {
+            const existing = prev.state !== 'none' ? prev.children : [];
+            const merged = [...existing];
+            for (const child of extracted) {
+              if (!merged.some((c) => c.name.toLowerCase() === child.name.toLowerCase())) {
+                merged.push(child);
+              }
+            }
+            return { state: 'capturing', children: merged };
+          });
+        }
+      }
 
       // Clear local draft + chip state immediately; rollback below if needed.
       setDraft('');
@@ -1328,6 +1650,19 @@ export function OnboardingText({ onFinalized, initialTurns }: OnboardingTextProp
           { id: parsed.lumi_turn_id, role: 'lumi', content: parsed.lumi_response },
         ]);
         setIsComplete(parsed.is_complete);
+        // M1 exit — lock the children list to 'captured' the moment the agent
+        // advances out of m1_table. Subsequent moments don't touch this state.
+        if (
+          (currentMomentKey === null || currentMomentKey === 'm1_table') &&
+          parsed.moment_key !== null &&
+          parsed.moment_key !== undefined &&
+          parsed.moment_key !== 'm1_table'
+        ) {
+          setM1ChildrenCapture((prev) => ({
+            state: 'captured',
+            children: prev.state !== 'none' ? prev.children : [],
+          }));
+        }
         // Slice 2.5-s6 — snapshot M2 chips for the profile-panel safety card
         // BEFORE chipConfig is reset by the new turn's chip_config. Uses the
         // chip selections + the *current* chipConfig (which describes M2's
@@ -1404,9 +1739,12 @@ export function OnboardingText({ onFinalized, initialTurns }: OnboardingTextProp
                 : prev,
             );
           }
-          // Slice 2.6-s6 — in cold-start mode chip_config is null, so addedCount
-          // is always 0. Count each successful turn as one declared dish instead.
-          if (coldStartMode && !advancedOutOfM5) {
+          // Slice 2.6-s6 — in normal cold-start mode chip_config is null, so
+          // addedCount is always 0 and we count each text turn as one dish.
+          // When chips become available mid-cold-start (catalog seeded late),
+          // chip taps are already counted via addedCount — skip the text-turn
+          // counter to avoid double-counting.
+          if (coldStartMode && !advancedOutOfM5 && addedCount === 0) {
             setColdStartDishCount((prev) => prev + 1);
           }
         }
@@ -1432,6 +1770,12 @@ export function OnboardingText({ onFinalized, initialTurns }: OnboardingTextProp
         if (parsed.missing_required_set !== undefined) {
           setMissingRequiredSet(parsed.missing_required_set);
         }
+        if (parsed.household_display_name != null) {
+          setHouseholdDisplayName(parsed.household_display_name);
+        }
+        // Refresh the kitchen-map panel after each turn — agent tool calls have
+        // already written to DB by the time this response arrives.
+        void fetchKitchenMap();
       } catch (err) {
         if (controller.signal.aborted) return;
         if (err instanceof DOMException && err.name === 'AbortError') return;
@@ -1457,7 +1801,7 @@ export function OnboardingText({ onFinalized, initialTurns }: OnboardingTextProp
         }
       }
     },
-    [pending, currentMomentKey, chipConfig, coldStartMode],
+    [pending, currentMomentKey, chipConfig, coldStartMode, fetchKitchenMap],
   );
 
   const handleSubmit = useCallback(
@@ -2042,10 +2386,14 @@ export function OnboardingText({ onFinalized, initialTurns }: OnboardingTextProp
             <KitchenProfilePanel
               turns={turns}
               currentMomentKey={currentMomentKey}
+              m1ChildrenCapture={m1ChildrenCapture}
               m2AllergenCapture={m2AllergenCapture}
               m3TasteCapture={m3TasteCapture}
               m4BagCapture={m4BagCapture}
               m5StartingLine={m5StartingLine}
+              householdDisplayName={householdDisplayName}
+              kitchenMap={kitchenMap}
+              onSync={fetchKitchenMap}
               isSummary={currentMomentKey === 'summary'}
               isFinalized={currentMomentKey === 'finalized'}
             />
@@ -2090,10 +2438,14 @@ export function OnboardingText({ onFinalized, initialTurns }: OnboardingTextProp
             <KitchenProfilePanel
               turns={turns}
               currentMomentKey={currentMomentKey}
+              m1ChildrenCapture={m1ChildrenCapture}
               m2AllergenCapture={m2AllergenCapture}
               m3TasteCapture={m3TasteCapture}
               m4BagCapture={m4BagCapture}
               m5StartingLine={m5StartingLine}
+              householdDisplayName={householdDisplayName}
+              kitchenMap={kitchenMap}
+              onSync={fetchKitchenMap}
               isSummary={currentMomentKey === 'summary'}
               isFinalized={currentMomentKey === 'finalized'}
             />

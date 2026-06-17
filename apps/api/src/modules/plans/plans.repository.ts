@@ -63,17 +63,17 @@ export class PlansRepository extends BaseRepository {
 
   // Story 3.14 — presentation read for a single (household, week) pair.
   // Differs from findCurrentByHousehold in intent only: maybeSingle() relies on
-  // the (household_id, week_id) unique index to enforce a single row, so the
+  // the (household_id, week_of) unique index to enforce a single row, so the
   // call surfaces a constraint violation rather than silently picking a winner.
   async findByHouseholdAndWeek(opts: {
     householdId: string;
-    weekId: string;
+    weekOf: string;
   }): Promise<PlanRow | null> {
     const { data, error } = await this.client
       .from('plans')
       .select(PLAN_COLUMNS)
       .eq('household_id', opts.householdId)
-      .eq('week_id', opts.weekId)
+      .eq('week_of', opts.weekOf)
       .not('guardrail_cleared_at', 'is', null)
       .maybeSingle();
     if (error) throw error;
@@ -104,13 +104,13 @@ export class PlansRepository extends BaseRepository {
 
   async findCurrentByHousehold(opts: {
     householdId: string;
-    weekId: string;
+    weekOf: string;
   }): Promise<PlanRow | null> {
     const { data, error } = await this.client
       .from('plans')
       .select(PLAN_COLUMNS)
       .eq('household_id', opts.householdId)
-      .eq('week_id', opts.weekId)
+      .eq('week_of', opts.weekOf)
       .not('guardrail_cleared_at', 'is', null)
       .order('revision', { ascending: false })
       .limit(1)
@@ -121,17 +121,17 @@ export class PlansRepository extends BaseRepository {
 
   // Resolves the canonical plan_id for a household+week pair regardless of
   // clearance state. Used by PlansService.commit() so the commit_plan() upsert
-  // always hits ON CONFLICT (id) and never violates the (household_id, week_id)
+  // always hits ON CONFLICT (id) and never violates the (household_id, week_of)
   // unique index.
   async findActiveByHouseholdAndWeek(opts: {
     householdId: string;
-    weekId: string;
+    weekOf: string;
   }): Promise<PlanRow | null> {
     const { data, error } = await this.client
       .from('plans')
       .select(PLAN_COLUMNS)
       .eq('household_id', opts.householdId)
-      .eq('week_id', opts.weekId)
+      .eq('week_of', opts.weekOf)
       .order('revision', { ascending: false })
       .limit(1)
       .maybeSingle(); // presentation-bypass: ops-audit — plan_id lookup only, not for rendering
@@ -151,25 +151,24 @@ export class PlansRepository extends BaseRepository {
   // Story 3.16 — used by school-policy propagation to find which future plans
   // need regeneration when a parent toggles a policy. Filters to cleared rows
   // whose week starts on or after the current Monday (UTC). Returns the
-  // metadata fields the regeneration job requires (week_id, week_of, revision).
+  // metadata fields the regeneration job requires (week_of, revision).
   // presentation-bypass: ops-history — intentional; not for UI rendering.
   async findActiveFuturePlanIds(
     householdId: string,
     nowMonday: string = getCurrentWeekMonday(),
-  ): Promise<Array<{ id: string; week_id: string; week_of: string; revision: number }>> {
+  ): Promise<Array<{ id: string; week_of: string; revision: number }>> {
     const { data, error } = await this.client
       .from('plans')
-      .select('id, week_id, week_of, revision')
+      .select('id, week_of, revision')
       .eq('household_id', householdId)
       .gte('week_of', nowMonday)
       .not('guardrail_cleared_at', 'is', null);
     if (error) throw error;
-    type Row = { id: string; week_id: string; week_of: string | null; revision: number };
+    type Row = { id: string; week_of: string | null; revision: number };
     return ((data ?? []) as Row[])
       .filter((row): row is Row & { week_of: string } => row.week_of !== null)
       .map((row) => ({
         id: row.id,
-        week_id: row.week_id,
         week_of: row.week_of,
         revision: row.revision,
       }));

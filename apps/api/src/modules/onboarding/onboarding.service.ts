@@ -123,6 +123,10 @@ export interface SubmitTextTurnResult {
   // Valid values: 'm1_table' | 'm2_safe' | 'm5_starting_line'. Empty array
   // when all required moments are complete OR momentRepository is absent.
   missing_required_set: string[];
+  // Household display_name from the kitchen map at the time of the turn.
+  // null on the M1 turn where household.set_name just fired (map is read
+  // before tool calls); real value from M2 onward.
+  household_display_name: string | null;
   // Slice 2-S26 — internal signal for the route handler's audit emission.
   // Stripped by the response Zod schema before serialization (the wire shape
   // is TextOnboardingTurnResponseSchema, which excludes this field).
@@ -162,6 +166,9 @@ export interface OnboardingStateResult {
     content: string;
     created_at: string;
   }>;
+  household_display_name?: string | null;
+  current_moment?: string | null;
+  chip_config?: ChipConfig | null;
 }
 
 export interface OnboardingResetResult {
@@ -450,6 +457,7 @@ export class OnboardingService {
       this.vocabularyService !== undefined &&
       this.memoryService !== undefined &&
       this.childAllergensRepository !== undefined &&
+      this.householdAllergensRepository !== undefined &&
       this.dietaryPreferencesRepository !== undefined &&
       this.foodPreferencesRepository !== undefined &&
       this.householdRulesRepository !== undefined &&
@@ -710,6 +718,7 @@ export class OnboardingService {
       },
       'onboarding tool loop check',
     );
+    let householdDisplayName: string | null = null;
     try {
       if (
         this.toolLoopAvailable &&
@@ -720,12 +729,14 @@ export class OnboardingService {
         this.vocabularyService !== undefined &&
         this.memoryService !== undefined &&
         this.childAllergensRepository !== undefined &&
+        this.householdAllergensRepository !== undefined &&
         this.dietaryPreferencesRepository !== undefined &&
         this.foodPreferencesRepository !== undefined &&
         this.householdRulesRepository !== undefined &&
         this.recipesRepository !== undefined
       ) {
         const map = await this.kitchenMapService.get(input.householdId);
+        householdDisplayName = map.household.display_name ?? null;
         const toolSpecs = createOnboardingToolSpecs(
           { householdId: input.householdId, userId: input.userId, logger: this.logger },
           {
@@ -735,6 +746,7 @@ export class OnboardingService {
             memoryService: this.memoryService,
             vocabularyService: this.vocabularyService,
             childAllergensRepository: this.childAllergensRepository,
+            householdAllergensRepository: this.householdAllergensRepository,
             dietaryPreferencesRepository: this.dietaryPreferencesRepository,
             foodPreferencesRepository: this.foodPreferencesRepository,
             householdRulesRepository: this.householdRulesRepository,
@@ -998,10 +1010,18 @@ export class OnboardingService {
         // flag and into the relaxed (3 vs 10) m5_complete threshold.
         // Result cached in m5ProjectionResult and reused when chip_config
         // is assembled outside this block.
+        //
+        // Cold-start re-check: if a previous turn triggered cold-start but
+        // Stage 1 has since completed, attempt the projection again. We skip
+        // only when Stage 1 is still not done — the quick isStage1Complete()
+        // check avoids the full 5s poll overhead on every repeated turn.
+        const skipDueToColdStart =
+          coldStartTriggered &&
+          !(await this.catalogProjection?.isStage1Complete(input.householdId));
         if (
           nextCurrentMoment === 'm5_starting_line' &&
           this.catalogProjection !== undefined &&
-          !coldStartTriggered
+          !skipDueToColdStart
         ) {
           let declaredCuisineTags: string[] = [];
           if (this.culturalPriorRepository !== undefined) {
@@ -1390,6 +1410,7 @@ export class OnboardingService {
       moment_key: nextCurrentMoment,
       required_set_complete,
       missing_required_set,
+      household_display_name: householdDisplayName,
       _was_resumed: wasResumed,
       cold_start_mode: coldStartTriggered,
     };
@@ -1794,6 +1815,31 @@ export class OnboardingService {
 
     const lastTurn = messageTurns[messageTurns.length - 1]!;
 
+    let householdDisplayName: string | null = null;
+    if (this.kitchenMapService) {
+      try {
+        const map = await this.kitchenMapService.get(householdId);
+        householdDisplayName = map.household.display_name ?? null;
+      } catch {
+        // Non-fatal: panel falls back to regex heuristic
+      }
+    }
+
+    let currentMoment: string | null = null;
+    let chipConfig: ChipConfig | null = null;
+    if (this.momentRepository !== undefined) {
+      try {
+        const momentState = await this.momentRepository.getState(householdId);
+        currentMoment = momentState?.current_moment ?? null;
+        const validMoment = parseMomentKey(currentMoment);
+        if (validMoment !== null) {
+          chipConfig = momentToChipConfig(validMoment);
+        }
+      } catch {
+        // Non-fatal: client restores chips on next turn
+      }
+    }
+
     return {
       status: 'in_progress',
       thread_id: thread.id,
@@ -1806,6 +1852,9 @@ export class OnboardingService {
         content: t.body.content,
         created_at: t.created_at,
       })),
+      household_display_name: householdDisplayName,
+      current_moment: currentMoment,
+      chip_config: chipConfig,
     };
   }
 

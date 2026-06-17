@@ -30,7 +30,7 @@ import { buildPlan } from '../../../test/factories/index.js';
 
 const PLAN_ID = '11111111-1111-4111-8111-111111111111';
 const HOUSEHOLD_ID = '22222222-2222-4222-8222-222222222222';
-const WEEK_ID = '33333333-3333-4333-8333-333333333333';
+
 const CHILD_ID = '44444444-4444-4444-8444-444444444444';
 const REQUEST_ID = '55555555-5555-4555-8555-555555555555';
 const RECIPE_M1 = '66666666-6666-4666-8666-666666666666';
@@ -66,7 +66,7 @@ function makeInput(overrides: Partial<CommitPlanTreeInput> = {}): CommitPlanTree
           {
             slot_kind: 'main',
             main_assignment_sequence: 1,
-            variations: [{ child_id: CHILD_ID }],
+            variations: [{ child_id: CHILD_ID, add_ons: ['test_ingredient'] }],
           },
         ],
       },
@@ -116,7 +116,7 @@ function buildRepo(opts: {
   });
   const existingRow =
     opts.existingPlanId != null
-      ? { id: opts.existingPlanId, household_id: HOUSEHOLD_ID, week_id: WEEK_ID }
+      ? { id: opts.existingPlanId, household_id: HOUSEHOLD_ID }
       : null;
   const findActiveByHouseholdAndWeek = vi.fn().mockResolvedValue(existingRow);
   // Story 3-DM-D1 — plan_state write path moved from BriefStateRepository to

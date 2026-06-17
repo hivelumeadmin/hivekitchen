@@ -3,6 +3,7 @@ import type { Redis } from 'ioredis';
 import { createPlanComposeSpec } from './plan.tools.js';
 import { PLANNER_PROMPT } from '../prompts/planner.prompt.js';
 import type { PlansService } from '../../modules/plans/plans.service.js';
+import type { RecipeService } from '../../modules/recipe/recipe.service.js';
 
 // Story 3-DM-C1 — §10.7's "synthetic plan_compose gate" surfaced as a
 // Vitest test: stub the planner LLM with hand-authored tree-shape outputs,
@@ -21,6 +22,10 @@ const PROMPT_VERSION = 'v2.0.0-test';
 
 function buildRedisStub(): Redis {
   return {} as unknown as Redis;
+}
+
+function buildRecipeServiceStub(): RecipeService {
+  return { findIdByName: vi.fn().mockResolvedValue(null) } as unknown as RecipeService;
 }
 
 function buildPlansServiceStub(): PlansService & {
@@ -42,8 +47,8 @@ function buildPlansServiceStub(): PlansService & {
 }
 
 describe('PLANNER_PROMPT', () => {
-  it('declares v2.1.0 and includes plan.compose in toolsAllowed', () => {
-    expect(PLANNER_PROMPT.version).toBe('v2.1.0');
+  it('declares v2.4.0 and includes plan.compose in toolsAllowed', () => {
+    expect(PLANNER_PROMPT.version).toBe('v2.4.0');
     expect(PLANNER_PROMPT.toolsAllowed).toContain('plan.compose');
   });
 
@@ -133,20 +138,20 @@ describe('createPlanComposeSpec — synthetic plan_compose tree round-trips', ()
   };
 
   it('accepts the shared-Main day output through input + output schema parse', async () => {
-    const spec = createPlanComposeSpec(buildPlansServiceStub(), buildRedisStub());
+    const spec = createPlanComposeSpec(buildPlansServiceStub(), buildRedisStub(), buildRecipeServiceStub());
     const inputParse = spec.inputSchema.safeParse(sharedMainOutput);
     expect(inputParse.success).toBe(true);
   });
 
   it('accepts the allergen-fork day output through input + output schema parse', async () => {
-    const spec = createPlanComposeSpec(buildPlansServiceStub(), buildRedisStub());
+    const spec = createPlanComposeSpec(buildPlansServiceStub(), buildRedisStub(), buildRecipeServiceStub());
     const inputParse = spec.inputSchema.safeParse(allergenForkOutput);
     expect(inputParse.success).toBe(true);
   });
 
   it('routes the shared-Main day to plansService.composeTree and returns a tree-shape output', async () => {
     const service = buildPlansServiceStub();
-    const spec = createPlanComposeSpec(service, buildRedisStub());
+    const spec = createPlanComposeSpec(service, buildRedisStub(), buildRecipeServiceStub());
 
     const result = (await spec.fn(sharedMainOutput)) as Record<string, unknown>;
 
@@ -157,7 +162,7 @@ describe('createPlanComposeSpec — synthetic plan_compose tree round-trips', ()
   });
 
   it('rejects a flat-shape items[] body (the most common LLM regression)', async () => {
-    const spec = createPlanComposeSpec(buildPlansServiceStub(), buildRedisStub());
+    const spec = createPlanComposeSpec(buildPlansServiceStub(), buildRedisStub(), buildRecipeServiceStub());
     const flatShaped = {
       household_id: HOUSEHOLD,
       week_of: '2026-06-01',
@@ -176,7 +181,7 @@ describe('createPlanComposeSpec — synthetic plan_compose tree round-trips', ()
   });
 
   it('rejects a main slot that carries recipe_id (XOR violation)', async () => {
-    const spec = createPlanComposeSpec(buildPlansServiceStub(), buildRedisStub());
+    const spec = createPlanComposeSpec(buildPlansServiceStub(), buildRedisStub(), buildRecipeServiceStub());
     const bad = {
       ...sharedMainOutput,
       days: [
@@ -198,7 +203,7 @@ describe('createPlanComposeSpec — synthetic plan_compose tree round-trips', ()
   });
 
   it('rejects a slot referencing an undeclared main_assignment_sequence', async () => {
-    const spec = createPlanComposeSpec(buildPlansServiceStub(), buildRedisStub());
+    const spec = createPlanComposeSpec(buildPlansServiceStub(), buildRedisStub(), buildRecipeServiceStub());
     const bad = {
       ...sharedMainOutput,
       days: [

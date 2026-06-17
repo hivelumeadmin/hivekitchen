@@ -42,15 +42,8 @@ export interface CreateTalkSessionResult {
 
 const TALK_SESSION_TTL_SECONDS = 20;
 
-const ENRICHMENT_NODE_TYPES = [
-  'preference',
-  'rhythm',
-  'cultural_rhythm',
-  'allergy',
-  'child_obsession',
-  'school_policy',
-  'other',
-] as const;
+// Migration 20260904000300 narrowed node_type to 3 values.
+const ENRICHMENT_NODE_TYPES = ['rhythm', 'child_obsession', 'other'] as const;
 const EnrichmentSignalSchema = z.object({
   node_type: z.enum(ENRICHMENT_NODE_TYPES),
   facet: z.string().min(1).max(40),
@@ -71,7 +64,7 @@ Return ONLY valid JSON:
 {"signals": [{"node_type": "...", "facet": "...", "prose_text": "...", "confidence": 0.0}]}
 or {"signals": []} if nothing memory-worthy was stated.
 
-node_type: preference | rhythm | cultural_rhythm | allergy | child_obsession | school_policy | other
+node_type: rhythm | child_obsession | other
 facet: short stable kebab-case identifier, max 40 chars (e.g. "diwali-2026", "layla-no-broccoli", "tuesday-pasta-night")
 prose_text: one complete sentence capturing the fact, max 150 chars
 confidence: 0.8 if explicitly stated; 0.6 if implied; 0.5 if uncertain

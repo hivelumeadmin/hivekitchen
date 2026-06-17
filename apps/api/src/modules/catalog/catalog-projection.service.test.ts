@@ -98,7 +98,7 @@ function buildService(args: BuildArgs) {
 }
 
 describe('CatalogProjectionService.getM5Chips', () => {
-  it('happy path: 20 rows → 18 returned, sorted (favorites first, then provenance, then confidence)', async () => {
+  it('happy path: 20 rows → 20 returned, sorted (favorites first, then provenance, then confidence)', async () => {
     const rows: Row[] = [];
     // 4 favorites with mixed cuisines
     rows.push(makeRow('aaa-1', 'Fav One', ['cuisine_a'], 'declared', 80, true));
@@ -122,7 +122,7 @@ describe('CatalogProjectionService.getM5Chips', () => {
     const { service } = buildService({ rows, stage1At: '2026-05-25T00:00:00Z' });
     const { chips, coldStartReason } = await service.getM5Chips(HOUSEHOLD_ID, []);
     expect(coldStartReason).toBeNull();
-    expect(chips).toHaveLength(18);
+    expect(chips).toHaveLength(20);
     // Favorites surface first
     expect(chips.slice(0, 4).map((c) => c.key)).toEqual(['aaa-1', 'aaa-2', 'aaa-3', 'aaa-4']);
     // Provenance is carried into the chip

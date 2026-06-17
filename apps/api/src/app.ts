@@ -46,6 +46,7 @@ import { dataExportJobPlugin } from './jobs/data-export.job.js';
 import { accountDeletionJobPlugin } from './jobs/account-deletion.job.js';
 import { lumiNudgeJobPlugin } from './jobs/lumi-nudge.job.js';
 import { healthRoutes } from './modules/internal/health.routes.js';
+import { devRoutes } from './modules/internal/dev.routes.js';
 import { eventsRoutes } from './routes/v1/events/events.routes.js';
 import { authRoutes } from './modules/auth/auth.routes.js';
 import { inviteRoutes } from './modules/auth/invite.routes.js';
@@ -248,6 +249,9 @@ export async function buildApp(opts: BuildAppOptions) {
   });
 
   await app.register(healthRoutes);
+  if (env.NODE_ENV !== 'production') {
+    await app.register(devRoutes);
+  }
   await app.register(eventsRoutes);
   await app.register(authRoutes);
   await app.register(inviteRoutes);

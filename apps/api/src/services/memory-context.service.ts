@@ -1,9 +1,10 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 
-// L0 = preference (relational, no opt-in needed). Applied silently.
-// L1 = rhythm / cultural_rhythm (inferred priors). Soft signal — preferred,
-// not required. Both surface as natural-language strings for the planner
-// prompt; no schema parsing on the LLM side.
+// Migration 20260904000300 narrowed node_type to 3 values.
+// Old 'preference' and 'cultural_rhythm' nodes were remapped to 'other';
+// they now appear in l0Preferences. l1MethodPriors covers 'rhythm'.
+// culturalObligations is kept for interface compatibility but will be empty
+// until a dedicated cultural enum value is reintroduced.
 export interface MemoryContextForPlanning {
   l0Preferences: string[];
   l1MethodPriors: string[];
@@ -11,12 +12,12 @@ export interface MemoryContextForPlanning {
 }
 
 interface MemoryNodeRow {
-  node_type: 'preference' | 'rhythm' | 'cultural_rhythm';
+  node_type: 'rhythm' | 'child_obsession' | 'other';
   prose_text: string;
 }
 
 const MEMORY_COLUMNS = 'node_type, prose_text';
-const PLANNING_NODE_TYPES = ['preference', 'rhythm', 'cultural_rhythm'] as const;
+const PLANNING_NODE_TYPES = ['rhythm', 'child_obsession', 'other'] as const;
 
 export class MemoryContextService {
   constructor(private readonly client: SupabaseClient) {}
@@ -34,18 +35,15 @@ export class MemoryContextService {
 
     const l0Preferences: string[] = [];
     const l1MethodPriors: string[] = [];
-    const culturalObligations: string[] = [];
 
     for (const node of (data as MemoryNodeRow[] | null) ?? []) {
-      if (node.node_type === 'preference') {
-        l0Preferences.push(node.prose_text);
-      } else if (node.node_type === 'cultural_rhythm') {
-        culturalObligations.push(node.prose_text);
-      } else {
+      if (node.node_type === 'rhythm') {
         l1MethodPriors.push(node.prose_text);
+      } else {
+        l0Preferences.push(node.prose_text);
       }
     }
 
-    return { l0Preferences, l1MethodPriors, culturalObligations };
+    return { l0Preferences, l1MethodPriors, culturalObligations: [] };
   }
 }

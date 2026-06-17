@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { ChipConfigSchema } from './onboarding.js';
 
 // 2-S26 — GET /v1/onboarding/state response. Three-state machine that drives
 // the /onboarding entry surface:
@@ -36,6 +37,13 @@ export const OnboardingStateResponseSchema = z.object({
   started_at: z.string().datetime({ offset: true }).optional(),
   last_activity_at: z.string().datetime({ offset: true }).optional(),
   turns: z.array(OnboardingTurnSnapshotSchema).optional(),
+  // Populated when status='in_progress'. Lets the profile panel show the real
+  // DB value on resume rather than waiting for the first new turn.
+  household_display_name: z.string().nullable().optional(),
+  // Current moment key so the client can restore chip_config on resume without
+  // waiting for the first new turn response.
+  current_moment: z.string().nullable().optional(),
+  chip_config: ChipConfigSchema.nullable().optional(),
 });
 
 // POST /v1/onboarding/state/reset has no body and no response body (204).
