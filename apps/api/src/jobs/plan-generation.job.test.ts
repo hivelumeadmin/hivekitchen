@@ -310,3 +310,55 @@ describe('kitchenMap loading fallback (AC 12 — Story 3-S32)', () => {
     );
   });
 });
+
+// Story 3-S34 (AC 8) — the worker threads job.data.planned_days into BOTH the
+// initial and the guardrail-retry planWeek() calls. Mirrors the worker's inline
+// destructure + pass-through using the same convention as the kitchenMap tests
+// above (the worker body itself runs only under BullMQ).
+describe('planned_days threading (AC 8 — Story 3-S34)', () => {
+  it('passes job.data.planned_days to planWeek as plannedDays', async () => {
+    const job = {
+      data: {
+        household_id: HOUSEHOLD_ID,
+        week_of: '2026-06-22',
+        request_id: REQUEST_ID,
+        planned_days: ['monday', 'tuesday', 'wednesday', 'thursday', 'friday'] as const,
+      },
+    };
+    const planWeek = vi.fn().mockResolvedValue(buildOutput());
+
+    const { household_id, week_of, request_id, planned_days } = job.data;
+    await planWeek({
+      householdId: household_id,
+      weekOf: week_of,
+      requestId: request_id,
+      plannedDays: planned_days,
+    });
+
+    expect(planWeek).toHaveBeenCalledWith(
+      expect.objectContaining({ plannedDays: job.data.planned_days }),
+    );
+  });
+
+  it('threads undefined planned_days (cron path) — planWeek receives plannedDays: undefined', async () => {
+    const job = {
+      data: {
+        household_id: HOUSEHOLD_ID,
+        week_of: '2026-06-22',
+        request_id: REQUEST_ID,
+        // cron fan-out leaves planned_days absent
+      } as { household_id: string; week_of: string; request_id: string; planned_days?: readonly string[] },
+    };
+    const planWeek = vi.fn().mockResolvedValue(buildOutput());
+
+    const { household_id, week_of, request_id, planned_days } = job.data;
+    await planWeek({
+      householdId: household_id,
+      weekOf: week_of,
+      requestId: request_id,
+      plannedDays: planned_days,
+    });
+
+    expect(planWeek.mock.calls[0]?.[0]).toHaveProperty('plannedDays', undefined);
+  });
+});

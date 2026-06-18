@@ -3,15 +3,25 @@ import type { FastifyBaseLogger } from 'fastify';
 import type { Queue } from 'bullmq';
 import type Redis from 'ioredis';
 import { GUARDRAIL_VERSION } from '../allergy-guardrail/allergy-rules.engine.js';
-import { deriveWeekId, getCurrentWeekMonday, getNextWeekMonday } from '../../lib/derive-week-id.js';
+import {
+  deriveWeekId,
+  deriveCompositionWindow,
+  getCurrentWeekMonday,
+  getNextWeekMonday,
+} from '../../lib/derive-week-id.js';
+import { GENERATION_JOB_OPTS_BASE } from '../../jobs/plan-generation.job.js';
 import {
   GuardrailRejectionError,
   NotFoundError,
+  PlanAlreadyExistsError,
   SwapGuardrailBlockedError,
   TooManyRequestsError,
   ValidationError,
 } from '../../common/errors.js';
-import type { AllergyGuardrailService } from '../allergy-guardrail/allergy-guardrail.service.js';
+import type {
+  AllergyGuardrailService,
+  UnverifiableSlot,
+} from '../allergy-guardrail/allergy-guardrail.service.js';
 import type { AuditService } from '../../audit/audit.service.js';
 import type { PlansRepository } from './plans.repository.js';
 import type { BriefStateRepository } from './brief-state.repository.js';
@@ -20,6 +30,8 @@ import type { ExtraRemovalSignalService } from './extra-removal-signal.service.j
 import type { RecipeService } from '../recipe/recipe.service.js';
 import type { RecipesRepository } from '../recipe/recipes.repository.js';
 import type { PlanRegenerationJobData } from '../../jobs/plan-regeneration.job.js';
+import type { PlanGenerationJobData } from '../../jobs/plan-generation.job.js';
+import type { HouseholdsRepository } from '../households/households.repository.js';
 import type { VariantProposalService } from './variant-proposal.service.js';
 import { FlaggedCompoundItemSchema } from '@hivekitchen/contracts';
 import type {
@@ -77,11 +89,23 @@ export interface PlansServiceDeps {
   // when omitted, planner-emitted variant_proposal is silently ignored at
   // commit time.
   variantProposalService?: VariantProposalService;
+  // Story 3-S34 — on-demand ("compose now") plan composition. The plan-generation
+  // BullMQ queue (immediate enqueue, no delay) and the households repository
+  // (single-household timezone lookup for the composition window). Optional so
+  // tests pre-dating the method compose without them; requestOnDemandGeneration
+  // throws a clear error when either is missing.
+  generateQueue?: Queue;
+  householdsRepository?: HouseholdsRepository;
 }
 
 // Story 3.13 — regeneration rate limit (architecture §3.6).
 const REGEN_RATE_LIMIT = 5;              // max requests per household per week
 const REGEN_TTL_SECONDS = 8 * 24 * 3600; // 8 days — covers the full plan week + buffer
+
+// Story 3-S34 — on-demand generation rate limit. A small weekly cap per
+// household keyed by target week; distinct from the regeneration counter.
+const GEN_RATE_LIMIT = 3;
+const GEN_TTL_SECONDS = 8 * 24 * 3600;
 
 const MAX_GUARDRAIL_RETRIES = 3;
 
@@ -100,6 +124,8 @@ export class PlansService {
   private readonly recipeService: RecipeService | null;
   private readonly recipesRepo: RecipesRepository | null;
   private readonly variantProposalService: VariantProposalService | null;
+  private readonly generateQueue: Queue | null;
+  private readonly householdsRepo: HouseholdsRepository | null;
 
   constructor(deps: PlansServiceDeps) {
     this.repo = deps.repository;
@@ -114,6 +140,8 @@ export class PlansService {
     this.recipeService = deps.recipeService ?? null;
     this.recipesRepo = deps.recipesRepository ?? null;
     this.variantProposalService = deps.variantProposalService ?? null;
+    this.generateQueue = deps.generateQueue ?? null;
+    this.householdsRepo = deps.householdsRepository ?? null;
   }
 
   // Single-row read from brief_state. Never composes at request time
@@ -173,15 +201,18 @@ export class PlansService {
 
     for (let attempt = 1; attempt <= MAX_GUARDRAIL_RETRIES; attempt++) {
       lastAttempt = attempt;
-      const guardrailItems = buildGuardrailItemsFromTree(current);
 
-      // No add_ons across any variation — nothing new to check at commit time.
-      // Recipe base-ingredient checking is a follow-up slice; skip the engine
-      // call rather than sending an empty list (which would return uncertain).
-      const result: GuardrailResult =
-        guardrailItems.length === 0
-          ? { verdict: 'cleared', conflicts: [] }
-          : await this.allergyGuardrail.clearOrReject(guardrailItems, current.household_id, requestId);
+      // Story 3.S39 — evaluate the FULL effective ingredient set per
+      // (child, day, slot): recipe.ingredients − removals + add_ons. Recipes
+      // with no stored ingredients are surfaced as `unverifiable` so the engine
+      // can fail-closed for children with a declared allergen.
+      const { items, unverifiable } = await this.buildCommitGuardrailInputs(current);
+      const result: GuardrailResult = await this.allergyGuardrail.clearOrRejectCommit({
+        items,
+        unverifiable,
+        householdId: current.household_id,
+        requestId,
+      });
 
       if (result.verdict === 'cleared') {
         const clearedAt = new Date().toISOString();
@@ -587,6 +618,95 @@ export class PlansService {
     );
 
     return { jobId: job.id ?? jobIdKey, rateLimitRemaining };
+  }
+
+  // Story 3-S34 — user-triggered "compose now". Derives the composition window
+  // from the household-local clock (deriveCompositionWindow), then create-only
+  // guards, rate-limits, and enqueues a plan-generation job with NO delay
+  // carrying planned_days. Returns 202-shape metadata; the client reads the
+  // result via the existing GET /v1/plans?week=current|next.
+  async requestOnDemandGeneration(opts: {
+    householdId: string;
+    requestId: string;
+  }): Promise<{
+    jobId: string;
+    weekOf: string;
+    plannedDays: Weekday[];
+    basis: 'current_week_remaining' | 'next_week_full';
+  }> {
+    if (this.householdsRepo === null || this.generateQueue === null) {
+      throw new ValidationError(
+        'on-demand generation requires householdsRepository + generateQueue — not configured',
+      );
+    }
+
+    // 1. Resolve the household-local composition window.
+    const timezone = await this.householdsRepo.getTimezone(opts.householdId);
+    const { weekOf, plannedDays, basis } = deriveCompositionWindow(new Date(), timezone);
+    const weekId = deriveWeekId(weekOf);
+
+    // 2. Create-only guard: a plan already covering the target week must be
+    // edited via swap, not regenerated.
+    const existing = await this.repo.findByHouseholdAndWeek({
+      householdId: opts.householdId,
+      weekOf,
+    });
+    if (existing !== null) {
+      throw new PlanAlreadyExistsError(weekOf);
+    }
+
+    // 3. Rate limit: per-household per-target-week counter (distinct key from
+    // the regeneration counter). Key expires after the plan week + buffer.
+    const rateLimitKey = `gen-limit:${opts.householdId}:${weekId}`;
+    const count = await this.redis.incr(rateLimitKey);
+    if (count === 1) {
+      await this.redis.expire(rateLimitKey, GEN_TTL_SECONDS);
+    }
+    if (count > GEN_RATE_LIMIT) {
+      const ttl = await this.redis.ttl(rateLimitKey);
+      throw new TooManyRequestsError(ttl > 0 ? ttl : GEN_TTL_SECONDS);
+    }
+
+    // 4. Enqueue immediately (no delay). jobId includes requestId so duplicate
+    // client retries dedupe within BullMQ's retention window.
+    const jobIdKey = `plan-gen-ondemand-${opts.householdId}-${weekId}-${opts.requestId}`;
+    const jobData: PlanGenerationJobData = {
+      household_id: opts.householdId,
+      week_of: weekOf,
+      request_id: opts.requestId,
+      planned_days: plannedDays,
+    };
+    const job = await this.generateQueue.add('generate-plan', jobData, {
+      ...GENERATION_JOB_OPTS_BASE,
+      jobId: jobIdKey,
+    });
+
+    // 5. Audit the request. Audit failure does not throw — the job is enqueued.
+    try {
+      await this.auditService.write({
+        event_type: 'plan.on_demand_requested',
+        household_id: opts.householdId,
+        request_id: opts.requestId,
+        metadata: {
+          week_of: weekOf,
+          planned_days: plannedDays,
+          basis,
+          rate_limit_used: count,
+        },
+      });
+    } catch (err) {
+      this.logger.error(
+        { err, household_id: opts.householdId, week_of: weekOf },
+        'audit write failed for on-demand generation request — job still enqueued',
+      );
+    }
+
+    this.logger.info(
+      { household_id: opts.householdId, week_of: weekOf, basis, job_id: job.id, count },
+      'on-demand plan generation job enqueued',
+    );
+
+    return { jobId: job.id ?? jobIdKey, weekOf, plannedDays, basis };
   }
 
   // ==========================================================================
@@ -1181,6 +1301,117 @@ export class PlansService {
   // Tree-shape private helpers
   // ==========================================================================
 
+  // Story 3.S39 — walk the canonical tree and build the commit-time guardrail
+  // inputs. For every (child, day, slot) variation it resolves the slot's
+  // recipe (main via main_assignment_sequence → main_assignments[].recipe_id;
+  // snack/extra via slot.recipe_id, or the discover candidate cache via
+  // recipe_candidate_id), batch-fetches the base ingredients, and emits the
+  // full effective set (base − removals + add_ons) via buildVariationGuardrailItem.
+  // A slot whose base recipe has no resolvable ingredients is surfaced as an
+  // `unverifiable` tuple; its add_ons (if any) are still checked independently
+  // so an allergenic add-on always blocks even when the base is unknown.
+  private async buildCommitGuardrailInputs(input: CommitPlanTreeInput): Promise<{
+    items: PlanItemForGuardrail[];
+    unverifiable: UnverifiableSlot[];
+  }> {
+    const recipeIds = collectRecipeIdsFromTree(input);
+    const ingredientMap =
+      this.recipesRepo !== null && recipeIds.length > 0
+        ? await this.recipesRepo.findIngredientsByIds(recipeIds)
+        : new Map<string, string[]>();
+
+    const seqToRecipe = new Map<number, string>();
+    for (const m of input.main_assignments) seqToRecipe.set(m.sequence, m.recipe_id);
+
+    const items: PlanItemForGuardrail[] = [];
+    const unverifiable: UnverifiableSlot[] = [];
+
+    for (const day of input.days) {
+      for (const slot of day.slots) {
+        // Resolve the slot's base ingredients. `null` = no resolvable recipe
+        // row/candidate; `[]` = recipe exists but carries no ingredients. Both
+        // are unverifiable.
+        let baseIngredients: string[] | null = null;
+        if (slot.slot_kind === 'main') {
+          const recipeId =
+            slot.main_assignment_sequence !== undefined
+              ? seqToRecipe.get(slot.main_assignment_sequence)
+              : undefined;
+          if (recipeId !== undefined) baseIngredients = ingredientMap.get(recipeId) ?? [];
+        } else if (slot.recipe_id !== undefined && slot.recipe_id !== null) {
+          baseIngredients = ingredientMap.get(slot.recipe_id) ?? [];
+        } else if (slot.recipe_candidate_id !== undefined) {
+          baseIngredients = await this.resolveCandidateIngredients(
+            input.plan_build_id,
+            slot.recipe_candidate_id,
+          );
+        }
+
+        const isVerifiable = baseIngredients !== null && baseIngredients.length > 0;
+        for (const variation of slot.variations) {
+          if (isVerifiable) {
+            const item = buildVariationGuardrailItem(
+              baseIngredients!,
+              {
+                child_id: variation.child_id,
+                add_ons: variation.add_ons ?? [],
+                removals: variation.removals ?? [],
+              },
+              day.day,
+              slot.slot_kind,
+            );
+            if (item.ingredients.length > 0) items.push(item);
+          } else {
+            unverifiable.push({
+              child_id: variation.child_id,
+              day: day.day,
+              slot: slot.slot_kind,
+              recipe_label: '(recipe ingredients unverified)',
+            });
+            if (variation.add_ons?.length) {
+              items.push({
+                child_id: variation.child_id,
+                day: day.day,
+                slot: slot.slot_kind,
+                ingredients: [...variation.add_ons],
+              });
+            }
+          }
+        }
+      }
+    }
+
+    return { items, unverifiable };
+  }
+
+  // Story 3.S39 — read a discover candidate's web-extracted ingredients from
+  // the plan-build Redis cache (Story 3-31). Returns the display-name strings,
+  // or null on a cache miss / no recipeService / no plan_build_id — the caller
+  // treats null as unverifiable.
+  private async resolveCandidateIngredients(
+    planBuildId: string | undefined,
+    candidateId: string,
+  ): Promise<string[] | null> {
+    if (this.recipeService === null || planBuildId === undefined) return null;
+    try {
+      const extraction = await this.recipeService.readCandidate(
+        planBuildId,
+        candidateId,
+        this.redis,
+      );
+      if (extraction === null) return null;
+      return extraction.ingredients
+        .map((i) => i.display)
+        .filter((d) => d.length > 0);
+    } catch (err) {
+      this.logger.warn(
+        { err, candidate_id: candidateId },
+        'readCandidate failed during commit guardrail — treating slot as unverifiable',
+      );
+      return null;
+    }
+  }
+
   // Fetches a recipe's ingredient list via RecipesRepository and projects to
   // the display-name string array the guardrail evaluates against. Throws
   // ValidationError when recipesRepo isn't wired (tests pre-dating the dep)
@@ -1254,35 +1485,9 @@ export class PlansService {
   }
 }
 
-// Story 3-DM-C1 Phase 9 — walk the canonical plan tree and emit one
-// PlanItemForGuardrail per (day, slot, child). The guardrail evaluates
-// allergens at the (child, ingredient) grain; the tree's variations carry
-// add_ons / removals strings that the guardrail can scan.
-//
-// Note: the recipe's base ingredients (the canonical ingredient list on the
-// recipes row) are NOT joined into this walk yet. The planner's tree path
-// emits real recipe_ids whose ingredients the recipes table owns; a future
-// patch should batch-fetch and union them so the guardrail sees the full
-// effective ingredient set. Until then the guardrail sees only the per-child
-// add_ons (variation-level overlay), which matches the family-first model's
-// understanding that the *allergen-fork* always lives on the variation.
-function buildGuardrailItemsFromTree(input: CommitPlanTreeInput): PlanItemForGuardrail[] {
-  const out: PlanItemForGuardrail[] = [];
-  for (const day of input.days) {
-    for (const slot of day.slots) {
-      for (const variation of slot.variations) {
-        if (!variation.add_ons?.length) continue;
-        out.push({
-          child_id: variation.child_id,
-          day: day.day,
-          slot: slot.slot_kind,
-          ingredients: [...variation.add_ons],
-        });
-      }
-    }
-  }
-  return out;
-}
+// Story 3.S39 — buildGuardrailItemsFromTree (add-ons-only walk) is superseded
+// by PlansService.buildCommitGuardrailInputs, which evaluates the full
+// effective ingredient set per slot. The add-on case is now part of that set.
 
 // Story 3-DM-C1 Phase 9b part 4 step 5 — toCanonicalPlanRow retired with
 // the flat PlanRow → PlanRowCanonical projection. The canonical PlanRow IS
@@ -1291,10 +1496,8 @@ function buildGuardrailItemsFromTree(input: CommitPlanTreeInput): PlanItemForGua
 // Story 3-DM-C1 Phase 9b part 4 step 2 — build one PlanItemForGuardrail
 // for a single (variation, day, slot) tuple. The effective ingredient set
 // is recipe.ingredients (display names) − variation.removals + variation.add_ons,
-// with simple substring-equality dedupe of removals. This is the swap-time
-// guardrail unit; the commit-time path's buildGuardrailItemsFromTree still
-// uses only variation.add_ons because the recipe-batch-fetch hasn't landed
-// at commit yet (its own follow-up slice).
+// with simple substring-equality dedupe of removals. Shared by the swap-time
+// guardrail and (Story 3.S39) the commit-time effective-set walk.
 function buildVariationGuardrailItem(
   recipeIngredients: ReadonlyArray<string>,
   variation: { child_id: string; add_ons: readonly string[]; removals: readonly string[] },

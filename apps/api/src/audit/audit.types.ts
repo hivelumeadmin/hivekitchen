@@ -10,6 +10,7 @@ export const AUDIT_EVENT_TYPES = [
   'plan.hard_fail',
   'plan.cultural_degraded',
   'plan.generation.failed',
+  'plan.on_demand_requested', // Story 3-S34 — user-triggered "compose now"
   'plan.item_swapped',
   // Story 3-DM-C1 Phase 9b part 4 step 2 — tree-shape swap events. The flat
   // 'plan.item_swapped' stays alive until the swap-route rewrite (step 3)

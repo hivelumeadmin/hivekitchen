@@ -224,6 +224,7 @@ import {
   RespondToLearningMomentRequestSchema,
   RegeneratePlanQuerySchema,
   RegeneratePlanResponseSchema,
+  GeneratePlanResponseSchema,
   GetPlansQuerySchema,
   GetPlansResponseSchema,
   HardFailStatusSchema,
@@ -661,6 +662,9 @@ export type ScaffoldingDiff = z.infer<typeof ScaffoldingDiffSchema>;
 // Story 3.13 — plan regeneration types
 export type RegeneratePlanQuery = z.infer<typeof RegeneratePlanQuerySchema>;
 export type RegeneratePlanResponse = z.infer<typeof RegeneratePlanResponseSchema>;
+
+// Story 3-S34 — on-demand plan composition response
+export type GeneratePlanResponse = z.infer<typeof GeneratePlanResponseSchema>;
 
 // Story 3.14 — following-week draft view types (canonical tree shape)
 export type GetPlansQuery = z.infer<typeof GetPlansQuerySchema>;

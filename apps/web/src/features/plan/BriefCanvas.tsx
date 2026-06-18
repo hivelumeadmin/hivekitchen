@@ -29,9 +29,12 @@ import { usePlanQuery } from './queries.js';
 import { QueryKeys } from '@/lib/realtime/query-keys.js';
 import { useBriefStateQuery } from './useBriefStateQuery.js';
 import {
+  useGenerateOnDemandMutation,
   useRequestRegenerationMutation,
   useUpdateSovereigntyModeMutation,
 } from './mutations.js';
+import { PrimaryButton } from '@/components/PrimaryButton.js';
+import { SparkleIcon } from '@/components/icons.js';
 import { adaptPlansResponse, type DayTreeView } from './tree-adapter.js';
 
 const CHILD_COLORS: readonly ChildDotColor[] = ['foliage', 'lumi-terracotta'];
@@ -60,6 +63,65 @@ function DevTriggerButton() {
       {status === 'error' && 'Failed — check API logs'}
       {status === 'idle' && '[dev] Generate plan now'}
     </button>
+  );
+}
+
+// Story 3-S34 — on-demand ("compose now") trigger. Shown in the empty state so
+// a parent with no plan yet can compose immediately instead of waiting for the
+// Friday auto-generation. The server derives the window (rest-of-this-week vs
+// next-week-full) from the household timezone; on success we poll the brief
+// until the plan lands (this branch unmounts when brief !== null).
+function ComposeMyPlanButton() {
+  const queryClient = useQueryClient();
+  const generate = useGenerateOnDemandMutation();
+  const [isComposing, setIsComposing] = useState(false);
+  const [hasError, setHasError] = useState(false);
+
+  useEffect(() => {
+    if (!isComposing) return;
+    const interval = setInterval(() => {
+      void queryClient.invalidateQueries({ queryKey: ['brief'] });
+      void queryClient.invalidateQueries({ queryKey: ['plan'] });
+    }, 5000);
+    return () => clearInterval(interval);
+  }, [isComposing, queryClient]);
+
+  if (isComposing) {
+    return (
+      <p className="text-sm text-fg-muted text-center" role="status">
+        Lumi is composing your plan… this can take a minute.
+      </p>
+    );
+  }
+
+  function handleClick() {
+    setHasError(false);
+    generate.mutate(undefined, {
+      onSuccess: () => {
+        setIsComposing(true);
+        void queryClient.invalidateQueries({ queryKey: ['brief'] });
+        void queryClient.invalidateQueries({ queryKey: ['plan'] });
+      },
+      onError: () => setHasError(true),
+    });
+  }
+
+  return (
+    <div className="flex flex-col items-center gap-2">
+      <PrimaryButton
+        onClick={handleClick}
+        disabled={generate.isPending}
+        icon={<SparkleIcon />}
+        ariaLabel="Compose my plan now"
+      >
+        {generate.isPending ? 'Starting…' : 'Compose my plan'}
+      </PrimaryButton>
+      {hasError && (
+        <p className="text-xs text-clay-600" role="alert">
+          Couldn&rsquo;t start composing. Please try again.
+        </p>
+      )}
+    </div>
   );
 }
 
@@ -371,6 +433,7 @@ export function BriefCanvas() {
           <p className="max-w-sm text-base text-fg-muted text-center">
             Lumi is preparing your first plan. Check back Sunday evening.
           </p>
+          <ComposeMyPlanButton />
           {import.meta.env.DEV && <DevTriggerButton />}
         </div>
       </main>

@@ -1,6 +1,6 @@
 # Story 3.S32: Planner KitchenMap Context Injection
 
-Status: review
+Status: done
 
 ## Story
 
@@ -328,6 +328,7 @@ claude-sonnet-4-6
 ## Change Log
 
 - 2026-06-17: Story 3-S32 implementation complete. Added `renderPlannerKitchenMapBlock()` to orchestrator.ts; added `kitchenMap?` to `PlanWeekOptions`; injected KitchenMap block as first contextLines element in `planWeek()`; wired `kitchenMapService.get()` call with `.catch` fallback in plan-generation.job.ts; removed `memory.recall`, `cultural.lookup`, `allergy.check` from `PLANNER_PROMPT.toolsAllowed`; updated `PLANNING_CORE` with pre-loaded profile section + numbered tool discipline; bumped version to v2.5.0. 81 tests pass, 0 new typecheck errors.
+- 2026-06-17: Code review pass 2 (3-layer adversarial) — 2 patches applied. P1 `last_used_at` null guard (`r.last_used_at ? ... : ''`); P2 `display_name` guard widened to `!= null` (covers undefined). 3 deferred (D-3S32-CR3 kitchenMap-load-failure+no-tool-fallback; D-3S32-CR4 allNodes 20-cap starves obsessions; D-3S32-CR5 household-scoped food_preferences excluded). 9 dismissed. Orchestrator 53/53 green; 0 new typecheck errors.
 - 2026-06-17: Code review (3-layer adversarial) — applied all 7 patch findings. P1 stale allergy.check prose reworded + guard test; P2 child_obsession header collision fixed (→ `CHILD OBSESSIONS:`); P3 free-text scalar escaping (`yamlStr`/`oneLine`); P4 `plan-regeneration.job.ts` now loads + passes kitchenMap to both planWeek calls (+ decorator guard); P5 empty `favourites: []` inline; P6 stale MAX_PLAN_ITERATIONS comment; P7 kitchenMapService decorator guard in plan-generation plugin. 2 deferred (D-3S32-CR1 partial-onboarding gate, D-3S32-CR2 AC12 worker test). +3 tests (84 pass across the 4 touched files); full API suite 1823 pass / 31 fail (= unchanged pre-existing baseline); 0 new typecheck errors. Files added to review: apps/api/src/jobs/plan-regeneration.job.ts.
 
 ## Review Findings
@@ -348,3 +349,18 @@ claude-sonnet-4-6
 
 - [x] [Review][Defer] Partial-onboarding map (`meta.is_complete=false`) renders a full block as authoritative [apps/api/src/agents/orchestrator.ts:1148] — deferred; spec deliberately gates on `children.length===0`, and the post-compose deterministic guardrail enforces allergen safety regardless of pre-loaded context completeness
 - [x] [Review][Defer] AC 12 test re-implements the `.catch` snippet inline rather than driving the real worker / asserting `get()`-before-`planWeek()` ordering [apps/api/src/jobs/plan-generation.job.test.ts] — deferred; behavior verified correct by reading the worker, and this test file has no worker-integration harness
+
+### Review Findings — Pass 2 (2026-06-17)
+
+3-layer adversarial review (Blind Hunter / Edge Case Hunter / Acceptance Auditor) — Pass 2. 2 patch, 3 defer, 9 dismissed.
+
+#### Patch
+
+- [x] [Review][Patch] `last_used_at.slice(0,10)` not null-safe — if a favourite recipe has a null/empty `last_used_at` (never-used entry) the call throws a TypeError, crashing `renderPlannerKitchenMapBlock` and silently blocking plan generation [apps/api/src/agents/orchestrator.ts:renderPlannerKitchenMapBlock topFavourites map] — FIXED: `r.last_used_at ? r.last_used_at.slice(0, 10) : ''`
+- [x] [Review][Patch] `display_name` undefined slips past `!== null` guard — `map.household.display_name !== null` does not catch `undefined`; if the column is absent in a DB row, `yamlStr(undefined)` renders as the string literal `"undefined"` in the YAML block [apps/api/src/agents/orchestrator.ts:householdSection] — FIXED: changed to `!= null` (covers both null and undefined)
+
+#### Defer
+
+- [x] [Review][Defer] kitchenMap load failure leaves planner with zero household allergen/memory context AND no tool fallback — after removing `memory.recall`/`cultural.lookup`/`allergy.check` from `toolsAllowed`, a Redis failure silently degrades to a blind planner with no recovery path; only the post-compose guardrail remains as a safety net [apps/api/src/jobs/plan-generation.job.ts:kitchenMap catch] — deferred; deliberate design choice per AC9 + spec fallback contract; post-compose guardrail (`PlansService.commit`) is the authoritative allergen gate
+- [x] [Review][Defer] `allNodes.slice(0, 20)` cap applied before type-group split — if `rhythmNodes.length >= 20`, all `child_obsession` and `other` nodes are silently dropped from `<household_memory>` with no log [apps/api/src/agents/orchestrator.ts:allNodes] — deferred; 20-total cap is per spec; rhythm priority ordering is an explicit design choice; obsession starvation is unlikely in practice
+- [x] [Review][Defer] Household-scoped `food_preferences` (null `child_id`) silently excluded from `<household_memory>` — preferences not attributed to a specific child are skipped; the planner sees household `dietary_preferences` from the YAML section but not household-level food preference entries [apps/api/src/agents/orchestrator.ts:prefsByChild loop] — deferred; design ambiguity (spec does not mention household-scoped food_preferences in the block format); low real-world impact as most preferences are child-attributed

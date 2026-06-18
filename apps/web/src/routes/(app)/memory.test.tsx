@@ -40,7 +40,7 @@ function makeNode(overrides: Partial<MemoryNode> = {}): MemoryNode {
   return {
     id: '00000000-0000-4000-8000-000000000001',
     household_id: HOUSEHOLD_ID,
-    node_type: 'preference',
+    node_type: 'other',
     facet: 'avoids spicy',
     subject_child_id: null,
     prose_text: 'Layla avoids spicy peppers.',

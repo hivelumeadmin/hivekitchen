@@ -95,6 +95,23 @@ export class HouseholdsRepository extends BaseRepository {
     return (data ?? []) as Array<{ id: string; timezone: string }>;
   }
 
+  // Story 3-S34 — single-household IANA timezone for the on-demand composition
+  // window. Throws if the household row is missing (deriveCompositionWindow
+  // cannot pick the right week without a real timezone). Does not touch
+  // encrypted columns, so kek is not required.
+  async getTimezone(householdId: string): Promise<string> {
+    const { data, error } = await this.client
+      .from('households')
+      .select('timezone')
+      .eq('id', householdId)
+      .maybeSingle();
+    if (error) throw error;
+    if (data === null) {
+      throw new NotFoundError(`household not found: ${householdId}`);
+    }
+    return (data as { timezone: string }).timezone;
+  }
+
   // Returns household age in milliseconds (now - created_at). Used by the
   // tile-retry route to gate the ghost-timestamp escalation to week 1–2.
   // Throws if the household row is missing — no silent zero fallback that

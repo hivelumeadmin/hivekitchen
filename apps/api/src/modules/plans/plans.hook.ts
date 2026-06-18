@@ -9,6 +9,8 @@ import { BriefStateComposer } from './brief-state.composer.js';
 import { ChildAllergensRepository } from '../children/child-allergens.repository.js';
 import { ChildrenRepository } from '../children/children.repository.js';
 import { REGEN_QUEUE } from '../../jobs/plan-regeneration.job.js';
+import { GENERATE_QUEUE } from '../../jobs/plan-generation.job.js';
+import { HouseholdsRepository } from '../households/households.repository.js';
 import { PlanDayContextRepository } from './plan-day-context.repository.js';
 import { PlanDayContextService } from './plan-day-context.service.js';
 import { ExtraRulesRepository } from '../children/extra-rules.repository.js';
@@ -121,6 +123,10 @@ const plansHookPlugin: FastifyPluginAsync = async (fastify) => {
     logger: fastify.log,
   });
 
+  // Story 3-S34 — on-demand composition needs the single-household timezone
+  // (composition window) and the plan-generation queue (immediate enqueue).
+  const householdsRepository = new HouseholdsRepository(fastify.supabase, kek);
+
   const plansService = new PlansService({
     repository,
     briefStateRepository,
@@ -134,6 +140,8 @@ const plansHookPlugin: FastifyPluginAsync = async (fastify) => {
     recipeService,                                     // post-Phase-9: recordUse() only
     recipesRepository,                                 // 3-DM-C1 9b/4 step 2: swap recipe-ingredient lookup
     variantProposalService,                            // Story 3.27
+    generateQueue: fastify.bullmq.getQueue(GENERATE_QUEUE), // Story 3-S34
+    householdsRepository,                              // Story 3-S34
   });
   if (fastify.hasDecorator('planAdjustmentService')) {
     throw new Error(

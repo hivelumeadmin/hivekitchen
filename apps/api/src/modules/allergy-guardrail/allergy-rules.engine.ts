@@ -5,7 +5,11 @@ import type {
   PlanItemForGuardrail,
 } from '@hivekitchen/types';
 
-export const GUARDRAIL_VERSION = '1.1.0' as const;
+// 1.1.0 → 1.2.0 (Story 3.S39): commit-time guardrail now evaluates each
+// slot's full effective ingredient set (recipe.ingredients − removals + add_ons),
+// not just parent-added add_ons. Bump distinguishes the audit trail pre/post
+// base-ingredient evaluation.
+export const GUARDRAIL_VERSION = '1.2.0' as const;
 
 // Canonical FALCPA keys match `allergen_tags.key` (rule_class='falcpa'). Slice 2.6-s7
 // aligned engine keys with the vocabulary table so the repository can read seeds
@@ -129,11 +133,14 @@ export type AllergyRule = {
 const TOKEN_SPLIT_RE = /[\s_\-,;.()/]+/;
 const MIN_TOKEN_LEN = 3;
 
-// Hard caps: belt-and-braces with the contract `.max()` bounds. Engine refuses to
-// evaluate inputs that exceed these limits (returns `'uncertain'`) — protects the
-// p99 latency budget (maxLatencyMs: 150) from oversized agent payloads.
-const MAX_PLAN_ITEMS = 50;
-const MAX_INGREDIENTS_PER_ITEM = 20;
+// Hard caps: a latency guard against oversized payloads (the engine is
+// O(items × rules × ingredients)). Sized for the commit-time effective-set
+// walk (Story 3.S39), which emits one item per (child, day, slot) with the
+// full recipe ingredient set: up to DAYS(6) × SLOTS(3) × VARIATIONS(12) = 216
+// items, each up to recipe.ingredients(40) + add_ons(20) ingredients. Inputs
+// beyond these limits return `'uncertain'` rather than risk the p99 budget.
+const MAX_PLAN_ITEMS = 250;
+const MAX_INGREDIENTS_PER_ITEM = 80;
 
 function targetsFor(allergen: string): readonly string[] {
   const normalized = allergen.trim().toLowerCase();

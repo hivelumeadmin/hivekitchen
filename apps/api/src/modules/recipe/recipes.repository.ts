@@ -529,6 +529,45 @@ export class RecipesRepository extends BaseRepository {
   }
 
   /**
+   * Story 3.S39 — batch ingredient fetch for the commit-time allergy
+   * guardrail. Given many recipe ids, returns a Map<id, string[]> of
+   * display-name ingredient strings in a single query (no N+1 per slot).
+   *
+   * `recipes.ingredients` is JSONB: the canonical shape is the object form
+   * (key/modifier/display/…), but catalog-seeded / legacy rows MAY hold plain
+   * strings. Both are accepted — strings pass through, objects project to
+   * their `display`. A recipe with no resolvable ingredients is simply absent
+   * from (or empty in) the map; the caller treats that as "unverifiable" per
+   * the guardrail fail-safe. Mirrors PlansService.fetchRecipeDisplayIngredients
+   * (the swap path) so commit + swap derive the same ingredient vocabulary.
+   */
+  async findIngredientsByIds(ids: readonly string[]): Promise<Map<string, string[]>> {
+    const out = new Map<string, string[]>();
+    if (ids.length === 0) return out;
+
+    const { data, error } = await this.client
+      .from('recipes')
+      .select('id, ingredients')
+      .in('id', [...ids]);
+    if (error) throw error;
+
+    for (const raw of (data ?? []) as Array<{ id: string; ingredients: unknown }>) {
+      const list = Array.isArray(raw.ingredients) ? raw.ingredients : [];
+      const display: string[] = [];
+      for (const entry of list) {
+        if (typeof entry === 'string') {
+          if (entry.length > 0) display.push(entry);
+        } else if (entry !== null && typeof entry === 'object' && 'display' in entry) {
+          const d = (entry as { display?: unknown }).display;
+          if (typeof d === 'string' && d.length > 0) display.push(d);
+        }
+      }
+      out.set(raw.id, display);
+    }
+    return out;
+  }
+
+  /**
    * Slice 2.6-s3 — Layer 2 in-place ingredient population. Used after
    * RecipeAgent.discover() succeeds for a catalog_seeded row that started
    * empty. Updates ingredients + ingredient_keys atomically so the planner's

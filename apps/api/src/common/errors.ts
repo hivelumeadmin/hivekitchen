@@ -167,6 +167,18 @@ export class GuestAuthorCapReachedError extends DomainError {
   }
 }
 
+// Story 3-S34 — on-demand composition is create-only. A plan already covering
+// the target week must be edited via swap, not regenerated, so the endpoint
+// returns 409 rather than enqueueing a second generation.
+export class PlanAlreadyExistsError extends DomainError {
+  readonly type = '/errors/plan-already-exists';
+  readonly status = 409;
+  readonly title = 'Plan already exists';
+  constructor(weekOf: string) {
+    super(`A plan already exists for the week of ${weekOf}. Edit it via swap instead of regenerating.`);
+  }
+}
+
 export function isDomainError(err: unknown): err is DomainError {
   return err instanceof DomainError;
 }

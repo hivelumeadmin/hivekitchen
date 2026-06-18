@@ -275,14 +275,14 @@ describe('allergy-rules.engine.evaluate', () => {
   // -------------------- P9: input size guard --------------------
 
   it('returns uncertain when planItems exceeds the engine cap', () => {
-    const items = Array.from({ length: 51 }, () => item({ ingredients: ['rice'] }));
+    const items = Array.from({ length: 251 }, () => item({ ingredients: ['rice'] }));
     const result = evaluate(items, FALCPA_BASELINE);
     expect(result.verdict).toBe('uncertain');
     if (result.verdict === 'uncertain') expect(result.reason).toBe('plan_items_exceeds_max');
   });
 
   it('returns uncertain when an ingredients array exceeds the engine cap', () => {
-    const items = [item({ ingredients: Array.from({ length: 21 }, () => 'rice') })];
+    const items = [item({ ingredients: Array.from({ length: 81 }, () => 'rice') })];
     const result = evaluate(items, FALCPA_BASELINE);
     expect(result.verdict).toBe('uncertain');
     if (result.verdict === 'uncertain') expect(result.reason).toBe('ingredients_exceeds_max');

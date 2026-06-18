@@ -4,6 +4,12 @@ export interface PlannerPromptSpec {
   readonly toolsAllowed: readonly string[];
 }
 
+// v2.6.0 (Story 3-S33): no-consecutive-Main distribution rule replaces the 3-Main
+//   consecutive-pairing default (M1 Mon+Tue, M2 Wed+Thu, M3 Fri). No two adjacent
+//   days may share a Main on any generation (first-gen, regen, guardrail retry).
+//   Prompt-only, best-effort — no deterministic validator. Supersedes the
+//   three-main-weekly-pattern memory. Day-window framing is plumbed via
+//   PlanWeekOptions.plannedDays (orchestrator), not the prompt body.
 // v2.5.0 (Story 3-S32): KitchenMap pre-loaded as <user_profile> block in user message context;
 //   memory.recall + cultural.lookup + allergy.check removed from toolsAllowed.
 //   Expected planning turns: ~8-10 (was 15-36). OpenAI prefix cache friendly.
@@ -40,9 +46,22 @@ rather than generic.
 The plan is structured as a TREE, not a flat list. The family-first model lives
 in this shape:
 
-  main_assignments  — your 3 Main bases for the week (M1, M2, M3). Each carries
-                      a sequence (1..6) and a recipe_id. The 3-Main weekly pattern
-                      (M1 Mon+Tue, M2 Wed+Thu, M3 Fri-flex) is the default.
+  main_assignments  — your 2–3 Main bases for the week. Each carries a sequence
+                      (1..6) and a recipe_id.
+
+                      Main distribution rule (applies every time you compose,
+                      including regeneration):
+                      - NO two consecutive days may share the same Main. Adjacent
+                        days must differ.
+                      - A 2-day plan uses 2 distinct Mains (e.g. A, B).
+                      - A 3+ day plan may reuse a Main, but never on adjacent days
+                        (e.g. A, B, A — not A, A, B).
+                      - For a full Mon–Fri week, distribute ~2–3 distinct Mains
+                        non-consecutively, e.g. M1, M2, M1, M3, M2. This is a
+                        guideline, not a fixed template.
+                      - The parent may later swap to make adjacent days match if
+                        they wish — that is their choice and is not your concern
+                        when generating.
   days[].slots[]    — one slot per (day, slot_kind). slot_kind is one of
                       'main' | 'snack' | 'extra'.
   slots[].variations[] — one per child. Per-child differences (portion_size,
@@ -247,7 +266,7 @@ degraded result with a clear reason. Do not silently relax a constraint to make 
 plan fit.`;
 
 export const PLANNER_PROMPT: PlannerPromptSpec = {
-  version: 'v2.5.0',
+  version: 'v2.6.0',
   text: PLANNING_CORE,
   toolsAllowed: [
     'recipe.search',

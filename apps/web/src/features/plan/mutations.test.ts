@@ -3,7 +3,10 @@ import { renderHook, waitFor, cleanup, act } from '@testing-library/react';
 import { createElement } from 'react';
 import type { ReactNode } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { useRequestRegenerationMutation } from './mutations.js';
+import {
+  useGenerateOnDemandMutation,
+  useRequestRegenerationMutation,
+} from './mutations.js';
 import { HkApiError } from '@/lib/fetch.js';
 
 vi.mock('@/lib/fetch.js', async () => {
@@ -98,5 +101,53 @@ describe('useRequestRegenerationMutation (Story 3.13)', () => {
     });
     expect(result.current.error).toBeInstanceOf(HkApiError);
     expect((result.current.error as HkApiError).status).toBe(429);
+  });
+});
+
+describe('useGenerateOnDemandMutation (Story 3-S34)', () => {
+  it('POSTs to /v1/plans/generate with an Idempotency-Key and no body', async () => {
+    const { hkFetch } = await import('@/lib/fetch.js');
+    vi.mocked(hkFetch).mockResolvedValue({
+      job_id: 'gen-1',
+      week_of: '2026-06-15',
+      planned_days: ['thursday', 'friday'],
+      basis: 'current_week_remaining',
+    });
+    const { wrapper } = makeWrapper();
+
+    const { result } = renderHook(() => useGenerateOnDemandMutation(), { wrapper });
+
+    await act(async () => {
+      await result.current.mutateAsync();
+    });
+
+    expect(hkFetch).toHaveBeenCalledWith(
+      '/v1/plans/generate',
+      expect.objectContaining({
+        method: 'POST',
+        headers: expect.objectContaining({ 'Idempotency-Key': expect.any(String) }),
+      }),
+    );
+    // No request body — the window is server-derived.
+    expect(vi.mocked(hkFetch).mock.calls[0]?.[1]).not.toHaveProperty('body');
+  });
+
+  it('409 (plan already exists) surfaces as a mutation error', async () => {
+    const { hkFetch } = await import('@/lib/fetch.js');
+    vi.mocked(hkFetch).mockRejectedValue(
+      new HkApiError(409, { type: '/errors/plan-already-exists' }),
+    );
+    const { wrapper } = makeWrapper();
+
+    const { result } = renderHook(() => useGenerateOnDemandMutation(), { wrapper });
+
+    await act(async () => {
+      await result.current.mutateAsync().catch(() => undefined);
+    });
+
+    await waitFor(() => {
+      expect(result.current.isError).toBe(true);
+    });
+    expect((result.current.error as HkApiError).status).toBe(409);
   });
 });

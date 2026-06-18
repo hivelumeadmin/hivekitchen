@@ -6,6 +6,7 @@ import type {
   CommitPlanTreeInput,
   GuardrailResult,
   PlanComposeTreeOutput,
+  Weekday,
 } from '@hivekitchen/types';
 import { GuardrailRejectionError } from '../common/errors.js';
 import { HouseholdsRepository } from '../modules/households/households.repository.js';
@@ -54,6 +55,10 @@ export interface PlanGenerationJobData {
   household_id: string;
   week_of: string;
   request_id: string;
+  // Story 3-S34 — on-demand ("compose now") narrows the plan to a subset of
+  // weekdays (mid-week / next-week-full window). The Friday cron leaves this
+  // undefined → full default week (no behavior change).
+  planned_days?: Weekday[];
 }
 
 // Given a Friday date at fan-out time, returns the ISO date of the following
@@ -281,7 +286,7 @@ const planGenerationPlugin: FastifyPluginAsync = async (fastify) => {
   const generationWorker = fastify.bullmq.getWorker(
     GENERATE_QUEUE,
     async (job: Job<PlanGenerationJobData>) => {
-      const { household_id, week_of, request_id } = job.data;
+      const { household_id, week_of, request_id, planned_days } = job.data;
       const weekId = deriveWeekId(week_of);
 
       fastify.log.info(
@@ -371,6 +376,7 @@ const planGenerationPlugin: FastifyPluginAsync = async (fastify) => {
         variantEligibleChildren,
         sovereigntyMode,
         kitchenMap,
+        plannedDays: planned_days,
       });
       const commitInput = buildCommitInputTree(composeOutput, request_id);
 
@@ -446,6 +452,7 @@ const planGenerationPlugin: FastifyPluginAsync = async (fastify) => {
             variantEligibleChildren,
             sovereigntyMode,
             kitchenMap,
+            plannedDays: planned_days,
           });
           const retryCommit = buildCommitInputTree(retryOutput, request_id);
           lastAttemptCommit = retryCommit;

@@ -846,6 +846,161 @@ describe('DomainOrchestrator', () => {
     });
   });
 
+  // Story 3-S33 — partial-week (plannedDays) + day-scope adjacentMains injection.
+  describe('planWeek partial-week & adjacent-Main injection', () => {
+    let savedComposeSpec: ToolSpec;
+
+    beforeEach(() => {
+      savedComposeSpec = TOOL_MANIFEST.get('plan.compose')!;
+    });
+
+    afterEach(() => {
+      TOOL_MANIFEST.set('plan.compose', savedComposeSpec);
+    });
+
+    const MINIMAL_PLAN_OUTPUT = {
+      plan_id: '99999999-9999-4999-8999-999999999933',
+      household_id: HOUSEHOLD_ID,
+      week_of: '2026-11-02',
+      prompt_version: 'v2.0.0',
+      main_assignments: [{ sequence: 1, recipe_id: '33333333-3333-4333-8333-333333333333' }],
+      days: [
+        {
+          day: 'monday',
+          slots: [
+            {
+              slot_kind: 'main',
+              main_assignment_sequence: 1,
+              variations: [{ child_id: CHILD_ID }],
+            },
+          ],
+        },
+      ],
+    };
+
+    function buildCapturingOrchestrator(captureRef: { content?: string }) {
+      const provider = buildProvider('primary', {
+        completeWithMessages: vi.fn().mockImplementation(
+          (messages: Array<{ role: string; content: unknown }>) => {
+            const userMsg = messages.find((m) => m.role === 'user');
+            captureRef.content = userMsg?.content as string | undefined;
+            return Promise.resolve({
+              content: null,
+              toolCalls: [{ id: 'tc-pw', name: 'plan.compose', arguments: MINIMAL_PLAN_OUTPUT }],
+              finishReason: 'tool_calls',
+              usage: { promptTokens: 1, completionTokens: 1, cachedPromptTokens: 0 },
+            });
+          },
+        ),
+      });
+      const { orchestrator } = buildOrchestrator([provider]);
+      const composeSpec = TOOL_MANIFEST.get('plan.compose')!;
+      TOOL_MANIFEST.set('plan.compose', {
+        ...composeSpec,
+        fn: vi.fn().mockResolvedValue(MINIMAL_PLAN_OUTPUT),
+      });
+      return orchestrator;
+    }
+
+    it('prepends the PARTIAL WEEK line as the first context line when plannedDays is present', async () => {
+      const capture: { content?: string } = {};
+      const orchestrator = buildCapturingOrchestrator(capture);
+
+      await orchestrator.planWeek({
+        householdId: HOUSEHOLD_ID,
+        weekOf: '2026-11-02',
+        requestId: 'req-pw-1',
+        plannedDays: ['wednesday', 'thursday', 'friday'],
+      });
+
+      expect(capture.content).toBeDefined();
+      expect(capture.content!.startsWith('PARTIAL WEEK:')).toBe(true);
+      expect(capture.content).toContain(
+        'Compose plan_days entries for ONLY these weekdays: wednesday, thursday, friday.',
+      );
+      expect(capture.content).toContain('the plan starts mid-week');
+    });
+
+    it('renders no PARTIAL WEEK line when plannedDays is absent', async () => {
+      const capture: { content?: string } = {};
+      const orchestrator = buildCapturingOrchestrator(capture);
+
+      await orchestrator.planWeek({
+        householdId: HOUSEHOLD_ID,
+        weekOf: '2026-11-02',
+        requestId: 'req-pw-2',
+      });
+
+      expect(capture.content).toBeDefined();
+      expect(capture.content).not.toContain('PARTIAL WEEK:');
+    });
+
+    it('renders no PARTIAL WEEK line when plannedDays is empty', async () => {
+      const capture: { content?: string } = {};
+      const orchestrator = buildCapturingOrchestrator(capture);
+
+      await orchestrator.planWeek({
+        householdId: HOUSEHOLD_ID,
+        weekOf: '2026-11-02',
+        requestId: 'req-pw-3',
+        plannedDays: [],
+      });
+
+      expect(capture.content).toBeDefined();
+      expect(capture.content).not.toContain('PARTIAL WEEK:');
+    });
+
+    it('appends adjacent Mains to the day-scope line when adjacentMains is present', async () => {
+      const capture: { content?: string } = {};
+      const orchestrator = buildCapturingOrchestrator(capture);
+
+      await orchestrator.planWeek({
+        householdId: HOUSEHOLD_ID,
+        weekOf: '2026-11-02',
+        requestId: 'req-pw-4',
+        dayScope: 'wednesday',
+        adjacentMains: [
+          { day: 'tuesday', main_name: 'Chicken Tikka Wrap' },
+          { day: 'thursday', main_name: 'Veggie Pasta Bake' },
+        ],
+      });
+
+      expect(capture.content).toContain('Regeneration scope: DAY ONLY.');
+      expect(capture.content).toContain(
+        'do NOT assign the same Main to WEDNESDAY: tuesday → Chicken Tikka Wrap, thursday → Veggie Pasta Bake.',
+      );
+    });
+
+    it('omits the adjacent-Main clause from the day-scope line when adjacentMains is absent', async () => {
+      const capture: { content?: string } = {};
+      const orchestrator = buildCapturingOrchestrator(capture);
+
+      await orchestrator.planWeek({
+        householdId: HOUSEHOLD_ID,
+        weekOf: '2026-11-02',
+        requestId: 'req-pw-5',
+        dayScope: 'wednesday',
+      });
+
+      expect(capture.content).toContain('Regeneration scope: DAY ONLY.');
+      expect(capture.content).not.toContain('do NOT assign the same Main to');
+    });
+
+    it('throws when plannedDays and dayScope are both set', async () => {
+      const { orchestrator } = buildOrchestrator([buildProvider('primary')]);
+
+      await expect(
+        orchestrator.planWeek({
+          householdId: HOUSEHOLD_ID,
+          weekOf: '2026-11-02',
+          requestId: 'req-pw-6',
+          plannedDays: ['wednesday', 'thursday'],
+          dayScope: 'wednesday',
+        }),
+      ).rejects.toThrow('plannedDays and dayScope are mutually exclusive');
+    });
+  });
+
   // Story 3.30 — circuit-breaker health status and recovery audit.
   describe('getProviderStatus', () => {
     it('returns active_provider, closed circuit, and provider list when healthy', () => {

@@ -23,6 +23,7 @@ import {
   WeekdaySchema,
   RegeneratePlanQuerySchema,
   RegeneratePlanResponseSchema,
+  GeneratePlanResponseSchema,
   SetPlanDayContextInputSchema,
   SetPlanDayContextResponseSchema,
   ConfirmVariantProposalInputSchema,
@@ -159,6 +160,41 @@ const plansRoutesPlugin: FastifyPluginAsync = async (fastify) => {
         ...(hardFail !== null ? { hard_fail: hardFail } : {}),
         variant_proposals: variantProposals,
         ...(flaggedItems.length > 0 ? { flagged_items: flaggedItems } : {}),
+      });
+    },
+  );
+
+  // POST /v1/plans/generate
+  //
+  // Story 3-S34 — on-demand ("compose now") plan composition. The window is
+  // server-derived from "now" + the household timezone, so there is no body.
+  // Create-only: 409 when a plan already covers the target week. Rate-limited
+  // per household per target week → 429. Enqueues a plan-generation job with no
+  // delay and responds 202. The client then polls GET /v1/plans?week=current|next.
+  fastify.post(
+    '/v1/plans/generate',
+    {
+      preHandler: requireMember,
+      schema: {
+        response: { 202: GeneratePlanResponseSchema },
+      },
+    },
+    async (request, reply) => {
+      const requestId = requireIdempotencyKey(
+        request.headers['idempotency-key'],
+      );
+
+      const { jobId, weekOf, plannedDays, basis } =
+        await fastify.plansService.requestOnDemandGeneration({
+          householdId: request.user.household_id,
+          requestId,
+        });
+
+      return reply.status(202).send({
+        job_id: jobId,
+        week_of: weekOf,
+        planned_days: plannedDays,
+        basis,
       });
     },
   );

@@ -31,8 +31,22 @@ describe('PLANNER_PROMPT', () => {
     expect(PLANNER_PROMPT.toolsAllowed).not.toContain('allergy.check');
   });
 
-  it('is at version v2.5.0', () => {
-    expect(PLANNER_PROMPT.version).toBe('v2.5.0');
+  it('is at version v2.6.0', () => {
+    expect(PLANNER_PROMPT.version).toBe('v2.6.0');
+  });
+
+  // Story 3-S33 — no-consecutive-Main distribution rule.
+  it('documents the no-consecutive-Main distribution rule', () => {
+    expect(PLANNER_PROMPT.text).toContain('Main distribution rule');
+    expect(PLANNER_PROMPT.text).toContain(
+      'NO two consecutive days may share the same Main',
+    );
+    expect(PLANNER_PROMPT.text).toContain('A 2-day plan uses 2 distinct Mains');
+    expect(PLANNER_PROMPT.text).toContain('M1, M2, M1, M3, M2');
+  });
+
+  it('no longer defaults to the 3-Main consecutive-pairing pattern', () => {
+    expect(PLANNER_PROMPT.text).not.toContain('M1 Mon+Tue, M2 Wed+Thu, M3 Fri-flex');
   });
 
   it('documents the FR125 absence-neutrality rule for child_signal', () => {

@@ -40,7 +40,7 @@ import type {
   CulturalObservance,
   CulturalTemplateKey,
 } from '../services/cultural-calendar.service.js';
-import type { KitchenMap } from '@hivekitchen/types';
+import type { KitchenMap, Weekday } from '@hivekitchen/types';
 
 // Story 3.18 — cultural context the planner agent receives alongside household
 // + week metadata. Empty arrays = silence-mode household → no cultural lines
@@ -137,6 +137,14 @@ export interface PlanWeekOptions {
   variantEligibleChildren?: readonly PlannerVariantEligibleChild[];
   sovereigntyMode?: 'unified' | 'alternating';
   kitchenMap?: KitchenMap;
+  // Story 3-S33 — partial-week composition. When present and non-empty, the
+  // planner composes plan_days entries for ONLY these weekdays (mid-week /
+  // on-demand composition, Story 3-S34). Absent/empty = full default week.
+  plannedDays?: readonly Weekday[];
+  // Story 3-S33 — day-scope regeneration neighbour Mains. When dayScope is set,
+  // these are the current Mains on the adjacent days so the planner can avoid
+  // matching them (no-consecutive-Main rule). Populated by the regen caller.
+  adjacentMains?: ReadonlyArray<{ day: Weekday; main_name: string }>;
 }
 
 export interface OrchestratorServices {
@@ -341,7 +349,12 @@ export class DomainOrchestrator {
       variantEligibleChildren,
       sovereigntyMode,
       kitchenMap,
+      plannedDays,
+      adjacentMains,
     } = opts;
+    if (plannedDays && plannedDays.length > 0 && dayScope !== undefined) {
+      throw new Error('plannedDays and dayScope are mutually exclusive');
+    }
     // Story 3-S32 — memory.recall + cultural.lookup + allergy.check are no longer
     // in the planner's tool loop (household profile is pre-loaded via the
     // KitchenMap block). Minimum serial iterations for a 5-day main+snack+extra
@@ -391,7 +404,13 @@ export class DomainOrchestrator {
       ...variantEligibilityLines,
       ...sovereigntyLines,
       dayScope !== undefined
-        ? `Regeneration scope: DAY ONLY. Only generate a new plan for ${dayScope.toUpperCase()}. Keep all other days exactly as previously composed. Only call plan.compose with a days[] entry for ${dayScope} — do not include other days. main_assignments stay the same across the regeneration; declare the existing M-group as you received it.`
+        ? `Regeneration scope: DAY ONLY. Only generate a new plan for ${dayScope.toUpperCase()}. Keep all other days exactly as previously composed. Only call plan.compose with a days[] entry for ${dayScope} — do not include other days. main_assignments stay the same across the regeneration; declare the existing M-group as you received it.${
+            adjacentMains && adjacentMains.length > 0
+              ? ` The adjacent days already use these Mains — do NOT assign the same Main to ${dayScope.toUpperCase()}: ${adjacentMains
+                  .map((a) => `${a.day} → ${a.main_name}`)
+                  .join(', ')}.`
+              : ''
+          }`
         : undefined,
       rejectionContext !== undefined && rejectionContext.length > 0
         ? `Previous attempt was blocked by the allergy guardrail. Blocked ingredients/reasons:\n${rejectionContext}\nCompose a revised plan that avoids these.`
@@ -411,6 +430,17 @@ export class DomainOrchestrator {
     // it at position 0 so the planner sees it first.
     if (uncertainContext !== undefined) {
       contextLines.unshift(uncertainContext);
+    }
+
+    // Story 3-S33 — partial-week composition. The day window is the primary
+    // framing for a mid-week plan, so it sits at position 0 (above slot/uncertain
+    // scope). No-op when the caller wants the full default week.
+    if (plannedDays !== undefined && plannedDays.length > 0) {
+      contextLines.unshift(
+        `PARTIAL WEEK: Compose plan_days entries for ONLY these weekdays: ${plannedDays.join(
+          ', ',
+        )}. Do NOT emit any plan_days entry for any other weekday — the omitted days are intentionally left empty (the plan starts mid-week).`,
+      );
     }
 
     const messages: LLMMessage[] = [
@@ -1187,7 +1217,7 @@ export function renderPlannerKitchenMapBlock(map: KitchenMap): string {
     .sort((a, b) => b.confidence_score - a.confidence_score)
     .slice(0, 10)
     .map((r) => {
-      const lastUsed = r.last_used_at.slice(0, 10);
+      const lastUsed = r.last_used_at ? r.last_used_at.slice(0, 10) : '';
       return `    - { name: ${yamlStr(r.canonical_name)}, cuisine_tags: ${JSON.stringify(r.cuisine_tags)}, confidence: ${r.confidence_score}, last_used_at: "${lastUsed}" }`;
     });
 
@@ -1196,7 +1226,7 @@ export function renderPlannerKitchenMapBlock(map: KitchenMap): string {
 
   const householdSection = [
     'household:',
-    `  display_name: ${map.household.display_name !== null ? yamlStr(map.household.display_name) : 'null'}`,
+    `  display_name: ${map.household.display_name != null ? yamlStr(map.household.display_name) : 'null'}`,
     `  timezone: "${map.household.timezone}"`,
     `  declared_allergens: ${JSON.stringify(map.household.declared_allergens)}`,
     `  dietary_preferences: ${JSON.stringify(map.household.dietary_preferences)}`,
