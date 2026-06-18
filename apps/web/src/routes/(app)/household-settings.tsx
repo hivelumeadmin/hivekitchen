@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import {
   HouseholdMembersResponseSchema,
   HouseholdGeolocationConsentSchema,
+  AutoComposeStateSchema,
 } from '@hivekitchen/contracts';
 import type {
   HouseholdMember,
@@ -47,6 +48,14 @@ export default function HouseholdSettingsRoute() {
   const [geolocationEnabled, setGeolocationEnabled] = useState(false);
   const [geolocationLoading, setGeolocationLoading] = useState(false);
   const [geolocationError, setGeolocationError] = useState<string | null>(null);
+
+  // Story 3-S35 — weekly auto-compose enrollment. Surfaced only for the primary
+  // parent and only after the first plan exists (has_plan). Toggle is on/off.
+  const didLoadAutoCompose = useRef(false);
+  const [autoComposeEnabled, setAutoComposeEnabled] = useState(false);
+  const [autoComposeHasPlan, setAutoComposeHasPlan] = useState(false);
+  const [autoComposeLoading, setAutoComposeLoading] = useState(false);
+  const [autoComposeError, setAutoComposeError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!accessToken) {
@@ -98,6 +107,49 @@ export default function HouseholdSettingsRoute() {
       }
     })();
   }, [accessToken, householdId, role]);
+
+  // Load current auto-compose state on mount (primary_parent only — the toggle
+  // is primary-parent-gated). Fail-open: a load failure leaves the section
+  // hidden (has_plan stays false).
+  useEffect(() => {
+    if (!accessToken || householdId === null || role !== 'primary_parent') return;
+    if (didLoadAutoCompose.current) return;
+    didLoadAutoCompose.current = true;
+    void (async () => {
+      try {
+        const raw = await hkFetch<unknown>(`/v1/households/${householdId}/auto-compose`, {
+          method: 'GET',
+        });
+        const state = AutoComposeStateSchema.parse(raw);
+        setAutoComposeEnabled(state.auto_compose_enabled);
+        setAutoComposeHasPlan(state.has_plan);
+      } catch {
+        // fail-open: leave the section hidden
+      }
+    })();
+  }, [accessToken, householdId, role]);
+
+  async function handleAutoComposeToggle(checked: boolean) {
+    if (householdId === null) return;
+    const previous = autoComposeEnabled;
+    setAutoComposeError(null);
+    setAutoComposeEnabled(checked);
+    setAutoComposeLoading(true);
+    try {
+      const raw = await hkFetch<unknown>(`/v1/households/${householdId}/auto-compose`, {
+        method: 'PATCH',
+        body: { auto_compose_enabled: checked },
+      });
+      const state = AutoComposeStateSchema.parse(raw);
+      setAutoComposeEnabled(state.auto_compose_enabled);
+      setAutoComposeHasPlan(state.has_plan);
+    } catch {
+      setAutoComposeEnabled(previous);
+      setAutoComposeError('Could not update this setting. Please try again.');
+    } finally {
+      setAutoComposeLoading(false);
+    }
+  }
 
   async function handleGeolocationToggle(checked: boolean) {
     if (householdId === null) return;
@@ -307,6 +359,39 @@ export default function HouseholdSettingsRoute() {
               {geolocationError && (
                 <p role="alert" className="mt-2 text-sm text-safety-red">
                   {geolocationError}
+                </p>
+              )}
+            </section>
+          )}
+
+          {/* Auto-compose enrollment — primary_parent only, after the first plan */}
+          {role === 'primary_parent' && autoComposeHasPlan && (
+            <section className="mt-12 border-t border-border pt-8">
+              <h2 className="font-serif text-xl text-fg">Planning</h2>
+              <label className="mt-4 flex items-start justify-between gap-4 py-1">
+                <span>
+                  <span className="block text-sm text-fg">
+                    Auto-compose next week&apos;s plan — Friday evening
+                  </span>
+                  <span className="mt-1 block text-sm text-fg-muted leading-relaxed">
+                    Lumi prepares next week&apos;s plan for you every Friday evening. Turn this off
+                    to compose each week yourself.
+                  </span>
+                </span>
+                <input
+                  type="checkbox"
+                  role="switch"
+                  aria-label="Auto-compose next week's plan"
+                  aria-checked={autoComposeEnabled}
+                  checked={autoComposeEnabled}
+                  disabled={autoComposeLoading}
+                  onChange={(e) => void handleAutoComposeToggle(e.target.checked)}
+                  className="mt-1 h-4 w-4 shrink-0"
+                />
+              </label>
+              {autoComposeError && (
+                <p role="alert" className="mt-2 text-sm text-safety-red">
+                  {autoComposeError}
                 </p>
               )}
             </section>

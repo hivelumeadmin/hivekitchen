@@ -28,6 +28,8 @@ import {
   RespondToLearningMomentRequestSchema,
   HouseholdGeolocationConsentSchema,
   UpdateGeolocationConsentRequestSchema,
+  AutoComposeStateSchema,
+  UpdateAutoComposeRequestSchema,
 } from '@hivekitchen/contracts';
 import type {
   TileRetryRequest,
@@ -38,6 +40,7 @@ import type {
 import type {
   CreateExtraLibraryItemInput,
   UpdateGeolocationConsentRequest,
+  UpdateAutoComposeRequest,
 } from '@hivekitchen/types';
 import { AuditRepository } from '../../audit/audit.repository.js';
 import { AuditService } from '../../audit/audit.service.js';
@@ -920,6 +923,73 @@ const householdsRoutesPlugin: FastifyPluginAsync = async (fastify) => {
         metadata: { geolocation_enabled: body.geolocation_enabled },
       };
       return consent;
+    },
+  );
+
+  // Story 3-S35 — GET /v1/households/:id/auto-compose
+  // Current weekly auto-compose enrollment + whether the household has composed
+  // a plan yet (so the web surfaces the toggle only after the first plan, AC6).
+  // Either caregiver may read; the read is non-sensitive. 403 on cross-household.
+  fastify.get(
+    '/v1/households/:id/auto-compose',
+    {
+      preHandler: requireParentOrCaregiver,
+      schema: {
+        params: HouseholdIdParamSchema,
+        response: { 200: AutoComposeStateSchema },
+      },
+    },
+    async (request) => {
+      const { id: householdId } = request.params as { id: string };
+      if (householdId !== request.user.household_id) {
+        throw new ForbiddenError('Cannot access another household auto-compose setting');
+      }
+      const [autoComposeEnabled, hasPlan] = await Promise.all([
+        householdsService.getAutoComposeEnabled(householdId),
+        fastify.plansService.hasAnyPlan(householdId),
+      ]);
+      return { auto_compose_enabled: autoComposeEnabled, has_plan: hasPlan };
+    },
+  );
+
+  // Story 3-S35 — PATCH /v1/households/:id/auto-compose
+  // Toggle weekly auto-compose. Primary Parent only (mirrors sovereignty-mode);
+  // guest_author + secondary_caregiver → 403. Writes an audit event.
+  fastify.patch(
+    '/v1/households/:id/auto-compose',
+    {
+      preHandler: authorize(['primary_parent']),
+      schema: {
+        params: HouseholdIdParamSchema,
+        body: UpdateAutoComposeRequestSchema,
+        response: { 200: AutoComposeStateSchema },
+      },
+    },
+    async (request) => {
+      const { id: householdId } = request.params as { id: string };
+      if (householdId !== request.user.household_id) {
+        throw new ForbiddenError('Cannot update another household auto-compose setting');
+      }
+      const body = request.body as UpdateAutoComposeRequest;
+      await householdsService.setAutoComposeEnabled(householdId, body.auto_compose_enabled);
+
+      try {
+        await auditService.write({
+          event_type: 'household.auto_compose_changed',
+          user_id: request.user.id,
+          household_id: householdId,
+          request_id: request.id,
+          metadata: { auto_compose_enabled: body.auto_compose_enabled },
+        });
+      } catch (err) {
+        request.log.error(
+          { err, household_id: householdId },
+          'audit write failed for household.auto_compose_changed',
+        );
+      }
+
+      const hasPlan = await fastify.plansService.hasAnyPlan(householdId);
+      return { auto_compose_enabled: body.auto_compose_enabled, has_plan: hasPlan };
     },
   );
 };

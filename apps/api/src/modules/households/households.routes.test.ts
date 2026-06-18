@@ -34,6 +34,8 @@ interface HouseholdMockRow {
   geolocation_enabled: boolean;
   geolocation_consented_at: string | null;
   geolocation_purpose: 'cultural_supplier_routing' | null;
+  // Story 3-S35 — weekly auto-compose enrollment toggle.
+  auto_compose_enabled: boolean;
 }
 
 interface MockState {
@@ -154,6 +156,9 @@ function householdsTable(state: MockState) {
               if ('geolocation_consented_at' in patch) {
                 row.geolocation_consented_at = patch.geolocation_consented_at as string;
               }
+              if (typeof patch.auto_compose_enabled === 'boolean') {
+                row.auto_compose_enabled = patch.auto_compose_enabled;
+              }
             }
           }
           // Return a chain that supports .select().maybeSingle() for setTileGhostFlag
@@ -266,6 +271,7 @@ function freshState(
     geolocationEnabled?: boolean;
     geolocationConsentedAt?: string | null;
     geolocationPurpose?: 'cultural_supplier_routing' | null;
+    autoComposeEnabled?: boolean;
   } = {},
 ): MockState {
   const ageMs = opts.householdAgeMs ?? 1000 * 60 * 60; // 1h old by default
@@ -281,6 +287,7 @@ function freshState(
           geolocation_enabled: opts.geolocationEnabled ?? false,
           geolocation_consented_at: opts.geolocationConsentedAt ?? null,
           geolocation_purpose: opts.geolocationPurpose ?? null,
+          auto_compose_enabled: opts.autoComposeEnabled ?? true,
         },
       ],
     ]),
@@ -3250,5 +3257,212 @@ describe('PATCH /v1/households/:id/geolocation-consent', () => {
     });
 
     expect(res.statusCode).toBe(400);
+  });
+});
+
+// ===========================================================================
+// Story 3-S35 — auto-compose enrollment toggle
+// ===========================================================================
+
+describe('GET /v1/households/:id/auto-compose', () => {
+  let app: FastifyInstance;
+
+  afterEach(async () => {
+    if (app) await app.close();
+  });
+
+  it('returns 200 with the enabled flag and has_plan=true', async () => {
+    app = await buildTestApp({
+      state: freshState(),
+      plansService: { hasAnyPlan: async () => true },
+    });
+    const token = signPrimary(app);
+
+    const res = await app.inject({
+      method: 'GET',
+      url: `/v1/households/${SAMPLE_HOUSEHOLD_ID}/auto-compose`,
+      headers: { authorization: `Bearer ${token}` },
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual({ auto_compose_enabled: true, has_plan: true });
+  });
+
+  it('returns has_plan=false for a household that has not composed yet', async () => {
+    app = await buildTestApp({
+      state: freshState(),
+      plansService: { hasAnyPlan: async () => false },
+    });
+    const token = signPrimary(app);
+
+    const res = await app.inject({
+      method: 'GET',
+      url: `/v1/households/${SAMPLE_HOUSEHOLD_ID}/auto-compose`,
+      headers: { authorization: `Bearer ${token}` },
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual({ auto_compose_enabled: true, has_plan: false });
+  });
+
+  it('reflects a disabled household', async () => {
+    app = await buildTestApp({
+      state: freshState({ autoComposeEnabled: false }),
+      plansService: { hasAnyPlan: async () => true },
+    });
+    const token = signPrimary(app);
+
+    const res = await app.inject({
+      method: 'GET',
+      url: `/v1/households/${SAMPLE_HOUSEHOLD_ID}/auto-compose`,
+      headers: { authorization: `Bearer ${token}` },
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.json().auto_compose_enabled).toBe(false);
+  });
+
+  it('accepts secondary_caregiver (read is non-sensitive)', async () => {
+    app = await buildTestApp({
+      state: freshState(),
+      plansService: { hasAnyPlan: async () => true },
+    });
+    const token = signSecondary(app);
+
+    const res = await app.inject({
+      method: 'GET',
+      url: `/v1/households/${SAMPLE_HOUSEHOLD_ID}/auto-compose`,
+      headers: { authorization: `Bearer ${token}` },
+    });
+
+    expect(res.statusCode).toBe(200);
+  });
+
+  it('returns 403 on cross-household access', async () => {
+    app = await buildTestApp({
+      state: freshState(),
+      plansService: { hasAnyPlan: async () => true },
+    });
+    const OTHER_HOUSEHOLD = '99999999-9999-4999-8999-999999999999';
+    const token = signPrimary(app, SAMPLE_HOUSEHOLD_ID);
+
+    const res = await app.inject({
+      method: 'GET',
+      url: `/v1/households/${OTHER_HOUSEHOLD}/auto-compose`,
+      headers: { authorization: `Bearer ${token}` },
+    });
+
+    expect(res.statusCode).toBe(403);
+  });
+
+  it('returns 401 without a token', async () => {
+    app = await buildTestApp({
+      state: freshState(),
+      plansService: { hasAnyPlan: async () => true },
+    });
+
+    const res = await app.inject({
+      method: 'GET',
+      url: `/v1/households/${SAMPLE_HOUSEHOLD_ID}/auto-compose`,
+    });
+
+    expect(res.statusCode).toBe(401);
+  });
+});
+
+describe('PATCH /v1/households/:id/auto-compose', () => {
+  let app: FastifyInstance;
+
+  afterEach(async () => {
+    if (app) await app.close();
+  });
+
+  it('200 — disables auto-compose, persists, and writes an audit row', async () => {
+    const state = freshState({ autoComposeEnabled: true });
+    app = await buildTestApp({ state, plansService: { hasAnyPlan: async () => true } });
+    const token = signPrimary(app);
+
+    const res = await app.inject({
+      method: 'PATCH',
+      url: `/v1/households/${SAMPLE_HOUSEHOLD_ID}/auto-compose`,
+      headers: { authorization: `Bearer ${token}` },
+      payload: { auto_compose_enabled: false },
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual({ auto_compose_enabled: false, has_plan: true });
+    expect(state.households.get(SAMPLE_HOUSEHOLD_ID)?.auto_compose_enabled).toBe(false);
+    const auditRow = state.audit.find((r) => r.event_type === 'household.auto_compose_changed');
+    expect(auditRow).toBeDefined();
+    expect(auditRow?.metadata).toMatchObject({ auto_compose_enabled: false });
+  });
+
+  it('200 — re-enables auto-compose', async () => {
+    const state = freshState({ autoComposeEnabled: false });
+    app = await buildTestApp({ state, plansService: { hasAnyPlan: async () => true } });
+    const token = signPrimary(app);
+
+    const res = await app.inject({
+      method: 'PATCH',
+      url: `/v1/households/${SAMPLE_HOUSEHOLD_ID}/auto-compose`,
+      headers: { authorization: `Bearer ${token}` },
+      payload: { auto_compose_enabled: true },
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.json().auto_compose_enabled).toBe(true);
+    expect(state.households.get(SAMPLE_HOUSEHOLD_ID)?.auto_compose_enabled).toBe(true);
+  });
+
+  it('403 — secondary_caregiver is blocked (primary_parent only)', async () => {
+    app = await buildTestApp({
+      state: freshState(),
+      plansService: { hasAnyPlan: async () => true },
+    });
+    const token = signSecondary(app);
+
+    const res = await app.inject({
+      method: 'PATCH',
+      url: `/v1/households/${SAMPLE_HOUSEHOLD_ID}/auto-compose`,
+      headers: { authorization: `Bearer ${token}` },
+      payload: { auto_compose_enabled: false },
+    });
+
+    expect(res.statusCode).toBe(403);
+  });
+
+  it('403 — guest_author is blocked', async () => {
+    app = await buildTestApp({
+      state: freshState(),
+      plansService: { hasAnyPlan: async () => true },
+    });
+    const token = signGuest(app);
+
+    const res = await app.inject({
+      method: 'PATCH',
+      url: `/v1/households/${SAMPLE_HOUSEHOLD_ID}/auto-compose`,
+      headers: { authorization: `Bearer ${token}` },
+      payload: { auto_compose_enabled: false },
+    });
+
+    expect(res.statusCode).toBe(403);
+  });
+
+  it('403 — cross-household', async () => {
+    app = await buildTestApp({
+      state: freshState(),
+      plansService: { hasAnyPlan: async () => true },
+    });
+    const OTHER_HOUSEHOLD = '99999999-9999-4999-8999-999999999999';
+    const token = signPrimary(app, SAMPLE_HOUSEHOLD_ID);
+
+    const res = await app.inject({
+      method: 'PATCH',
+      url: `/v1/households/${OTHER_HOUSEHOLD}/auto-compose`,
+      headers: { authorization: `Bearer ${token}` },
+      payload: { auto_compose_enabled: false },
+    });
+
+    expect(res.statusCode).toBe(403);
   });
 });

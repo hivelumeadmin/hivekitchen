@@ -119,6 +119,15 @@ export class HouseholdsService {
     };
   }
 
+  // Story 3-S35 — weekly auto-compose enrollment toggle.
+  async getAutoComposeEnabled(householdId: string): Promise<boolean> {
+    return this.deps.repository.getAutoComposeEnabled(householdId);
+  }
+
+  async setAutoComposeEnabled(householdId: string, enabled: boolean): Promise<void> {
+    return this.deps.repository.setAutoComposeEnabled(householdId, enabled);
+  }
+
   // Slice 5-S14 — household-level geolocation consent (FR74, NFR-PRIV-3).
   async getGeolocationConsent(householdId: string): Promise<HouseholdGeolocationConsent> {
     const consent = await this.deps.repository.getGeolocationConsent(householdId);

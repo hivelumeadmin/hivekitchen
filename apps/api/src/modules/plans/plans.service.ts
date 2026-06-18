@@ -620,6 +620,12 @@ export class PlansService {
     return { jobId: job.id ?? jobIdKey, rateLimitRemaining };
   }
 
+  // Story 3-S35 — "has this household ever composed a plan?" Used by the
+  // auto-compose settings route to surface the toggle only after the first plan.
+  async hasAnyPlan(householdId: string): Promise<boolean> {
+    return this.repo.hasAnyPlan(householdId);
+  }
+
   // Story 3-S34 — user-triggered "compose now". Derives the composition window
   // from the household-local clock (deriveCompositionWindow), then create-only
   // guards, rate-limits, and enqueues a plan-generation job with NO delay

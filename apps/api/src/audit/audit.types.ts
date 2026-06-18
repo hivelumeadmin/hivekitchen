@@ -114,6 +114,7 @@ export const AUDIT_EVENT_TYPES = [
   'household.profile_updated',
   'household.sovereignty_mode_changed',
   'household.geolocation_consent', // 5-S14: geolocation opt-in consent (NFR-PRIV-3)
+  'household.auto_compose_changed', // 3-S35: weekly auto-compose enrollment toggle
   // school policies
   'school_policy.updated',
   // cultural

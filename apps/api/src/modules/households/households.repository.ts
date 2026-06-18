@@ -83,16 +83,47 @@ export class HouseholdsRepository extends BaseRepository {
   // Service-role client bypasses RLS — this is a background system query, not
   // a user-scoped read. Callers must loop with increasing offset until the
   // returned slice is shorter than limit (signals last page).
+  // Story 3-S35 — auto_compose_enabled is selected so the cron can skip
+  // households that have toggled weekly auto-compose off.
   async findAllActive(
     offset = 0,
     limit = 500,
-  ): Promise<Array<{ id: string; timezone: string }>> {
+  ): Promise<Array<{ id: string; timezone: string; auto_compose_enabled: boolean }>> {
     const { data, error } = await this.client
       .from('households')
-      .select('id, timezone')
+      .select('id, timezone, auto_compose_enabled')
       .range(offset, offset + limit - 1);
     if (error) throw error;
-    return (data ?? []) as Array<{ id: string; timezone: string }>;
+    return (data ?? []) as Array<{
+      id: string;
+      timezone: string;
+      auto_compose_enabled: boolean;
+    }>;
+  }
+
+  // Story 3-S35 — weekly auto-compose enrollment toggle. NOT NULL DEFAULT true
+  // at the column level; the null branch here only covers a missing row.
+  async getAutoComposeEnabled(householdId: string): Promise<boolean> {
+    const { data, error } = await this.client
+      .from('households')
+      .select('auto_compose_enabled')
+      .eq('id', householdId)
+      .maybeSingle();
+    if (error) throw error;
+    const row = data as { auto_compose_enabled: boolean } | null;
+    if (row === null) throw new NotFoundError(`household not found: ${householdId}`);
+    return row.auto_compose_enabled;
+  }
+
+  async setAutoComposeEnabled(householdId: string, enabled: boolean): Promise<void> {
+    const { data, error } = await this.client
+      .from('households')
+      .update({ auto_compose_enabled: enabled, updated_at: new Date().toISOString() })
+      .eq('id', householdId)
+      .select('id')
+      .maybeSingle();
+    if (error) throw error;
+    if (data === null) throw new NotFoundError(`household not found: ${householdId}`);
   }
 
   // Story 3-S34 — single-household IANA timezone for the on-demand composition

@@ -10,6 +10,7 @@ import type {
 } from '@hivekitchen/types';
 import { GuardrailRejectionError } from '../common/errors.js';
 import { HouseholdsRepository } from '../modules/households/households.repository.js';
+import { PlansRepository } from '../modules/plans/plans.repository.js';
 import { ChildAllergensRepository } from '../modules/children/child-allergens.repository.js';
 import { ChildrenRepository } from '../modules/children/children.repository.js';
 import { ChildPreferencesRepository } from '../modules/child-preferences/child-preferences.repository.js';
@@ -135,6 +136,23 @@ export function buildPlanNudgeContext(output: PlanComposeTreeOutput, weekOf: str
   );
 }
 
+// Story 3-S35 — pure gate for the auto-compose fan-out. Exported for unit
+// testing the skip/enqueue decision without BullMQ. A household is eligible
+// when it has auto-compose enabled AND has composed at least one plan
+// (opt-in by composing once) AND has no plan yet for the target week
+// (idempotent skip so the cron never clobbers an on-demand compose).
+export function selectAutoComposeEligible<
+  T extends { id: string; auto_compose_enabled: boolean },
+>(
+  households: readonly T[],
+  withAnyPlan: ReadonlySet<string>,
+  withTargetWeekPlan: ReadonlySet<string>,
+): T[] {
+  return households.filter(
+    (hh) => hh.auto_compose_enabled && withAnyPlan.has(hh.id) && !withTargetWeekPlan.has(hh.id),
+  );
+}
+
 const planGenerationPlugin: FastifyPluginAsync = async (fastify) => {
   if (!fastify.orchestrator) {
     throw new Error(
@@ -225,8 +243,9 @@ const planGenerationPlugin: FastifyPluginAsync = async (fastify) => {
     const now = new Date();
     const weekOf = getNextMondayFrom(now);
     const householdsRepo = new HouseholdsRepository(fastify.supabase, null);
+    const plansRepo = new PlansRepository(fastify.supabase);
     const PAGE_SIZE = 500;
-    const households: Array<{ id: string; timezone: string }> = [];
+    const households: Array<{ id: string; timezone: string; auto_compose_enabled: boolean }> = [];
     let offset = 0;
     while (true) {
       const page = await householdsRepo.findAllActive(offset, PAGE_SIZE);
@@ -235,13 +254,35 @@ const planGenerationPlugin: FastifyPluginAsync = async (fastify) => {
       offset += PAGE_SIZE;
     }
 
+    // Story 3-S35 — gate the fan-out. Enqueue a per-household job ONLY when the
+    // household has auto-compose enabled AND has composed at least one plan
+    // (opt-in by composing once) AND does not already have a plan for the target
+    // week (idempotent skip so the Friday cron never clobbers an on-demand
+    // compose for the same week). Skip reasons are logged in aggregate.
+    const enabled = households.filter((hh) => hh.auto_compose_enabled);
+    const enabledIds = enabled.map((hh) => hh.id);
+    const [withAnyPlan, withTargetWeekPlan] = await Promise.all([
+      plansRepo.findHouseholdIdsWithPlan(enabledIds),
+      plansRepo.findHouseholdIdsWithPlan(enabledIds, weekOf),
+    ]);
+    const toEnqueue = selectAutoComposeEligible(enabled, withAnyPlan, withTargetWeekPlan);
+
     fastify.log.info(
-      { module: 'plan-generation', action: 'fanout.start', count: households.length, weekOf },
+      {
+        module: 'plan-generation',
+        action: 'fanout.start',
+        weekOf,
+        total: households.length,
+        eligible: toEnqueue.length,
+        skipped_disabled: households.length - enabled.length,
+        skipped_no_plan: enabled.length - withAnyPlan.size,
+        skipped_already_composed: withTargetWeekPlan.size,
+      },
       'plan-generation fan-out: enqueuing per-household jobs',
     );
 
     const enqueueResults = await Promise.allSettled(
-      households.map(async (hh) => {
+      toEnqueue.map(async (hh) => {
         const fireAtMs = getLocalSixPmUtcMs(hh.timezone, now);
         const delay = Math.max(0, fireAtMs - Date.now());
         const jobData: PlanGenerationJobData = {
@@ -268,13 +309,13 @@ const planGenerationPlugin: FastifyPluginAsync = async (fastify) => {
           module: 'plan-generation',
           action: 'fanout.partial',
           failed: failures.length,
-          total: households.length,
+          total: toEnqueue.length,
         },
         'plan-generation fan-out: some enqueues failed',
       );
     } else {
       fastify.log.info(
-        { module: 'plan-generation', action: 'fanout.complete', count: households.length, weekOf },
+        { module: 'plan-generation', action: 'fanout.complete', count: toEnqueue.length, weekOf },
         'plan-generation fan-out: all household jobs enqueued',
       );
     }

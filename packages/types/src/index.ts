@@ -666,6 +666,12 @@ export type RegeneratePlanResponse = z.infer<typeof RegeneratePlanResponseSchema
 // Story 3-S34 — on-demand plan composition response
 export type GeneratePlanResponse = z.infer<typeof GeneratePlanResponseSchema>;
 
+// Story 3-S35 — weekly auto-compose enrollment toggle
+export type {
+  AutoComposeState,
+  UpdateAutoComposeRequest,
+} from '@hivekitchen/contracts';
+
 // Story 3.14 — following-week draft view types (canonical tree shape)
 export type GetPlansQuery = z.infer<typeof GetPlansQuerySchema>;
 export type GetPlansResponse = z.infer<typeof GetPlansResponseSchema>;

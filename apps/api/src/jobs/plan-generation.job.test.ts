@@ -5,6 +5,7 @@ import {
   deriveWeekId,
   getLocalSixPmUtcMs,
   getNextMondayFrom,
+  selectAutoComposeEligible,
 } from './plan-generation.job.js';
 
 const HOUSEHOLD_ID = '11111111-1111-4111-8111-111111111111';
@@ -16,6 +17,50 @@ const RECIPE_SNACK = '66666666-6666-4666-8666-666666666666';
 const RECIPE_CANDIDATE = '77777777-7777-4777-8777-777777777777';
 const CHILD_A = '88888888-8888-4888-8888-888888888888';
 const CHILD_B = '99999999-9999-4999-8999-999999999990';
+
+describe('selectAutoComposeEligible (3-S35 cron gate)', () => {
+  const HH_A = 'aaaaaaaa-0000-4000-8000-000000000001';
+  const HH_B = 'bbbbbbbb-0000-4000-8000-000000000002';
+  const HH_C = 'cccccccc-0000-4000-8000-000000000003';
+
+  it('enqueues a household that is enabled, has a plan, and has no plan for the target week', () => {
+    const households = [{ id: HH_A, auto_compose_enabled: true }];
+    const result = selectAutoComposeEligible(households, new Set([HH_A]), new Set());
+    expect(result.map((h) => h.id)).toEqual([HH_A]);
+  });
+
+  it('skips a household with auto-compose disabled', () => {
+    const households = [{ id: HH_A, auto_compose_enabled: false }];
+    const result = selectAutoComposeEligible(households, new Set([HH_A]), new Set());
+    expect(result).toEqual([]);
+  });
+
+  it('skips a household with zero plans (not opted in by composing once)', () => {
+    const households = [{ id: HH_A, auto_compose_enabled: true }];
+    const result = selectAutoComposeEligible(households, new Set(), new Set());
+    expect(result).toEqual([]);
+  });
+
+  it('skips a household that already has a plan for the target week (idempotent)', () => {
+    const households = [{ id: HH_A, auto_compose_enabled: true }];
+    const result = selectAutoComposeEligible(households, new Set([HH_A]), new Set([HH_A]));
+    expect(result).toEqual([]);
+  });
+
+  it('filters a mixed set to only the eligible households', () => {
+    const households = [
+      { id: HH_A, auto_compose_enabled: true }, // enabled + has plan + week empty → enqueue
+      { id: HH_B, auto_compose_enabled: false }, // disabled → skip
+      { id: HH_C, auto_compose_enabled: true }, // has plan but week already composed → skip
+    ];
+    const result = selectAutoComposeEligible(
+      households,
+      new Set([HH_A, HH_C]),
+      new Set([HH_C]),
+    );
+    expect(result.map((h) => h.id)).toEqual([HH_A]);
+  });
+});
 
 describe('deriveWeekId', () => {
   it('returns a deterministic UUID-shaped string for the same weekOf', () => {
