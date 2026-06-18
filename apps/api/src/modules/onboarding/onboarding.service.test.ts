@@ -68,6 +68,10 @@ interface BuildOpts {
   catalogProjectionGetM5Chips?:
     | ReturnType<typeof vi.fn>
     | (() => Promise<unknown>);
+  // Story 3-S38 (Task 2) — wire a mock catalog-seed BullMQ queue so the guard
+  // test can assert the Stage 1 seed is enqueued at m2_safe exit (the ordering
+  // anchor that keeps seeding ahead of the first plan composition).
+  wireCatalogSeedQueue?: boolean;
 }
 
 function normalizeMomentState(
@@ -140,6 +144,10 @@ function buildService(opts: BuildOpts) {
       ? { getM5Chips: opts.catalogProjectionGetM5Chips }
       : undefined;
 
+  const catalogSeedQueue = opts.wireCatalogSeedQueue
+    ? { add: vi.fn().mockResolvedValue(undefined) }
+    : undefined;
+
   const deps: OnboardingServiceDeps = {
     threads: threads as unknown as OnboardingServiceDeps['threads'],
     agent: agent as unknown as OnboardingServiceDeps['agent'],
@@ -149,10 +157,12 @@ function buildService(opts: BuildOpts) {
       momentRepository as unknown as OnboardingServiceDeps['momentRepository'],
     catalogProjection:
       catalogProjection as unknown as OnboardingServiceDeps['catalogProjection'],
+    catalogSeedQueue:
+      catalogSeedQueue as unknown as OnboardingServiceDeps['catalogSeedQueue'],
   };
 
   const service = new OnboardingService(deps);
-  return { service, threads, agent, momentRepository, catalogProjection };
+  return { service, threads, agent, momentRepository, catalogProjection, catalogSeedQueue };
 }
 
 describe('renderMomentStateBlock', () => {
@@ -337,6 +347,70 @@ describe('OnboardingService.submitTextTurn — moment_key in response (Slice 2.5
       message: 'next',
     });
     expect(result.moment_key).toBe('m2_safe');
+  });
+});
+
+// Story 3-S38 (Task 2) — catalog-seed ordering guard. The Stage 1 catalog seed
+// is enqueued (fire-and-forget) when the parent advances OUT of m2_safe during
+// onboarding. This is the structural anchor that keeps seeding ahead of the
+// first plan composition: the first compose only ever happens post-onboarding
+// (on-demand "compose now", 3-S34; the auto-compose Friday cron, 3-S35, requires
+// ≥1 prior plan so it never produces a household's first plan). These tests lock
+// that enqueue so the cold-start discover storm can't silently return.
+describe('OnboardingService.submitTextTurn — catalog-seed enqueue at m2_safe exit (3-S38)', () => {
+  it('enqueues the Stage 1 catalog seed when advancing OUT of m2_safe', async () => {
+    const { service, catalogSeedQueue } = buildService({
+      agentText: 'All noted. [NEXT_MOMENT:m3_taste]',
+      preTurnMomentState: {
+        current_moment: 'm2_safe',
+        required_set_status: {
+          m1_household_name: true,
+          m1_child_declared: true,
+          m2_allergen_response: true,
+          m5_favorite_count: 0,
+          m5_complete: false,
+        },
+      },
+      countsOverride: { household_name_set: true, child_count: 1 },
+      wireCatalogSeedQueue: true,
+    });
+
+    await service.submitTextTurn({
+      userId: USER_ID,
+      householdId: HOUSEHOLD_ID,
+      message: 'no known allergens',
+    });
+
+    expect(catalogSeedQueue?.add).toHaveBeenCalledTimes(1);
+    const [jobName, payload] = catalogSeedQueue!.add.mock.calls[0];
+    expect(jobName).toBe('seed-catalog');
+    expect(payload).toMatchObject({ household_id: HOUSEHOLD_ID });
+  });
+
+  it('does NOT enqueue the seed while still inside m2_safe (no advance)', async () => {
+    const { service, catalogSeedQueue } = buildService({
+      agentText: 'Anything else to add to the allergy list?',
+      preTurnMomentState: {
+        current_moment: 'm2_safe',
+        required_set_status: {
+          m1_household_name: true,
+          m1_child_declared: true,
+          m2_allergen_response: false,
+          m5_favorite_count: 0,
+          m5_complete: false,
+        },
+      },
+      countsOverride: { household_name_set: true, child_count: 1 },
+      wireCatalogSeedQueue: true,
+    });
+
+    await service.submitTextTurn({
+      userId: USER_ID,
+      householdId: HOUSEHOLD_ID,
+      message: 'peanuts',
+    });
+
+    expect(catalogSeedQueue?.add).not.toHaveBeenCalled();
   });
 });
 

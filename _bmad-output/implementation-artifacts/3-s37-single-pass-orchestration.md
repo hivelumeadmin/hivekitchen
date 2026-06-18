@@ -1,6 +1,6 @@
 # Story 3.S37: Single-Pass Orchestration (assemble → compose → verify)
 
-Status: ready-for-dev
+Status: done
 
 ## Story
 
@@ -32,17 +32,17 @@ The retry/regeneration machinery already exists in the jobs — this story tight
 
 ## Tasks / Subtasks
 
-- [ ] **Task 1 — Tighten the loop** (AC: 1, 2, 3, 4)
-  - [ ] Lower `MAX_PLAN_ITERATIONS` (~8) with a documented turn-budget comment
-  - [ ] Confirm the loop still services fallback read tools + both self-correction detours within the bound
-  - [ ] Keep the tool-trace + the "did not call plan.compose" terminal error (lower N)
+- [x] **Task 1 — Tighten the loop** (AC: 1, 2, 3, 4)
+  - [x] Lower `MAX_PLAN_ITERATIONS` (~8) with a documented turn-budget comment
+  - [x] Confirm the loop still services fallback read tools + both self-correction detours within the bound
+  - [x] Keep the tool-trace + the "did not call plan.compose" terminal error (lower N)
 
-- [ ] **Task 2 — Confirm/clean the verify path** (AC: 5, 6)
-  - [ ] Verify `trySurgicalSwap` runs before full-regen in both `plan-generation.job.ts` and `plan-regeneration.job.ts` (it does today — assert with a test, don't rebuild)
-  - [ ] Remove now-dead branches if the iteration reduction makes any unreachable (surgical: only if clearly dead)
+- [x] **Task 2 — Confirm/clean the verify path** (AC: 5, 6)
+  - [x] Verify `trySurgicalSwap` runs before full-regen in both `plan-generation.job.ts` and `plan-regeneration.job.ts` (it does today — assert with a test, don't rebuild)
+  - [x] Remove now-dead branches if the iteration reduction makes any unreachable (surgical: only if clearly dead) — none; lowering 80→8 changes only the ceiling, every branch (fallback read tools, stop-nudge, validation-error feedback) is still reachable
 
-- [ ] **Task 3 — Tests** (AC: 2, 3, 7)
-  - [ ] orchestrator.test.ts: happy path issues `plan.compose` as the first/only tool call; fallback path stays within bound; over-bound throws
+- [x] **Task 3 — Tests** (AC: 2, 3, 7)
+  - [x] orchestrator.test.ts: happy path issues `plan.compose` as the first/only tool call; fallback path stays within bound; over-bound throws
 
 ## Dev Notes
 
@@ -70,7 +70,38 @@ The retry/regeneration machinery already exists in the jobs — this story tight
 
 ## Dev Agent Record
 ### Agent Model Used
+claude-opus-4-8[1m] (Claude Code dev-story workflow)
+
 ### Debug Log References
+- `npx vitest run src/agents/orchestrator.test.ts` → 67/67 green (incl. 3 new 3-S37 loop-bound tests)
+- `npx vitest run src/jobs/swap-retry.helper.test.ts` → 12/12 green (incl. 2 new 3-S37 surgical-first ordering tests)
+- `npx vitest run src/jobs/plan-generation.job.test.ts src/jobs/planner-context.loader.test.ts` → 50/50 green
+- `npx tsc --noEmit` (apps/api) → exit 0, zero errors
+- `npx vitest run src/agents/ src/jobs/` → 437 pass / 4 fail; the 4 fails are the documented pre-existing baseline (`memory.tools` ×2, `onboarding.tools` ×2 — untouched by this story)
+- `npx eslint` on changed files: test files clean; `orchestrator.ts` reports only 8 pre-existing `eqeqeq` (`!= null`) baseline errors on untouched lines (319/560/564/614/631/635/671/1286) — zero new
+
 ### Completion Notes List
+- **Task 1 (AC1–4):** `MAX_PLAN_ITERATIONS` lowered 80 → 8 in `orchestrator.ts` with a documented turn-budget comment. Turn math: 1 (warm plan.compose) + ≤3 cold-start fallback reads (search→fetch→discover) + ≤2 self-correction detours (stop-nudge, validation-error feedback) ≈ 6 worst-case; 8 leaves a 2-turn margin. No control-flow change — the fallback read-tool servicing, both self-correction detours, the tool-trace Redis write, and the terminal "did not call plan.compose within N iterations" error are all preserved; only the ceiling moved (the error message now reports `8`).
+- **Task 2 (AC5, 6):** Confirmed by inspection + test that both jobs are surgical-swap-first: each regenerate callback runs `trySurgicalSwap(...)` and only calls the flagship `orchestrator.planWeek(...)` full-regen when it returns `null` (`plan-generation.job.ts:484`, `plan-regeneration.job.ts:294`). No new LLM calls added to the verify path. No dead branches resulted from the iteration reduction. No production code changed in either job.
+- **Task 3 (AC2, 3, 7):** Added 3 orchestrator loop-bound tests (happy path = 1 compose turn; one recipe.search fallback then compose = 2 turns within bound; never-composes throws at exactly 8 iterations) and 2 swap-retry-helper ordering tests (covering swap → non-null, `planWeek` never invoked; uncovered swap → null with `swapBlockedItems` attempted first, `planWeek` never invoked by the helper). The over-bound test asserts the literal `within 8 iterations` message, locking the documented bound.
+- AC6 holds: the successful-compose path (tree shape, commit, brief-state refresh, audit, post-commit variant/degraded/nudge steps) is untouched.
+
 ### File List
+- `apps/api/src/agents/orchestrator.ts` — lowered `MAX_PLAN_ITERATIONS` 80→8 + turn-budget comment (Task 1)
+- `apps/api/src/agents/orchestrator.test.ts` — new `planWeek loop bound (Story 3-S37)` describe block (3 tests)
+- `apps/api/src/jobs/swap-retry.helper.test.ts` — new `surgical-swap-first ordering (Story 3-S37)` describe block (2 tests)
+
+### Review Findings
+
+- [x] [Review][Patch] Turn-budget comment overstates margin — worst-case path reaches 8 turns with zero headroom when cold-start + both self-correction detours compound [orchestrator.ts, near `MAX_PLAN_ITERATIONS` constant]
+- [x] [Review][Defer] Validation-error retry uncapped — repeated `plan.compose` failures can exhaust full 8-turn budget [orchestrator.ts] — deferred, pre-existing behavior (unchanged from 80-turn bound)
+- [x] [Review][Defer] No test exercises stop-nudge or validation-error self-correction paths (AC4 coverage gap) [orchestrator.test.ts] — deferred, beyond Task 3 scope per spec
+- [x] [Review][Defer] Job-level surgical-swap ordering confirmed via helper test only, not direct job callback test [plan-generation.job.ts:484, plan-regeneration.job.ts:294] — deferred, justified by shared helper assertion
+- [x] [Review][Defer] `plan-generation.job.ts` full-regen fallback doesn't forward `slotScopeContext` [plan-generation.job.ts:~525] — deferred, pre-existing asymmetry vs. plan-regeneration.job.ts:348
+- [x] [Review][Defer] `lastAttemptComposeOutput` not updated after surgical swap success in plan-generation.job [plan-generation.job.ts:~492] — deferred, pre-existing asymmetry vs. plan-regeneration.job.ts:379
+- [x] [Review][Defer] `mergeSlot` keeps old `recipe_candidate_id` when swap replaces slot with different provenance [swap-retry.helper.ts] — deferred, pre-existing
+
 ## Change Log
+| Date | Change |
+|---|---|
+| 2026-06-18 | 3-S37 implemented (dev-story): `MAX_PLAN_ITERATIONS` 80→8 with documented turn-budget; 5 new tests (3 orchestrator loop-bound + 2 swap-retry surgical-first ordering); surgical-swap-first verify path confirmed in both jobs. No production change beyond the constant + comment. Status → review. |

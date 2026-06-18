@@ -541,3 +541,101 @@ describe('trySurgicalSwap', () => {
     expect(callArg.blockedItems[0]!.child_id).toBe(CHILD_ID_A);
   });
 });
+
+// =============================================================================
+// Story 3-S37 — surgical-swap-first ordering on the guardrail-block path
+// =============================================================================
+// Both plan-generation.job.ts and plan-regeneration.job.ts wire the SAME
+// regenerate callback shape:
+//
+//     const surgical = await trySurgicalSwap(...);
+//     if (surgical !== null) return surgical;   // ← cheap mini-tier swap wins
+//     ... await orchestrator.planWeek(...)        // ← flagship full-regen only
+//                                                 //    when the swap can't cover
+//
+// These tests pin the helper's half of that contract: the surgical swap is the
+// only orchestrator call on the covered path (no full-regen planWeek), and a
+// null return is the explicit signal the caller falls back on. The helper is
+// shared verbatim by both jobs (see plan-generation.job.ts:484 and
+// plan-regeneration.job.ts:294), so one assertion covers both call sites.
+describe('surgical-swap-first ordering (Story 3-S37)', () => {
+  type OrchestratorWithRegen = OrchestratorMock & { planWeek: ReturnType<typeof vi.fn> };
+
+  function buildOrchestratorWithRegen(swap: PlanComposeTreeOutput): OrchestratorWithRegen {
+    return {
+      swapBlockedItems: vi.fn().mockResolvedValue(swap),
+      planWeek: vi.fn(),
+    };
+  }
+
+  it('uses the surgical swap and never invokes the full-regen planWeek when the swap covers every blocked slot', async () => {
+    const previousCommit = twoKidMondayMain();
+    const swap = buildSwapOutput([
+      day('monday', [
+        mainSlot(1, [
+          variation({ child_id: CHILD_ID_A, removals: ['peanut butter'], add_ons: ['sunflower seed butter'] }),
+        ]),
+      ]),
+    ]);
+    const orchestrator = buildOrchestratorWithRegen(swap);
+
+    const result = await trySurgicalSwap({
+      orchestrator,
+      previousCommit,
+      rejections: [
+        blocked({ child_id: CHILD_ID_A, day: 'monday', slot: 'main', allergen: 'peanut', ingredient: 'peanut butter' }),
+      ],
+      weekOf: '2026-05-18',
+      requestId: 'req-s37-surgical',
+      logger: buildLogger(),
+    });
+
+    expect(result).not.toBeNull();
+    // Cheap mini-tier swap was attempted first…
+    expect(orchestrator.swapBlockedItems).toHaveBeenCalledTimes(1);
+    // …and the flagship full-regen path is never reached — no new LLM call on
+    // the verify path beyond the single surgical swap (AC5).
+    expect(orchestrator.planWeek).not.toHaveBeenCalled();
+  });
+
+  it('returns null (the caller falls back to full regen) without itself invoking planWeek when the swap misses a blocked slot', async () => {
+    const previousCommit = buildCommit([
+      day('monday', [
+        mainSlot(1, [
+          variation({ child_id: CHILD_ID_A, add_ons: ['peanut butter'] }),
+          variation({ child_id: CHILD_ID_B, add_ons: ['peanut butter'] }),
+        ]),
+      ]),
+    ]);
+    // Swap covers only kid A — kid B is left uncovered.
+    const swap = buildSwapOutput([
+      day('monday', [
+        mainSlot(1, [
+          variation({ child_id: CHILD_ID_A, removals: ['peanut butter'], add_ons: ['sunflower seed butter'] }),
+        ]),
+      ]),
+    ]);
+    const orchestrator = buildOrchestratorWithRegen(swap);
+
+    const result = await trySurgicalSwap({
+      orchestrator,
+      previousCommit,
+      rejections: [
+        blocked(
+          { child_id: CHILD_ID_A, day: 'monday', slot: 'main', allergen: 'peanut', ingredient: 'peanut butter' },
+          { child_id: CHILD_ID_B, day: 'monday', slot: 'main', allergen: 'peanut', ingredient: 'peanut butter' },
+        ),
+      ],
+      weekOf: '2026-05-18',
+      requestId: 'req-s37-fallback',
+      logger: buildLogger(),
+    });
+
+    // null is the signal both job callbacks branch on to reach full regen.
+    expect(result).toBeNull();
+    // The surgical path was attempted first; the helper itself never runs the
+    // full regen — that fallback lives in the job callback.
+    expect(orchestrator.swapBlockedItems).toHaveBeenCalledTimes(1);
+    expect(orchestrator.planWeek).not.toHaveBeenCalled();
+  });
+});

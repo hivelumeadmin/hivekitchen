@@ -395,13 +395,21 @@ export class DomainOrchestrator {
     if (plannedDays && plannedDays.length > 0 && dayScope !== undefined) {
       throw new Error('plannedDays and dayScope are mutually exclusive');
     }
-    // Story 3-S36 — child_signal + pantry.read are now pre-loaded (rendered as
-    // <child_signals>/<pantry> blocks) and removed from the tool loop, and the
-    // candidate slate (<recipe_candidates>) demotes recipe.search/fetch to
-    // fallback-only. On a warm path the planner issues plan.compose as its
-    // first/only call (~1-2 turns). 80 still keeps generous headroom for the
-    // cold-start fallback (search + fetch + discover fan-out).
-    const MAX_PLAN_ITERATIONS = 80;
+    // Story 3-S37 — single-pass orchestration. After 3-S36 every read is
+    // pre-loaded (<child_signals>/<pantry>/<recipe_candidates>), so plan.compose
+    // is the only state-changing tool on the happy path. The old open-ended
+    // 80-iteration ReAct ceiling no longer reflects reality. Turn budget:
+    //   1  happy path: plan.compose (warm slate, single LLM call)
+    //   +3 cold-start / slate-miss fallback: recipe.search → recipe.fetch →
+    //      recipe.discover (rarely all three) before plan.compose
+    //   +2 self-correction detours: stopped-without-compose nudge;
+    //      plan.compose validation-error fed back for one retry
+    //   = ~6 independent worst-case; both detours compounding with a full
+    //   cold-start can reach ~8 (no margin). 8 bounds all documented paths
+    //   and ensures termination. Exceeding it still throws the "did not call
+    //   plan.compose within N iterations" terminal error below (unchanged
+    //   behavior, lower N).
+    const MAX_PLAN_ITERATIONS = 8;
     // Story 3-31 — recipe.discover needs the per-run requestId in its deps
     // closure (for audit correlation), so we override the manifest's stub
     // spec with a per-run live spec. When recipeAgent isn't wired (legacy
@@ -511,7 +519,13 @@ export class DomainOrchestrator {
         // change in providers/openai.adapter.ts.
         {
           tier: 'flagship',
-          temperature: 0.7,
+          // Story 3-S38 (Opt #3) — lowered 0.7 → 0.2. The loop is compose-
+          // dominated and plan.compose must hit a strict tree schema; 0.7 drove
+          // schema deviations (each costs a self-correction turn + a
+          // planner.bad_output audit — flagged in the 3-S32 dev notes). 0.2
+          // sharply cuts format drift while keeping a sliver of variety for
+          // recipe selection.
+          temperature: 0.2,
           maxTokens: 4096,
           metadata: { agent_type: 'planner', prompt_version: PLANNER_PROMPT.version },
         },

@@ -2026,3 +2026,142 @@ describe('planWeek pre-loaded reads injection (Story 3-S36)', () => {
     expect(completeWithMessages).toHaveBeenCalledTimes(1);
   });
 });
+
+// ===========================================================================
+// Story 3-S37 — single-pass orchestration loop bound
+// ===========================================================================
+
+describe('planWeek loop bound (Story 3-S37)', () => {
+  let savedComposeSpec: ToolSpec;
+
+  beforeEach(() => {
+    savedComposeSpec = TOOL_MANIFEST.get('plan.compose')!;
+  });
+
+  afterEach(() => {
+    TOOL_MANIFEST.set('plan.compose', savedComposeSpec);
+  });
+
+  const MINIMAL_PLAN_OUTPUT = {
+    plan_id: '99999999-9999-4999-8999-999999999937',
+    household_id: HOUSEHOLD_ID,
+    week_of: '2026-11-09',
+    prompt_version: 'v2.7.0',
+    main_assignments: [{ sequence: 1, recipe_id: '33333333-3333-4333-8333-333333333333' }],
+    days: [
+      {
+        day: 'monday',
+        slots: [
+          { slot_kind: 'main', main_assignment_sequence: 1, variations: [{ child_id: CHILD_ID }] },
+        ],
+      },
+    ],
+  };
+
+  const composeResponse = (id: string): LLMResponse => ({
+    content: null,
+    toolCalls: [{ id, name: 'plan.compose', arguments: MINIMAL_PLAN_OUTPUT }],
+    finishReason: 'tool_calls',
+    usage: { promptTokens: 1, completionTokens: 1, cachedPromptTokens: 0 },
+  });
+
+  // A retained fallback read tool (recipe.search). When the slate misses, the
+  // planner issues one of these before composing — the loop must service it and
+  // continue within the bound.
+  const searchResponse = (id: string): LLMResponse => ({
+    content: null,
+    toolCalls: [{ id, name: 'recipe.search', arguments: { query: 'wrap' } }],
+    finishReason: 'tool_calls',
+    usage: { promptTokens: 1, completionTokens: 1, cachedPromptTokens: 0 },
+  });
+
+  function wireComposeStub(): void {
+    const composeSpec = TOOL_MANIFEST.get('plan.compose')!;
+    TOOL_MANIFEST.set('plan.compose', {
+      ...composeSpec,
+      fn: vi.fn().mockResolvedValue(MINIMAL_PLAN_OUTPUT),
+    });
+  }
+
+  it('completes the happy path in a single plan.compose turn (AC2)', async () => {
+    const completeWithMessages = vi.fn().mockResolvedValue(composeResponse('tc-warm'));
+    const provider = buildProvider('primary', { completeWithMessages });
+    const { orchestrator } = buildOrchestrator([provider]);
+    wireComposeStub();
+
+    const result = await orchestrator.planWeek({
+      householdId: HOUSEHOLD_ID,
+      weekOf: '2026-11-09',
+      requestId: 'req-s37-warm',
+      recipeCandidates: {
+        main: [
+          { name: 'Chana Masala Wraps', cuisine_tags: ['indian'], allergen_flags: [], key_ingredients: ['chickpea'], confidence: 90 },
+        ],
+        snack: [],
+        extra: [],
+      },
+    });
+
+    expect(result.plan_id).toBe(MINIMAL_PLAN_OUTPUT.plan_id);
+    // Single LLM call — plan.compose was the first and only tool turn.
+    expect(completeWithMessages).toHaveBeenCalledTimes(1);
+  });
+
+  it('calls the planner with the lowered compose temperature of 0.2 (3-S38 Opt #3)', async () => {
+    const completeWithMessages = vi.fn().mockResolvedValue(composeResponse('tc-temp'));
+    const provider = buildProvider('primary', { completeWithMessages });
+    const { orchestrator } = buildOrchestrator([provider]);
+    wireComposeStub();
+
+    await orchestrator.planWeek({
+      householdId: HOUSEHOLD_ID,
+      weekOf: '2026-11-09',
+      requestId: 'req-s38-temp',
+    });
+
+    const options = completeWithMessages.mock.calls[0][2] as { temperature: number; tier: string };
+    expect(options.temperature).toBe(0.2);
+    expect(options.tier).toBe('flagship');
+  });
+
+  it('services one fallback read tool then composes, staying within the bound (AC3)', async () => {
+    let call = 0;
+    const completeWithMessages = vi.fn().mockImplementation(() => {
+      call += 1;
+      return Promise.resolve(call === 1 ? searchResponse('tc-search') : composeResponse('tc-after-search'));
+    });
+    const provider = buildProvider('primary', { completeWithMessages });
+    const { orchestrator } = buildOrchestrator([provider]);
+    wireComposeStub();
+
+    const result = await orchestrator.planWeek({
+      householdId: HOUSEHOLD_ID,
+      weekOf: '2026-11-09',
+      requestId: 'req-s37-fallback',
+    });
+
+    expect(result.plan_id).toBe(MINIMAL_PLAN_OUTPUT.plan_id);
+    // recipe.search (1) + plan.compose (1) = 2 turns, well inside the bound of 8.
+    expect(completeWithMessages).toHaveBeenCalledTimes(2);
+  });
+
+  it('throws the terminal error after exceeding the bound when plan.compose is never called (AC1, AC3)', async () => {
+    // The planner keeps issuing fallback read tools and never composes. The
+    // loop services each one and stops at the lowered MAX_PLAN_ITERATIONS,
+    // throwing the unchanged "did not call plan.compose" terminal error.
+    const completeWithMessages = vi.fn().mockResolvedValue(searchResponse('tc-loop'));
+    const provider = buildProvider('primary', { completeWithMessages });
+    const { orchestrator } = buildOrchestrator([provider]);
+
+    await expect(
+      orchestrator.planWeek({
+        householdId: HOUSEHOLD_ID,
+        weekOf: '2026-11-09',
+        requestId: 'req-s37-overbound',
+      }),
+    ).rejects.toThrow(/did not call plan\.compose within 8 iterations/);
+
+    // Bound is 8 — the loop ran exactly that many LLM turns before giving up.
+    expect(completeWithMessages).toHaveBeenCalledTimes(8);
+  });
+});
