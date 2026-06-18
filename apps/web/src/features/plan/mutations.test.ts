@@ -118,14 +118,14 @@ describe('useGenerateOnDemandMutation (Story 3-S34)', () => {
     const { result } = renderHook(() => useGenerateOnDemandMutation(), { wrapper });
 
     await act(async () => {
-      await result.current.mutateAsync();
+      await result.current.mutateAsync('test-idempotency-key');
     });
 
     expect(hkFetch).toHaveBeenCalledWith(
       '/v1/plans/generate',
       expect.objectContaining({
         method: 'POST',
-        headers: expect.objectContaining({ 'Idempotency-Key': expect.any(String) }),
+        headers: expect.objectContaining({ 'Idempotency-Key': 'test-idempotency-key' }),
       }),
     );
     // No request body — the window is server-derived.
@@ -142,7 +142,7 @@ describe('useGenerateOnDemandMutation (Story 3-S34)', () => {
     const { result } = renderHook(() => useGenerateOnDemandMutation(), { wrapper });
 
     await act(async () => {
-      await result.current.mutateAsync().catch(() => undefined);
+      await result.current.mutateAsync('test-idempotency-key').catch(() => undefined);
     });
 
     await waitFor(() => {

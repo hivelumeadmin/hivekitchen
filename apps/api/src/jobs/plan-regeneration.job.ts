@@ -22,12 +22,17 @@ import { ExtraRulesRepository } from '../modules/children/extra-rules.repository
 import { ExtraLibraryRepository } from '../modules/households/extra-library.repository.js';
 import { HouseholdsRepository } from '../modules/households/households.repository.js';
 import { PlanDayContextRepository } from '../modules/plans/plan-day-context.repository.js';
+import { RecipesRepository } from '../modules/recipe/recipes.repository.js';
+import { PantryService } from '../modules/pantry/pantry.service.js';
+import { loadChildSignal } from '../modules/child-preferences/child-signal.assembler.js';
 import {
   loadBagCompositionsForHousehold,
   loadCulturalContextForHousehold,
   loadExtraLibraryForHousehold,
   loadExtraRulesForChildren,
   loadHighActivityExtraProposalsForHousehold,
+  loadPantrySnapshotForHousehold,
+  loadRecipeCandidatesForHousehold,
   loadVariantEligibleChildrenForHousehold,
 } from './planner-context.loader.js';
 import { trySurgicalSwap } from './swap-retry.helper.js';
@@ -111,6 +116,9 @@ const planRegenerationPlugin: FastifyPluginAsync = async (fastify) => {
   const extraLibraryRepository = new ExtraLibraryRepository(fastify.supabase);
   const planDayContextRepository = new PlanDayContextRepository(fastify.supabase);
   const householdsRepository = new HouseholdsRepository(fastify.supabase, null);
+  // Story 3-S36 — candidate-slate + pantry pre-load, mirroring plan-generation.job.
+  const recipesRepository = new RecipesRepository(fastify.supabase);
+  const pantryService = new PantryService();
   const regenWorker = fastify.bullmq.getWorker(
     REGEN_QUEUE,
     async (job: Job<PlanRegenerationJobData>) => {
@@ -141,7 +149,7 @@ const planRegenerationPlugin: FastifyPluginAsync = async (fastify) => {
         'plan-regeneration job started',
       );
 
-      const [culturalContext, bagCompositions, extraLibraryItems, variantEligibleChildren, sovereigntyMode] = await Promise.all([
+      const [culturalContext, bagCompositions, extraLibraryItems, variantEligibleChildren, sovereigntyMode, childSignals, pantrySnapshot] = await Promise.all([
         loadCulturalContextForHousehold(household_id, week_of, culturalPriorRepository, culturalCalendarService, memoryContextService),
         loadBagCompositionsForHousehold(household_id, childrenRepository),
         loadExtraLibraryForHousehold(household_id, extraLibraryRepository),
@@ -153,6 +161,20 @@ const planRegenerationPlugin: FastifyPluginAsync = async (fastify) => {
           );
           return 'unified' as const;
         }),
+        // Story 3-S36 — child rating signals pre-load (replaces the child_signal tool).
+        loadChildSignal({
+          childPrefsRepo: childPreferencesRepository,
+          childrenRepo: childrenRepository,
+          householdId: household_id,
+          lookbackDays: 30,
+        }).catch((err: unknown) => {
+          fastify.log.warn(
+            { err, household_id },
+            'child-signal pre-load failed — proceeding without <child_signals> block',
+          );
+          return undefined;
+        }),
+        loadPantrySnapshotForHousehold(household_id, pantryService),
       ]);
       // Story 3.22 — extra_rules read fans out per-child; depends on bagCompositions.
       // High-activity proposals also depend on bagCompositions, so both are loaded
@@ -166,6 +188,19 @@ const planRegenerationPlugin: FastifyPluginAsync = async (fastify) => {
           planDayContextRepository,
         ),
       ]);
+
+      // Story 3-S36 — candidate recipe slate (depends on childSignals for bias).
+      const recipeCandidates = await loadRecipeCandidatesForHousehold(
+        household_id,
+        recipesRepository,
+        childSignals,
+      ).catch((err: unknown) => {
+        fastify.log.warn(
+          { err, household_id },
+          'recipe-candidate pre-load failed — proceeding without <recipe_candidates> block',
+        );
+        return undefined;
+      });
 
       // Story 3-S32 — pre-load the KitchenMap so the planner has memory/cultural/
       // allergen context in its prompt. memory.recall + cultural.lookup +
@@ -198,6 +233,9 @@ const planRegenerationPlugin: FastifyPluginAsync = async (fastify) => {
         variantEligibleChildren,
         sovereigntyMode,
         kitchenMap,
+        childSignals,
+        pantrySnapshot,
+        recipeCandidates,
       });
 
       // For day-scope: filter the output to only include items for the target day.
@@ -312,6 +350,9 @@ const planRegenerationPlugin: FastifyPluginAsync = async (fastify) => {
             variantEligibleChildren,
             sovereigntyMode,
             kitchenMap,
+            childSignals,
+            pantrySnapshot,
+            recipeCandidates,
           });
 
           const filteredRetry =

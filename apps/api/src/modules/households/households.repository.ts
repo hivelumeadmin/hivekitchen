@@ -5,7 +5,7 @@ import type { HouseholdGeolocationConsent } from '@hivekitchen/types';
 import { BaseRepository } from '../../repository/base.repository.js';
 import { decryptField, encryptField, normalizedHash } from '../../lib/envelope-encryption.js';
 import { getHouseholdDek, getOrCreateHouseholdDek } from '../../lib/household-key.js';
-import { NotFoundError } from '../../common/errors.js';
+import { NotFoundError, ValidationError } from '../../common/errors.js';
 import { HouseholdAllergensRepository } from './household-allergens.repository.js';
 import { HouseholdCulturalIdentifiersRepository } from './household-cultural-identifiers.repository.js';
 
@@ -140,7 +140,11 @@ export class HouseholdsRepository extends BaseRepository {
     if (data === null) {
       throw new NotFoundError(`household not found: ${householdId}`);
     }
-    return (data as { timezone: string }).timezone;
+    const tz = (data as { timezone: string | null }).timezone;
+    if (!tz) {
+      throw new ValidationError(`household ${householdId} has no timezone configured`);
+    }
+    return tz;
   }
 
   // Returns household age in milliseconds (now - created_at). Used by the

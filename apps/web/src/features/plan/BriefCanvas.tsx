@@ -79,11 +79,21 @@ function ComposeMyPlanButton() {
 
   useEffect(() => {
     if (!isComposing) return;
-    const interval = setInterval(() => {
+    let attempts = 0;
+    const id = setInterval(() => {
+      attempts += 1;
+      // After ~2 min (24 × 5 s) the background job has likely failed.
+      // Surface an error and restore the button so the parent can retry.
+      if (attempts >= 24) {
+        clearInterval(id);
+        setIsComposing(false);
+        setHasError(true);
+        return;
+      }
       void queryClient.invalidateQueries({ queryKey: ['brief'] });
       void queryClient.invalidateQueries({ queryKey: ['plan'] });
     }, 5000);
-    return () => clearInterval(interval);
+    return () => clearInterval(id);
   }, [isComposing, queryClient]);
 
   if (isComposing) {
@@ -96,7 +106,10 @@ function ComposeMyPlanButton() {
 
   function handleClick() {
     setHasError(false);
-    generate.mutate(undefined, {
+    // Capture the key once so React Query retries reuse it — a fresh UUID per
+    // retry would defeat deduplication and consume extra rate-limit slots.
+    const idempotencyKey = crypto.randomUUID();
+    generate.mutate(idempotencyKey, {
       onSuccess: () => {
         setIsComposing(true);
         void queryClient.invalidateQueries({ queryKey: ['brief'] });

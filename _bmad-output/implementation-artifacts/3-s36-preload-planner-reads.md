@@ -1,6 +1,6 @@
 # Story 3.S36: Pre-load Planner Reads (child signals + pantry + recipe candidates)
 
-Status: ready-for-dev
+Status: review
 
 > **⚠️ GATED BY Story 3.S39.** This story further reduces the planner's allergen self-checking on the promise that the deterministic commit-time guardrail catches violations. That guardrail does not check recipe base ingredients today — **3.S39 must land first.**
 
@@ -64,25 +64,25 @@ extra: [ ... ]
 
 ## Tasks / Subtasks
 
-- [ ] **Task 1 — Child-signal pre-load** (AC: 1, 5, 7)
-  - [ ] Job: assemble signals (`loadChildSignal`); pass to `planWeek` via a new `PlanWeekOptions` field (e.g. `childSignals?`)
-  - [ ] `renderPlannerChildSignalsBlock()` in orchestrator.ts; inject into contextLines
-  - [ ] Remove `child_signal` from `toolsAllowed`; update `PLANNING_CORE`
+- [x] **Task 1 — Child-signal pre-load** (AC: 1, 5, 7)
+  - [x] Job: assemble signals (`loadChildSignal`); pass to `planWeek` via a new `PlanWeekOptions` field (e.g. `childSignals?`)
+  - [x] `renderPlannerChildSignalsBlock()` in orchestrator.ts; inject into contextLines
+  - [x] Remove `child_signal` from `toolsAllowed`; update `PLANNING_CORE`
 
-- [ ] **Task 2 — Pantry pre-load** (AC: 2, 5, 7)
-  - [ ] Job: load pantry snapshot; pass via `PlanWeekOptions` (`pantrySnapshot?`)
-  - [ ] `renderPlannerPantryBlock()`; inject; remove `pantry.read` from `toolsAllowed`; update prompt
+- [x] **Task 2 — Pantry pre-load** (AC: 2, 5, 7)
+  - [x] Job: load pantry snapshot; pass via `PlanWeekOptions` (`pantrySnapshot?`)
+  - [x] `renderPlannerPantryBlock()`; inject; remove `pantry.read` from `toolsAllowed`; update prompt
 
-- [ ] **Task 3 — Candidate recipe slate** (AC: 3, 4, 5, 7) — *heaviest task; may split if estimate runs large*
-  - [ ] RecipeService/RecipesRepository: a "candidate slate" query (catalog previews ranked by usage/confidence + signal bias, grouped by slot suitability, with allergen flags + key ingredients)
-  - [ ] Job: assemble slate; pass via `PlanWeekOptions` (`recipeCandidates?`)
-  - [ ] `renderPlannerRecipeCandidatesBlock()`; inject
-  - [ ] Demote `recipe.search/fetch/discover` to fallback in `PLANNING_CORE` (compose-from-slate first)
+- [x] **Task 3 — Candidate recipe slate** (AC: 3, 4, 5, 7) — *heaviest task; may split if estimate runs large*
+  - [x] RecipeService/RecipesRepository: a "candidate slate" query (catalog previews ranked by usage/confidence + signal bias, grouped by slot suitability, with allergen flags + key ingredients)
+  - [x] Job: assemble slate; pass via `PlanWeekOptions` (`recipeCandidates?`)
+  - [x] `renderPlannerRecipeCandidatesBlock()`; inject
+  - [x] Demote `recipe.search/fetch/discover` to fallback in `PLANNING_CORE` (compose-from-slate first)
 
-- [ ] **Task 4 — Prompt version + tests** (AC: 6, 7, 8)
-  - [ ] Bump version + history comment
-  - [ ] planner.prompt.test.ts / plan.tools.test.ts: version + tool-list assertions
-  - [ ] orchestrator.test.ts: blocks render; empty-safe; happy-path issues `plan.compose` first
+- [x] **Task 4 — Prompt version + tests** (AC: 6, 7, 8)
+  - [x] Bump version + history comment
+  - [x] planner.prompt.test.ts / plan.tools.test.ts: version + tool-list assertions
+  - [x] orchestrator.test.ts: blocks render; empty-safe; happy-path issues `plan.compose` first
 
 ## Dev Notes
 
@@ -117,7 +117,40 @@ extra: [ ... ]
 
 ## Dev Agent Record
 ### Agent Model Used
+claude-opus-4-8[1m] (Opus 4.8, 1M context)
+
 ### Debug Log References
+- `pnpm --filter @hivekitchen/api typecheck` → 0 errors.
+- Targeted suites (orchestrator + orchestrator.planweek + planner.prompt + planner-context.loader + plan.tools) → 114/114 then 122/122 green post plan.tools fix.
+- Full `src/jobs src/agents` → 432 pass / 4 fail (memory.tools ×2, onboarding.tools ×2 — confirmed pre-existing via `git stash` on clean tree, fail identically without this change).
+- Full API suite → 1920 pass / 31 fail / 13 skip — the 31 = documented pre-existing baseline (auth/memory/onboarding/catalog-seed/audit-types/children/households/lumi/lunch-link/plan-adjustment/extra-library/memory-context); NONE in any file this story touched.
+- ESLint on changed files → the 10 reported errors are all pre-existing baseline (`eqeqeq` `!= null` + the `_job` no-unused-vars on lines that merely shifted under my insertions); 0 new errors in any added code.
+
 ### Completion Notes List
+- **AC1 (child-signal pre-load):** `PlanWeekOptions.childSignals?: ChildSignalOutput`; `renderPlannerChildSignalsBlock()` renders `<child_signals>` per child (liked/disliked with slot_kind for FR124) + a `family_liked` summary + the FR125 absence note. `child_signal` removed from `PLANNER_PROMPT.toolsAllowed` (kept in `TOOL_MANIFEST`). Job assembles via the existing `loadChildSignal` (lookback 30, matching the tool).
+- **AC2 (pantry pre-load):** `PlanWeekOptions.pantrySnapshot?`; `renderPlannerPantryBlock()` renders `<pantry>`. `pantry.read` removed from `toolsAllowed` (kept in manifest). New `loadPantrySnapshotForHousehold()` calls `PantryService.read` and **swallows failure → empty snapshot** — `PantryService` is unimplemented until Epic 6 (`read()` throws `NotImplementedError`), so the block is empty today but the wiring is forward-compatible (block populates with no job change when pantry lands).
+- **AC3/4 (candidate slate + demotion):** new `RecipesRepository.findCandidateSlateForHousehold()` (household_recipe_usage⋈recipes, banned excluded; superset of `findCatalogProjectionForHousehold` adding applicable_slots + ingredient_keys). `loadRecipeCandidatesForHousehold()` ranks (favourite → liked-signal → confidence → use_count → name) and groups into main/snack/extra by applicable_slots (default 'main'), caps 12/slot and 6 key-ingredients/candidate. `renderPlannerRecipeCandidatesBlock()` renders `<recipe_candidates>`. Recipe tools stay in `toolsAllowed`; `PLANNING_CORE` demotes search/fetch to "FALLBACK ONLY" and keeps the existing discover gate.
+- **AC5 (fallback contract):** every render fn returns `''` when its input is empty → no block; all three loaders `.catch → undefined/empty`; recipe tools retained for cold-start. Covered by empty-safe unit tests on each render fn + the "omits all three blocks" planWeek test + the pantry-unimplemented loader test.
+- **AC6 (version):** `PLANNER_PROMPT.version` v2.6.0 → **v2.7.0** with history comment; planner.prompt.test + plan.tools.test version/tool-list assertions updated.
+- **AC7/8 (tests):** orchestrator.test gains render-fn suites (populated + empty-safe), a planWeek-injection test (all three blocks appear in the user message), an empty-safe planWeek test, and an AC8 warm-path test asserting `plan.compose` is the first/only call (`completeWithMessages` called once). loader tests cover pantry mapping/empty-fallback + slate rank/group/cap/bias.
+- **Reconciliation (slate location):** Task 3 sketched "RecipeService/RecipesRepository". Implemented the raw query on `RecipesRepository` but put the rank/group assembly in `planner-context.loader.ts` (pure, `assembleRecipeCandidateSlate`, unit-tested) — this follows the established loader convention (every other Planner* shape is mapped in that file) and avoids a type-only cycle between `recipe.service.ts` and `orchestrator.ts`. `RecipeService` left untouched.
+- **Block placement:** the three new blocks render immediately after the KitchenMap `<user_profile>` block (still first, preserving the 3-S32 prefix-cache test) and before the `Household ID:` line, keeping all run-invariant context at the leading edge of the prompt.
+- **Gate:** 3-S39 (commit-time recipe-ingredient guardrail) is complete (CODE REVIEW DONE per the latest sprint log), so the gating precondition for this story is satisfied.
+- No migration, no contract change, no new deps, no web change.
+
 ### File List
+- `apps/api/src/agents/orchestrator.ts` — `PlanWeekOptions` += childSignals/pantrySnapshot/recipeCandidates; `PlannerPantrySnapshot`/`PlannerRecipeCandidate`/`PlannerRecipeCandidateSlate` interfaces; `renderPlannerChildSignalsBlock`/`renderPlannerPantryBlock`/`renderPlannerRecipeCandidatesBlock`; inject blocks into contextLines; ChildSignalOutput import; MAX_PLAN_ITERATIONS comment.
+- `apps/api/src/agents/prompts/planner.prompt.ts` — version v2.7.0 + history; remove child_signal + pantry.read from toolsAllowed; rewrite Pre-loaded Context / child-signal / pantry / tool-usage sections (recipe tools fallback-only).
+- `apps/api/src/modules/recipe/recipes.repository.ts` — `findCandidateSlateForHousehold`; `CandidateSlateRow` (+ private join shape).
+- `apps/api/src/jobs/planner-context.loader.ts` — `loadPantrySnapshotForHousehold`, `loadRecipeCandidatesForHousehold`, `assembleRecipeCandidateSlate` (+ rank/group/bias helpers).
+- `apps/api/src/jobs/plan-generation.job.ts` — construct RecipesRepository + PantryService; load childSignals/pantrySnapshot/recipeCandidates; pass to both planWeek calls.
+- `apps/api/src/jobs/plan-regeneration.job.ts` — same wiring; pass to both planWeek calls.
+- `apps/api/src/agents/orchestrator.test.ts` — render-fn suites + planWeek pre-load injection/empty-safe/AC8 suites (+ imports).
+- `apps/api/src/jobs/planner-context.loader.test.ts` — pantry + slate (assemble/load) suites (+ imports).
+- `apps/api/src/agents/prompts/planner.prompt.test.ts` — v2.7.0 + 4-tool allow-list + pre-load directive assertions.
+- `apps/api/src/agents/tools/plan.tools.test.ts` — version assertion v2.6.0 → v2.7.0.
+
 ## Change Log
+| Date | Change |
+|---|---|
+| 2026-06-18 | Story 3-S36 implemented (dev-story). Pre-loaded planner reads — `<child_signals>`/`<pantry>`/`<recipe_candidates>` context blocks; child_signal + pantry.read removed from toolsAllowed; recipe tools demoted to fallback-only; PLANNER_PROMPT v2.7.0. New RecipesRepository.findCandidateSlateForHousehold + loader assembly. Wired into both jobs (both planWeek call sites each). +new tests across orchestrator/loader/prompt. No migration/contract/dep/web change. Status → review. |

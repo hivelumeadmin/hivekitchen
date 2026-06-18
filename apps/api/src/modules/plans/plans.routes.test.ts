@@ -326,6 +326,14 @@ function signOps(app: FastifyInstance): string {
   });
 }
 
+function signGuest(app: FastifyInstance): string {
+  return app.jwt.sign({
+    sub: SAMPLE_USER_ID,
+    hh: SAMPLE_HOUSEHOLD_ID,
+    role: 'guest_author',
+  });
+}
+
 // ---------------------------------------------------------------------------
 // GET /v1/plans (tree-shape response)
 // ---------------------------------------------------------------------------
@@ -580,6 +588,17 @@ describe('POST /v1/plans/generate', () => {
   it('returns 403 when role is ops', async () => {
     app = await buildTestApp();
     const token = signOps(app);
+    const res = await app.inject({
+      method: 'POST',
+      url: '/v1/plans/generate',
+      headers: { authorization: `Bearer ${token}`, 'idempotency-key': IDEMPOTENCY_KEY },
+    });
+    expect(res.statusCode).toBe(403);
+  });
+
+  it('returns 403 when role is guest_author', async () => {
+    app = await buildTestApp();
+    const token = signGuest(app);
     const res = await app.inject({
       method: 'POST',
       url: '/v1/plans/generate',

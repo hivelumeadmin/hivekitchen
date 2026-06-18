@@ -20,6 +20,9 @@ import { MemoryContextService } from '../services/memory-context.service.js';
 import { ExtraRulesRepository } from '../modules/children/extra-rules.repository.js';
 import { ExtraLibraryRepository } from '../modules/households/extra-library.repository.js';
 import { PlanDayContextRepository } from '../modules/plans/plan-day-context.repository.js';
+import { RecipesRepository } from '../modules/recipe/recipes.repository.js';
+import { PantryService } from '../modules/pantry/pantry.service.js';
+import { loadChildSignal } from '../modules/child-preferences/child-signal.assembler.js';
 import { deriveWeekId } from '../lib/derive-week-id.js';
 import {
   loadBagCompositionsForHousehold,
@@ -27,6 +30,8 @@ import {
   loadExtraLibraryForHousehold,
   loadExtraRulesForChildren,
   loadHighActivityExtraProposalsForHousehold,
+  loadPantrySnapshotForHousehold,
+  loadRecipeCandidatesForHousehold,
   loadVariantEligibleChildrenForHousehold,
 } from './planner-context.loader.js';
 import { trySurgicalSwap } from './swap-retry.helper.js';
@@ -212,6 +217,11 @@ const planGenerationPlugin: FastifyPluginAsync = async (fastify) => {
   // plan_day_context rows and pair them with bag-composition data to surface
   // sport_practice/field_trip days for children whose Extra slot is OFF.
   const planDayContextRepository = new PlanDayContextRepository(fastify.supabase);
+  // Story 3-S36 — pre-load the candidate recipe slate + pantry snapshot so the
+  // planner composes from context instead of spending a recipe.search/pantry.read
+  // turn. PantryService.read() is unimplemented until Epic 6 (returns empty).
+  const recipesRepository = new RecipesRepository(fastify.supabase);
+  const pantryService = new PantryService();
 
   // Fan-out scheduler — Friday 10:00 UTC (= 06:00 ET / 03:00 PT). For each
   // active household, enqueues a delayed per-household job that fires at
@@ -343,7 +353,7 @@ const planGenerationPlugin: FastifyPluginAsync = async (fastify) => {
       );
 
       const householdsRepoForRun = new HouseholdsRepository(fastify.supabase, null);
-      const [culturalContext, bagCompositions, extraLibraryItems, variantEligibleChildren, sovereigntyMode] = await Promise.all([
+      const [culturalContext, bagCompositions, extraLibraryItems, variantEligibleChildren, sovereigntyMode, childSignals, pantrySnapshot] = await Promise.all([
         loadCulturalContextForHousehold(household_id, week_of, culturalPriorRepository, culturalCalendarService, memoryContextService),
         loadBagCompositionsForHousehold(household_id, childrenRepository),
         loadExtraLibraryForHousehold(household_id, extraLibraryRepository),
@@ -355,6 +365,21 @@ const planGenerationPlugin: FastifyPluginAsync = async (fastify) => {
           );
           return 'unified' as const;
         }),
+        // Story 3-S36 — child rating signals pre-load (replaces the child_signal
+        // tool turn). Failure → undefined → no <child_signals> block (no data).
+        loadChildSignal({
+          childPrefsRepo: childPreferencesRepository,
+          childrenRepo: childrenRepository,
+          householdId: household_id,
+          lookbackDays: 30,
+        }).catch((err: unknown) => {
+          fastify.log.warn(
+            { err, household_id },
+            'child-signal pre-load failed — proceeding without <child_signals> block',
+          );
+          return undefined;
+        }),
+        loadPantrySnapshotForHousehold(household_id, pantryService),
       ]);
       // extra_rules read fans out per-child; depends on bagCompositions for
       // {child_id, child_name} pairs, so it's sequenced after the parallel batch.
@@ -369,6 +394,21 @@ const planGenerationPlugin: FastifyPluginAsync = async (fastify) => {
           planDayContextRepository,
         ),
       ]);
+
+      // Story 3-S36 — candidate recipe slate. Sequenced after childSignals so the
+      // per-child "liked" bias folds into ranking. Failure → undefined → no
+      // <recipe_candidates> block → the planner falls back to recipe.search.
+      const recipeCandidates = await loadRecipeCandidatesForHousehold(
+        household_id,
+        recipesRepository,
+        childSignals,
+      ).catch((err: unknown) => {
+        fastify.log.warn(
+          { err, household_id },
+          'recipe-candidate pre-load failed — proceeding without <recipe_candidates> block',
+        );
+        return undefined;
+      });
 
       // Story 3.22 — write a single audit row per planning batch summarising
       // the proposals injected. Ops can correlate with plan.generated to see
@@ -418,6 +458,9 @@ const planGenerationPlugin: FastifyPluginAsync = async (fastify) => {
         sovereigntyMode,
         kitchenMap,
         plannedDays: planned_days,
+        childSignals,
+        pantrySnapshot,
+        recipeCandidates,
       });
       const commitInput = buildCommitInputTree(composeOutput, request_id);
 
@@ -494,6 +537,9 @@ const planGenerationPlugin: FastifyPluginAsync = async (fastify) => {
             sovereigntyMode,
             kitchenMap,
             plannedDays: planned_days,
+            childSignals,
+            pantrySnapshot,
+            recipeCandidates,
           });
           const retryCommit = buildCommitInputTree(retryOutput, request_id);
           lastAttemptCommit = retryCommit;

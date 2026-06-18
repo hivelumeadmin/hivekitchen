@@ -40,7 +40,7 @@ import type {
   CulturalObservance,
   CulturalTemplateKey,
 } from '../services/cultural-calendar.service.js';
-import type { KitchenMap, Weekday } from '@hivekitchen/types';
+import type { ChildSignalOutput, KitchenMap, Weekday } from '@hivekitchen/types';
 
 // Story 3.18 — cultural context the planner agent receives alongside household
 // + week metadata. Empty arrays = silence-mode household → no cultural lines
@@ -104,6 +104,36 @@ export interface PlannerVariantEligibleChild {
   child_name: string;
 }
 
+// Story 3-S36 — pre-loaded pantry snapshot. The job assembles the on-hand
+// ingredient names so the planner favours them without spending a pantry.read
+// turn. Empty on_hand → no <pantry> block (treat as "no data", never a
+// constraint). Pantry service isn't live until Epic 6, so this is empty today
+// and the wiring is forward-compatible.
+export interface PlannerPantrySnapshot {
+  on_hand: readonly string[];
+}
+
+// Story 3-S36 — one entry in the pre-assembled candidate recipe slate. Carries
+// enough inline (allergen flags + key ingredients) for the planner to judge fit
+// WITHOUT a recipe.fetch turn. `name` is the canonical_name the planner passes
+// as recipe_id (server resolves name → catalog id, existing convention).
+export interface PlannerRecipeCandidate {
+  name: string;
+  cuisine_tags: readonly string[];
+  allergen_flags: readonly string[];
+  key_ingredients: readonly string[];
+  confidence: number;
+}
+
+// Story 3-S36 — the candidate slate grouped by slot suitability. A recipe whose
+// applicable_slots include a kind appears in that group. Empty groups render as
+// `kind: []`; an entirely empty slate renders no <recipe_candidates> block.
+export interface PlannerRecipeCandidateSlate {
+  main: readonly PlannerRecipeCandidate[];
+  snack: readonly PlannerRecipeCandidate[];
+  extra: readonly PlannerRecipeCandidate[];
+}
+
 // Slice E — input shape for DomainOrchestrator.swapBlockedItems. One entry
 // per slot the deterministic allergy guardrail blocked, carrying the
 // original ingredients so the agent can reason about minimal-edit
@@ -137,6 +167,13 @@ export interface PlanWeekOptions {
   variantEligibleChildren?: readonly PlannerVariantEligibleChild[];
   sovereigntyMode?: 'unified' | 'alternating';
   kitchenMap?: KitchenMap;
+  // Story 3-S36 — pre-loaded planner reads. The job assembles these before the
+  // agentic loop so the planner composes from context instead of spending one
+  // LLM turn per read tool. Absent/empty blocks fall back to the retained tools
+  // (recipes) or are treated as "no data" (signals/pantry).
+  childSignals?: ChildSignalOutput;
+  pantrySnapshot?: PlannerPantrySnapshot;
+  recipeCandidates?: PlannerRecipeCandidateSlate;
   // Story 3-S33 — partial-week composition. When present and non-empty, the
   // planner composes plan_days entries for ONLY these weekdays (mid-week /
   // on-demand composition, Story 3-S34). Absent/empty = full default week.
@@ -351,16 +388,19 @@ export class DomainOrchestrator {
       kitchenMap,
       plannedDays,
       adjacentMains,
+      childSignals,
+      pantrySnapshot,
+      recipeCandidates,
     } = opts;
     if (plannedDays && plannedDays.length > 0 && dayScope !== undefined) {
       throw new Error('plannedDays and dayScope are mutually exclusive');
     }
-    // Story 3-S32 — memory.recall + cultural.lookup + allergy.check are no longer
-    // in the planner's tool loop (household profile is pre-loaded via the
-    // KitchenMap block). Minimum serial iterations for a 5-day main+snack+extra
-    // household is now ~8-10 (child_signal + pantry + 3×search + 3×fetch +
-    // plan.compose, plus discover only when search is thin). 80 keeps generous
-    // headroom for model inefficiency and discover fan-out.
+    // Story 3-S36 — child_signal + pantry.read are now pre-loaded (rendered as
+    // <child_signals>/<pantry> blocks) and removed from the tool loop, and the
+    // candidate slate (<recipe_candidates>) demotes recipe.search/fetch to
+    // fallback-only. On a warm path the planner issues plan.compose as its
+    // first/only call (~1-2 turns). 80 still keeps generous headroom for the
+    // cold-start fallback (search + fetch + discover fan-out).
     const MAX_PLAN_ITERATIONS = 80;
     // Story 3-31 — recipe.discover needs the per-run requestId in its deps
     // closure (for audit correlation), so we override the manifest's stub
@@ -391,9 +431,20 @@ export class DomainOrchestrator {
     const sovereigntyLines = buildSovereigntyContextLines(sovereigntyMode, culturalContext);
 
     const kitchenMapBlock = kitchenMap ? renderPlannerKitchenMapBlock(kitchenMap) : '';
+    // Story 3-S36 — pre-loaded read blocks. Rendered right after the KitchenMap
+    // block so all stable, run-invariant context sits together at the leading
+    // edge of the prompt (OpenAI prefix-cache friendly, same rationale as 3-S32).
+    const childSignalsBlock = childSignals ? renderPlannerChildSignalsBlock(childSignals) : '';
+    const pantryBlock = pantrySnapshot ? renderPlannerPantryBlock(pantrySnapshot) : '';
+    const recipeCandidatesBlock = recipeCandidates
+      ? renderPlannerRecipeCandidatesBlock(recipeCandidates)
+      : '';
 
     const contextLines = [
       kitchenMapBlock || undefined,
+      childSignalsBlock || undefined,
+      pantryBlock || undefined,
+      recipeCandidatesBlock || undefined,
       `Household ID: ${householdId}`,
       `Planning week starting: ${weekOf} (Monday)`,
       `Request ID: ${requestId}`,
@@ -1333,5 +1384,73 @@ export function renderPlannerKitchenMapBlock(map: KitchenMap): string {
   ].join('\n');
 
   return [userProfile, householdMemory, memoryPolicy].join('\n\n');
+}
+
+// Story 3-S36 — renders the pre-loaded child rating signals as a <child_signals>
+// block so the planner biases toward liked recipes without a child_signal turn.
+// Grouped per child (liked / disliked), with the family_liked summary and the
+// FR125 absence-neutrality note. Returns '' when there are no signals at all
+// (the planner then treats preferences as "no data", never as a constraint).
+export function renderPlannerChildSignalsBlock(signals: ChildSignalOutput): string {
+  if (signals.per_child.length === 0 && signals.family_liked.length === 0) return '';
+
+  const itemLabel = (i: { recipe_name: string; slot_kind: string }): string =>
+    `${i.recipe_name} (${i.slot_kind})`;
+
+  const lines: string[] = ['<child_signals>'];
+  for (const child of signals.per_child) {
+    const parts: string[] = [];
+    if (child.liked.length > 0) {
+      parts.push(`liked [${child.liked.map(itemLabel).join(', ')}]`);
+    }
+    if (child.disliked.length > 0) {
+      parts.push(`disliked [${child.disliked.map(itemLabel).join(', ')}]`);
+    }
+    lines.push(`${child.child_name}: ${parts.length > 0 ? parts.join('; ') : '(no recent signals)'}`);
+  }
+  if (signals.family_liked.length > 0) {
+    const fam = signals.family_liked
+      .map((f) => `${f.recipe_name} (${f.slot_kind}, ${String(f.child_count)} children)`)
+      .join(', ');
+    lines.push(`family_liked: ${fam}`);
+  }
+  lines.push('NOTE: absence of a signal = no data; never infer dislike from absence (FR125).');
+  lines.push('</child_signals>');
+  return lines.join('\n');
+}
+
+// Story 3-S36 — renders the pre-loaded pantry snapshot as a <pantry> block. The
+// planner favours on-hand ingredients before introducing new shopping. Returns
+// '' when nothing is on hand (no pantry data → no block).
+export function renderPlannerPantryBlock(snapshot: PlannerPantrySnapshot): string {
+  if (snapshot.on_hand.length === 0) return '';
+  return ['<pantry>', `on_hand: [${snapshot.on_hand.join(', ')}]`, '</pantry>'].join('\n');
+}
+
+// Story 3-S36 — renders the pre-assembled candidate recipe slate as a
+// <recipe_candidates> block, grouped by slot suitability. Each candidate carries
+// allergen flags + key ingredients inline so the planner can judge fit without a
+// recipe.fetch turn; the planner uses `name` as recipe_id. Returns '' when all
+// three groups are empty (the planner then falls back to recipe.search/discover).
+export function renderPlannerRecipeCandidatesBlock(slate: PlannerRecipeCandidateSlate): string {
+  if (slate.main.length === 0 && slate.snack.length === 0 && slate.extra.length === 0) return '';
+
+  const renderCandidate = (c: PlannerRecipeCandidate): string =>
+    `  - { name: ${JSON.stringify(c.name)}, cuisine: ${JSON.stringify(c.cuisine_tags)}, ` +
+    `allergens: ${JSON.stringify(c.allergen_flags)}, ` +
+    `key_ingredients: ${JSON.stringify(c.key_ingredients)}, confidence: ${String(c.confidence)} }`;
+
+  const renderGroup = (label: string, items: readonly PlannerRecipeCandidate[]): string =>
+    items.length === 0
+      ? `${label}: []`
+      : [`${label}:`, ...items.map(renderCandidate)].join('\n');
+
+  return [
+    '<recipe_candidates>',
+    renderGroup('main', slate.main),
+    renderGroup('snack', slate.snack),
+    renderGroup('extra', slate.extra),
+    '</recipe_candidates>',
+  ].join('\n');
 }
 

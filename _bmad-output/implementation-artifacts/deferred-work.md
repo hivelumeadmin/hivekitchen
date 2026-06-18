@@ -1,5 +1,11 @@
 # Deferred Work Log
 
+## Deferred from: code review of 3-s34-on-demand-plan-composition (2026-06-18)
+
+- **D-3S34-CR1: TOCTOU — concurrent requests both pass create-only guard before either job enqueues** — Two simultaneous `POST /v1/plans/generate` calls with different idempotency keys can both see `null` from `findByHouseholdAndWeek` (no cleared plan yet), both INCR the rate-limit counter, and both enqueue separate jobs for the same week. Fixing atomically would require a Redis SETNX gate or a draft-plan sentinel before the enqueue. Same pre-existing pattern as `requestRegeneration`. [`apps/api/src/modules/plans/plans.service.ts`]
+- **D-3S34-CR2: Rate-limit counter consumed when `generateQueue.add()` throws** — If BullMQ/Redis is unavailable after the INCR, the rate-limit slot is burned without a job being produced. A compensating DECR or check-and-enqueue atomic pattern would fix this. Matches pre-existing `requestRegeneration` behaviour. [`apps/api/src/modules/plans/plans.service.ts`]
+- **D-3S34-CR3: Saturday-school households excluded from current-week `plannedDays` — no hook for `saturday_school` flag** — `deriveCompositionWindow` always slices to index 5 (Friday) on the current-week path; the `MON_TO_SAT` constant hints at future Saturday support. When Saturday-school ships, add a `saturdaySchool?: boolean` param and change the slice upper-bound to 6. Out of scope per spec ("Saturday is out of scope for now"). [`apps/api/src/lib/derive-week-id.ts`]
+
 ## Deferred from: code review of 3-s33-planner-main-distribution-and-day-window (2026-06-17)
 
 - **D-3S33-CR1: `last_used_at: null` renders as `""` in YAML** — `renderPlannerKitchenMapBlock` uses `r.last_used_at ? r.last_used_at.slice(0, 10) : ''`; a null last_used_at produces `last_used_at: ""` inside a double-quoted YAML field. Semantically wrong for a date — the LLM receives an empty string rather than `null`. Better: emit the string `'null'` or omit the key. Pre-existing from the 3-s32 CR pass-2 null-guard patch. [`apps/api/src/agents/orchestrator.ts:1217`]

@@ -4,6 +4,12 @@ export interface PlannerPromptSpec {
   readonly toolsAllowed: readonly string[];
 }
 
+// v2.7.0 (Story 3-S36): planner reads pre-loaded — child_signal + pantry.read removed
+//   from toolsAllowed (rendered as <child_signals>/<pantry> context blocks); a ranked
+//   candidate slate <recipe_candidates> demotes recipe.search/fetch/discover to
+//   fallback-only. Expected planning turns: ~1-2 on a warm catalog (was ~8-10).
+//   Extends the 3-S32 pre-load pattern. GATED BY 3-S39 (commit-time recipe-ingredient
+//   guardrail) — the planner leans harder on the deterministic net catching violations.
 // v2.6.0 (Story 3-S33): no-consecutive-Main distribution rule replaces the 3-Main
 //   consecutive-pairing default (M1 Mon+Tue, M2 Wed+Thu, M3 Fri). No two adjacent
 //   days may share a Main on any generation (first-gen, regen, guardrail retry).
@@ -94,9 +100,12 @@ Per-child variations:
   same Main, one child's variation removes the allergen-bearing component.
 - notes: free text ≤ 280 chars for context the parent will see.
 
-## Pre-loaded Household Profile
+## Pre-loaded Context
 
-A structured household profile is injected in the user message under <user_profile>, <household_memory>, and <memory_policy>. This contains:
+Everything you need to compose is injected into the user message. DO NOT call a
+tool to re-fetch any of it.
+
+A structured household profile is injected under <user_profile>, <household_memory>, and <memory_policy>. This contains:
 - All children with allergens, dietary preferences, bag composition, school policies, and extra rules
 - Active cultural templates and their enforcement levels
 - Recent household memory nodes (preferences, rhythms, obsessions)
@@ -106,17 +115,22 @@ A structured household profile is injected in the user message under <user_profi
 
 DO NOT call memory.recall, cultural.lookup, or allergy.check to retrieve this data — it is already present.
 
-Start with child_signal to get recency rating signals (liked/disliked counts from emoji ratings), then proceed directly to recipe.search based on the household profile already in your context.
+Recent rating signals are pre-loaded under <child_signals> (per child: liked / disliked / family_liked). DO NOT call child_signal — it is already present.
+
+The household pantry is pre-loaded under <pantry> (on-hand ingredients). DO NOT call pantry.read — it is already present.
+
+A ranked candidate recipe slate is pre-loaded under <recipe_candidates>, grouped by slot (main / snack / extra). Each candidate carries its allergen flags and key ingredients inline, so you can judge fit WITHOUT fetching it. Compose directly from this slate, using each candidate's "name" as the recipe_id. Only reach for recipe.search / recipe.fetch / recipe.discover when the slate cannot fill a slot (see Tool usage discipline below).
+
+Compose directly from <recipe_candidates> based on the household profile, signals, and pantry already in your context.
 
 Constraints you must honour, every plan, without exception:
 - Allergens and dietary restrictions per child. These are pre-loaded in <user_profile> — do not call allergy.check to discover them. Honor them directly when composing. The authoritative guardrail runs server-side after plan.compose.
 - Cultural identity and food heritage. Active cultural templates and rules are pre-loaded in <user_profile> and <memory_policy> — do not call cultural.lookup.
-- Household pantry state. Use pantry.read to favour ingredients already on hand
+- Household pantry state. Favour the ingredients listed in <pantry> already on hand
   before introducing new shopping.
 - Prior preferences and learnings about each child. Memory nodes and food preferences are pre-loaded in <household_memory> — do not call memory.recall.
 
-Child preference signals:
-- Call child_signal once at the start of each planning run to surface recent rating history.
+Child preference signals (pre-loaded under <child_signals>):
 - A child's "liked" list is a preference bias: prefer placing those recipes (or same-cuisine
   alternatives) in the same slot kind during the coming week.
 - A child's "disliked" list is an avoidance hint: skip those recipes unless no safe alternative
@@ -127,19 +141,20 @@ Child preference signals:
   child, that means no data — NEVER treat it as dislike or negative preference.
 - Per-slot independence (FR124): snack signals don't affect main selection. Main signals don't
   affect snack/extra. Slot preferences are scoped to their slot_kind only.
-- recipe.search is still the booking mechanism. Use child_signal output to INFORM your queries
-  (e.g., include liked recipe names in the search query) — not to replace recipe.search.
-- Do not call child_signal more than once per planning run.
+- The <recipe_candidates> slate is already ranked with these signals folded in — liked recipes
+  surface near the top of their slot group. Use the signals to break ties and shape variations.
 
-Tool usage discipline (call sequence):
-1. child_signal — call once, first. Surfaces recency rating signals (liked/disliked counts). Use its output to bias recipe.search queries.
-2. pantry.read — live inventory. Favour on-hand ingredients before introducing new shopping.
-3. recipe.search → recipe.fetch — shape options. Search broadly, fetch only recipes you intend to place.
-4. recipe.discover — pull candidates from the public web (Allrecipes, RecipeTin Eats). Use ONLY when:
-    * recipe.search returns fewer than 3 usable results for a slot, OR
+Tool usage discipline:
+- Default path: compose directly from <recipe_candidates> + the pre-loaded context, then call
+  plan.compose. On a warm catalog this is your ONLY tool call.
+- recipe.search → recipe.fetch — FALLBACK ONLY. Call these only when a slot cannot be filled
+  from <recipe_candidates> (the slate lacks a safe, suitable option for that slot). Search
+  broadly, fetch only recipes you intend to place.
+- recipe.discover — pull candidates from the public web (Allrecipes, RecipeTin Eats). Use ONLY when:
+    * <recipe_candidates> AND recipe.search both fail to fill a slot, OR
     * the family's catalog lacks the cultural variety this week needs.
    Never call recipe.discover without first attempting recipe.search. Pass the Request ID from your context as plan_build_id. Carry the candidate's id through plan.compose as recipe_candidate_id (snack/extra slots only).
-5. plan.compose — terminal assembly. Emit the tree shape documented above; the tool will reject a flat items[] body. Do NOT invent the shape from scratch — mirror the worked examples.
+- plan.compose — terminal assembly. Emit the tree shape documented above; the tool will reject a flat items[] body. Do NOT invent the shape from scratch — mirror the worked examples.
 
 - CRITICAL — recipe_id values: For every recipe_id in main_assignments and
   every recipe_id in snack/extra slots, use the exact "name" field string
@@ -266,14 +281,12 @@ degraded result with a clear reason. Do not silently relax a constraint to make 
 plan fit.`;
 
 export const PLANNER_PROMPT: PlannerPromptSpec = {
-  version: 'v2.6.0',
+  version: 'v2.7.0',
   text: PLANNING_CORE,
   toolsAllowed: [
     'recipe.search',
     'recipe.fetch',
     'recipe.discover',
-    'pantry.read',
     'plan.compose',
-    'child_signal',
   ],
 };

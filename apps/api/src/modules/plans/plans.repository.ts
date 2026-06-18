@@ -80,6 +80,23 @@ export class PlansRepository extends BaseRepository {
     return (data as PlanRow | null) ?? null;
   }
 
+  // Story 3-S34 (patch CR1) — create-only guard for POST /v1/plans/generate must
+  // block even draft/in-flight plan rows (guardrail_cleared_at IS NULL) to prevent
+  // double-enqueue during the generation window. Distinct from findByHouseholdAndWeek
+  // which intentionally filters to cleared plans for the presentation path.
+  async existsForHouseholdAndWeek(opts: {
+    householdId: string;
+    weekOf: string;
+  }): Promise<boolean> {
+    const { count, error } = await this.client
+      .from('plans')
+      .select('id', { count: 'exact', head: true })
+      .eq('household_id', opts.householdId)
+      .eq('week_of', opts.weekOf);
+    if (error) throw error;
+    return (count ?? 0) > 0;
+  }
+
   // Story 4-S11 — resolve the committed plan_id for a (household, week_of) pair
   // by the calendar Monday date rather than the derived week_id. The Layer-2
   // signal write only has the rating's session date in hand, so it looks the

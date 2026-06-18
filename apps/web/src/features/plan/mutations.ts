@@ -293,12 +293,15 @@ export function useRequestRegenerationMutation() {
 // window { job_id, week_of, planned_days, basis }. The caller polls
 // GET /v1/plans for the committed result; the request has no body (the window
 // is server-derived from the household timezone).
+// The caller must supply the idempotency key so the same value is reused
+// across React Query retries (a fresh UUID per retry would defeat deduplication
+// and burn extra rate-limit slots).
 export function useGenerateOnDemandMutation() {
-  return useMutation<GeneratePlanResponse, Error, void>({
-    mutationFn: () =>
+  return useMutation<GeneratePlanResponse, Error, string>({
+    mutationFn: (idempotencyKey) =>
       hkFetch<GeneratePlanResponse>('/v1/plans/generate', {
         method: 'POST',
-        headers: { 'Idempotency-Key': safeRandomUuid() },
+        headers: { 'Idempotency-Key': idempotencyKey },
       }),
   });
 }

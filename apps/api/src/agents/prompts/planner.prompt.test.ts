@@ -6,14 +6,12 @@ describe('PLANNER_PROMPT', () => {
     expect(PLANNER_PROMPT.version).toMatch(/^v\d+\.\d+\.\d+$/);
   });
 
-  it('exposes the canonical 6-tool allow-list in the specified order (Story 3-S32: memory.recall, cultural.lookup, allergy.check removed)', () => {
+  it('exposes the canonical 4-tool allow-list in the specified order (Story 3-S36: child_signal + pantry.read removed)', () => {
     expect(PLANNER_PROMPT.toolsAllowed).toEqual([
       'recipe.search',
       'recipe.fetch',
       'recipe.discover',
-      'pantry.read',
       'plan.compose',
-      'child_signal',
     ]);
   });
 
@@ -31,8 +29,31 @@ describe('PLANNER_PROMPT', () => {
     expect(PLANNER_PROMPT.toolsAllowed).not.toContain('allergy.check');
   });
 
-  it('is at version v2.6.0', () => {
-    expect(PLANNER_PROMPT.version).toBe('v2.6.0');
+  // Story 3-S36 — child_signal + pantry.read pre-loaded as context blocks and
+  // removed from the tool loop; the three recipe tools stay (fallback-only).
+  it('does not include child_signal or pantry.read (Story 3-S36: pre-loaded in context)', () => {
+    expect(PLANNER_PROMPT.toolsAllowed).not.toContain('child_signal');
+    expect(PLANNER_PROMPT.toolsAllowed).not.toContain('pantry.read');
+  });
+
+  it('retains the three recipe tools as fallback (Story 3-S36)', () => {
+    expect(PLANNER_PROMPT.toolsAllowed).toContain('recipe.search');
+    expect(PLANNER_PROMPT.toolsAllowed).toContain('recipe.fetch');
+    expect(PLANNER_PROMPT.toolsAllowed).toContain('recipe.discover');
+  });
+
+  it('instructs the planner not to call the pre-loaded read tools', () => {
+    expect(PLANNER_PROMPT.text).toContain('DO NOT call child_signal');
+    expect(PLANNER_PROMPT.text).toContain('DO NOT call pantry.read');
+    expect(PLANNER_PROMPT.text).toContain('<recipe_candidates>');
+  });
+
+  it('demotes the recipe tools to fallback-only', () => {
+    expect(PLANNER_PROMPT.text).toContain('FALLBACK ONLY');
+  });
+
+  it('is at version v2.7.0', () => {
+    expect(PLANNER_PROMPT.version).toBe('v2.7.0');
   });
 
   // Story 3-S33 — no-consecutive-Main distribution rule.

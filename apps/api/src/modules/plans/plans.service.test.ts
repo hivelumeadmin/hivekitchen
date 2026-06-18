@@ -1541,11 +1541,11 @@ describe('PlansService.requestOnDemandGeneration', () => {
     incrCount?: number;
     ttl?: number;
   } = {}) {
-    const findByHouseholdAndWeek = vi
+    const existsForHouseholdAndWeek = vi
       .fn()
-      .mockResolvedValue(opts.existingPlan ?? null);
-    const repo = { findByHouseholdAndWeek } as unknown as PlansRepository & {
-      findByHouseholdAndWeek: ReturnType<typeof vi.fn>;
+      .mockResolvedValue(opts.existingPlan != null);
+    const repo = { existsForHouseholdAndWeek } as unknown as PlansRepository & {
+      existsForHouseholdAndWeek: ReturnType<typeof vi.fn>;
     };
     const getTimezone = vi.fn().mockResolvedValue(opts.timezone ?? 'UTC');
     const householdsRepository = { getTimezone } as unknown as HouseholdsRepository;

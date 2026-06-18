@@ -73,6 +73,32 @@ export interface HouseholdUsageScore {
   is_household_favorite: boolean;
 }
 
+// Story 3-S36 — one row of the candidate slate (household_recipe_usage joined to
+// its recipe). The loader ranks + groups these into the planner's slot-grouped
+// <recipe_candidates> block.
+export interface CandidateSlateRow {
+  id: string;
+  canonical_name: string;
+  cuisine_tags: string[];
+  allergen_flags: string[];
+  applicable_slots: string[];
+  ingredient_keys: string[];
+  confidence_score: number;
+  is_household_favorite: boolean;
+  use_count: number;
+}
+
+// Shape of the joined `recipes` projection inside findCandidateSlateForHousehold.
+interface CandidateSlateJoinedRecipe {
+  id: string;
+  canonical_name: string;
+  cuisine_tags: string[] | null;
+  allergen_flags: string[] | null;
+  applicable_slots: string[] | null;
+  ingredient_keys: string[] | null;
+  is_active: boolean;
+}
+
 export interface InsertRecipeInput {
   canonical_name: string;
   ingredients: Array<{
@@ -705,6 +731,59 @@ export class RecipesRepository extends BaseRepository {
         catalog_provenance: raw.catalog_provenance,
         confidence_score: raw.confidence_score,
         is_household_favorite: raw.is_household_favorite,
+      });
+    }
+    return out;
+  }
+
+  /**
+   * Story 3-S36 — candidate-slate read for the pre-loaded planner context.
+   *
+   * Returns every catalog row visible to the household (banned rows excluded at
+   * the SQL layer), carrying the fields the planner needs to judge slot fit
+   * WITHOUT a recipe.fetch turn: applicable_slots (for grouping), allergen_flags,
+   * ingredient_keys (key ingredients), cuisine_tags, plus the usage/confidence
+   * signals the loader ranks by. A superset of {@link findCatalogProjectionForHousehold}
+   * (adds applicable_slots + ingredient_keys); ranking/grouping is the loader's job.
+   *
+   * Mirrors the household_recipe_usage → recipes join shape (many-to-one, so
+   * PostgREST may return `recipes` as an array or object; we normalize).
+   */
+  async findCandidateSlateForHousehold(
+    householdId: string,
+  ): Promise<CandidateSlateRow[]> {
+    const { data, error } = await this.client
+      .from('household_recipe_usage')
+      .select(
+        'confidence_score, is_household_favorite, use_count, recipes!inner(id, canonical_name, cuisine_tags, allergen_flags, applicable_slots, ingredient_keys, is_active)',
+      )
+      .eq('household_id', householdId)
+      .eq('is_household_banned', false);
+    if (error) throw error;
+
+    const out: CandidateSlateRow[] = [];
+    for (const raw of (data ?? []) as Array<{
+      confidence_score: number;
+      is_household_favorite: boolean;
+      use_count: number;
+      recipes:
+        | Array<CandidateSlateJoinedRecipe>
+        | CandidateSlateJoinedRecipe
+        | null;
+    }>) {
+      const joined = Array.isArray(raw.recipes) ? raw.recipes[0] : (raw.recipes ?? undefined);
+      if (joined === undefined) continue;
+      if (!joined.is_active) continue;
+      out.push({
+        id: joined.id,
+        canonical_name: joined.canonical_name,
+        cuisine_tags: joined.cuisine_tags ?? [],
+        allergen_flags: joined.allergen_flags ?? [],
+        applicable_slots: joined.applicable_slots ?? [],
+        ingredient_keys: joined.ingredient_keys ?? [],
+        confidence_score: raw.confidence_score,
+        is_household_favorite: raw.is_household_favorite,
+        use_count: raw.use_count,
       });
     }
     return out;

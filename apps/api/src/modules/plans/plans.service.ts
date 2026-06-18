@@ -651,13 +651,10 @@ export class PlansService {
     const { weekOf, plannedDays, basis } = deriveCompositionWindow(new Date(), timezone);
     const weekId = deriveWeekId(weekOf);
 
-    // 2. Create-only guard: a plan already covering the target week must be
-    // edited via swap, not regenerated.
-    const existing = await this.repo.findByHouseholdAndWeek({
-      householdId: opts.householdId,
-      weekOf,
-    });
-    if (existing !== null) {
+    // 2. Create-only guard: any plan row for the target week (draft or cleared)
+    // blocks a new enqueue. Using existsForHouseholdAndWeek (no cleared filter)
+    // prevents double-enqueue during the generation window.
+    if (await this.repo.existsForHouseholdAndWeek({ householdId: opts.householdId, weekOf })) {
       throw new PlanAlreadyExistsError(weekOf);
     }
 

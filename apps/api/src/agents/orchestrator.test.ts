@@ -7,7 +7,10 @@ import {
   buildCulturalContextLines,
   buildExtraProposalLines,
   buildExtraRulesLines,
+  renderPlannerChildSignalsBlock,
   renderPlannerKitchenMapBlock,
+  renderPlannerPantryBlock,
+  renderPlannerRecipeCandidatesBlock,
 } from './orchestrator.js';
 import type {
   OrchestratorServices,
@@ -16,8 +19,9 @@ import type {
   PlannerExtraLibraryItem,
   PlannerExtraProposal,
   PlannerExtraRules,
+  PlannerRecipeCandidateSlate,
 } from './orchestrator.js';
-import type { KitchenMap } from '@hivekitchen/types';
+import type { ChildSignalOutput, KitchenMap } from '@hivekitchen/types';
 import { TOOL_MANIFEST } from './tools.manifest.js';
 import type { ToolSpec } from './tools.manifest.js';
 import type { LLMProvider, LLMResponse } from './providers/llm-provider.interface.js';
@@ -1792,5 +1796,233 @@ describe('DomainOrchestrator', () => {
       expect(Array.isArray(auditCall.metadata.zodIssues)).toBe(true);
       expect((auditCall.metadata.zodIssues as unknown[]).length).toBeGreaterThan(0);
     });
+  });
+});
+
+// ===========================================================================
+// Story 3-S36 — pre-loaded planner reads (child signals / pantry / slate)
+// ===========================================================================
+
+describe('renderPlannerChildSignalsBlock (Story 3-S36)', () => {
+  const FULL_SIGNALS: ChildSignalOutput = {
+    per_child: [
+      {
+        child_id: CHILD_ID,
+        child_name: 'Layla',
+        liked: [
+          { recipe_id: 'r1', recipe_name: 'Chana Masala Wraps', slot_kind: 'main', count: 3, last_at: '2026-06-01' },
+        ],
+        disliked: [
+          { recipe_id: 'r2', recipe_name: 'Capsicum Roll', slot_kind: 'main', count: 1, last_at: '2026-06-02' },
+        ],
+      },
+    ],
+    family_liked: [
+      { recipe_id: 'r3', recipe_name: 'Paneer Wrap', slot_kind: 'main', child_count: 2 },
+    ],
+  };
+
+  it('returns "" when there are no signals at all', () => {
+    expect(renderPlannerChildSignalsBlock({ per_child: [], family_liked: [] })).toBe('');
+  });
+
+  it('renders per-child liked/disliked, family_liked, and the FR125 note', () => {
+    const block = renderPlannerChildSignalsBlock(FULL_SIGNALS);
+    expect(block.startsWith('<child_signals>')).toBe(true);
+    expect(block.trimEnd().endsWith('</child_signals>')).toBe(true);
+    expect(block).toContain('Layla: liked [Chana Masala Wraps (main)]; disliked [Capsicum Roll (main)]');
+    expect(block).toContain('family_liked: Paneer Wrap (main, 2 children)');
+    expect(block).toContain('absence of a signal = no data');
+  });
+
+  it('renders "(no recent signals)" for a child present with empty liked + disliked', () => {
+    const block = renderPlannerChildSignalsBlock({
+      per_child: [{ child_id: CHILD_ID, child_name: 'Zara', liked: [], disliked: [] }],
+      family_liked: [],
+    });
+    expect(block).toContain('Zara: (no recent signals)');
+  });
+});
+
+describe('renderPlannerPantryBlock (Story 3-S36)', () => {
+  it('returns "" when on_hand is empty', () => {
+    expect(renderPlannerPantryBlock({ on_hand: [] })).toBe('');
+  });
+
+  it('renders the on_hand list in a <pantry> block', () => {
+    const block = renderPlannerPantryBlock({ on_hand: ['basmati rice', 'chickpeas'] });
+    expect(block).toBe('<pantry>\non_hand: [basmati rice, chickpeas]\n</pantry>');
+  });
+});
+
+describe('renderPlannerRecipeCandidatesBlock (Story 3-S36)', () => {
+  const SLATE: PlannerRecipeCandidateSlate = {
+    main: [
+      {
+        name: 'Chana Masala Wraps',
+        cuisine_tags: ['indian'],
+        allergen_flags: [],
+        key_ingredients: ['chickpea', 'wrap'],
+        confidence: 92,
+      },
+    ],
+    snack: [],
+    extra: [],
+  };
+
+  it('returns "" when all three groups are empty', () => {
+    expect(renderPlannerRecipeCandidatesBlock({ main: [], snack: [], extra: [] })).toBe('');
+  });
+
+  it('renders grouped candidates with inline allergens + key ingredients', () => {
+    const block = renderPlannerRecipeCandidatesBlock(SLATE);
+    expect(block.startsWith('<recipe_candidates>')).toBe(true);
+    expect(block).toContain('main:');
+    expect(block).toContain('"Chana Masala Wraps"');
+    expect(block).toContain('key_ingredients: ["chickpea","wrap"]');
+    expect(block).toContain('confidence: 92');
+    // Empty groups render as `kind: []`.
+    expect(block).toContain('snack: []');
+    expect(block).toContain('extra: []');
+  });
+});
+
+describe('planWeek pre-loaded reads injection (Story 3-S36)', () => {
+  let savedComposeSpec: ToolSpec;
+
+  beforeEach(() => {
+    savedComposeSpec = TOOL_MANIFEST.get('plan.compose')!;
+  });
+
+  afterEach(() => {
+    TOOL_MANIFEST.set('plan.compose', savedComposeSpec);
+  });
+
+  const MINIMAL_PLAN_OUTPUT = {
+    plan_id: '99999999-9999-4999-8999-999999999933',
+    household_id: HOUSEHOLD_ID,
+    week_of: '2026-11-09',
+    prompt_version: 'v2.7.0',
+    main_assignments: [{ sequence: 1, recipe_id: '33333333-3333-4333-8333-333333333333' }],
+    days: [
+      {
+        day: 'monday',
+        slots: [
+          { slot_kind: 'main', main_assignment_sequence: 1, variations: [{ child_id: CHILD_ID }] },
+        ],
+      },
+    ],
+  };
+
+  const SIGNALS: ChildSignalOutput = {
+    per_child: [
+      {
+        child_id: CHILD_ID,
+        child_name: 'Layla',
+        liked: [{ recipe_id: 'r1', recipe_name: 'Dosa', slot_kind: 'snack', count: 2, last_at: '2026-06-01' }],
+        disliked: [],
+      },
+    ],
+    family_liked: [],
+  };
+
+  function captureUserContent(): {
+    provider: LLMProvider;
+    completeWithMessages: ReturnType<typeof vi.fn>;
+    getContent: () => string | undefined;
+  } {
+    let captured: string | undefined;
+    const completeWithMessages = vi.fn().mockImplementation(
+      (messages: Array<{ role: string; content: unknown }>) => {
+        const userMsg = messages.find((m) => m.role === 'user');
+        captured = userMsg?.content as string | undefined;
+        return Promise.resolve({
+          content: null,
+          toolCalls: [{ id: 'tc-pre', name: 'plan.compose', arguments: MINIMAL_PLAN_OUTPUT }],
+          finishReason: 'tool_calls',
+          usage: { promptTokens: 1, completionTokens: 1, cachedPromptTokens: 0 },
+        });
+      },
+    );
+    const provider = buildProvider('primary', { completeWithMessages });
+    return { provider, completeWithMessages, getContent: () => captured };
+  }
+
+  function wireComposeStub(): void {
+    const composeSpec = TOOL_MANIFEST.get('plan.compose')!;
+    TOOL_MANIFEST.set('plan.compose', {
+      ...composeSpec,
+      fn: vi.fn().mockResolvedValue(MINIMAL_PLAN_OUTPUT),
+    });
+  }
+
+  it('injects <child_signals>, <pantry>, and <recipe_candidates> blocks into the user message', async () => {
+    const { provider, getContent } = captureUserContent();
+    const { orchestrator } = buildOrchestrator([provider]);
+    wireComposeStub();
+
+    await orchestrator.planWeek({
+      householdId: HOUSEHOLD_ID,
+      weekOf: '2026-11-09',
+      requestId: 'req-pre',
+      childSignals: SIGNALS,
+      pantrySnapshot: { on_hand: ['basmati rice'] },
+      recipeCandidates: {
+        main: [
+          { name: 'Chana Masala Wraps', cuisine_tags: ['indian'], allergen_flags: [], key_ingredients: ['chickpea'], confidence: 90 },
+        ],
+        snack: [],
+        extra: [],
+      },
+    });
+
+    const content = getContent();
+    expect(content).toContain('<child_signals>');
+    expect(content).toContain('Layla: liked [Dosa (snack)]');
+    expect(content).toContain('<pantry>');
+    expect(content).toContain('on_hand: [basmati rice]');
+    expect(content).toContain('<recipe_candidates>');
+    expect(content).toContain('"Chana Masala Wraps"');
+  });
+
+  it('omits all three blocks when the pre-loads are absent (empty-safe fallback)', async () => {
+    const { provider, getContent } = captureUserContent();
+    const { orchestrator } = buildOrchestrator([provider]);
+    wireComposeStub();
+
+    await orchestrator.planWeek({
+      householdId: HOUSEHOLD_ID,
+      weekOf: '2026-11-09',
+      requestId: 'req-pre-none',
+    });
+
+    const content = getContent();
+    expect(content).not.toContain('<child_signals>');
+    expect(content).not.toContain('<pantry>');
+    expect(content).not.toContain('<recipe_candidates>');
+  });
+
+  it('issues plan.compose as the first/only tool call on the warm path (AC8)', async () => {
+    const { provider, completeWithMessages } = captureUserContent();
+    const { orchestrator } = buildOrchestrator([provider]);
+    wireComposeStub();
+
+    await orchestrator.planWeek({
+      householdId: HOUSEHOLD_ID,
+      weekOf: '2026-11-09',
+      requestId: 'req-warm',
+      childSignals: SIGNALS,
+      pantrySnapshot: { on_hand: ['rice'] },
+      recipeCandidates: {
+        main: [
+          { name: 'Chana Masala Wraps', cuisine_tags: ['indian'], allergen_flags: [], key_ingredients: ['chickpea'], confidence: 90 },
+        ],
+        snack: [],
+        extra: [],
+      },
+    });
+
+    // The loop exits after the first iteration — plan.compose was the first call.
+    expect(completeWithMessages).toHaveBeenCalledTimes(1);
   });
 });
