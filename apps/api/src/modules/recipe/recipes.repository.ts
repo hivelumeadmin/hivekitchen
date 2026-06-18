@@ -758,7 +758,8 @@ export class RecipesRepository extends BaseRepository {
         'confidence_score, is_household_favorite, use_count, recipes!inner(id, canonical_name, cuisine_tags, allergen_flags, applicable_slots, ingredient_keys, is_active)',
       )
       .eq('household_id', householdId)
-      .eq('is_household_banned', false);
+      .eq('is_household_banned', false)
+      .filter('recipes.is_active', 'eq', 'true');
     if (error) throw error;
 
     const out: CandidateSlateRow[] = [];
@@ -773,7 +774,7 @@ export class RecipesRepository extends BaseRepository {
     }>) {
       const joined = Array.isArray(raw.recipes) ? raw.recipes[0] : (raw.recipes ?? undefined);
       if (joined === undefined) continue;
-      if (!joined.is_active) continue;
+      if (!joined.is_active) continue; // safety net if embedded filter is not applied
       out.push({
         id: joined.id,
         canonical_name: joined.canonical_name,

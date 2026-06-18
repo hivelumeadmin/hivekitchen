@@ -24,6 +24,7 @@ import type {
   PlannerVariantEligibleChild,
 } from '../agents/orchestrator.js';
 import type { CulturalTemplateKey } from '../services/cultural-calendar.service.js';
+import { NotImplementedError } from '../common/errors.js';
 
 // Story 3.27 / 4-S11 — variant-eligible children, now derived from REAL rating
 // engagement rather than the manually-flipped children.variant_eligible MVP
@@ -162,8 +163,9 @@ export async function loadPantrySnapshotForHousehold(
   try {
     const result = await pantryService.read({ household_id: householdId });
     return { on_hand: result.items.map((i) => i.name).filter((n) => n.length > 0) };
-  } catch {
-    return { on_hand: [] };
+  } catch (err) {
+    if (err instanceof NotImplementedError) return { on_hand: [] };
+    throw err; // caller's .catch() logs and falls back to undefined → no pantry block
   }
 }
 

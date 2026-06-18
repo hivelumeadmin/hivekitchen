@@ -139,6 +139,15 @@ export class ParentalNoticeRequiredError extends DomainError {
   }
 }
 
+// Thrown when a DB row is missing a field that must be present for the operation
+// to proceed (e.g. null timezone on a households row). Indicates a server-side
+// data integrity gap, not a client mistake — surfaces as 500.
+export class DataIntegrityError extends DomainError {
+  readonly type = '/errors/data-integrity';
+  readonly status = 500;
+  readonly title = 'Data integrity error';
+}
+
 // Thrown by HouseholdsRepository when an encrypted household column cannot be
 // decrypted — indicates DEK mismatch or data corruption. Callers must surface
 // this as a 500 rather than silently treating the field as empty, because an

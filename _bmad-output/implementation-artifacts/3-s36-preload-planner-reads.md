@@ -1,6 +1,6 @@
 # Story 3.S36: Pre-load Planner Reads (child signals + pantry + recipe candidates)
 
-Status: review
+Status: done
 
 > **⚠️ GATED BY Story 3.S39.** This story further reduces the planner's allergen self-checking on the promise that the deterministic commit-time guardrail catches violations. That guardrail does not check recipe base ingredients today — **3.S39 must land first.**
 
@@ -149,6 +149,22 @@ claude-opus-4-8[1m] (Opus 4.8, 1M context)
 - `apps/api/src/jobs/planner-context.loader.test.ts` — pantry + slate (assemble/load) suites (+ imports).
 - `apps/api/src/agents/prompts/planner.prompt.test.ts` — v2.7.0 + 4-tool allow-list + pre-load directive assertions.
 - `apps/api/src/agents/tools/plan.tools.test.ts` — version assertion v2.6.0 → v2.7.0.
+
+### Review Findings
+
+- [x] [Review][Patch] **P1: Unsanitized `child_name`/`recipe_name` in `renderPlannerChildSignalsBlock` — LLM prompt injection via angle-bracket sequences** [`apps/api/src/agents/orchestrator.ts:~1397-1415`] — FIXED: added `sanitizePromptField()` helper (strips `<>/\n`) applied to all user-controlled fields in the block.
+- [x] [Review][Patch] **P2: `findCandidateSlateForHousehold` filters `is_active` in app-layer instead of SQL — inactive recipes returned across the wire on every plan run** [`apps/api/src/modules/recipe/recipes.repository.ts:~758-761`] — FIXED: added `.filter('recipes.is_active', 'eq', 'true')` at SQL level; app-level check retained as safety net.
+- [x] [Review][Patch] **P3: `loadPantrySnapshotForHousehold` bare catch swallows all errors silently — no log emitted** [`apps/api/src/jobs/planner-context.loader.ts:~159-169`] — FIXED: catch now scoped to `instanceof NotImplementedError` (silent empty snapshot); other errors re-thrown to caller's `.catch()` which logs warn.
+- [x] [Review][Patch] **P4: `getTimezone` throws `ValidationError` (400) for null household timezone — server data-integrity issue exposed as client error** [`apps/api/src/modules/households/households.repository.ts:~143-146`] — FIXED: added `DataIntegrityError` (status 500) to `errors.ts`; `getTimezone` now throws `DataIntegrityError` for null timezone.
+- [x] [Review][Defer] **D-3S36-CR1: TOCTOU double-enqueue under concurrent `POST /v1/plans/generate` requests** [`apps/api/src/modules/plans/plans.service.ts`] — deferred, pre-existing (mirrors D-3S34-CR1)
+- [x] [Review][Defer] **D-3S36-CR2: `applicable_slots` unrecognized values cause recipe to silently drop from all candidate groups** [`apps/api/src/jobs/planner-context.loader.ts:~203-208`] — deferred, pre-existing
+- [x] [Review][Defer] **D-3S36-CR3: PostgREST array normalization in `findCandidateSlateForHousehold` — `raw.recipes[0]` silently drops extra elements if join shape changes** [`apps/api/src/modules/recipe/recipes.repository.ts:~774`] — deferred, defensive code already in place
+- [x] [Review][Defer] **D-3S36-CR4: Pantry `on_hand.join(', ')` breaks when item names contain commas** [`apps/api/src/agents/orchestrator.ts:~1427`] — deferred until Epic 6 pantry lands
+- [x] [Review][Defer] **D-3S36-CR5: Redis INCR + EXPIRE non-atomic — counter persists without TTL on crash between calls** [`apps/api/src/modules/plans/plans.service.ts:~664-666`] — deferred, pre-existing pattern (matches D-3S34-CR2 pattern)
+- [x] [Review][Defer] **D-3S36-CR6: BullMQ `job.id` null on duplicate-key enqueue — 202 response conflates "already running" with "new job created"** [`apps/api/src/modules/plans/plans.service.ts:~682-712`] — deferred, accepted idempotency key design
+- [x] [Review][Defer] **D-3S36-CR7: FR125 absence-neutrality note absent from prompt when household has zero child signals (block returns '')** [`apps/api/src/agents/orchestrator.ts`] — deferred, cold-start path falls back to recipe tools; AC5 fallback contract satisfied
+- [x] [Review][Defer] **D-3S36-CR8: `loadRecipeCandidatesForHousehold` swallows DB connection errors — cascade failure masked at recipe-tool layer** [`apps/api/src/jobs/plan-generation.job.ts:~401-411`] — deferred, warn log is emitted; cascade is expected retry behaviour
+- [x] [Review][Defer] **D-3S36-CR9: `CandidateSlateJoinedRecipe` types `applicable_slots`/`ingredient_keys` as `string[] | null` but columns are `NOT NULL` — dead null guards mislead future maintainers** [`apps/api/src/modules/recipe/recipes.repository.ts:~96-98`] — deferred, no runtime impact
 
 ## Change Log
 | Date | Change |

@@ -262,7 +262,7 @@ development_status:
   # 3-s37 = single-pass loop (Opt #2, depends on 3-s36); 3-s38 = quick wins
   # (Opt #3, independent, can land first). Distinct from mid-week (3-s33/34/35).
   # ==========================================================================
-  3-s36-preload-planner-reads: review
+  3-s36-preload-planner-reads: done
   3-s37-single-pass-orchestration: ready-for-dev
   3-s38-planner-efficiency-quick-wins: ready-for-dev
   epic-3-retrospective: done                                                  # retro completed 2026-05-25; see epic-3-retro-2026-05-25.md

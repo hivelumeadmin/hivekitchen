@@ -1388,6 +1388,10 @@ export function renderPlannerKitchenMapBlock(map: KitchenMap): string {
 
 // Story 3-S36 — renders the pre-loaded child rating signals as a <child_signals>
 // block so the planner biases toward liked recipes without a child_signal turn.
+// Strips characters that could prematurely close XML-like prompt blocks or
+// inject newline-separated directives from user-controlled string fields.
+const sanitizePromptField = (s: string): string => s.replace(/[<>\n]/g, ' ').trim();
+
 // Grouped per child (liked / disliked), with the family_liked summary and the
 // FR125 absence-neutrality note. Returns '' when there are no signals at all
 // (the planner then treats preferences as "no data", never as a constraint).
@@ -1395,7 +1399,7 @@ export function renderPlannerChildSignalsBlock(signals: ChildSignalOutput): stri
   if (signals.per_child.length === 0 && signals.family_liked.length === 0) return '';
 
   const itemLabel = (i: { recipe_name: string; slot_kind: string }): string =>
-    `${i.recipe_name} (${i.slot_kind})`;
+    `${sanitizePromptField(i.recipe_name)} (${sanitizePromptField(i.slot_kind)})`;
 
   const lines: string[] = ['<child_signals>'];
   for (const child of signals.per_child) {
@@ -1406,11 +1410,11 @@ export function renderPlannerChildSignalsBlock(signals: ChildSignalOutput): stri
     if (child.disliked.length > 0) {
       parts.push(`disliked [${child.disliked.map(itemLabel).join(', ')}]`);
     }
-    lines.push(`${child.child_name}: ${parts.length > 0 ? parts.join('; ') : '(no recent signals)'}`);
+    lines.push(`${sanitizePromptField(child.child_name)}: ${parts.length > 0 ? parts.join('; ') : '(no recent signals)'}`);
   }
   if (signals.family_liked.length > 0) {
     const fam = signals.family_liked
-      .map((f) => `${f.recipe_name} (${f.slot_kind}, ${String(f.child_count)} children)`)
+      .map((f) => `${sanitizePromptField(f.recipe_name)} (${sanitizePromptField(f.slot_kind)}, ${String(f.child_count)} children)`)
       .join(', ');
     lines.push(`family_liked: ${fam}`);
   }
