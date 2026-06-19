@@ -1,7 +1,9 @@
+import { useState } from 'react';
 import { Outlet, useMatch } from 'react-router-dom';
 import { useScope } from '@hivekitchen/ui';
 import { AppFooter } from '@/components/AppFooter.js';
 import { AppHeader } from '@/components/AppHeader.js';
+import { AppSidebar } from '@/components/AppSidebar.js';
 import { LumiOrb } from '@/components/LumiOrb.js';
 import { LumiPanel } from '@/components/LumiPanel.js';
 import { VoiceSessionProvider } from '@/contexts/VoiceSessionContext.js';
@@ -13,6 +15,7 @@ import { useAuthStore } from '@/stores/auth.store.js';
 export default function AppScopeLayout() {
   useScope('app-scope');
   const onLunchRoute = useMatch('/lunch/*');
+  const [mobileOpen, setMobileOpen] = useState(false);
 
   // Story 12-S12 — subscribe to proactive Lumi nudges so the orb breathes the
   // moment a nudge lands. Keyed on accessToken: the EventSource reopens on login
@@ -34,12 +37,24 @@ export default function AppScopeLayout() {
 
   return (
     <VoiceSessionProvider startSession={startSession} endSession={endSession}>
-      <div className="flex min-h-screen flex-col bg-bg text-fg">
-        <AppHeader />
-        <div className="flex-grow">
-          <Outlet />
+      <div className="flex min-h-screen bg-bg text-fg">
+        {/* Sidebar suppressed on the child-scope lunch-link surface */}
+        {!onLunchRoute && (
+          <AppSidebar
+            mobileOpen={mobileOpen}
+            onMobileClose={() => setMobileOpen(false)}
+          />
+        )}
+
+        {/* Main column: header + scrollable content + footer */}
+        <div className="flex flex-1 flex-col min-w-0">
+          <AppHeader onMenuToggle={onLunchRoute ? undefined : () => setMobileOpen((v) => !v)} />
+          <div className="flex-grow">
+            <Outlet />
+          </div>
+          <AppFooter />
         </div>
-        <AppFooter />
+
         {!onLunchRoute && <LumiOrb />}
         {!onLunchRoute && <LumiPanel />}
       </div>

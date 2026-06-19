@@ -1,11 +1,15 @@
 import { useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { BellIcon, UserCircleIcon } from './icons.js';
+import { BellIcon, MenuIcon, UserCircleIcon } from './icons.js';
 import { ThemeToggle } from './ThemeToggle.js';
 import { useAuthStore } from '@/stores/auth.store.js';
 import { useClickOutside } from '@/hooks/useClickOutside.js';
 
-export function AppHeader() {
+export interface AppHeaderProps {
+  onMenuToggle?: () => void;
+}
+
+export function AppHeader({ onMenuToggle }: AppHeaderProps) {
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
   const navigate = useNavigate();
@@ -22,9 +26,23 @@ export function AppHeader() {
 
   return (
     <header className="border-b border-neutral-400/30 bg-bg">
-      <div className="mx-auto flex w-full max-w-7xl items-center justify-between px-6 py-4">
-        <div className="flex items-center gap-2">
-          <span className="font-serif text-3xl italic text-amber-warm">HiveKitchen</span>
+      <div className="flex w-full items-center justify-between px-4 py-4 md:px-6">
+        <div className="flex items-center gap-3">
+          {/* Hamburger — mobile only (sidebar handles desktop nav) */}
+          {onMenuToggle && (
+            <button
+              type="button"
+              aria-label="Open navigation menu"
+              onClick={onMenuToggle}
+              className="flex h-8 w-8 items-center justify-center rounded-md text-fg-muted transition-colors hover:bg-surface-2 hover:text-fg lg:hidden"
+            >
+              <MenuIcon className="h-5 w-5" />
+            </button>
+          )}
+          {/* Brand — hidden on lg+ where the sidebar shows it */}
+          <span className="font-serif text-3xl italic text-amber-warm lg:hidden">
+            HiveKitchen
+          </span>
         </div>
         <div className="flex items-center gap-6 text-fg-muted">
           <ThemeToggle />
