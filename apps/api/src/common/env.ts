@@ -94,10 +94,11 @@ const EnvSchema = z
     OTEL_EXPORTER_OTLP_HEADERS: optionalEmptyAsUndefined(z.string()),
 
     // Comma-separated list of origins allowed to hit the API (used by @fastify/cors).
-    // Default in development covers the Vite dev server; production deploys must set explicitly.
+    // Default in development covers both Vite port 5173 and its fallback 5174;
+    // production deploys must set this explicitly.
     CORS_ALLOWED_ORIGINS: z
       .string()
-      .default('http://localhost:5173')
+      .default('http://localhost:5173,http://localhost:5174')
       .transform((s) =>
         s
           .split(',')

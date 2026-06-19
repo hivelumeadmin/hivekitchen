@@ -69,7 +69,10 @@ export default function KitchenProfileRoute() {
         setLoadState('error');
       }
     })();
-    return () => controller.abort();
+    return () => {
+      controller.abort();
+      didLoad.current = false;
+    };
   }, [accessToken, householdId, navigate]);
 
   if (loadState === 'loading') {

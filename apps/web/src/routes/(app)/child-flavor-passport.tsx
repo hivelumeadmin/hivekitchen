@@ -75,7 +75,10 @@ export default function ChildFlavorPassportPage() {
         setLoadState('error');
       }
     })();
-    return () => controller.abort();
+    return () => {
+      controller.abort();
+      didLoad.current = false;
+    };
   }, [accessToken, householdId, childId, navigate]);
 
   // Story 7-S7 — the route reuses this component instance across :childId

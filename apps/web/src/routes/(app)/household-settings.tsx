@@ -85,7 +85,10 @@ export default function HouseholdSettingsRoute() {
         setLoadState('error');
       }
     })();
-    return () => controller.abort();
+    return () => {
+      controller.abort();
+      didLoad.current = false;
+    };
   }, [accessToken, householdId, navigate]);
 
   // Load current geolocation consent on mount (caregivers only — guest_author
