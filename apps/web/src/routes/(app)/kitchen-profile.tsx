@@ -1,7 +1,11 @@
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useScope } from '@hivekitchen/ui';
+import { ALLERGEN_LABELS } from '@hivekitchen/contracts';
 import type {
+  AllergenKey,
+  ChildAllergenMutationResponse,
+  EnforcementLevel,
   KitchenMap,
   KitchenMapAllergen,
   KitchenMapChild,
@@ -42,6 +46,11 @@ export default function KitchenProfileRoute() {
 
   const [loadState, setLoadState] = useState<LoadState>('loading');
   const [kitchenMap, setKitchenMap] = useState<KitchenMap | null>(null);
+  // Story 7-S14 — deterministic safety-edit mutation state.
+  const [allergenBusyChild, setAllergenBusyChild] = useState<string | null>(null);
+  const [allergenErrors, setAllergenErrors] = useState<Record<string, string | null>>({});
+  const [enforcementBusy, setEnforcementBusy] = useState(false);
+  const [enforcementError, setEnforcementError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!accessToken) {
@@ -93,6 +102,79 @@ export default function KitchenProfileRoute() {
     );
   }
 
+  async function handleAddAllergen(childId: string, key: AllergenKey): Promise<void> {
+    if (householdId === null) return;
+    const prevMap = kitchenMap;
+    setAllergenErrors((e) => ({ ...e, [childId]: null }));
+    setAllergenBusyChild(childId);
+    // Optimistic: add the human label before the POST completes.
+    const label = ALLERGEN_LABELS[key];
+    setKitchenMap((m) => {
+      if (m === null) return m;
+      const current = m.allergens.filter((a) => a.child_id === childId).map((a) => a.allergen);
+      return reconcileChildAllergens(m, childId, [...current, label]);
+    });
+    try {
+      const res = await hkFetch<ChildAllergenMutationResponse>(
+        `/v1/children/${childId}/allergens`,
+        { method: 'POST', body: { allergen: key } },
+      );
+      setKitchenMap((m) => (m === null ? m : reconcileChildAllergens(m, childId, res.allergens)));
+    } catch {
+      setKitchenMap(prevMap);
+      setAllergenErrors((e) => ({ ...e, [childId]: 'Could not add that allergen. Please try again.' }));
+    } finally {
+      setAllergenBusyChild(null);
+    }
+  }
+
+  async function handleRemoveAllergen(childId: string, allergenName: string): Promise<void> {
+    if (householdId === null) return;
+    const prevMap = kitchenMap;
+    setAllergenErrors((e) => ({ ...e, [childId]: null }));
+    setAllergenBusyChild(childId);
+    // Optimistic: remove the item before the DELETE completes.
+    setKitchenMap((m) => {
+      if (m === null) return m;
+      const current = m.allergens
+        .filter((a) => a.child_id === childId && a.allergen !== allergenName)
+        .map((a) => a.allergen);
+      return reconcileChildAllergens(m, childId, current);
+    });
+    try {
+      const res = await hkFetch<ChildAllergenMutationResponse>(
+        `/v1/children/${childId}/allergens/${encodeURIComponent(allergenName)}`,
+        { method: 'DELETE' },
+      );
+      setKitchenMap((m) => (m === null ? m : reconcileChildAllergens(m, childId, res.allergens)));
+    } catch {
+      setKitchenMap(prevMap);
+      setAllergenErrors((e) => ({ ...e, [childId]: 'Could not remove that allergen. Please try again.' }));
+    } finally {
+      setAllergenBusyChild(null);
+    }
+  }
+
+  async function handleSetEnforcement(key: string, tier: UiEnforcement): Promise<void> {
+    if (householdId === null) return;
+    const prevMap = kitchenMap;
+    const enforcement = UI_TIER_TO_ENFORCEMENT[tier];
+    setEnforcementError(null);
+    setEnforcementBusy(true);
+    setKitchenMap((m) => (m === null ? m : applyCulturalEnforcement(m, key, enforcement)));
+    try {
+      await hkFetch(`/v1/households/${householdId}/cultural-priors/enforcement`, {
+        method: 'PATCH',
+        body: { key, enforcement },
+      });
+    } catch {
+      setKitchenMap(prevMap);
+      setEnforcementError('Could not update that rule. Please try again.');
+    } finally {
+      setEnforcementBusy(false);
+    }
+  }
+
   const culturalChips = mapCulturalToChips(kitchenMap.cultural);
   const identityQuote = synthesizeQuote(
     kitchenMap.cultural,
@@ -121,6 +203,9 @@ export default function KitchenProfileRoute() {
             onRefine={noop}
             onSendComposite={(c) => logComposite('Identity', c)}
             onDone={noop}
+            onSetEnforcement={(key, tier) => void handleSetEnforcement(key, tier)}
+            enforcementBusy={enforcementBusy}
+            enforcementError={enforcementError}
           />
         </section>
 
@@ -136,6 +221,10 @@ export default function KitchenProfileRoute() {
                 onEdit={noop}
                 onSendComposite={(c) => logComposite(`Child[${child.id}]`, c)}
                 onDone={noop}
+                onAddAllergen={(key) => void handleAddAllergen(child.id, key)}
+                onRemoveAllergen={(name) => void handleRemoveAllergen(child.id, name)}
+                allergenBusy={allergenBusyChild === child.id}
+                allergenError={allergenErrors[child.id] ?? null}
               />
             ))}
           </div>
@@ -192,6 +281,50 @@ function apiEnforcementToUi(enforcement: string): UiEnforcement {
   return 'context';
 }
 
+// Story 7-S14 — inverse of apiEnforcementToUi for the deterministic edit path.
+// Locked mapping (OQ-2): always→strong, prefer→default, context→just_for_context.
+// `non_negotiable` is never written from the 3-way UI selector.
+const UI_TIER_TO_ENFORCEMENT: Record<UiEnforcement, EnforcementLevel> = {
+  always: 'strong',
+  prefer: 'default',
+  context: 'just_for_context',
+};
+
+// Replace a single child's allergen rows with the authoritative list returned
+// by the API, preserving every other child's rows. Used to reconcile after an
+// optimistic add/remove.
+function reconcileChildAllergens(
+  map: KitchenMap,
+  childId: string,
+  allergens: readonly string[],
+): KitchenMap {
+  const others = map.allergens.filter((a) => a.child_id !== childId);
+  const next: KitchenMapAllergen[] = allergens.map((allergen) => ({
+    child_id: childId,
+    allergen,
+    source: 'parent_edited',
+  }));
+  return { ...map, allergens: [...others, ...next] };
+}
+
+// Optimistically set a cultural prior's enforcement (matched by key) across
+// both the active and suggested arrays.
+function applyCulturalEnforcement(
+  map: KitchenMap,
+  key: string,
+  enforcement: EnforcementLevel,
+): KitchenMap {
+  const patch = <T extends { key: string; enforcement: EnforcementLevel }>(arr: readonly T[]) =>
+    arr.map((p) => (p.key === key ? { ...p, enforcement } : p));
+  return {
+    ...map,
+    cultural: {
+      active: patch(map.cultural.active),
+      suggested: patch(map.cultural.suggested),
+    },
+  };
+}
+
 function mapCulturalToChips(
   cultural: KitchenMapCultural,
 ): Array<{ key: string; label: string; enforcement: UiEnforcement }> {
@@ -206,6 +339,7 @@ function mapCulturalToChips(
       key: p.key,
       label: p.label,
       enforcement: apiEnforcementToUi(p.enforcement),
+      locked: p.enforcement === 'non_negotiable',
     }));
 }
 

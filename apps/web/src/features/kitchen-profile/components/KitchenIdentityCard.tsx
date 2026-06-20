@@ -1,5 +1,5 @@
 import { EditIcon, GlobeIcon, UtensilsIcon } from '../../../components/icons.js';
-import type { EnforcedChip } from '../data/mockData.js';
+import type { EnforcedChip, Enforcement } from '../data/mockData.js';
 import {
   IdentityEditConversation,
   type IdentityEditValue,
@@ -24,6 +24,14 @@ interface Readonly_KitchenIdentityCardProps {
   readonly onSendComposite?: (composite: string, nextValue: IdentityEditValue) => void;
   /** Close the edit panel (user clicked "I'm done with my edit"). */
   readonly onDone?: () => void;
+  /**
+   * Story 7-S14 — deterministic enforcement editing. When provided, each
+   * cultural rule chip gains an inline tier selector (parent is editor of
+   * record, no LLM). Omitting it keeps the chips read-only (dev mock route).
+   */
+  readonly onSetEnforcement?: (key: string, tier: Enforcement) => void;
+  readonly enforcementBusy?: boolean;
+  readonly enforcementError?: string | null;
 }
 
 export type KitchenIdentityCardProps = Readonly<Readonly_KitchenIdentityCardProps>;
@@ -38,6 +46,9 @@ export function KitchenIdentityCard({
   onRefine,
   onSendComposite,
   onDone,
+  onSetEnforcement,
+  enforcementBusy = false,
+  enforcementError = null,
 }: KitchenIdentityCardProps) {
   if (isEditing) {
     return (
@@ -57,7 +68,12 @@ export function KitchenIdentityCard({
         {quote}
       </blockquote>
       <div className="mb-8 grid grid-cols-1 gap-8 md:grid-cols-2">
-        <CulturalPillar items={cultural} />
+        <CulturalPillar
+          items={cultural}
+          onSetEnforcement={onSetEnforcement}
+          enforcementBusy={enforcementBusy}
+          enforcementError={enforcementError}
+        />
         <SharedTastesPillar body={sharedTastes} />
       </div>
       <div className="flex justify-end">
@@ -74,7 +90,18 @@ export function KitchenIdentityCard({
   );
 }
 
-function CulturalPillar({ items }: Readonly<{ readonly items: readonly EnforcedChip[] }>) {
+function CulturalPillar({
+  items,
+  onSetEnforcement,
+  enforcementBusy = false,
+  enforcementError = null,
+}: Readonly<{
+  readonly items: readonly EnforcedChip[];
+  readonly onSetEnforcement?: (key: string, tier: Enforcement) => void;
+  readonly enforcementBusy?: boolean;
+  readonly enforcementError?: string | null;
+}>) {
+  const editable = onSetEnforcement !== undefined;
   return (
     <div>
       <div className="mb-3 flex items-center gap-2 text-amber-warm">
@@ -85,6 +112,26 @@ function CulturalPillar({ items }: Readonly<{ readonly items: readonly EnforcedC
       </div>
       {items.length === 0 ? (
         <p className="text-sm italic text-fg-muted/70">Nothing locked in yet.</p>
+      ) : editable ? (
+        <div className="space-y-3">
+          {items.map((c) => (
+            <div key={c.key} className="flex flex-wrap items-center gap-2">
+              <EnforcementChip chip={c} />
+              {!c.locked && (
+                <EnforcementSelector
+                  value={c.enforcement}
+                  disabled={enforcementBusy}
+                  onChange={(tier) => onSetEnforcement!(c.key, tier)}
+                />
+              )}
+            </div>
+          ))}
+          {enforcementError !== null && (
+            <p role="alert" className="text-[12px] text-safety-red">
+              {enforcementError}
+            </p>
+          )}
+        </div>
       ) : (
         <div className="flex flex-wrap gap-1.5">
           {items.map((c) => (
@@ -92,6 +139,44 @@ function CulturalPillar({ items }: Readonly<{ readonly items: readonly EnforcedC
           ))}
         </div>
       )}
+    </div>
+  );
+}
+
+const ENFORCEMENT_TIERS: ReadonlyArray<{ tier: Enforcement; label: string }> = [
+  { tier: 'always', label: 'Always' },
+  { tier: 'prefer', label: 'Prefer' },
+  { tier: 'context', label: 'Context' },
+];
+
+function EnforcementSelector({
+  value,
+  onChange,
+  disabled = false,
+}: Readonly<{
+  readonly value: Enforcement;
+  readonly onChange: (tier: Enforcement) => void;
+  readonly disabled?: boolean;
+}>) {
+  return (
+    <div className="inline-flex overflow-hidden rounded-md border border-border/30">
+      {ENFORCEMENT_TIERS.map(({ tier, label }) => (
+        <button
+          key={tier}
+          type="button"
+          disabled={disabled}
+          aria-pressed={value === tier}
+          onClick={() => onChange(tier)}
+          className={[
+            'px-2 py-0.5 font-sans text-[11px] transition-colors disabled:cursor-not-allowed disabled:opacity-50',
+            value === tier
+              ? 'bg-amber text-bg'
+              : 'bg-surface text-fg-muted hover:text-fg',
+          ].join(' ')}
+        >
+          {label}
+        </button>
+      ))}
     </div>
   );
 }

@@ -159,6 +159,37 @@ export class HouseholdAllergensRepository {
   }
 
   /**
+   * Story 7-S14 — remove exactly one per-child allergen, identified by value.
+   * The allergen string is hashed (same normalization as declareIfNew) and the
+   * row pinned by (household_id, child_id, allergen_hash). household_id +
+   * child_id scope is defense-in-depth (a cross-household or wrong-child value
+   * matches nothing). Returns true when a row was deleted (→ 200), false when
+   * nothing matched (→ 404). The DB trigger bumps kitchen_map_version; the
+   * explicit bump here is belt-and-suspenders.
+   *
+   * Unlike deleteByChild (which wipes ALL of a child's rows), this deletes the
+   * single matching row only.
+   */
+  async deleteOneByAllergen(
+    householdId: string,
+    childId: string,
+    allergen: string,
+  ): Promise<boolean> {
+    const hash = normalizedHash(allergen);
+    const { data, error } = await this.client
+      .from('household_allergens')
+      .delete()
+      .eq('household_id', householdId)
+      .eq('child_id', childId)
+      .eq('allergen_hash', hash)
+      .select('id');
+    if (error) throw error;
+    const deleted = ((data ?? []) as Array<{ id: string }>).length > 0;
+    if (deleted) void this.bumpKitchenMapVersion(householdId);
+    return deleted;
+  }
+
+  /**
    * Wipe per-child rows for a specific child. Household-wide rows (child_id
    * NULL) are intentionally left alone. Used by ChildrenRepository.updateProfile
    * to implement replace-semantics on a child's allergen list without

@@ -155,6 +155,22 @@ export class ChildrenRepository extends BaseRepository {
     };
   }
 
+  // Story 7-S14 — lightweight existence + ownership check for child-scoped
+  // write routes. Returns false for a missing OR cross-household child (the
+  // (id, household_id) filter is the cross-household guard). No decryption, no
+  // allergen/tag overlay — callers that only need a 404 guard avoid findById's
+  // heavier read path.
+  async existsInHousehold(householdId: string, childId: string): Promise<boolean> {
+    const { data, error } = await this.client
+      .from('children')
+      .select('id')
+      .eq('household_id', householdId)
+      .eq('id', childId)
+      .maybeSingle();
+    if (error) throw error;
+    return data !== null;
+  }
+
   async findById(householdId: string, childId: string): Promise<DecryptedChildRow | null> {
     const { data, error } = await this.client
       .from('children')

@@ -327,6 +327,13 @@ import {
   DayAssignmentsResponseSchema,
   AssignPackerRequestSchema,
   AssignPackerResponseSchema,
+  // Story 7-S14 — Kitchen Profile parent-deterministic safety edits
+  AllergenKeySchema,
+  AddChildAllergenRequestSchema,
+  RemoveChildAllergenRequestSchema,
+  ChildAllergenMutationResponseSchema,
+  SetCulturalEnforcementRequestSchema,
+  SetCulturalEnforcementResponseSchema,
 } from '@hivekitchen/contracts';
 
 // Auth
@@ -807,3 +814,11 @@ export type DayAssignment = z.infer<typeof DayAssignmentSchema>;
 export type DayAssignmentsResponse = z.infer<typeof DayAssignmentsResponseSchema>;
 export type AssignPackerRequest = z.infer<typeof AssignPackerRequestSchema>;
 export type AssignPackerResponse = z.infer<typeof AssignPackerResponseSchema>;
+
+// Story 7-S14 — Kitchen Profile parent-deterministic safety edits (Phase 1)
+export type AllergenKey = z.infer<typeof AllergenKeySchema>;
+export type AddChildAllergenRequest = z.infer<typeof AddChildAllergenRequestSchema>;
+export type RemoveChildAllergenRequest = z.infer<typeof RemoveChildAllergenRequestSchema>;
+export type ChildAllergenMutationResponse = z.infer<typeof ChildAllergenMutationResponseSchema>;
+export type SetCulturalEnforcementRequest = z.infer<typeof SetCulturalEnforcementRequestSchema>;
+export type SetCulturalEnforcementResponse = z.infer<typeof SetCulturalEnforcementResponseSchema>;

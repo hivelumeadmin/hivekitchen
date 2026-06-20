@@ -24,6 +24,8 @@ export interface EnforcedChip {
   readonly key: string;
   readonly label: string;
   readonly enforcement: Enforcement;
+  /** True when the underlying API enforcement is `non_negotiable` — the selector is hidden. */
+  readonly locked?: boolean;
 }
 
 export interface Allergen {
