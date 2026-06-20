@@ -17,6 +17,7 @@ import { ExtraRulesRepository } from '../children/extra-rules.repository.js';
 import { ExtraRemovalSignalService } from './extra-removal-signal.service.js';
 import { RecipeService } from '../recipe/recipe.service.js';
 import { RecipesRepository } from '../recipe/recipes.repository.js';
+import { SnackSkuRepository } from '../recipe/snack-sku.repository.js';
 import { LunchLinkSessionRepository } from './lunch-link-session.repository.js';
 import { MemoryRepository } from '../memory/memory.repository.js';
 import { VariantProposalRepository } from './variant-proposal.repository.js';
@@ -82,6 +83,8 @@ const plansHookPlugin: FastifyPluginAsync = async (fastify) => {
   // Slice 5-S8 — composer reads turn-sourced memory nodes for the "I noticed"
   // learning-moment threshold.
   const memoryRepository = new MemoryRepository(fastify.supabase);
+  // Story 3-S40 (AC6) — composer resolves snack_sku_id → snack_skus.name for tiles.
+  const snackSkuRepository = new SnackSkuRepository(fastify.supabase);
 
   const briefStateComposer = new BriefStateComposer({
     plansRepository: repository,
@@ -91,6 +94,7 @@ const plansHookPlugin: FastifyPluginAsync = async (fastify) => {
     auditService: fastify.auditService,
     logger: fastify.log,
     memoryRepository,
+    snackSkuRepository,
   });
   // Story 3.22 — passive Extra-removal bias service. Lives next to PlansService
   // because the swap path is the only signal source today; co-locating avoids

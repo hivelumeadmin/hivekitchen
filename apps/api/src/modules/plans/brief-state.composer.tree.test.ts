@@ -83,6 +83,7 @@ function slotRow(overrides: Partial<PlanSlotRow> = {}): PlanSlotRow {
     main_assignment_id: MAIN_ASSIGN_1,
     recipe_id: null,
     extra_kind: null,
+    snack_sku_id: null,
     paused_at: null,
     created_at: NOW,
     updated_at: NOW,
@@ -322,6 +323,70 @@ describe('BriefStateComposer.refreshTree — 8-read parallelism + composition', 
     expect(upsertCall.payload.cleared_allergies).toEqual([
       { child_id: CHILD_A, child_name: expect.any(String), allergen: 'peanut' },
     ]);
+  });
+
+  // Story 3-S40 (AC6) — snack-SKU tile name resolution.
+  it('resolves snack_sku_id → snack_skus.name onto the snack tile item', async () => {
+    const SNACK_SKU_1 = '30000000-0000-4000-8000-000000000001';
+    const plan = buildPlan({ id: PLAN_ID, household_id: HOUSEHOLD_ID });
+    const days = [dayRow({ id: DAY_MON, day: 'monday' })];
+    const slots = [
+      slotRow({ id: SLOT_MON_MAIN, plan_day_id: DAY_MON }),
+      slotRow({
+        id: SLOT_MON_SNACK,
+        plan_day_id: DAY_MON,
+        slot_kind: 'snack',
+        main_assignment_id: null,
+        recipe_id: null,
+        snack_sku_id: SNACK_SKU_1,
+      } as Partial<PlanSlotRow>),
+    ];
+    const variations = [
+      variationRow({ id: VAR_MON_MAIN_A, plan_slot_id: SLOT_MON_MAIN, child_id: CHILD_A }),
+      variationRow({ id: VAR_MON_MAIN_B, plan_slot_id: SLOT_MON_SNACK, child_id: CHILD_A }),
+    ];
+    const mainAssignments = [mainAssign({ id: MAIN_ASSIGN_1, plan_id: PLAN_ID })];
+
+    const findNamesByIds = vi
+      .fn()
+      .mockResolvedValue(new Map([[SNACK_SKU_1, 'Apple']]));
+
+    const upsert = vi.fn().mockResolvedValue(undefined);
+    const composer = new BriefStateComposer({
+      plansRepository: {
+        findCurrentByHousehold: vi.fn().mockResolvedValue(plan),
+        findMainAssignmentsByPlanId: vi.fn().mockResolvedValue(mainAssignments),
+        findDaysByPlanId: vi.fn().mockResolvedValue(days),
+        findSlotsByDayIds: vi.fn().mockResolvedValue(slots),
+        findVariationsBySlotIds: vi.fn().mockResolvedValue(variations),
+      } as unknown as PlansRepository,
+      briefStateRepository: {
+        upsert,
+        findByHousehold: vi.fn().mockResolvedValue(null),
+      } as unknown as BriefStateRepository,
+      childrenRepository: {
+        findByHouseholdId: vi.fn().mockResolvedValue([]),
+      } as unknown as ChildrenRepository,
+      auditService: { write: vi.fn().mockResolvedValue(undefined) } as unknown as AuditService,
+      logger: buildLogger(),
+      snackSkuRepository: { findNamesByIds } as unknown as never,
+    });
+
+    await composer.refreshTree(HOUSEHOLD_ID, WEEK_OF, REQUEST_ID);
+
+    expect(findNamesByIds).toHaveBeenCalledWith([SNACK_SKU_1]);
+    const upsertCall = upsert.mock.calls[0]![0] as {
+      payload: {
+        tile_summaries: Array<{
+          items: Array<{ slot: string; snack_sku_id?: string; name?: string }>;
+        }>;
+      };
+    };
+    const snackItem = upsertCall.payload.tile_summaries[0]?.items.find(
+      (i) => i.slot === 'snack',
+    );
+    expect(snackItem?.snack_sku_id).toBe(SNACK_SKU_1);
+    expect(snackItem?.name).toBe('Apple');
   });
 
   it('marks a day paused when every variation on it is paused', async () => {

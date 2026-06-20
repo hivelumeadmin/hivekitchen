@@ -224,6 +224,7 @@ export function buildPlanSlot(overrides: Partial<PlanSlotRow> = {}): PlanSlotRow
     main_assignment_id: TEST_IDS.mainAssignment,
     recipe_id: null,
     extra_kind: null,
+    snack_sku_id: null,
     paused_at: null,
     created_at: NOW_ISO,
     updated_at: NOW_ISO,

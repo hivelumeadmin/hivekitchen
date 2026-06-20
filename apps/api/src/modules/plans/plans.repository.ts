@@ -29,7 +29,7 @@ const PLAN_DAY_COLUMNS =
   'id, plan_id, day, paused_at, paused_reason, paused_note, created_at, updated_at';
 
 const PLAN_SLOT_COLUMNS =
-  'id, plan_day_id, slot_kind, main_assignment_id, recipe_id, extra_kind, paused_at, created_at, updated_at';
+  'id, plan_day_id, slot_kind, main_assignment_id, recipe_id, extra_kind, snack_sku_id, paused_at, created_at, updated_at';
 
 const PLAN_SLOT_VARIATION_COLUMNS =
   'id, plan_slot_id, child_id, portion_size, texture, spice_level, cutting_style, container, add_ons, removals, notes, paused_at, created_at, updated_at';

@@ -21,7 +21,9 @@ import { ExtraRulesRepository } from '../modules/children/extra-rules.repository
 import { ExtraLibraryRepository } from '../modules/households/extra-library.repository.js';
 import { PlanDayContextRepository } from '../modules/plans/plan-day-context.repository.js';
 import { RecipesRepository } from '../modules/recipe/recipes.repository.js';
+import { SnackSkuRepository } from '../modules/recipe/snack-sku.repository.js';
 import { PantryService } from '../modules/pantry/pantry.service.js';
+import { assignSnackRotation, type SnackSlotAssignment } from '../services/snack-rotation.service.js';
 import { loadChildSignal } from '../modules/child-preferences/child-signal.assembler.js';
 import { deriveWeekId } from '../lib/derive-week-id.js';
 import {
@@ -104,10 +106,31 @@ export function getLocalSixPmUtcMs(timezone: string, referenceDate: Date): numbe
 // days[].slots[].variations pass through 1:1; the RPC resolves
 // slot.main_assignment_sequence against just-inserted plan_main_assignments
 // rows DB-side.
+// Story 3-S40 — snack slots are server-assigned (not emitted by the LLM).
+// Inject them into each day's slots before passing to commit_plan() RPC.
 export function buildCommitInputTree(
   output: PlanComposeTreeOutput,
   requestId: string,
+  snackSlots: readonly SnackSlotAssignment[] = [],
 ): CommitPlanTreeInput {
+  const snackByDay = new Map<string, SnackSlotAssignment>(
+    snackSlots.map((s) => [s.day, s]),
+  );
+  const days = output.days.map((d) => {
+    const snack = snackByDay.get(d.day);
+    if (!snack) return d;
+    return {
+      ...d,
+      slots: [
+        ...d.slots,
+        {
+          slot_kind: 'snack' as const,
+          snack_sku_id: snack.snack_sku_id,
+          variations: snack.child_ids.map((child_id) => ({ child_id })),
+        },
+      ],
+    };
+  });
   return {
     plan_id: output.plan_id,
     household_id: output.household_id,
@@ -117,11 +140,11 @@ export function buildCommitInputTree(
     prompt_version: output.prompt_version,
     // Story 3-31 carry-through: requestId IS the plan_build_id used by
     // recipe.discover's Redis cache. In the tree path, recipe_candidate_id
-    // only appears on snack/extra slot rows (mains use main_assignment.recipe_id
+    // only appears on extra slot rows (mains use main_assignment.recipe_id
     // which is always a real catalog id).
     plan_build_id: requestId,
     main_assignments: output.main_assignments,
-    days: output.days,
+    days,
   };
 }
 
@@ -221,6 +244,7 @@ const planGenerationPlugin: FastifyPluginAsync = async (fastify) => {
   // planner composes from context instead of spending a recipe.search/pantry.read
   // turn. PantryService.read() is unimplemented until Epic 6 (returns empty).
   const recipesRepository = new RecipesRepository(fastify.supabase);
+  const snackSkuRepository = new SnackSkuRepository(fastify.supabase);
   const pantryService = new PantryService();
 
   // Fan-out scheduler — Friday 10:00 UTC (= 06:00 ET / 03:00 PT). For each
@@ -395,6 +419,26 @@ const planGenerationPlugin: FastifyPluginAsync = async (fastify) => {
         ),
       ]);
 
+      // Story 3-S40 — deterministic snack slot assignment. Pre-computed once per
+      // job so both the initial commit and any guardrail-retry regen share the
+      // same snack assignments (snacks are static for the week, never regenerated).
+      const activeSnackSkus = await snackSkuRepository
+        .findActiveForHousehold(household_id)
+        .catch((err: unknown) => {
+          fastify.log.warn(
+            { err, household_id },
+            'snack-sku load failed — snack slots will be omitted this week',
+          );
+          return [];
+        });
+      const snackSlots = assignSnackRotation({
+        bagCompositions,
+        extraRules,
+        activeSkus: activeSnackSkus,
+        weekOf: week_of,
+        plannedDays: planned_days,
+      });
+
       // Story 3-S36 — candidate recipe slate. Sequenced after childSignals so the
       // per-child "liked" bias folds into ranking. Failure → undefined → no
       // <recipe_candidates> block → the planner falls back to recipe.search.
@@ -462,7 +506,7 @@ const planGenerationPlugin: FastifyPluginAsync = async (fastify) => {
         pantrySnapshot,
         recipeCandidates,
       });
-      const commitInput = buildCommitInputTree(composeOutput, request_id);
+      const commitInput = buildCommitInputTree(composeOutput, request_id, snackSlots);
 
       // Allergy guardrail + brief_state refresh are wired inside
       // PlansService.commit(). The regenerate callback first tries the
@@ -541,7 +585,7 @@ const planGenerationPlugin: FastifyPluginAsync = async (fastify) => {
             pantrySnapshot,
             recipeCandidates,
           });
-          const retryCommit = buildCommitInputTree(retryOutput, request_id);
+          const retryCommit = buildCommitInputTree(retryOutput, request_id, snackSlots);
           lastAttemptCommit = retryCommit;
           lastAttemptComposeOutput = retryOutput;
           return retryCommit;

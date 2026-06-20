@@ -1334,6 +1334,23 @@ export class PlansService {
         // Resolve the slot's base ingredients. `null` = no resolvable recipe
         // row/candidate; `[]` = recipe exists but carries no ingredients. Both
         // are unverifiable.
+        // Story 3-S40 — snack-SKU slots are parent-attested. The allergen
+        // fields live on snack_skus (not recipe.ingredients). Skip the
+        // normal ingredient-resolution path; push each variation as
+        // attested:true so the guardrail exempts them from fail-closed.
+        if ((slot as { snack_sku_id?: string | null }).snack_sku_id != null) {
+          for (const variation of slot.variations) {
+            unverifiable.push({
+              child_id: variation.child_id,
+              day: day.day,
+              slot: slot.slot_kind,
+              recipe_label: 'snack-sku (parent-attested)',
+              attested: true,
+            });
+          }
+          continue;
+        }
+
         let baseIngredients: string[] | null = null;
         if (slot.slot_kind === 'main') {
           const recipeId =

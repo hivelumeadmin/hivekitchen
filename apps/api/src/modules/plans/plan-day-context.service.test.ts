@@ -72,6 +72,7 @@ function buildSlotRow(): PlanSlotRow {
     main_assignment_id: '88888888-8888-4888-8888-888888888888',
     recipe_id: null,
     extra_kind: null,
+    snack_sku_id: null,
     paused_at: null,
     created_at: '2026-05-30T10:00:00.000Z',
     updated_at: '2026-05-30T10:00:00.000Z',

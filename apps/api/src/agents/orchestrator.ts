@@ -581,9 +581,9 @@ export class DomainOrchestrator {
         const catalogRecipes = knownRecipesStop.filter((r) => r.id !== r.name); // non-discover have real UUIDs
         const recipeListText = knownRecipesStop.length > 0
           ? `\n\nRecipes from your tool results:\n` +
-            `  Catalog recipes (use name as recipe_id for main/snack/extra): ${catalogRecipes.map((r) => `"${r.name}"`).join(', ') || 'none'}\n` +
-            `  Discover candidates (use id as recipe_candidate_id for snack/extra only): ${knownRecipesStop.filter((r) => r.id === r.name).length} found — check your recipe.discover result\n\n` +
-            `IMPORTANT: main_assignments[] MUST use catalog recipe names from recipe.search. Do NOT use discover candidates or invented names for main_assignments.`
+            `  Catalog recipes (use name as recipe_id for main/extra): ${catalogRecipes.map((r) => `"${r.name}"`).join(', ') || 'none'}\n` +
+            `  Discover candidates (use id as recipe_candidate_id for extra only): ${knownRecipesStop.filter((r) => r.id === r.name).length} found — check your recipe.discover result\n\n` +
+            `IMPORTANT: main_assignments[] MUST use catalog recipe names from recipe.search. Do NOT use discover candidates or invented names for main_assignments. Do NOT emit snack slots — they are assigned server-side.`
           : '\n\nNo catalog recipes found this session. Call recipe.search first before composing the plan.';
         messages.push({
           role: 'user',
@@ -658,8 +658,8 @@ export class DomainOrchestrator {
               invalid_paths: issues.map((i) => i.path.join('.')),
               fix: [
                 'main_assignments[].recipe_id MUST be a recipe name from recipe.search or recipe.fetch results (catalog recipes only).',
-                'snack/extra slots that use recipe.discover results MUST use recipe_candidate_id, NOT recipe_id.',
-                'Do NOT invent recipe names. Only use names from your tool results this session.',
+                'extra slots that use recipe.discover results MUST use recipe_candidate_id, NOT recipe_id.',
+                'Do NOT invent recipe names. Only use names from your tool results this session. Do NOT emit snack slots — they are assigned server-side.',
               ].join(' '),
               catalog_recipe_names: knownRecipes.filter((r) => r.source !== 'recipe.discover').map((r) => r.name),
               discover_candidate_names: knownRecipes.filter((r) => r.source === 'recipe.discover').map((r) => r.name),
@@ -1112,14 +1112,15 @@ export function buildBagCompositionLines(
   compositions: readonly PlannerBagComposition[] | undefined,
 ): string[] {
   if (compositions === undefined || compositions.length === 0) return [];
+  // Story 3-S40: Snack is server-assigned (SnackRotationService) — do not show
+  // Snack ON/OFF to the planner. Only Extra opt-in matters for the LLM path.
   const lines: string[] = ['Per-child bag composition (Main is always active — never skip Main):'];
   for (const c of compositions) {
-    const snack = c.snack ? 'ON' : 'OFF';
     const extra = c.extra ? 'ON' : 'OFF';
-    lines.push(`- ${c.child_name} (${c.child_id}): Snack ${snack}, Extra ${extra}`);
+    lines.push(`- ${c.child_name} (${c.child_id}): Extra ${extra}`);
   }
   lines.push(
-    'Emit slot rows only for active slots. Do not produce a Snack slot when Snack is OFF, and do not produce an Extra slot when Extra is OFF.',
+    'Emit slot rows only for active slots. Do not produce an Extra slot when Extra is OFF. Do not produce Snack slots — they are filled server-side.',
   );
   return lines;
 }
@@ -1463,10 +1464,11 @@ export function renderPlannerRecipeCandidatesBlock(slate: PlannerRecipeCandidate
       ? `${label}: []`
       : [`${label}:`, ...items.map(renderCandidate)].join('\n');
 
+  // Story 3-S40: snack group omitted — snacks are assigned server-side by
+  // SnackRotationService, not by the LLM from the candidate slate.
   return [
     '<recipe_candidates>',
     renderGroup('main', slate.main),
-    renderGroup('snack', slate.snack),
     renderGroup('extra', slate.extra),
     '</recipe_candidates>',
   ].join('\n');

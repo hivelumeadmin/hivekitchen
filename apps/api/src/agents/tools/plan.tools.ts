@@ -19,7 +19,7 @@ export function createPlanComposeSpec(planService: PlansService, redis: Redis, r
   return {
     name: 'plan.compose',
     description:
-      "Assemble the final weekly plan as the canonical tree (main_assignments + days[].slots[].variations). main_assignment_sequence is the symbolic 1..6 handle that variations on main slots reference; snack/extra slots carry recipe_id (recipe name or UUID) directly. Returns a validated tree ready for guardrail evaluation and atomic commit_plan() RPC submission.",
+      "Assemble the final weekly plan as the canonical tree (main_assignments + days[].slots[].variations). main_assignment_sequence is the symbolic 1..6 handle that variations on main slots reference; extra slots carry recipe_id (recipe name or UUID) directly. Snack slots are assigned deterministically server-side — do NOT emit snack slots. Returns a validated tree ready for guardrail evaluation and atomic commit_plan() RPC submission.",
     inputSchema: PlanComposeTreeInputSchema,
     outputSchema: PlanComposeTreeOutputSchema,
     maxLatencyMs: 4000,
@@ -52,9 +52,10 @@ export function createPlanComposeSpec(planService: PlansService, redis: Redis, r
         for (const assignment of parsed.main_assignments) {
           assignment.recipe_id = await resolveRecipeId(assignment.recipe_id);
         }
-        // Resolve snack/extra slot recipe_ids
+        // Resolve extra slot recipe_ids (snack slots are server-assigned — skip them)
         for (const day of parsed.days) {
           for (const slot of day.slots) {
+            if (slot.slot_kind === 'snack') continue;
             if (slot.recipe_id !== undefined) {
               slot.recipe_id = await resolveRecipeId(slot.recipe_id);
             }

@@ -206,6 +206,12 @@ const PlanTileItemSchema = z.object({
   ingredients: z.array(z.string().min(1)),
   recipe_id: z.string().uuid().optional(),
   item_id: z.string().uuid().optional(),
+  // Story 3-S40 — snack-SKU slots carry snack_sku_id instead of recipe_id.
+  snack_sku_id: z.string().uuid().optional(),
+  // Story 3-S40 (AC6) — resolved display label for the tile dish line. Today
+  // only snack-SKU slots populate it (snack_skus.name); recipe-name projection
+  // for mains/extras is a separate follow-up.
+  name: z.string().optional(),
 });
 
 export const PlanTileSummarySchema = z.object({
@@ -441,6 +447,8 @@ export const PlanSlotRowSchema = z.object({
   main_assignment_id: z.string().uuid().nullable().default(null),
   recipe_id: z.string().uuid().nullable().default(null),
   extra_kind: ExtraKindSchema.nullable().default(null),
+  // Story 3-S40: snack slots may carry snack_sku_id instead of recipe_id.
+  snack_sku_id: z.string().uuid().nullable().default(null),
   paused_at: z.string().datetime({ offset: true }).nullable().default(null),
   created_at: z.string().datetime({ offset: true }),
   updated_at: z.string().datetime({ offset: true }),
@@ -449,27 +457,30 @@ export const PlanSlotRowSchema = z.object({
   // Catches malformed reads OR malformed in-memory constructions before they
   // reach the DB.
   if (val.slot_kind === 'main') {
-    if (val.main_assignment_id === null || val.recipe_id !== null || val.extra_kind !== null) {
+    if (val.main_assignment_id === null || val.recipe_id !== null || val.extra_kind !== null || val.snack_sku_id !== null) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
-        message: 'slot_kind=main requires main_assignment_id; recipe_id and extra_kind must be null',
+        message: 'slot_kind=main requires main_assignment_id; recipe_id, extra_kind, snack_sku_id must be null',
         path: ['slot_kind'],
       });
     }
   } else if (val.slot_kind === 'snack') {
-    if (val.recipe_id === null || val.main_assignment_id !== null || val.extra_kind !== null) {
+    // Exactly one of recipe_id / snack_sku_id must be set.
+    const hasRecipe = val.recipe_id !== null;
+    const hasSku = val.snack_sku_id !== null;
+    if (!(hasRecipe !== hasSku) || val.main_assignment_id !== null || val.extra_kind !== null) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
-        message: 'slot_kind=snack requires recipe_id; main_assignment_id and extra_kind must be null',
+        message: 'slot_kind=snack requires exactly one of recipe_id or snack_sku_id; main_assignment_id and extra_kind must be null',
         path: ['slot_kind'],
       });
     }
   } else {
     // 'extra'
-    if (val.recipe_id === null || val.main_assignment_id !== null || val.extra_kind === null) {
+    if (val.recipe_id === null || val.main_assignment_id !== null || val.extra_kind === null || val.snack_sku_id !== null) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
-        message: 'slot_kind=extra requires recipe_id + extra_kind; main_assignment_id must be null',
+        message: 'slot_kind=extra requires recipe_id + extra_kind; main_assignment_id and snack_sku_id must be null',
         path: ['slot_kind'],
       });
     }
@@ -542,6 +553,9 @@ export const PlannerSlotInputSchema = z.object({
   recipe_id: z.string().min(1).optional(),
   recipe_candidate_id: z.string().uuid().optional(),
   extra_kind: ExtraKindSchema.optional(),
+  // Story 3-S40: snack slots injected by SnackRotationService carry snack_sku_id
+  // instead of recipe_id. Mutually exclusive with recipe_id / recipe_candidate_id.
+  snack_sku_id: z.string().uuid().optional(),
   variations: z.array(PlannerVariationInputSchema).max(VARIATIONS_PER_SLOT_MAX).default([]),
 }).superRefine((val, ctx) => {
   if (val.slot_kind === 'main') {
@@ -552,20 +566,30 @@ export const PlannerSlotInputSchema = z.object({
         path: ['main_assignment_sequence'],
       });
     }
-    if (val.recipe_id !== undefined || val.extra_kind !== undefined) {
+    if (val.recipe_id !== undefined || val.extra_kind !== undefined || val.snack_sku_id !== undefined) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
-        message: 'slot_kind=main must not carry recipe_id or extra_kind',
+        message: 'slot_kind=main must not carry recipe_id, extra_kind, or snack_sku_id',
         path: ['slot_kind'],
       });
     }
   } else if (val.slot_kind === 'snack') {
+    // Story 3-S40: snack slots accept recipe_id / recipe_candidate_id (legacy LLM
+    // path) OR snack_sku_id (SnackRotationService path). Exactly one must be set.
     const hasRecipe = val.recipe_id !== undefined || val.recipe_candidate_id !== undefined;
-    if (!hasRecipe) {
+    const hasSku = val.snack_sku_id !== undefined;
+    if (!hasRecipe && !hasSku) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
-        message: 'slot_kind=snack requires recipe_id or recipe_candidate_id',
+        message: 'slot_kind=snack requires recipe_id, recipe_candidate_id, or snack_sku_id',
         path: ['recipe_id'],
+      });
+    }
+    if (hasRecipe && hasSku) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'slot_kind=snack: snack_sku_id is mutually exclusive with recipe_id / recipe_candidate_id',
+        path: ['snack_sku_id'],
       });
     }
     if (val.main_assignment_sequence !== undefined || val.extra_kind !== undefined) {
@@ -590,6 +614,13 @@ export const PlannerSlotInputSchema = z.object({
         code: z.ZodIssueCode.custom,
         message: 'slot_kind=extra must not carry main_assignment_sequence',
         path: ['main_assignment_sequence'],
+      });
+    }
+    if (val.snack_sku_id !== undefined) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'slot_kind=extra must not carry snack_sku_id',
+        path: ['snack_sku_id'],
       });
     }
   }

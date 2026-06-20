@@ -132,4 +132,54 @@ describe('AllergyGuardrailService.clearOrRejectCommit (Story 3.S39)', () => {
     if (result.verdict === 'uncertain') expect(result.reason).toBe('allergen_data_decrypt_failure');
     expect(writeDecision).toHaveBeenCalled();
   });
+
+  // Story 3-S40 — snack-SKU slots are parent-attested; must NOT trigger the
+  // fail-closed unverifiable path even when the child carries a declared allergen.
+  it('clears when the only unverifiable slot is a snack-SKU slot (attested=true)', async () => {
+    // CHILD_A has a declared peanut allergen. The snack slot is attested — it
+    // should be exempted from the fail-closed guard entirely.
+    const { service } = buildService({
+      rules: [falcpa('peanut'), declared(CHILD_A, 'peanut')],
+    });
+
+    const result = await service.clearOrRejectCommit({
+      items: [item(CHILD_A, ['chicken', 'rice'])],
+      unverifiable: [
+        {
+          child_id: CHILD_A,
+          day: 'monday',
+          slot: 'snack',
+          recipe_label: 'snack-sku (parent-attested)',
+          attested: true,
+        },
+      ],
+      householdId: HOUSEHOLD_ID,
+      requestId: REQUEST_ID,
+    });
+
+    expect(result.verdict).toBe('cleared');
+  });
+
+  it('does not exempt a non-attested unverifiable slot for an allergic child', async () => {
+    const { service } = buildService({
+      rules: [falcpa('peanut'), declared(CHILD_A, 'peanut')],
+    });
+
+    const result = await service.clearOrRejectCommit({
+      items: [],
+      unverifiable: [
+        {
+          child_id: CHILD_A,
+          day: 'monday',
+          slot: 'extra',
+          recipe_label: '(recipe ingredients unverified)',
+          // attested is absent (undefined) — normal fail-closed path
+        },
+      ],
+      householdId: HOUSEHOLD_ID,
+      requestId: REQUEST_ID,
+    });
+
+    expect(result.verdict).toBe('uncertain');
+  });
 });

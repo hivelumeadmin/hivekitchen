@@ -587,8 +587,11 @@ describe('DomainOrchestrator', () => {
 
       expect(lines[0]).toContain('Per-child bag composition');
       expect(lines[0]).toContain('Main is always active');
-      expect(lines.some((l) => l.includes('Asha') && l.includes('Snack ON') && l.includes('Extra OFF'))).toBe(true);
-      expect(lines.some((l) => l.includes('Kai') && l.includes('Snack OFF') && l.includes('Extra ON'))).toBe(true);
+      // Story 3-S40: Snack is server-assigned; only Extra ON/OFF appears in the lines.
+      expect(lines.some((l) => l.includes('Asha') && l.includes('Extra OFF'))).toBe(true);
+      expect(lines.some((l) => l.includes('Kai') && l.includes('Extra ON'))).toBe(true);
+      // Snack ON/OFF is no longer emitted to the LLM.
+      expect(lines.some((l) => l.includes('Snack ON') || l.includes('Snack OFF'))).toBe(false);
       expect(lines.at(-1)).toContain('Emit slot rows only for active slots');
     });
   });
@@ -804,7 +807,8 @@ describe('DomainOrchestrator', () => {
 
       expect(capturedUserContent).toContain('Per-child bag composition');
       expect(capturedUserContent).toContain('Asha');
-      expect(capturedUserContent).toContain('Snack OFF');
+      // Story 3-S40: Snack is server-assigned — no longer appears in the user message.
+      expect(capturedUserContent).not.toContain('Snack OFF');
       expect(capturedUserContent).toContain('Extra ON');
       expect(capturedUserContent).toContain(
         'Emit slot rows only for active slots',
@@ -1881,8 +1885,8 @@ describe('renderPlannerRecipeCandidatesBlock (Story 3-S36)', () => {
     expect(block).toContain('"Chana Masala Wraps"');
     expect(block).toContain('key_ingredients: ["chickpea","wrap"]');
     expect(block).toContain('confidence: 92');
-    // Empty groups render as `kind: []`.
-    expect(block).toContain('snack: []');
+    // Story 3-S40: snack group omitted (server-assigned) — only extra: [] for empty extra group.
+    expect(block).not.toContain('snack:');
     expect(block).toContain('extra: []');
   });
 });

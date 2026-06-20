@@ -9,6 +9,9 @@ import { evaluate, GUARDRAIL_VERSION } from './allergy-rules.engine.js';
 // Story 3.S39 — a slot whose base recipe has no stored ingredients at commit
 // time. The engine cannot evaluate it, so the commit guardrail treats it as a
 // risk only for children who carry a declared (parent_declared) allergen.
+// Story 3-S40 — snack-SKU slots are exempted via attested:true (parent chose
+// the SKU; no recipe_id → no ingredients, but allergen fields are explicit on
+// the snack_skus row — a downstream guardrail phase will use those directly).
 export interface UnverifiableSlot {
   child_id: string;
   day: string;
@@ -16,6 +19,10 @@ export interface UnverifiableSlot {
   // Human-readable label surfaced as the flagged item's `ingredient` on the
   // hard-fail surface. Not a real ingredient — the recipe data is missing.
   recipe_label: string;
+  // When true, the slot is exempted from the fail-closed unverifiable path.
+  // Used for snack-SKU slots (Phase-1 parent-attested; allergen fields are
+  // explicit on the snack_skus row rather than inferred from recipe ingredients).
+  attested?: boolean;
 }
 
 export interface AllergyGuardrailServiceDeps {
@@ -124,6 +131,8 @@ export class AllergyGuardrailService {
     const seen = new Set<string>();
     const unverifiableFlags: FlaggedCompoundItem[] = [];
     for (const u of opts.unverifiable) {
+      // Story 3-S40 — snack-SKU slots are parent-attested; skip fail-closed path.
+      if (u.attested) continue;
       const childHasDeclared = rules.some(
         (r) =>
           r.rule_type === 'parent_declared' &&

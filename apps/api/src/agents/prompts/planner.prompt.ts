@@ -4,6 +4,11 @@ export interface PlannerPromptSpec {
   readonly toolsAllowed: readonly string[];
 }
 
+// v2.8.0 (Story 3-S40): snack slots removed from LLM path — assigned server-side by
+//   SnackRotationService (deterministic per child × day). Planner no longer emits
+//   snack slots; the plan.compose tool description and Slot ↔ FK rules updated.
+//   Snack group removed from <recipe_candidates> block and bag-composition lines.
+//   Worked-example snack block removed. Expected turns unchanged (~1-2 warm catalog).
 // v2.7.0 (Story 3-S36): planner reads pre-loaded — child_signal + pantry.read removed
 //   from toolsAllowed (rendered as <child_signals>/<pantry> context blocks); a ranked
 //   candidate slate <recipe_candidates> demotes recipe.search/fetch/discover to
@@ -69,7 +74,8 @@ in this shape:
                         they wish — that is their choice and is not your concern
                         when generating.
   days[].slots[]    — one slot per (day, slot_kind). slot_kind is one of
-                      'main' | 'snack' | 'extra'.
+                      'main' | 'extra'. DO NOT emit snack slots — they are
+                      assigned automatically by the server after you compose.
   slots[].variations[] — one per child. Per-child differences (portion_size,
                       texture, spice_level, add_ons, removals, notes) go HERE.
                       Same Main + three Variations = one shared family meal
@@ -79,8 +85,7 @@ in this shape:
 Slot ↔ FK rules (validated server-side; bad emissions are rejected before commit):
 - slot_kind=main: MUST carry main_assignment_sequence pointing at one of your
   declared main_assignments. MUST NOT carry recipe_id or extra_kind.
-- slot_kind=snack: MUST carry recipe_id (or recipe_candidate_id for discover-
-  sourced items). MUST NOT carry main_assignment_sequence or extra_kind.
+- slot_kind=snack: DO NOT emit. The server assigns snacks deterministically.
 - slot_kind=extra: MUST carry recipe_id (or recipe_candidate_id) AND extra_kind.
   MUST NOT carry main_assignment_sequence. extra_kind enumerates the WHAT of
   the extra: drink | extra_snack | protein_boost | sports_add | sweet |
@@ -119,7 +124,7 @@ Recent rating signals are pre-loaded under <child_signals> (per child: liked / d
 
 The household pantry is pre-loaded under <pantry> (on-hand ingredients). DO NOT call pantry.read — it is already present.
 
-A ranked candidate recipe slate is pre-loaded under <recipe_candidates>, grouped by slot (main / snack / extra). Each candidate carries its allergen flags and key ingredients inline, so you can judge fit WITHOUT fetching it. Compose directly from this slate, using each candidate's "name" as the recipe_id. Only reach for recipe.search / recipe.fetch / recipe.discover when the slate cannot fill a slot (see Tool usage discipline below).
+A ranked candidate recipe slate is pre-loaded under <recipe_candidates>, grouped by slot (main / extra). Each candidate carries its allergen flags and key ingredients inline, so you can judge fit WITHOUT fetching it. Compose directly from this slate, using each candidate's "name" as the recipe_id. Only reach for recipe.search / recipe.fetch / recipe.discover when the slate cannot fill a slot (see Tool usage discipline below).
 
 Compose directly from <recipe_candidates> based on the household profile, signals, and pantry already in your context.
 
@@ -139,8 +144,8 @@ Child preference signals (pre-loaded under <child_signals>):
   strong signals when composing shared-Main assignments.
 - CRITICAL (FR125): absence of a signal entry is neutral data. If a recipe has no signal for a
   child, that means no data — NEVER treat it as dislike or negative preference.
-- Per-slot independence (FR124): snack signals don't affect main selection. Main signals don't
-  affect snack/extra. Slot preferences are scoped to their slot_kind only.
+- Per-slot independence (FR124): main signals don't affect extra and vice versa. Slot
+  preferences are scoped to their slot_kind only. (Snack is server-assigned; no signal needed.)
 - The <recipe_candidates> slate is already ranked with these signals folded in — liked recipes
   surface near the top of their slot group. Use the signals to break ties and shape variations.
 
@@ -171,7 +176,8 @@ Output expectations:
   if the household has Saturday school. Sequence numbers can become sparse
   after parent overrides; that's documented behavior, not a bug.
 - days: one entry per school day. Each day has slots: at minimum a main slot;
-  snack and extra are per-child opt-in (read the household's bag_composition_pattern).
+  extra is per-child opt-in (read the household's bag_composition_pattern).
+  DO NOT emit snack slots — they are filled server-side automatically.
 - variations: one per child per slot. Same Main + per-child Variation rows is
   the family-first preferred shape — DO NOT split into separate Mains unless a
   child's allergens or hard cultural-rule constraint genuinely forces it.
@@ -206,14 +212,6 @@ slot is on for both. The extra slot is on for Aarav only.
           "variations": [
             { "child_id": "11111111-aaaa-4aaa-8aaa-aaaaaaaaaaaa", "portion_size": "regular" },
             { "child_id": "22222222-bbbb-4bbb-8bbb-bbbbbbbbbbbb", "portion_size": "small", "texture": "soft" }
-          ]
-        },
-        {
-          "slot_kind": "snack",
-          "recipe_id": "Apple Slices with Peanut Butter",
-          "variations": [
-            { "child_id": "11111111-aaaa-4aaa-8aaa-aaaaaaaaaaaa" },
-            { "child_id": "22222222-bbbb-4bbb-8bbb-bbbbbbbbbbbb", "portion_size": "small" }
           ]
         },
         {
@@ -281,7 +279,7 @@ degraded result with a clear reason. Do not silently relax a constraint to make 
 plan fit.`;
 
 export const PLANNER_PROMPT: PlannerPromptSpec = {
-  version: 'v2.7.0',
+  version: 'v2.8.0',
   text: PLANNING_CORE,
   toolsAllowed: [
     'recipe.search',

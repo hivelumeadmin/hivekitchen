@@ -11,6 +11,7 @@ import type {
 import type { AuditService } from '../../audit/audit.service.js';
 import type { LunchLinkSessionRepository } from './lunch-link-session.repository.js';
 import type { MemoryRepository } from '../memory/memory.repository.js';
+import type { SnackSkuRepository } from '../recipe/snack-sku.repository.js';
 import type {
   ClearedAllergyEntry,
   PlanDayRow,
@@ -34,6 +35,9 @@ export interface BriefStateComposerDeps {
   // Slice 5-S8: optional so existing tests that construct the composer without a
   // memory repo remain valid. When absent, buildLearningMomentCallout returns null.
   memoryRepository?: MemoryRepository;
+  // Story 3-S40 (AC6): optional so existing tests remain valid. When absent,
+  // snack-SKU tiles carry snack_sku_id but no resolved display name.
+  snackSkuRepository?: SnackSkuRepository;
 }
 
 const SCHOOL_DAYS = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'] as const;
@@ -57,6 +61,7 @@ export class BriefStateComposer {
   private readonly auditService: AuditService;
   private readonly logger: FastifyBaseLogger;
   private readonly memoryRepository: MemoryRepository | undefined;
+  private readonly snackSkuRepository: SnackSkuRepository | undefined;
 
   constructor(deps: BriefStateComposerDeps) {
     this.plansRepo = deps.plansRepository;
@@ -66,6 +71,7 @@ export class BriefStateComposer {
     this.auditService = deps.auditService;
     this.logger = deps.logger;
     this.memoryRepository = deps.memoryRepository;
+    this.snackSkuRepository = deps.snackSkuRepository;
   }
 
   // Slice 5-S8 — evaluate the "I noticed" threshold. Returns a callout when ≥3
@@ -302,6 +308,22 @@ export class BriefStateComposer {
       const tree = composePlanTree({ days, mainAssignments, slots, variations });
       const previousTileSummaries = previousBrief?.payload?.tile_summaries ?? null;
 
+      // Story 3-S40 (AC6) — resolve snack-SKU display names for the tile dish
+      // line. Snack-SKU slots have no recipe_id, so they never get a name from
+      // the recipe-name projection; batch-read snack_skus.name here. No-op when
+      // the repository isn't wired (existing tests) or no snack slots exist.
+      const snackSkuIds = [
+        ...new Set(
+          slots
+            .map((s) => (s as { snack_sku_id?: string | null }).snack_sku_id)
+            .filter((id): id is string => id != null),
+        ),
+      ];
+      const snackSkuNames =
+        this.snackSkuRepository && snackSkuIds.length > 0
+          ? await this.snackSkuRepository.findNamesByIds(snackSkuIds)
+          : new Map<string, string>();
+
       // Slice 5-S8 — "I noticed" learning-moment callout. Read the suppress
       // window from the previous payload, then evaluate the turn-sourced
       // threshold. Sequential (after the parallel block) because it needs
@@ -324,6 +346,7 @@ export class BriefStateComposer {
             tree,
             suppressionByDay,
             ratingsMap,
+            snackSkuNames,
           ),
           cleared_allergies: this.buildClearedAllergiesTree(tree, children),
           scaffolding_diff: this.buildScaffoldingDiffTree(
@@ -393,6 +416,7 @@ export class BriefStateComposer {
     tree: PlanTree,
     suppressionByDay: Map<string, string[]>,
     ratingsMap: Map<string, Map<string, 'loved' | 'ok' | 'not-really'>>,
+    snackSkuNames: ReadonlyMap<string, string> = new Map(),
   ): PlanTileSummary[] {
     const out: PlanTileSummary[] = [];
     for (const dayNode of tree.days) {
@@ -416,6 +440,12 @@ export class BriefStateComposer {
           // composition produces at least one variation per slot.
           continue;
         }
+        // Story 3-S40 — snack-SKU slots carry snack_sku_id instead of recipe_id.
+        const tileSnackSkuId = (slotNode.slot as { snack_sku_id?: string | null }).snack_sku_id ?? null;
+        // AC6 — resolve the SKU's display name for the tile dish line.
+        const tileSnackName =
+          tileSnackSkuId != null ? snackSkuNames.get(tileSnackSkuId) ?? null : null;
+
         for (const variation of slotNode.variations) {
           const item: TileItem = {
             plan_item_id: variation.id,
@@ -423,6 +453,8 @@ export class BriefStateComposer {
             slot: slotNode.slot.slot_kind,
             ingredients: [],
             ...(tileRecipeId != null ? { recipe_id: tileRecipeId } : {}),
+            ...(tileSnackSkuId != null ? { snack_sku_id: tileSnackSkuId } : {}),
+            ...(tileSnackName != null ? { name: tileSnackName } : {}),
           };
           tileItems.push(item);
           totalCount++;

@@ -97,9 +97,11 @@ function deriveVariant(day: PlanTileSummary['day']): PlanTileVariant {
 }
 
 function deriveDishLine(summary: PlanTileSummary): string {
-  // Recipe name lives in a future contract field; until then the dish line
-  // is the unique ingredient list (capped at 3 + overflow).
-  const all = [...new Set(summary.items.flatMap((item) => item.ingredients))];
+  // Recipe name lives in a future contract field; until then the dish line is
+  // resolved item names (Story 3-S40 — snack-SKU names) followed by the unique
+  // ingredient list (capped at 3 + overflow).
+  const names = summary.items.flatMap((item) => (item.name != null ? [item.name] : []));
+  const all = [...new Set([...names, ...summary.items.flatMap((item) => item.ingredients)])];
   if (all.length === 0) return '';
   const preview = all.slice(0, 3).join(', ');
   return all.length > 3 ? `${preview} +${all.length - 3} more` : preview;
