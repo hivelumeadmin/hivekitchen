@@ -50,6 +50,24 @@ function buildBannedCategories(
   return banned;
 }
 
+// Story 3-S42 — compute the set of pinned categories for the snack slot.
+// Mirrors buildBannedCategories: the union of every snack-ON child's pins,
+// each normalized. Pins are "prefer" (bias, best-effort) — see assignSnackRotation.
+function buildPinnedCategories(
+  snackOnChildIds: readonly string[],
+  extraRulesByChildId: ReadonlyMap<string, PlannerExtraRules>,
+): Set<string> {
+  const pinned = new Set<string>();
+  for (const childId of snackOnChildIds) {
+    const rules = extraRulesByChildId.get(childId);
+    if (!rules) continue;
+    for (const pin of rules.pins) {
+      pinned.add(normalizeCategory(pin));
+    }
+  }
+  return pinned;
+}
+
 // Filter active SKUs to those not banned by any child sharing the slot.
 function eligibleSkus(
   allSkus: readonly SnackSkuRow[],
@@ -108,12 +126,25 @@ export function assignSnackRotation(opts: {
   let prevSkuId: string | null = null;
 
   const bannedCategories = buildBannedCategories(snackOnChildIds, extraRulesByChildId);
+  const pinnedCategories = buildPinnedCategories(snackOnChildIds, extraRulesByChildId);
 
   for (let dayIdx = 0; dayIdx < days.length; dayIdx++) {
     const day = days[dayIdx];
 
     // Eligible SKUs for this day (ban-filtered).
     let candidates = eligibleSkus(sortedSkus, bannedCategories);
+
+    // Story 3-S42 — pin narrowing (after bans, before adjacency). "Prefer"
+    // semantics: when ≥1 eligible SKU matches a pinned category, restrict the
+    // pick to those; otherwise leave candidates untouched (best-effort, never
+    // empties a day). A pinned-but-banned category yields no preferred SKUs and
+    // falls back — bans run first by design.
+    if (pinnedCategories.size > 0) {
+      const preferred = candidates.filter((sku) =>
+        pinnedCategories.has(normalizeCategory(sku.category)),
+      );
+      if (preferred.length > 0) candidates = preferred;
+    }
 
     // No-adjacent-repeat: remove the previous day's pick from the candidate list.
     if (prevSkuId !== null && candidates.length > 1) {

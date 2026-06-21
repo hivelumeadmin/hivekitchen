@@ -25,6 +25,17 @@ interface Readonly_ChildProfileCardProps {
   readonly onRemoveAllergen?: (allergenName: string) => void;
   readonly allergenBusy?: boolean;
   readonly allergenError?: string | null;
+  /**
+   * Story 3-S42 — deterministic per-child Snack & Extra preferences (pins/bans).
+   * `extraRules` is the kitchen-map projection ({ pinned, banned }). When
+   * `onSetExtraRules` is provided (primary parent), the editor renders 3-state
+   * toggles; when absent it renders read-only chips. The handler receives the
+   * full replacement set in PATCH-body shape ({ pins, bans }).
+   */
+  readonly extraRules?: { readonly pinned: readonly string[]; readonly banned: readonly string[] };
+  readonly onSetExtraRules?: (next: { pins: string[]; bans: string[] }) => void;
+  readonly extraRulesBusy?: boolean;
+  readonly extraRulesError?: string | null;
 }
 
 export type ChildProfileCardProps = Readonly<Readonly_ChildProfileCardProps>;
@@ -40,6 +51,10 @@ export function ChildProfileCard({
   onRemoveAllergen,
   allergenBusy = false,
   allergenError = null,
+  extraRules,
+  onSetExtraRules,
+  extraRulesBusy = false,
+  extraRulesError = null,
 }: ChildProfileCardProps) {
   if (isEditing) {
     return (
@@ -91,6 +106,10 @@ export function ChildProfileCard({
               onRemoveAllergen={onRemoveAllergen}
               allergenBusy={allergenBusy}
               allergenError={allergenError}
+              extraRules={extraRules}
+              onSetExtraRules={onSetExtraRules}
+              extraRulesBusy={extraRulesBusy}
+              extraRulesError={extraRulesError}
             />
             <LumiLearningColumn
               loves={child.loves}
@@ -122,6 +141,10 @@ function SafetyAndBagColumn({
   onRemoveAllergen,
   allergenBusy = false,
   allergenError = null,
+  extraRules,
+  onSetExtraRules,
+  extraRulesBusy = false,
+  extraRulesError = null,
 }: Readonly<{
   readonly allergens: readonly Allergen[];
   readonly bagComposition: string | null;
@@ -130,6 +153,10 @@ function SafetyAndBagColumn({
   readonly onRemoveAllergen?: (allergenName: string) => void;
   readonly allergenBusy?: boolean;
   readonly allergenError?: string | null;
+  readonly extraRules?: { readonly pinned: readonly string[]; readonly banned: readonly string[] };
+  readonly onSetExtraRules?: (next: { pins: string[]; bans: string[] }) => void;
+  readonly extraRulesBusy?: boolean;
+  readonly extraRulesError?: string | null;
 }>) {
   const editable = onAddAllergen !== undefined && onRemoveAllergen !== undefined;
   const present = new Set(allergens.map((a) => a.name.trim().toLowerCase()));
@@ -194,7 +221,156 @@ function SafetyAndBagColumn({
           />
         )}
       </div>
+      {extraRules !== undefined && (
+        <ExtraRulesEditor
+          pinned={extraRules.pinned}
+          banned={extraRules.banned}
+          onSetExtraRules={onSetExtraRules}
+          busy={extraRulesBusy}
+          error={extraRulesError}
+        />
+      )}
     </div>
+  );
+}
+
+// Story 3-S42 — component-type vocabulary shared with the Extra slot
+// (ExtraRulesForm writes the same tokens). A ban/pin here governs both the
+// child's snack rotation and their Extra slot — do not fork a snack-only set.
+const EXTRA_RULE_COMPONENT_TYPES = [
+  'fruit',
+  'veggie',
+  'grain',
+  'protein',
+  'dairy',
+  'sweet treat',
+] as const;
+
+type ExtraRuleState = 'neutral' | 'pin' | 'ban';
+
+/**
+ * Deterministic per-child Snack & Extra preferences. Fully controlled by the
+ * `pinned`/`banned` props (the kitchen-map projection) — every toggle sends the
+ * complete replacement set to `onSetExtraRules`, mirroring the optimistic
+ * handleAddAllergen idiom. Read-only when `onSetExtraRules` is absent.
+ */
+function ExtraRulesEditor({
+  pinned,
+  banned,
+  onSetExtraRules,
+  busy = false,
+  error = null,
+}: Readonly<{
+  readonly pinned: readonly string[];
+  readonly banned: readonly string[];
+  readonly onSetExtraRules?: (next: { pins: string[]; bans: string[] }) => void;
+  readonly busy?: boolean;
+  readonly error?: string | null;
+}>) {
+  const editable = onSetExtraRules !== undefined;
+  const pinnedSet = new Set(pinned);
+  const bannedSet = new Set(banned);
+
+  function stateOf(token: string): ExtraRuleState {
+    if (pinnedSet.has(token)) return 'pin';
+    if (bannedSet.has(token)) return 'ban';
+    return 'neutral';
+  }
+
+  // Full-replacement: build the complete {pins, bans} after mutating one token,
+  // then hand it to the optimistic handler. Selecting pin clears ban (and vice
+  // versa), mirroring the server-side ExtraRulesSchema mutual-exclusion refine.
+  function setToken(token: string, next: ExtraRuleState) {
+    const pins = new Set(pinnedSet);
+    const bans = new Set(bannedSet);
+    pins.delete(token);
+    bans.delete(token);
+    if (next === 'pin') pins.add(token);
+    if (next === 'ban') bans.add(token);
+    onSetExtraRules?.({ pins: [...pins], bans: [...bans] });
+  }
+
+  return (
+    <div>
+      <p className="mb-3 text-xs font-bold uppercase tracking-wider text-amber-warm/80">
+        Snack &amp; Extra preferences
+      </p>
+      <div className="space-y-1.5">
+        {EXTRA_RULE_COMPONENT_TYPES.map((token) => {
+          const state = stateOf(token);
+          return (
+            <div key={token} className="flex items-center justify-between gap-2">
+              <span className="text-[13px] capitalize text-fg">{token}</span>
+              {editable ? (
+                <div className="flex gap-1">
+                  <ToggleChip
+                    label="Pin"
+                    active={state === 'pin'}
+                    disabled={busy}
+                    ariaLabel={`Pin ${token}`}
+                    onClick={() => setToken(token, state === 'pin' ? 'neutral' : 'pin')}
+                  />
+                  <ToggleChip
+                    label="Ban"
+                    active={state === 'ban'}
+                    disabled={busy}
+                    ariaLabel={`Ban ${token}`}
+                    onClick={() => setToken(token, state === 'ban' ? 'neutral' : 'ban')}
+                  />
+                </div>
+              ) : (
+                state !== 'neutral' && (
+                  <span className="text-[11px] uppercase tracking-wide text-fg-muted">
+                    {state === 'pin' ? 'Pinned' : 'Banned'}
+                  </span>
+                )
+              )}
+            </div>
+          );
+        })}
+      </div>
+      {editable && (
+        <p className="mt-3 text-[12px] italic text-fg-muted">
+          Lumi will use these for next week.
+        </p>
+      )}
+      {error !== null && (
+        <p role="alert" className="mt-2 text-[12px] text-safety-red">
+          {error}
+        </p>
+      )}
+    </div>
+  );
+}
+
+function ToggleChip({
+  label,
+  active,
+  disabled,
+  ariaLabel,
+  onClick,
+}: Readonly<{
+  readonly label: string;
+  readonly active: boolean;
+  readonly disabled: boolean;
+  readonly ariaLabel: string;
+  readonly onClick: () => void;
+}>) {
+  return (
+    <button
+      type="button"
+      aria-pressed={active}
+      aria-label={ariaLabel}
+      disabled={disabled}
+      onClick={onClick}
+      className={
+        active
+          ? 'rounded-md border border-foliage bg-foliage-soft px-2 py-0.5 font-sans text-[11px] font-medium text-fg transition-colors disabled:cursor-not-allowed disabled:opacity-50'
+          : 'rounded-md border border-border/30 bg-surface-2 px-2 py-0.5 font-sans text-[11px] text-fg-muted transition-colors hover:border-foliage/40 disabled:cursor-not-allowed disabled:opacity-50'
+      }
+    >
+      {label}
+    </button>
   );
 }
 
