@@ -117,12 +117,19 @@ export function buildCommitInputTree(
     snackSlots.map((s) => [s.day, s]),
   );
   const days = output.days.map((d) => {
+    // Snacks are strictly server-assigned (Story 3-S40). The planner prompt
+    // (v2.8.0) tells the model NOT to emit snack slots, but it occasionally
+    // does anyway — those slots carry no snack_sku_id and would either render
+    // as empty snacks or collide with the deterministic snack on the same day
+    // (one-slot-per-kind). Strip any model-emitted snack slot first, then add
+    // the deterministic rotation snack so every eligible day has exactly one.
+    const nonSnackSlots = d.slots.filter((s) => s.slot_kind !== 'snack');
     const snack = snackByDay.get(d.day);
-    if (!snack) return d;
+    if (!snack) return { ...d, slots: nonSnackSlots };
     return {
       ...d,
       slots: [
-        ...d.slots,
+        ...nonSnackSlots,
         {
           slot_kind: 'snack' as const,
           snack_sku_id: snack.snack_sku_id,
@@ -431,12 +438,40 @@ const planGenerationPlugin: FastifyPluginAsync = async (fastify) => {
           );
           return [];
         });
+
+      // Story 3-S40 — kitchenMap pre-loaded once and reused by both the snack
+      // rotation (Phase-2 allergen pre-filter) and the planner call below.
+      const kitchenMap = await fastify.kitchenMapService.get(household_id).catch((err: unknown) => {
+        fastify.log.warn(
+          { err, householdId: household_id },
+          'kitchenMap load failed — proceeding without pre-loaded context',
+        );
+        return undefined;
+      });
+
+      // Story 3-s43 (Phase-2, AC6) — per-child declared allergens for the snack
+      // rotation pre-filter. Each child's effective set = household-wide rules
+      // (apply to everyone) ∪ that child's own medical allergens. Absent
+      // kitchenMap → empty map → the filter is a no-op (the commit-time
+      // guardrail remains the safety backstop).
+      const declaredAllergensByChildId = new Map<string, string[]>();
+      if (kitchenMap) {
+        const householdAllergens = kitchenMap.household.declared_allergens;
+        for (const child of kitchenMap.children) {
+          declaredAllergensByChildId.set(child.id, [
+            ...householdAllergens,
+            ...child.declared_allergens,
+          ]);
+        }
+      }
+
       const snackSlots = assignSnackRotation({
         bagCompositions,
         extraRules,
         activeSkus: activeSnackSkus,
         weekOf: week_of,
         plannedDays: planned_days,
+        declaredAllergensByChildId,
       });
 
       // Story 3-S36 — candidate recipe slate. Sequenced after childSignals so the
@@ -480,14 +515,6 @@ const planGenerationPlugin: FastifyPluginAsync = async (fastify) => {
           );
         }
       }
-
-      const kitchenMap = await fastify.kitchenMapService.get(household_id).catch((err: unknown) => {
-        fastify.log.warn(
-          { err, householdId: household_id },
-          'kitchenMap load failed — proceeding without pre-loaded context',
-        );
-        return undefined;
-      });
 
       const composeOutput = await fastify.orchestrator.planWeek({
         householdId: household_id,

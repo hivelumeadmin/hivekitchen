@@ -389,6 +389,55 @@ describe('BriefStateComposer.refreshTree — 8-read parallelism + composition', 
     expect(snackItem?.name).toBe('Apple');
   });
 
+  // Main/extra tile name resolution — recipe_id → recipes.canonical_name.
+  it('resolves a main slot recipe_id → recipes.canonical_name onto the tile item', async () => {
+    const plan = buildPlan({ id: PLAN_ID, household_id: HOUSEHOLD_ID });
+    const days = [dayRow({ id: DAY_MON, day: 'monday' })];
+    const slots = [slotRow({ id: SLOT_MON_MAIN, plan_day_id: DAY_MON })];
+    const variations = [
+      variationRow({ id: VAR_MON_MAIN_A, plan_slot_id: SLOT_MON_MAIN, child_id: CHILD_A }),
+    ];
+    const mainAssignments = [
+      mainAssign({ id: MAIN_ASSIGN_1, plan_id: PLAN_ID, recipe_id: RECIPE_1 }),
+    ];
+
+    const findNamesByIds = vi
+      .fn()
+      .mockResolvedValue(new Map([[RECIPE_1, 'Chicken Biriyani']]));
+    const upsert = vi.fn().mockResolvedValue(undefined);
+    const composer = new BriefStateComposer({
+      plansRepository: {
+        findCurrentByHousehold: vi.fn().mockResolvedValue(plan),
+        findMainAssignmentsByPlanId: vi.fn().mockResolvedValue(mainAssignments),
+        findDaysByPlanId: vi.fn().mockResolvedValue(days),
+        findSlotsByDayIds: vi.fn().mockResolvedValue(slots),
+        findVariationsBySlotIds: vi.fn().mockResolvedValue(variations),
+      } as unknown as PlansRepository,
+      briefStateRepository: {
+        upsert,
+        findByHousehold: vi.fn().mockResolvedValue(null),
+      } as unknown as BriefStateRepository,
+      childrenRepository: {
+        findByHouseholdId: vi.fn().mockResolvedValue([]),
+      } as unknown as ChildrenRepository,
+      auditService: { write: vi.fn().mockResolvedValue(undefined) } as unknown as AuditService,
+      logger: buildLogger(),
+      recipesRepository: { findNamesByIds } as unknown as never,
+    });
+
+    await composer.refreshTree(HOUSEHOLD_ID, WEEK_OF, REQUEST_ID);
+
+    expect(findNamesByIds).toHaveBeenCalledWith([RECIPE_1]);
+    const upsertCall = upsert.mock.calls[0]![0] as {
+      payload: {
+        tile_summaries: Array<{ items: Array<{ slot: string; recipe_id?: string; name?: string }> }>;
+      };
+    };
+    const mainItem = upsertCall.payload.tile_summaries[0]?.items.find((i) => i.slot === 'main');
+    expect(mainItem?.recipe_id).toBe(RECIPE_1);
+    expect(mainItem?.name).toBe('Chicken Biriyani');
+  });
+
   it('marks a day paused when every variation on it is paused', async () => {
     const plan = buildPlan({ id: PLAN_ID, household_id: HOUSEHOLD_ID });
     const days = [dayRow({ id: DAY_MON, day: 'monday' })];

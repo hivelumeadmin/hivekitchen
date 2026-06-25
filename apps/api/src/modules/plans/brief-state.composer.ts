@@ -12,6 +12,7 @@ import type { AuditService } from '../../audit/audit.service.js';
 import type { LunchLinkSessionRepository } from './lunch-link-session.repository.js';
 import type { MemoryRepository } from '../memory/memory.repository.js';
 import type { SnackSkuRepository } from '../recipe/snack-sku.repository.js';
+import type { RecipesRepository } from '../recipe/recipes.repository.js';
 import type {
   ClearedAllergyEntry,
   PlanDayRow,
@@ -38,6 +39,10 @@ export interface BriefStateComposerDeps {
   // Story 3-S40 (AC6): optional so existing tests remain valid. When absent,
   // snack-SKU tiles carry snack_sku_id but no resolved display name.
   snackSkuRepository?: SnackSkuRepository;
+  // Resolves main/extra slot recipe_ids → canonical_name for the tile dish line.
+  // Optional so existing tests remain valid; when absent, main/extra tiles carry
+  // recipe_id but no name (the dish line falls back to "Plan pending").
+  recipesRepository?: RecipesRepository;
 }
 
 const SCHOOL_DAYS = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'] as const;
@@ -62,6 +67,7 @@ export class BriefStateComposer {
   private readonly logger: FastifyBaseLogger;
   private readonly memoryRepository: MemoryRepository | undefined;
   private readonly snackSkuRepository: SnackSkuRepository | undefined;
+  private readonly recipesRepository: RecipesRepository | undefined;
 
   constructor(deps: BriefStateComposerDeps) {
     this.plansRepo = deps.plansRepository;
@@ -72,6 +78,7 @@ export class BriefStateComposer {
     this.logger = deps.logger;
     this.memoryRepository = deps.memoryRepository;
     this.snackSkuRepository = deps.snackSkuRepository;
+    this.recipesRepository = deps.recipesRepository;
   }
 
   // Slice 5-S8 — evaluate the "I noticed" threshold. Returns a callout when ≥3
@@ -324,6 +331,24 @@ export class BriefStateComposer {
           ? await this.snackSkuRepository.findNamesByIds(snackSkuIds)
           : new Map<string, string>();
 
+      // Resolve main/extra recipe display names for the tile dish line. Main
+      // slots dereference recipe_id via their main_assignment; extra slots carry
+      // recipe_id directly. Without this, main/extra tiles had only a recipe_id
+      // (no name) so the dish line rendered "Plan pending". No-op when the repo
+      // isn't wired (existing tests) or no recipe slots exist.
+      const recipeIds = [
+        ...new Set([
+          ...mainAssignments.map((m) => m.recipe_id),
+          ...slots
+            .map((s) => s.recipe_id)
+            .filter((id): id is string => id != null),
+        ]),
+      ];
+      const recipeNames =
+        this.recipesRepository && recipeIds.length > 0
+          ? await this.recipesRepository.findNamesByIds(recipeIds)
+          : new Map<string, string>();
+
       // Slice 5-S8 — "I noticed" learning-moment callout. Read the suppress
       // window from the previous payload, then evaluate the turn-sourced
       // threshold. Sequential (after the parallel block) because it needs
@@ -347,6 +372,7 @@ export class BriefStateComposer {
             suppressionByDay,
             ratingsMap,
             snackSkuNames,
+            recipeNames,
           ),
           cleared_allergies: this.buildClearedAllergiesTree(tree, children),
           scaffolding_diff: this.buildScaffoldingDiffTree(
@@ -417,6 +443,7 @@ export class BriefStateComposer {
     suppressionByDay: Map<string, string[]>,
     ratingsMap: Map<string, Map<string, 'loved' | 'ok' | 'not-really'>>,
     snackSkuNames: ReadonlyMap<string, string> = new Map(),
+    recipeNames: ReadonlyMap<string, string> = new Map(),
   ): PlanTileSummary[] {
     const out: PlanTileSummary[] = [];
     for (const dayNode of tree.days) {
@@ -445,6 +472,12 @@ export class BriefStateComposer {
         // AC6 — resolve the SKU's display name for the tile dish line.
         const tileSnackName =
           tileSnackSkuId != null ? snackSkuNames.get(tileSnackSkuId) ?? null : null;
+        // Resolve main/extra recipe name for the dish line (snacks use the SKU
+        // name above). Without this the main/extra tiles render "Plan pending".
+        const tileRecipeName =
+          tileSnackSkuId == null && tileRecipeId != null
+            ? recipeNames.get(tileRecipeId) ?? null
+            : null;
 
         for (const variation of slotNode.variations) {
           const item: TileItem = {
@@ -455,6 +488,7 @@ export class BriefStateComposer {
             ...(tileRecipeId != null ? { recipe_id: tileRecipeId } : {}),
             ...(tileSnackSkuId != null ? { snack_sku_id: tileSnackSkuId } : {}),
             ...(tileSnackName != null ? { name: tileSnackName } : {}),
+            ...(tileRecipeName != null ? { name: tileRecipeName } : {}),
           };
           tileItems.push(item);
           totalCount++;

@@ -6,6 +6,7 @@ import {
   ChevronLeftIcon,
   ChevronRightIcon,
   MailIcon,
+  PackageIcon,
   SettingsIcon,
   ShoppingBasketIcon,
   UtensilsIcon,
@@ -18,6 +19,7 @@ const COLLAPSED_KEY = 'hk_sidebar_collapsed';
 const NAV_ITEMS = [
   { label: 'Plan', href: '/app', Icon: CalendarIcon, end: true },
   { label: 'Grocery List', href: '/app/grocery-list', Icon: ShoppingBasketIcon, end: false },
+  { label: 'My Snacks', href: '/app/kitchen/snacks', Icon: PackageIcon, end: false },
   { label: 'Kitchen Profile', href: '/app/kitchen-profile', Icon: UtensilsIcon, end: false },
   { label: 'Memory', href: '/app/memory', Icon: ArticleIcon, end: false },
   { label: 'Heart Notes', href: '/app/heart-notes', Icon: MailIcon, end: false },

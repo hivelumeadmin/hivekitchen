@@ -22,7 +22,7 @@ import type {
   PlannerRecipeCandidate,
   PlannerRecipeCandidateSlate,
   PlannerVariantEligibleChild,
-} from '../agents/orchestrator.js';
+} from '../agents/planner/context/assemble.js';
 import type { CulturalTemplateKey } from '../services/cultural-calendar.service.js';
 import { NotImplementedError } from '../common/errors.js';
 
@@ -214,6 +214,9 @@ export function assembleRecipeCandidateSlate(
 
 function toCandidate(row: CandidateSlateRow): PlannerRecipeCandidate {
   return {
+    // Story 3.5-s3 — carry the catalog UUID so the handle index can map a
+    // model-emitted handle (m1, e1, …) straight back to it without a DB lookup.
+    id: row.id,
     name: row.canonical_name,
     cuisine_tags: row.cuisine_tags,
     allergen_flags: row.allergen_flags,

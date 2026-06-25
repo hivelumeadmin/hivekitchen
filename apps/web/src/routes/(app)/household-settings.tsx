@@ -57,6 +57,36 @@ export default function HouseholdSettingsRoute() {
   const [autoComposeLoading, setAutoComposeLoading] = useState(false);
   const [autoComposeError, setAutoComposeError] = useState<string | null>(null);
 
+  const clearSession = useAuthStore((s) => s.clearSession);
+  const [devResetAllState, setDevResetAllState] = useState<'idle' | 'running' | 'error'>('idle');
+  const [devResetPlansState, setDevResetPlansState] = useState<'idle' | 'running' | 'done' | 'error'>('idle');
+
+  async function handleDevResetAll() {
+    if (devResetAllState === 'running') return;
+    setDevResetAllState('running');
+    try {
+      await hkFetch('/v1/dev/reset-all', { method: 'DELETE' });
+      clearSession();
+      navigate('/auth/login', { replace: true });
+    } catch {
+      setDevResetAllState('error');
+      setTimeout(() => setDevResetAllState('idle'), 2000);
+    }
+  }
+
+  async function handleDevResetPlans() {
+    if (devResetPlansState === 'running') return;
+    setDevResetPlansState('running');
+    try {
+      await hkFetch('/v1/dev/reset-plans', { method: 'DELETE' });
+      setDevResetPlansState('done');
+      setTimeout(() => window.location.reload(), 600);
+    } catch {
+      setDevResetPlansState('error');
+      setTimeout(() => setDevResetPlansState('idle'), 2000);
+    }
+  }
+
   useEffect(() => {
     if (!accessToken) {
       navigate('/auth/login?next=/app/household/settings', { replace: true });
@@ -400,6 +430,38 @@ export default function HouseholdSettingsRoute() {
             </section>
           )}
         </>
+      )}
+
+      {import.meta.env.DEV && (
+        <section className="mt-12 border-t border-border pt-8">
+          <h2 className="font-serif text-xl text-fg">Developer</h2>
+          <p className="mt-1 font-sans text-sm text-fg-muted">
+            Visible in dev mode only. These actions are irreversible.
+          </p>
+          <div className="mt-4 flex flex-col gap-3 sm:flex-row">
+            <button
+              type="button"
+              onClick={() => void handleDevResetAll()}
+              disabled={devResetAllState === 'running'}
+              className="rounded border border-safety-red/40 px-4 py-2 text-sm text-safety-red hover:bg-safety-red/5 disabled:opacity-50 transition-colors"
+            >
+              {devResetAllState === 'running' && 'Resetting…'}
+              {devResetAllState === 'error' && 'Error — try again'}
+              {devResetAllState === 'idle' && 'Reset all + onboarding'}
+            </button>
+            <button
+              type="button"
+              onClick={() => void handleDevResetPlans()}
+              disabled={devResetPlansState === 'running' || devResetPlansState === 'done'}
+              className="rounded border border-border px-4 py-2 text-sm text-fg-muted hover:bg-surface-2 disabled:opacity-50 transition-colors"
+            >
+              {devResetPlansState === 'running' && 'Resetting…'}
+              {devResetPlansState === 'done' && 'Done — reloading'}
+              {devResetPlansState === 'error' && 'Error — try again'}
+              {devResetPlansState === 'idle' && 'Reset weekly plans'}
+            </button>
+          </div>
+        </section>
       )}
     </main>
   );

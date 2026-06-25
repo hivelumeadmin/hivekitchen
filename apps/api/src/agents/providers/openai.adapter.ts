@@ -94,15 +94,77 @@ function toJsonSchemaParameters(toolSpec: ToolSpec): Record<string, unknown> {
   return schema;
 }
 
-function toOpenAITools(tools: ToolSpec[]): ChatCompletionTool[] {
-  return tools.map((spec) => ({
-    type: 'function',
-    function: {
-      name: toExternalName(spec.name),
-      description: spec.description,
-      parameters: toJsonSchemaParameters(spec),
-    },
-  }));
+// Slice 3.5-s2 — recursively apply OpenAI strict-tool schema constraints:
+// every object node gets `additionalProperties: false` and ALL of its
+// properties moved into `required` (OpenAI strict requires this — optional
+// fields become required-but-present, which the model satisfies by emitting
+// null/empty for absent optionals). Non-object nodes (string/number/boolean)
+// are returned unchanged; arrays recurse into `items`; `anyOf` recurses into
+// each branch.
+function addStrictConstraints(schema: Record<string, unknown>): Record<string, unknown> {
+  if (schema.type === 'object') {
+    const props = (schema.properties as Record<string, unknown> | undefined) ?? {};
+    return {
+      ...schema,
+      additionalProperties: false,
+      required: Object.keys(props),
+      properties: Object.fromEntries(
+        Object.entries(props).map(([k, v]) => [k, addStrictConstraints(v as Record<string, unknown>)]),
+      ),
+    };
+  }
+  if (schema.type === 'array' && schema.items !== undefined && schema.items !== null) {
+    return { ...schema, items: addStrictConstraints(schema.items as Record<string, unknown>) };
+  }
+  if (Array.isArray(schema.anyOf)) {
+    return {
+      ...schema,
+      anyOf: (schema.anyOf as Record<string, unknown>[]).map(addStrictConstraints),
+    };
+  }
+  return schema;
+}
+
+// Slice 3.5-s2 — strict variant of toJsonSchemaParameters: the base JSON Schema
+// (with `$schema` already stripped) recursively hardened for OpenAI's
+// `strict: true` function-tool mode.
+export function toStrictJsonSchemaParameters(toolSpec: ToolSpec): Record<string, unknown> {
+  return addStrictConstraints(toJsonSchemaParameters(toolSpec));
+}
+
+// `strictForToolName` is the INTERNAL dotted name (e.g. 'plan.compose'). When
+// it matches a tool, that tool's parameters are hardened and `strict: true` is
+// set; all other tools keep the default (non-strict) projection.
+function toOpenAITools(tools: ToolSpec[], strictForToolName?: string): ChatCompletionTool[] {
+  return tools.map((spec) => {
+    const isStrict = strictForToolName !== undefined && spec.name === strictForToolName;
+    return {
+      type: 'function',
+      function: {
+        name: toExternalName(spec.name),
+        description: spec.description,
+        parameters: isStrict ? toStrictJsonSchemaParameters(spec) : toJsonSchemaParameters(spec),
+        ...(isStrict ? { strict: true } : {}),
+      },
+    };
+  });
+}
+
+// Slice 3.5-s2 — builds the `tools` + `tool_choice` params. When
+// `forcedToolName` is set the named tool is forced and made strict; otherwise
+// the prior `tool_choice: 'auto'` behaviour is preserved exactly.
+function buildToolParams(
+  tools: ToolSpec[],
+  forcedToolName: string | undefined,
+): Pick<ChatCompletionCreateParams, 'tools' | 'tool_choice'> | Record<string, never> {
+  if (tools.length === 0) return {};
+  return {
+    tools: toOpenAITools(tools, forcedToolName),
+    tool_choice:
+      forcedToolName !== undefined
+        ? { type: 'function', function: { name: toExternalName(forcedToolName) } }
+        : 'auto',
+  };
 }
 
 function buildMessages(prompt: string, systemPrompt: string | undefined): ChatCompletionMessageParam[] {
@@ -255,7 +317,7 @@ export class OpenAIAdapter implements LLMProvider {
       messages: buildMessages(prompt, options.systemPrompt),
       ...(options.temperature !== undefined ? { temperature: options.temperature } : {}),
       ...(options.maxTokens !== undefined ? { max_tokens: options.maxTokens } : {}),
-      ...(tools.length > 0 ? { tools: toOpenAITools(tools), tool_choice: 'auto' } : {}),
+      ...buildToolParams(tools, options.forcedToolName),
       ...(this.storeCompletions ? { store: true } : {}),
       ...(this.storeCompletions && options.metadata !== undefined
         ? { metadata: options.metadata }
@@ -286,7 +348,7 @@ export class OpenAIAdapter implements LLMProvider {
       messages: buildMessagesFromLLM(messages),
       ...(options.temperature !== undefined ? { temperature: options.temperature } : {}),
       ...(options.maxTokens !== undefined ? { max_tokens: options.maxTokens } : {}),
-      ...(tools.length > 0 ? { tools: toOpenAITools(tools), tool_choice: 'auto' } : {}),
+      ...buildToolParams(tools, options.forcedToolName),
       ...(this.storeCompletions ? { store: true } : {}),
       ...(this.storeCompletions && options.metadata !== undefined
         ? { metadata: options.metadata }
@@ -373,5 +435,12 @@ export class OpenAIAdapter implements LLMProvider {
     } catch {
       return false;
     }
+  }
+
+  // Slice 3.5-s2 — OpenAI enforces forced `tool_choice` + `strict: true` schema
+  // validation at the decode layer, so the orchestrator can rely on
+  // `forcedToolName` to guarantee a schema-valid plan.compose call.
+  supportsStrictTools(): boolean {
+    return true;
   }
 }

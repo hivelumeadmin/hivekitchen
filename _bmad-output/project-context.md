@@ -334,6 +334,7 @@ These are the invariants that silently break HiveKitchen if violated. If any are
 **Architectural invariants**
 - **API is the only door to the Data Layer.** No Postgres/Supabase calls from `apps/web`. No DB calls from the AI Agent Layer. If a need seems to require this, add an API endpoint instead.
 - **Agent Layer is stateless.** It takes input, returns a response + resource payload. It never persists, never schedules, never caches across invocations.
+- **Planner compose is single-shot (3.5-s5):** `planWeek` makes exactly one LLM call, a forced `plan.compose`. Recipe acquisition is a deterministic pre-flight (`ensureCandidateCoverage`) in code, not model-driven control flow. The `MAX_PLAN_ITERATIONS` loop is deleted. The Swap Agent loop is a separate path and is unchanged.
 - **One conversation thread model.** Text and voice share the same thread. Never fork storage or identity between modalities — the thread ID is the join key.
 - **SSE for server→client streaming; WS is voice-only.** Don't add a general-purpose WebSocket route. Don't wrap SSE in a WS bridge "for consistency."
 - **Contracts are the wire truth.** If `apps/web` and `apps/api` disagree on a shape, the `packages/contracts` schema is correct and the apps are wrong. Fix the apps.

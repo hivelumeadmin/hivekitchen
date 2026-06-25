@@ -4,6 +4,11 @@ export interface PlannerPromptSpec {
   readonly toolsAllowed: readonly string[];
 }
 
+// EVAL GATE (Story 3.5-s1): planner behavior is pinned by the golden-set eval at
+//   apps/api/src/agents/eval/ — any prompt or model-tier change must keep it green.
+// v2.9.0 (Story 3.5-s3): candidate handle-index. <recipe_candidates> emits handles
+//   (m1, m2, e1, e2); recipe_id accepts handle→UUID from the per-run slate index.
+//   findIdByName retained for cold-acquisition path only.
 // v2.8.0 (Story 3-S40): snack slots removed from LLM path — assigned server-side by
 //   SnackRotationService (deterministic per child × day). Planner no longer emits
 //   snack slots; the plan.compose tool description and Slot ↔ FK rules updated.
@@ -124,7 +129,7 @@ Recent rating signals are pre-loaded under <child_signals> (per child: liked / d
 
 The household pantry is pre-loaded under <pantry> (on-hand ingredients). DO NOT call pantry.read — it is already present.
 
-A ranked candidate recipe slate is pre-loaded under <recipe_candidates>, grouped by slot (main / extra). Each candidate carries its allergen flags and key ingredients inline, so you can judge fit WITHOUT fetching it. Compose directly from this slate, using each candidate's "name" as the recipe_id. Only reach for recipe.search / recipe.fetch / recipe.discover when the slate cannot fill a slot (see Tool usage discipline below).
+A ranked candidate recipe slate is pre-loaded under <recipe_candidates>, grouped by slot (main / extra). Each candidate carries its allergen flags and key ingredients inline, so you can judge fit WITHOUT fetching it. Each candidate line starts with a short handle (m1, m2, … for mains; e1, e2, … for extras) — compose directly from this slate, using each candidate's handle as the recipe_id. Only reach for recipe.search / recipe.fetch / recipe.discover when the slate cannot fill a slot (see Tool usage discipline below).
 
 Compose directly from <recipe_candidates> based on the household profile, signals, and pantry already in your context.
 
@@ -161,12 +166,12 @@ Tool usage discipline:
    Never call recipe.discover without first attempting recipe.search. Pass the Request ID from your context as plan_build_id. Carry the candidate's id through plan.compose as recipe_candidate_id (snack/extra slots only).
 - plan.compose — terminal assembly. Emit the tree shape documented above; the tool will reject a flat items[] body. Do NOT invent the shape from scratch — mirror the worked examples.
 
-- CRITICAL — recipe_id values: For every recipe_id in main_assignments and
-  every recipe_id in snack/extra slots, use the exact "name" field string
-  returned by recipe.search, recipe.fetch, or recipe.discover. For example,
-  if recipe.search returned { "id": "...", "name": "Chicken Tikka Wrap" },
-  use "Chicken Tikka Wrap" as the recipe_id. The server resolves names to
-  catalog IDs automatically. Do NOT copy UUID strings; do NOT invent names.
+- CRITICAL — recipe_id values: For main_assignments and extra slots, use the
+  handle from the <recipe_candidates> block (e.g., m1, m2 for main candidates;
+  e1, e2 for extra candidates). Handles are the short tokens at the start of
+  each candidate line. For recipes surfaced by recipe.search/fetch/discover
+  (not in the pre-loaded slate), use the exact "name" field string returned by
+  the tool. Do NOT copy UUID strings. Do NOT invent names or handles.
   recipe_candidate_id (discover pathway only) still requires the exact UUID
   "id" field from the discover result.
 - memory.note (write) is NOT in your allowed set.
@@ -187,20 +192,24 @@ Output expectations:
   AI language. Omit if no distinct rationale exists.
 
 Worked examples follow. Mirror their shape exactly.
-Use the exact recipe name string (from your recipe.search/fetch/discover results) as recipe_id.
-The server looks up the catalog ID from the name automatically.
+Use the handle (m1, m2, … / e1, e2, …) from <recipe_candidates> as recipe_id for
+slate recipes; use the exact recipe name string for recipes you pulled in via
+recipe.search/fetch/discover. The server resolves the handle (or name) to the
+catalog ID automatically.
 
 Example 1 — Shared Main Monday, Anglo household with 2 kids (Aarav age 5,
 Mira age 3). M1 is the day's only Main; both kids share the recipe; Mira's
 variation drops portion size and shifts texture per her profile. The snack
 slot is on for both. The extra slot is on for Aarav only.
+recipe_ids below are handles from <recipe_candidates>: m1=Chicken Tikka Wrap,
+m2=Turkey & Cheese Pinwheel, m3=Mini Veggie Quesadilla, e1=Fruit Pouch.
 
 \`\`\`json
 {
   "main_assignments": [
-    { "sequence": 1, "recipe_id": "Chicken Tikka Wrap" },
-    { "sequence": 2, "recipe_id": "Turkey & Cheese Pinwheel" },
-    { "sequence": 3, "recipe_id": "Mini Veggie Quesadilla" }
+    { "sequence": 1, "recipe_id": "m1" },
+    { "sequence": 2, "recipe_id": "m2" },
+    { "sequence": 3, "recipe_id": "m3" }
   ],
   "days": [
     {
@@ -216,7 +225,7 @@ slot is on for both. The extra slot is on for Aarav only.
         },
         {
           "slot_kind": "extra",
-          "recipe_id": "Fruit Pouch",
+          "recipe_id": "e1",
           "extra_kind": "sweet",
           "variations": [
             { "child_id": "11111111-aaaa-4aaa-8aaa-aaaaaaaaaaaa", "add_ons": ["honey drizzle"] }
@@ -234,13 +243,15 @@ allergy: his variation REMOVES the peanut paste and adds a coconut-cream
 substitute. Mira and Kabir share the unmodified base with portion differences.
 This is the canonical allergen-fork: one shared Main, per-child Variations
 that remove + substitute. Same row count as a no-allergen day; no Main split.
+recipe_ids below are handles from <recipe_candidates>: m1=Lamb Kebab Flatbread,
+m2=Chicken Peanut Curry Rice, m3=Paneer Paratha Roll.
 
 \`\`\`json
 {
   "main_assignments": [
-    { "sequence": 1, "recipe_id": "Lamb Kebab Flatbread" },
-    { "sequence": 2, "recipe_id": "Chicken Peanut Curry Rice" },
-    { "sequence": 3, "recipe_id": "Paneer Paratha Roll" }
+    { "sequence": 1, "recipe_id": "m1" },
+    { "sequence": 2, "recipe_id": "m2" },
+    { "sequence": 3, "recipe_id": "m3" }
   ],
   "days": [
     {
@@ -279,7 +290,7 @@ degraded result with a clear reason. Do not silently relax a constraint to make 
 plan fit.`;
 
 export const PLANNER_PROMPT: PlannerPromptSpec = {
-  version: 'v2.8.0',
+  version: 'v2.9.0',
   text: PLANNING_CORE,
   toolsAllowed: [
     'recipe.search',

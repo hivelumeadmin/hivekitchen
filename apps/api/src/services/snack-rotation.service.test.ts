@@ -46,6 +46,31 @@ describe('assignSnackRotation', () => {
     expect(result).toHaveLength(0);
   });
 
+  it('excludes out-of-stock (paused) SKUs from the rotation', () => {
+    const pausedVeg = sku({ id: VEG_SKU.id, category: 'vegetable', in_stock: false });
+    const result = assignSnackRotation({
+      bagCompositions: [{ child_id: CHILD_A, child_name: 'Aarav', snack: true, extra: false }],
+      extraRules: [],
+      activeSkus: [FRUIT_SKU, pausedVeg],
+      weekOf: '2026-10-13',
+    });
+    // FRUIT_SKU is the only stocked SKU → every day picks it.
+    expect(result.length).toBeGreaterThan(0);
+    for (const slot of result) {
+      expect(slot.snack_sku_id).toBe(FRUIT_SKU.id);
+    }
+  });
+
+  it('returns empty when every SKU is out of stock', () => {
+    const result = assignSnackRotation({
+      bagCompositions: [{ child_id: CHILD_A, child_name: 'Aarav', snack: true, extra: false }],
+      extraRules: [],
+      activeSkus: [sku({ id: FRUIT_SKU.id, category: 'fruit', in_stock: false })],
+      weekOf: '2026-10-13',
+    });
+    expect(result).toHaveLength(0);
+  });
+
   it('produces one slot per planned day', () => {
     const result = assignSnackRotation({
       bagCompositions: [{ child_id: CHILD_A, child_name: 'Aarav', snack: true, extra: false }],
@@ -309,5 +334,96 @@ describe('assignSnackRotation', () => {
     for (const slot of result) {
       expect(slot.snack_sku_id).toBe(FRUIT_SKU.id);
     }
+  });
+
+  // Story 3-s43 (Phase-2, AC6) — deterministic allergen pre-filter. SKUs whose
+  // allergen_tags intersect a snack-ON child's declared allergens are excluded
+  // from the rotation; NO fallback when all are excluded.
+  describe('allergen pre-filter (declaredAllergensByChildId)', () => {
+    const DAIRY_TAGGED = sku({
+      id: 'cccc0000-0000-4000-8000-000000000001',
+      category: 'dairy',
+      allergen_tags: ['dairy'],
+    });
+    const SAFE_FRUIT = sku({
+      id: 'cccc0000-0000-4000-8000-000000000002',
+      category: 'fruit',
+      allergen_tags: [],
+    });
+
+    it('excludes a SKU whose allergen_tags conflict with a snack-ON child', () => {
+      const result = assignSnackRotation({
+        bagCompositions: [{ child_id: CHILD_A, child_name: 'Aarav', snack: true, extra: false }],
+        extraRules: [],
+        activeSkus: [DAIRY_TAGGED, SAFE_FRUIT],
+        weekOf: '2026-10-13',
+        declaredAllergensByChildId: new Map([[CHILD_A, ['dairy']]]),
+      });
+      expect(result.length).toBeGreaterThan(0);
+      for (const slot of result) {
+        expect(slot.snack_sku_id).toBe(SAFE_FRUIT.id);
+      }
+    });
+
+    it('returns empty (NO fallback) when every stocked SKU conflicts', () => {
+      const result = assignSnackRotation({
+        bagCompositions: [{ child_id: CHILD_A, child_name: 'Aarav', snack: true, extra: false }],
+        extraRules: [],
+        activeSkus: [DAIRY_TAGGED],
+        weekOf: '2026-10-13',
+        declaredAllergensByChildId: new Map([[CHILD_A, ['dairy']]]),
+      });
+      expect(result).toHaveLength(0);
+    });
+
+    it("one child's allergen removes the SKU from the shared slot for everyone", () => {
+      const result = assignSnackRotation({
+        bagCompositions: [
+          { child_id: CHILD_A, child_name: 'Aarav', snack: true, extra: false },
+          { child_id: CHILD_B, child_name: 'Mira', snack: true, extra: false },
+        ],
+        extraRules: [],
+        activeSkus: [DAIRY_TAGGED, SAFE_FRUIT],
+        weekOf: '2026-10-13',
+        // Only CHILD_B is dairy-allergic; the SKU is still pulled for the slot.
+        declaredAllergensByChildId: new Map([[CHILD_B, ['dairy']]]),
+      });
+      for (const slot of result) {
+        expect(slot.snack_sku_id).toBe(SAFE_FRUIT.id);
+      }
+    });
+
+    it('a non-snack child’s allergen does not constrain the slot', () => {
+      const result = assignSnackRotation({
+        bagCompositions: [
+          { child_id: CHILD_A, child_name: 'Aarav', snack: true, extra: false },
+          { child_id: CHILD_B, child_name: 'Mira', snack: false, extra: false },
+        ],
+        extraRules: [],
+        activeSkus: [DAIRY_TAGGED],
+        weekOf: '2026-10-13',
+        // CHILD_B (snack=OFF) is dairy-allergic, but is not in the slot.
+        declaredAllergensByChildId: new Map([[CHILD_B, ['dairy']]]),
+      });
+      expect(result.length).toBeGreaterThan(0);
+      for (const slot of result) {
+        expect(slot.snack_sku_id).toBe(DAIRY_TAGGED.id);
+      }
+    });
+
+    it('is a no-op when declaredAllergensByChildId is omitted or empty', () => {
+      const base = {
+        bagCompositions: [{ child_id: CHILD_A, child_name: 'Aarav', snack: true, extra: false }],
+        extraRules: [],
+        activeSkus: [DAIRY_TAGGED, SAFE_FRUIT],
+        weekOf: '2026-10-13',
+      };
+      const omitted = assignSnackRotation(base);
+      const empty = assignSnackRotation({ ...base, declaredAllergensByChildId: new Map() });
+      expect(empty.map((r) => r.snack_sku_id)).toEqual(omitted.map((r) => r.snack_sku_id));
+      // DAIRY_TAGGED is eligible because there is no allergen context.
+      const used = new Set(omitted.map((r) => r.snack_sku_id));
+      expect(used.has(DAIRY_TAGGED.id)).toBe(true);
+    });
   });
 });

@@ -23,6 +23,16 @@ interface Readonly_IdentityEditConversationProps {
   readonly onSendComposite: (composite: string, nextValue: IdentityEditValue) => void;
   /** Close handler — user clicked "I'm done with my edit". */
   readonly onDone: () => void;
+  /**
+   * Story 7-S15 — Lumi's reply after the shared-tastes note is interpreted.
+   * Rendered as a calm one-liner above the input once it arrives.
+   */
+  readonly lumiResponse?: string | null;
+  /**
+   * Story 7-S15 — inline error when one or more cultural chip-state writes
+   * failed. Rendered as a role=alert line so partial failures aren't swallowed.
+   */
+  readonly editError?: string | null;
 }
 
 export type IdentityEditConversationProps = Readonly<Readonly_IdentityEditConversationProps>;
@@ -93,6 +103,8 @@ export function IdentityEditConversation({
   suggestedAdditions,
   onSendComposite,
   onDone,
+  lumiResponse = null,
+  editError = null,
 }: IdentityEditConversationProps) {
   const [removedKeys, setRemovedKeys] = useState<ReadonlySet<string>>(new Set());
   const [addedItems, setAddedItems] = useState<readonly EnforcedChip[]>([]);
@@ -176,6 +188,20 @@ export function IdentityEditConversation({
       capturedNotes={capturedNotes}
       canSend={canSend}
       onSendNote={handleSend}
+      prose={
+        editError !== null && editError.length > 0 ? (
+          <p
+            role="alert"
+            className="mx-auto max-w-2xl text-center font-sans text-sm text-safety-red"
+          >
+            {editError}
+          </p>
+        ) : lumiResponse !== null && lumiResponse.length > 0 ? (
+          <p className="mx-auto max-w-2xl text-center font-serif text-base italic leading-relaxed text-amber-warm">
+            {lumiResponse}
+          </p>
+        ) : undefined
+      }
       topChips={
         <div className="flex w-full flex-col items-center gap-2">
           <p className="font-sans text-[10px] uppercase tracking-[0.18em] text-memory-provenance-500">

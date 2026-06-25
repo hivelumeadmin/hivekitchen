@@ -15,6 +15,7 @@ import { AllergyGuardrailService } from '../allergy-guardrail/allergy-guardrail.
 import type { AllergyGuardrailRepository } from '../allergy-guardrail/allergy-guardrail.repository.js';
 import type { AllergyRule } from '../allergy-guardrail/allergy-rules.engine.js';
 import type { RecipesRepository } from '../recipe/recipes.repository.js';
+import type { SnackSkuRepository } from '../recipe/snack-sku.repository.js';
 import type { HouseholdsRepository } from '../households/households.repository.js';
 import type { AuditService } from '../../audit/audit.service.js';
 import type {
@@ -39,6 +40,7 @@ const HOUSEHOLD_ID = '22222222-2222-4222-8222-222222222222';
 const CHILD_ID = '44444444-4444-4444-8444-444444444444';
 const REQUEST_ID = '55555555-5555-4555-8555-555555555555';
 const RECIPE_M1 = '66666666-6666-4666-8666-666666666666';
+const SNACK_SKU_ID = '77777777-7777-4777-8777-777777777777';
 
 function buildLogger(): FastifyBaseLogger {
   const noop = vi.fn();
@@ -162,6 +164,21 @@ function buildAudit() {
   return {
     write: vi.fn().mockResolvedValue(undefined),
   } as unknown as AuditService & { write: ReturnType<typeof vi.fn> };
+}
+
+// Story 3-s43 (Phase-2) — buildCommitGuardrailInputs batch-loads allergen_tags
+// for every snack-SKU slot via findAllergenTagsByIds(ids) → Map<id, tags>.
+function buildSnackSkuRepo(tagsById: Record<string, string[]>): SnackSkuRepository & {
+  findAllergenTagsByIds: ReturnType<typeof vi.fn>;
+} {
+  const findAllergenTagsByIds = vi.fn(async (ids: string[]) => {
+    const map = new Map<string, string[]>();
+    for (const id of ids) if (id in tagsById) map.set(id, tagsById[id]);
+    return map;
+  });
+  return { findAllergenTagsByIds } as unknown as SnackSkuRepository & {
+    findAllergenTagsByIds: ReturnType<typeof vi.fn>;
+  };
 }
 
 function buildBriefStateRepo(): BriefStateRepository {
@@ -352,6 +369,113 @@ describe('PlansService.commit', () => {
     const passedItems = guardrail.clearOrRejectCommit.mock.calls[0]?.[0].items;
     expect(passedItems).toEqual([
       { child_id: CHILD_ID, day: 'monday', slot: 'main', ingredients: ['rice'] },
+    ]);
+  });
+
+  // Story 3-s43 (Phase-2) — snack-SKU allergen fail-safe. Tagged SKUs become
+  // verifiable guardrail items evaluated by set-membership against allergen_tags.
+  // Untagged SKUs are parent-attested shelf items (allergen_tags is authoritative;
+  // empty = no allergens), so they route to the unverifiable path WITH attested:true
+  // and are exempted — otherwise the curated shelf's whole-food snacks (apple,
+  // carrots) would fail-close for any child with a declared allergen.
+  const snackSkuInput = () =>
+    makeInput({
+      main_assignments: [],
+      days: [
+        {
+          day: 'monday',
+          slots: [
+            {
+              slot_kind: 'snack',
+              snack_sku_id: SNACK_SKU_ID,
+              variations: [{ child_id: CHILD_ID }],
+            },
+          ],
+        },
+      ],
+    });
+
+  it('emits a tagged snack-SKU slot as a verifiable guardrail item (allergen_tags as ingredients)', async () => {
+    const repo = buildRepo();
+    const guardrail = buildGuardrail([{ verdict: 'cleared', conflicts: [] }]);
+    const service = new PlansService({
+      repository: repo,
+      briefStateRepository: buildBriefStateRepo(),
+      briefStateComposer: buildBriefStateComposer(),
+      allergyGuardrail: guardrail,
+      auditService: buildAudit(),
+      logger: buildLogger(),
+      redis: buildRedis(),
+      regenQueue: buildRegenQueue(),
+      snackSkuRepository: buildSnackSkuRepo({ [SNACK_SKU_ID]: ['dairy'] }),
+    });
+
+    await service.commit(snackSkuInput(), REQUEST_ID, vi.fn());
+
+    const arg = guardrail.clearOrRejectCommit.mock.calls[0]?.[0];
+    expect(arg.items).toEqual([
+      { child_id: CHILD_ID, day: 'monday', slot: 'snack', ingredients: ['dairy'] },
+    ]);
+    expect(arg.unverifiable).toEqual([]);
+  });
+
+  it('routes an untagged snack-SKU slot to the unverifiable path WITH attested:true', async () => {
+    const repo = buildRepo();
+    const guardrail = buildGuardrail([{ verdict: 'cleared', conflicts: [] }]);
+    const service = new PlansService({
+      repository: repo,
+      briefStateRepository: buildBriefStateRepo(),
+      briefStateComposer: buildBriefStateComposer(),
+      allergyGuardrail: guardrail,
+      auditService: buildAudit(),
+      logger: buildLogger(),
+      redis: buildRedis(),
+      regenQueue: buildRegenQueue(),
+      snackSkuRepository: buildSnackSkuRepo({ [SNACK_SKU_ID]: [] }),
+    });
+
+    await service.commit(snackSkuInput(), REQUEST_ID, vi.fn());
+
+    const arg = guardrail.clearOrRejectCommit.mock.calls[0]?.[0];
+    expect(arg.items).toEqual([]);
+    expect(arg.unverifiable).toEqual([
+      {
+        child_id: CHILD_ID,
+        day: 'monday',
+        slot: 'snack',
+        recipe_label: 'snack-sku (parent-attested, no allergen tags)',
+        attested: true,
+      },
+    ]);
+  });
+
+  it('treats an untagged snack-SKU slot as parent-attested when no snackSkuRepository is wired', async () => {
+    const repo = buildRepo();
+    const guardrail = buildGuardrail([{ verdict: 'cleared', conflicts: [] }]);
+    const service = new PlansService({
+      repository: repo,
+      briefStateRepository: buildBriefStateRepo(),
+      briefStateComposer: buildBriefStateComposer(),
+      allergyGuardrail: guardrail,
+      auditService: buildAudit(),
+      logger: buildLogger(),
+      redis: buildRedis(),
+      regenQueue: buildRegenQueue(),
+      // snackSkuRepository intentionally omitted — repo defaults to null.
+    });
+
+    await service.commit(snackSkuInput(), REQUEST_ID, vi.fn());
+
+    const arg = guardrail.clearOrRejectCommit.mock.calls[0]?.[0];
+    expect(arg.items).toEqual([]);
+    expect(arg.unverifiable).toEqual([
+      {
+        child_id: CHILD_ID,
+        day: 'monday',
+        slot: 'snack',
+        recipe_label: 'snack-sku (parent-attested, no allergen tags)',
+        attested: true,
+      },
     ]);
   });
 

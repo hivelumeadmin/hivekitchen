@@ -15,6 +15,7 @@ const RECIPE_M1 = '44444444-4444-4444-8444-444444444444';
 const RECIPE_M2 = '55555555-5555-4555-8555-555555555555';
 const RECIPE_SNACK = '66666666-6666-4666-8666-666666666666';
 const RECIPE_CANDIDATE = '77777777-7777-4777-8777-777777777777';
+const SNACK_SKU_ID = '66666666-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
 const CHILD_A = '88888888-8888-4888-8888-888888888888';
 const CHILD_B = '99999999-9999-4999-8999-999999999990';
 
@@ -193,13 +194,18 @@ describe('buildCommitInputTree', () => {
     expect(input.main_assignments).toEqual(out.main_assignments);
   });
 
-  it('passes days[] through 1:1 (no flattening)', () => {
+  it('passes non-snack slots through 1:1 and strips model-emitted snack slots', () => {
+    // buildOutput() puts a model-emitted snack on monday. With no server snack
+    // assignment passed, that snack is stripped (snacks are server-assigned,
+    // Story 3-S40) while the main slot and wednesday pass through untouched.
     const out = buildOutput();
     const input = buildCommitInputTree(out, REQUEST_ID);
-    expect(input.days).toEqual(out.days);
     expect(input.days).toHaveLength(2);
-    expect(input.days[0]?.slots).toHaveLength(2);
+    expect(input.days[0]?.slots).toHaveLength(1);
+    expect(input.days[0]?.slots[0]?.slot_kind).toBe('main');
     expect(input.days[1]?.slots).toHaveLength(1);
+    expect(input.days[1]?.slots[0]?.slot_kind).toBe('main');
+    expect(input.days.flatMap((d) => d.slots).some((s) => s.slot_kind === 'snack')).toBe(false);
   });
 
   it('preserves variation attributes (portion_size, texture, removals, add_ons)', () => {
@@ -217,7 +223,9 @@ describe('buildCommitInputTree', () => {
     });
   });
 
-  it('preserves a snack slot with recipe_candidate_id (discover path)', () => {
+  it('strips a model-emitted snack slot when no server snack is assigned (Story 3-S40)', () => {
+    // Snacks are server-assigned; a model-emitted snack slot (even one carrying
+    // a discover recipe_candidate_id) is dropped rather than committed.
     const out = buildOutput({
       days: [
         {
@@ -233,9 +241,24 @@ describe('buildCommitInputTree', () => {
       ],
     });
     const input = buildCommitInputTree(out, REQUEST_ID);
-    expect(input.days[0]?.slots[0]).toEqual(
-      expect.objectContaining({ recipe_candidate_id: RECIPE_CANDIDATE }),
+    expect(input.days[0]?.slots).toHaveLength(0);
+  });
+
+  it('injects the deterministic snack slot from snackSlots, replacing any model snack', () => {
+    // buildOutput() monday carries a model snack (recipe_id) + a main. The
+    // server assignment must replace the model snack with exactly one snack_sku
+    // slot; wednesday (no assignment) keeps only its main.
+    const out = buildOutput();
+    const input = buildCommitInputTree(out, REQUEST_ID, [
+      { day: 'monday', snack_sku_id: SNACK_SKU_ID, child_ids: [CHILD_A, CHILD_B] },
+    ]);
+    const mondaySnacks = (input.days[0]?.slots ?? []).filter((s) => s.slot_kind === 'snack');
+    expect(mondaySnacks).toHaveLength(1);
+    expect(mondaySnacks[0]).toEqual(
+      expect.objectContaining({ slot_kind: 'snack', snack_sku_id: SNACK_SKU_ID }),
     );
+    expect((mondaySnacks[0] as { recipe_id?: string }).recipe_id).toBeUndefined();
+    expect((input.days[1]?.slots ?? []).some((s) => s.slot_kind === 'snack')).toBe(false);
   });
 
   it('does not surface a week_id field (canonical model drops plans.week_id)', () => {

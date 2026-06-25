@@ -9,9 +9,12 @@ import { evaluate, GUARDRAIL_VERSION } from './allergy-rules.engine.js';
 // Story 3.S39 — a slot whose base recipe has no stored ingredients at commit
 // time. The engine cannot evaluate it, so the commit guardrail treats it as a
 // risk only for children who carry a declared (parent_declared) allergen.
-// Story 3-S40 — snack-SKU slots are exempted via attested:true (parent chose
-// the SKU; no recipe_id → no ingredients, but allergen fields are explicit on
-// the snack_skus row — a downstream guardrail phase will use those directly).
+// Story 3-s43 — snack-SKU Phase-1 attested:true exemption retired.
+// Phase-2: tagged SKUs (allergen_tags non-empty) are pushed as verifiable
+// PlanItemForGuardrail items; untagged SKUs (allergen_tags=[]) are pushed
+// as unverifiable without attested:true. `attested` remains on the interface
+// (other future callers may use it) but buildCommitGuardrailInputs no longer
+// sets it for snack-SKU slots.
 export interface UnverifiableSlot {
   child_id: string;
   day: string;

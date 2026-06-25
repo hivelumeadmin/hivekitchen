@@ -177,6 +177,27 @@ export class CulturalPriorRepository extends BaseRepository {
     return rows.map((r) => r.key);
   }
 
+  /**
+   * Story 7-S15 (Arc B) — household-scoped lookup by `key`. The kitchen-profile
+   * identity chips track priors by `key` (UNIQUE per household), not by UUID,
+   * so the key-addressed state endpoint resolves the id here before delegating
+   * to the ratify state machine. A cross-household key matches 0 rows → null →
+   * route surfaces 404 (no existence leak).
+   */
+  async findByKeyForHousehold(
+    householdId: string,
+    key: string,
+  ): Promise<CulturalPriorRow | null> {
+    const { data, error } = await this.client
+      .from('cultural_priors')
+      .select(PRIOR_COLUMNS)
+      .eq('household_id', householdId)
+      .eq('key', key)
+      .maybeSingle();
+    if (error) throw error;
+    return (data as CulturalPriorRow | null) ?? null;
+  }
+
   async findByIdForHousehold(
     householdId: string,
     priorId: string,

@@ -26,4 +26,12 @@ export class AnthropicAdapter implements LLMProvider {
   probe(): Promise<boolean> {
     return Promise.resolve(false);
   }
+
+  // Slice 3.5-s2 — Anthropic is a NotImplementedError stub. When it is wired
+  // for real, forced tool calling uses `tool_choice: { type: 'tool', name: ... }`
+  // (the Anthropic equivalent of OpenAI's forced function tool_choice); until
+  // then the orchestrator skips the forced-compose path on Anthropic failover.
+  supportsStrictTools(): boolean {
+    return false;
+  }
 }

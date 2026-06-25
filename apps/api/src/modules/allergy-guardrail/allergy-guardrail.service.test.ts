@@ -133,8 +133,12 @@ describe('AllergyGuardrailService.clearOrRejectCommit (Story 3.S39)', () => {
     expect(writeDecision).toHaveBeenCalled();
   });
 
-  // Story 3-S40 — snack-SKU slots are parent-attested; must NOT trigger the
+  // Story 3-S40 — snack-SKU slots were parent-attested; must NOT trigger the
   // fail-closed unverifiable path even when the child carries a declared allergen.
+  // Story 3-s43 — buildCommitGuardrailInputs NO LONGER sends attested:true for
+  // snack-SKU slots (Phase-2 replaced the exemption with a set-membership check).
+  // This test stays as a unit-level guard for the UnverifiableSlot.attested
+  // field itself, which clearOrRejectCommit still honors for any future caller.
   it('clears when the only unverifiable slot is a snack-SKU slot (attested=true)', async () => {
     // CHILD_A has a declared peanut allergen. The snack slot is attested — it
     // should be exempted from the fail-closed guard entirely.

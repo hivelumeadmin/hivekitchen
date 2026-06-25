@@ -1,8 +1,8 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { FastifyBaseLogger } from 'fastify';
 import type { Redis } from 'ioredis';
+import { DomainOrchestrator } from './orchestrator.js';
 import {
-  DomainOrchestrator,
   buildBagCompositionLines,
   buildCulturalContextLines,
   buildExtraProposalLines,
@@ -11,7 +11,8 @@ import {
   renderPlannerKitchenMapBlock,
   renderPlannerPantryBlock,
   renderPlannerRecipeCandidatesBlock,
-} from './orchestrator.js';
+} from './planner/context/render.js';
+import type { PlannerContext } from './planner/context/assemble.js';
 import type {
   OrchestratorServices,
   PlannerBagComposition,
@@ -36,6 +37,31 @@ import { ForbiddenToolCallError } from '../common/errors.js';
 
 const HOUSEHOLD_ID = '11111111-1111-4111-8111-111111111111';
 const CHILD_ID = '22222222-2222-4222-8222-222222222222';
+// Story 3.5-s3 — plan_id the buildPlansService.composeTree stub echoes. When a
+// slate is provided, planWeek builds a per-run plan.compose spec from the
+// services (bypassing any manifest mock), so composeTree — not the LLM-emitted
+// arguments — is the source of the returned plan_id.
+const STUB_COMPOSED_PLAN_ID = '99999999-9999-4999-8999-999999999933';
+
+// Story 3.5-s4 — the render/build functions now take a single PlannerContext.
+// `pc` builds one with every field undefined, overridden by the partial — so a
+// test exercising one render path only sets the field it cares about.
+function pc(partial: Partial<PlannerContext>): PlannerContext {
+  return {
+    kitchenMap: undefined,
+    culturalContext: undefined,
+    bagCompositions: undefined,
+    extraRules: undefined,
+    extraLibraryItems: undefined,
+    extraProposals: undefined,
+    sovereigntyMode: undefined,
+    variantEligibleChildren: undefined,
+    childSignals: undefined,
+    pantrySnapshot: undefined,
+    recipeCandidates: undefined,
+    ...partial,
+  };
+}
 
 function buildLogger(): FastifyBaseLogger {
   const fn = (): unknown => undefined;
@@ -84,8 +110,16 @@ function buildMemoryService() {
 
 function buildRecipeService() {
   return {
-    search: vi.fn(),
+    // Story 3.5-s5 — ensureCandidateCoverage calls search() directly when a
+    // slate is below the Main floor. Default to an empty result so the
+    // pre-flight is a no-op (no augmentation) for tests that don't care.
+    search: vi.fn().mockResolvedValue({ results: [] }),
     fetch: vi.fn(),
+    discover: vi.fn().mockResolvedValue({ results: [] }),
+    // Story 3.5-s3 — the per-run plan.compose spec closes over findIdByName for
+    // the cold-acquisition path. Slate-driven tests emit UUIDs/handles so it is
+    // not hit, but it must exist on the stub for the closure to be safe.
+    findIdByName: vi.fn().mockResolvedValue(null),
   } as unknown as RecipeService;
 }
 
@@ -98,6 +132,17 @@ function buildPantryService() {
 function buildPlansService() {
   return {
     compose: vi.fn(),
+    // Story 3.5-s3 — when a slate is provided, planWeek builds a per-run
+    // plan.compose spec from these services (bypassing the manifest mock), so the
+    // stub must echo a tree-shape output the way the real RPC would.
+    composeTree: vi.fn().mockImplementation(async (parsed: Record<string, unknown>) => ({
+      plan_id: STUB_COMPOSED_PLAN_ID,
+      household_id: parsed.household_id,
+      week_of: parsed.week_of,
+      main_assignments: parsed.main_assignments,
+      days: parsed.days,
+      prompt_version: parsed.prompt_version,
+    })),
   } as unknown as PlansService;
 }
 
@@ -136,12 +181,14 @@ function buildProvider(name: string, overrides: Partial<LLMProvider> = {}): LLMP
       yield { type: 'done' as const };
     });
   const probe = overrides.probe ?? vi.fn().mockResolvedValue(true);
+  const supportsStrictTools = overrides.supportsStrictTools ?? ((): boolean => true);
   return {
     name,
     complete,
     completeWithMessages,
     stream,
     probe,
+    supportsStrictTools,
   } as LLMProvider;
 }
 
@@ -457,7 +504,7 @@ describe('DomainOrchestrator', () => {
   // single source of truth; planWeek() consumes its output.
   describe('buildCulturalContextLines', () => {
     it('returns empty array for undefined cultural context (silence mode)', () => {
-      expect(buildCulturalContextLines(undefined)).toEqual([]);
+      expect(buildCulturalContextLines(pc({}))).toEqual([]);
     });
 
     it('returns empty array when all fields are empty', () => {
@@ -468,7 +515,7 @@ describe('DomainOrchestrator', () => {
         culturalObligations: [],
         culturalTemplates: [],
       };
-      expect(buildCulturalContextLines(ctx)).toEqual([]);
+      expect(buildCulturalContextLines(pc({ culturalContext: ctx }))).toEqual([]);
     });
 
     it('renders templates as display names, observances, L0 preferences, cultural obligations, and L1 priors', () => {
@@ -488,7 +535,7 @@ describe('DomainOrchestrator', () => {
         culturalTemplates: ['hindu_vegetarian'],
       };
 
-      const lines = buildCulturalContextLines(ctx);
+      const lines = buildCulturalContextLines(pc({ culturalContext: ctx }));
 
       // Template slug rendered as display name
       expect(lines).toContain(
@@ -527,7 +574,7 @@ describe('DomainOrchestrator', () => {
         culturalTemplates: ['halal'],
       };
 
-      const lines = buildCulturalContextLines(ctx);
+      const lines = buildCulturalContextLines(pc({ culturalContext: ctx }));
       const observanceLine = lines.find((l) => l.includes('Eid al-Fitr'));
 
       expect(observanceLine).toBeDefined();
@@ -552,7 +599,7 @@ describe('DomainOrchestrator', () => {
         culturalTemplates: ['kosher'],
       };
 
-      const lines = buildCulturalContextLines(ctx);
+      const lines = buildCulturalContextLines(pc({ culturalContext: ctx }));
       const shabbatLine = lines.find((l) => l.includes('Shabbat'));
 
       expect(shabbatLine).toBeDefined();
@@ -565,11 +612,11 @@ describe('DomainOrchestrator', () => {
   // inactive Snack/Extra slots. Pure helper, single source of truth.
   describe('buildBagCompositionLines', () => {
     it('returns empty array when undefined', () => {
-      expect(buildBagCompositionLines(undefined)).toEqual([]);
+      expect(buildBagCompositionLines(pc({}))).toEqual([]);
     });
 
     it('returns empty array when no children are supplied', () => {
-      expect(buildBagCompositionLines([])).toEqual([]);
+      expect(buildBagCompositionLines(pc({ bagCompositions: [] }))).toEqual([]);
     });
 
     it('renders one line per child with ON/OFF flags and an enforcement instruction', () => {
@@ -583,7 +630,7 @@ describe('DomainOrchestrator', () => {
         },
       ];
 
-      const lines = buildBagCompositionLines(compositions);
+      const lines = buildBagCompositionLines(pc({ bagCompositions: compositions }));
 
       expect(lines[0]).toContain('Per-child bag composition');
       expect(lines[0]).toContain('Main is always active');
@@ -601,15 +648,15 @@ describe('DomainOrchestrator', () => {
   // so the prompt stays neutral when no preferences exist.
   describe('buildExtraRulesLines', () => {
     it('returns empty when no rules and no library', () => {
-      expect(buildExtraRulesLines(undefined, undefined)).toEqual([]);
-      expect(buildExtraRulesLines([], [])).toEqual([]);
+      expect(buildExtraRulesLines(pc({}))).toEqual([]);
+      expect(buildExtraRulesLines(pc({ extraRules: [], extraLibraryItems: [] }))).toEqual([]);
     });
 
     it('returns empty when every child has zero pins and zero bans', () => {
       const rules: PlannerExtraRules[] = [
         { child_id: CHILD_ID, child_name: 'Asha', pins: [], bans: [] },
       ];
-      expect(buildExtraRulesLines(rules, undefined)).toEqual([]);
+      expect(buildExtraRulesLines(pc({ extraRules: rules }))).toEqual([]);
     });
 
     it('renders pins and bans per child plus the library summary', () => {
@@ -631,7 +678,7 @@ describe('DomainOrchestrator', () => {
         },
       ];
 
-      const lines = buildExtraRulesLines(rules, library);
+      const lines = buildExtraRulesLines(pc({ extraRules: rules, extraLibraryItems: library }));
 
       expect(lines[0]).toContain('Per-child Extra slot pin/ban rules');
       expect(lines.some((l) => l.includes('Asha') && l.includes('always include one of [fruit]'))).toBe(true);
@@ -650,7 +697,7 @@ describe('DomainOrchestrator', () => {
           is_allergen_free: true,
         },
       ];
-      const lines = buildExtraRulesLines([], library);
+      const lines = buildExtraRulesLines(pc({ extraRules: [], extraLibraryItems: library }));
       expect(lines.some((l) => l.includes('Household custom Extra items available'))).toBe(true);
     });
   });
@@ -659,8 +706,8 @@ describe('DomainOrchestrator', () => {
   // only when a proposal exists; empty inputs collapse silently.
   describe('buildExtraProposalLines', () => {
     it('returns empty for undefined or empty input', () => {
-      expect(buildExtraProposalLines(undefined)).toEqual([]);
-      expect(buildExtraProposalLines([])).toEqual([]);
+      expect(buildExtraProposalLines(pc({}))).toEqual([]);
+      expect(buildExtraProposalLines(pc({ extraProposals: [] }))).toEqual([]);
     });
 
     it('renders one line per proposal under a clear heading', () => {
@@ -678,7 +725,7 @@ describe('DomainOrchestrator', () => {
           context_type: 'field_trip',
         },
       ];
-      const lines = buildExtraProposalLines(proposals);
+      const lines = buildExtraProposalLines(pc({ extraProposals: proposals }));
       expect(lines[0]).toContain('High-activity day Extra proposals');
       expect(lines.some((l) => l.includes('Asha') && l.includes('2026-11-04') && l.includes('sport_practice'))).toBe(true);
       expect(lines.some((l) => l.includes('Kai') && l.includes('2026-11-06') && l.includes('field_trip'))).toBe(true);
@@ -1308,12 +1355,12 @@ describe('DomainOrchestrator', () => {
 
     it('returns empty string when children array is empty (incomplete onboarding guard)', () => {
       const map = buildMinimalKitchenMap({ children: [] });
-      expect(renderPlannerKitchenMapBlock(map)).toBe('');
+      expect(renderPlannerKitchenMapBlock(pc({ kitchenMap: map }))).toBe('');
     });
 
     it('includes <user_profile> with YAML household, children, cultural, and recipes', () => {
       const map = buildMinimalKitchenMap();
-      const block = renderPlannerKitchenMapBlock(map);
+      const block = renderPlannerKitchenMapBlock(pc({ kitchenMap: map }));
 
       expect(block).toContain('<user_profile>');
       expect(block).toContain('</user_profile>');
@@ -1329,7 +1376,7 @@ describe('DomainOrchestrator', () => {
 
     it('includes only non_negotiable and strong rules in the YAML', () => {
       const map = buildMinimalKitchenMap();
-      const block = renderPlannerKitchenMapBlock(map);
+      const block = renderPlannerKitchenMapBlock(pc({ kitchenMap: map }));
 
       // Both rules are non_negotiable/strong, so both appear
       expect(block).toContain('no_beef');
@@ -1347,13 +1394,13 @@ describe('DomainOrchestrator', () => {
           },
         ],
       });
-      const block = renderPlannerKitchenMapBlock(map);
+      const block = renderPlannerKitchenMapBlock(pc({ kitchenMap: map }));
       expect(block).not.toContain('no_overnight_leftovers');
     });
 
     it('includes <household_memory> with memory nodes grouped by type', () => {
       const map = buildMinimalKitchenMap();
-      const block = renderPlannerKitchenMapBlock(map);
+      const block = renderPlannerKitchenMapBlock(pc({ kitchenMap: map }));
 
       expect(block).toContain('<household_memory>');
       expect(block).toContain('</household_memory>');
@@ -1362,7 +1409,7 @@ describe('DomainOrchestrator', () => {
 
     it('includes <household_memory> per-child food preferences', () => {
       const map = buildMinimalKitchenMap();
-      const block = renderPlannerKitchenMapBlock(map);
+      const block = renderPlannerKitchenMapBlock(pc({ kitchenMap: map }));
 
       expect(block).toContain('Layla');
       expect(block).toContain('loves paneer');
@@ -1382,7 +1429,7 @@ describe('DomainOrchestrator', () => {
         },
         // food_preferences (paneer) comes from the base fixture
       });
-      const block = renderPlannerKitchenMapBlock(map);
+      const block = renderPlannerKitchenMapBlock(pc({ kitchenMap: map }));
 
       const headerCount = block.split('PER-CHILD FOOD PREFERENCES:').length - 1;
       expect(headerCount).toBe(1);
@@ -1428,7 +1475,7 @@ describe('DomainOrchestrator', () => {
           ],
         },
       });
-      const block = renderPlannerKitchenMapBlock(map);
+      const block = renderPlannerKitchenMapBlock(pc({ kitchenMap: map }));
 
       // Quotes are escaped in the YAML scalar (JSON.stringify form)
       expect(block).toContain('name: "Mary \\"Mae\\""');
@@ -1441,7 +1488,7 @@ describe('DomainOrchestrator', () => {
 
     it('includes <memory_policy> with all 5 precedence rules', () => {
       const map = buildMinimalKitchenMap();
-      const block = renderPlannerKitchenMapBlock(map);
+      const block = renderPlannerKitchenMapBlock(pc({ kitchenMap: map }));
 
       expect(block).toContain('<memory_policy>');
       expect(block).toContain('</memory_policy>');
@@ -1462,7 +1509,7 @@ describe('DomainOrchestrator', () => {
         last_used_at: '2026-01-01T00:00:00.000Z',
       }));
       const map = buildMinimalKitchenMap({ recipes: { favourites: manyFavourites, banned: [] } });
-      const block = renderPlannerKitchenMapBlock(map);
+      const block = renderPlannerKitchenMapBlock(pc({ kitchenMap: map }));
 
       // Top 10 by confidence = recipes 14,13,12,...5 (confidence 64..55)
       // Recipe 14 should be present, Recipe 4 (confidence 54) should not
@@ -1473,7 +1520,7 @@ describe('DomainOrchestrator', () => {
 
     it('uses only the date part (YYYY-MM-DD) for last_used_at', () => {
       const map = buildMinimalKitchenMap();
-      const block = renderPlannerKitchenMapBlock(map);
+      const block = renderPlannerKitchenMapBlock(pc({ kitchenMap: map }));
 
       expect(block).toContain('2026-06-10');
       expect(block).not.toContain('T00:00:00');
@@ -1669,10 +1716,13 @@ describe('DomainOrchestrator', () => {
     });
   });
 
-  // Story 3-DM-C2 — planner.bad_output audit instrumentation. The .safeParse
-  // swap at orchestrator.ts:430 (planner) / :593 (swap) must emit exactly one
-  // audit row per structurally-invalid plan.compose result and still throw so
-  // the BullMQ worker's failure semantics are unchanged.
+  // Story 3-DM-C2 — planner.bad_output audit instrumentation (swap path only as
+  // of Story 3.5-s2). The .safeParse swap in swapBlockedItems must emit exactly
+  // one audit row per structurally-invalid plan.compose result and still throw.
+  // The PLANNER path's redundant safeParse + audit (orchestrator Block C) was
+  // DELETED by s2 — strict forced tool calling makes invalid input impossible
+  // and plan.tools.ts validates the output, so the orchestrator no longer
+  // re-validates or emits planner.bad_output on the planner path.
   describe('planner.bad_output audit emission', () => {
     let savedComposeSpec: ToolSpec;
 
@@ -1690,12 +1740,12 @@ describe('DomainOrchestrator', () => {
       not_a_plan: true,
     };
 
-    it('planner path: structurally invalid plan.compose result → 1 planner.bad_output audit + throws', async () => {
+    it('planner path (s2): plan.compose tool error propagates WITHOUT a planner.bad_output audit', async () => {
       const provider = buildProvider('primary', {
         completeWithMessages: vi.fn().mockResolvedValue({
           content: null,
           toolCalls: [
-            { id: 'tc-bad', name: 'plan.compose', arguments: STRUCTURALLY_INVALID_RESULT },
+            { id: 'tc-bad', name: 'plan.compose', arguments: { not_a_plan: true } },
           ],
           finishReason: 'tool_calls',
           usage: { promptTokens: 1, completionTokens: 1, cachedPromptTokens: 0 },
@@ -1704,9 +1754,13 @@ describe('DomainOrchestrator', () => {
 
       const { orchestrator, audit } = buildOrchestrator([provider]);
       const composeSpec = TOOL_MANIFEST.get('plan.compose')!;
+      // Post-s2 the authoritative output validator is plan.tools.ts
+      // (PlanComposeTreeOutputSchema.parse). Simulate it rejecting by throwing
+      // from the tool fn — the orchestrator must propagate the error and must
+      // NOT write a planner.bad_output audit (Block C is gone).
       TOOL_MANIFEST.set('plan.compose', {
         ...composeSpec,
-        fn: vi.fn().mockResolvedValue(STRUCTURALLY_INVALID_RESULT),
+        fn: vi.fn().mockRejectedValue(new Error('plan.tools output schema rejected')),
       });
 
       await expect(
@@ -1715,30 +1769,13 @@ describe('DomainOrchestrator', () => {
           weekOf: '2026-11-02',
           requestId: 'req-bad-planner',
         }),
-      ).rejects.toThrow();
+      ).rejects.toThrow(/output schema rejected/);
 
       const calls = (audit.write as unknown as ReturnType<typeof vi.fn>).mock.calls;
       const badOutputCalls = calls.filter(
         (c: Array<{ event_type: string }>) => c[0]?.event_type === 'planner.bad_output',
       );
-      expect(badOutputCalls).toHaveLength(1);
-      const auditCall = badOutputCalls[0]?.[0] as {
-        event_type: string;
-        household_id: string;
-        request_id: string;
-        metadata: { agent: string; weekOf: string; zodIssues: unknown };
-      };
-      expect(auditCall).toMatchObject({
-        event_type: 'planner.bad_output',
-        household_id: HOUSEHOLD_ID,
-        request_id: 'req-bad-planner',
-        metadata: {
-          agent: 'planner',
-          weekOf: '2026-11-02',
-        },
-      });
-      expect(Array.isArray(auditCall.metadata.zodIssues)).toBe(true);
-      expect((auditCall.metadata.zodIssues as unknown[]).length).toBeGreaterThan(0);
+      expect(badOutputCalls).toHaveLength(0);
     });
 
     it('swap path: structurally invalid plan.compose result → 1 planner.bad_output audit (agent=swap) + throws', async () => {
@@ -1827,11 +1864,11 @@ describe('renderPlannerChildSignalsBlock (Story 3-S36)', () => {
   };
 
   it('returns "" when there are no signals at all', () => {
-    expect(renderPlannerChildSignalsBlock({ per_child: [], family_liked: [] })).toBe('');
+    expect(renderPlannerChildSignalsBlock(pc({ childSignals: { per_child: [], family_liked: [] } }))).toBe('');
   });
 
   it('renders per-child liked/disliked, family_liked, and the FR125 note', () => {
-    const block = renderPlannerChildSignalsBlock(FULL_SIGNALS);
+    const block = renderPlannerChildSignalsBlock(pc({ childSignals: FULL_SIGNALS }));
     expect(block.startsWith('<child_signals>')).toBe(true);
     expect(block.trimEnd().endsWith('</child_signals>')).toBe(true);
     expect(block).toContain('Layla: liked [Chana Masala Wraps (main)]; disliked [Capsicum Roll (main)]');
@@ -1840,21 +1877,23 @@ describe('renderPlannerChildSignalsBlock (Story 3-S36)', () => {
   });
 
   it('renders "(no recent signals)" for a child present with empty liked + disliked', () => {
-    const block = renderPlannerChildSignalsBlock({
-      per_child: [{ child_id: CHILD_ID, child_name: 'Zara', liked: [], disliked: [] }],
-      family_liked: [],
-    });
+    const block = renderPlannerChildSignalsBlock(pc({
+      childSignals: {
+        per_child: [{ child_id: CHILD_ID, child_name: 'Zara', liked: [], disliked: [] }],
+        family_liked: [],
+      },
+    }));
     expect(block).toContain('Zara: (no recent signals)');
   });
 });
 
 describe('renderPlannerPantryBlock (Story 3-S36)', () => {
   it('returns "" when on_hand is empty', () => {
-    expect(renderPlannerPantryBlock({ on_hand: [] })).toBe('');
+    expect(renderPlannerPantryBlock(pc({ pantrySnapshot: { on_hand: [] } }))).toBe('');
   });
 
   it('renders the on_hand list in a <pantry> block', () => {
-    const block = renderPlannerPantryBlock({ on_hand: ['basmati rice', 'chickpeas'] });
+    const block = renderPlannerPantryBlock(pc({ pantrySnapshot: { on_hand: ['basmati rice', 'chickpeas'] } }));
     expect(block).toBe('<pantry>\non_hand: [basmati rice, chickpeas]\n</pantry>');
   });
 });
@@ -1863,6 +1902,7 @@ describe('renderPlannerRecipeCandidatesBlock (Story 3-S36)', () => {
   const SLATE: PlannerRecipeCandidateSlate = {
     main: [
       {
+        id: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc',
         name: 'Chana Masala Wraps',
         cuisine_tags: ['indian'],
         allergen_flags: [],
@@ -1874,20 +1914,25 @@ describe('renderPlannerRecipeCandidatesBlock (Story 3-S36)', () => {
     extra: [],
   };
 
-  it('returns "" when all three groups are empty', () => {
-    expect(renderPlannerRecipeCandidatesBlock({ main: [], snack: [], extra: [] })).toBe('');
+  it('returns "" + an empty handleMap when all three groups are empty', () => {
+    const { block, handleMap } = renderPlannerRecipeCandidatesBlock(pc({ recipeCandidates: { main: [], snack: [], extra: [] } }));
+    expect(block).toBe('');
+    expect(handleMap.size).toBe(0);
   });
 
-  it('renders grouped candidates with inline allergens + key ingredients', () => {
-    const block = renderPlannerRecipeCandidatesBlock(SLATE);
+  it('renders grouped candidates with handles + inline allergens + key ingredients', () => {
+    const { block, handleMap } = renderPlannerRecipeCandidatesBlock(pc({ recipeCandidates: SLATE }));
     expect(block.startsWith('<recipe_candidates>')).toBe(true);
     expect(block).toContain('main:');
+    expect(block).toContain('handle: m1');
     expect(block).toContain('"Chana Masala Wraps"');
     expect(block).toContain('key_ingredients: ["chickpea","wrap"]');
     expect(block).toContain('confidence: 92');
     // Story 3-S40: snack group omitted (server-assigned) — only extra: [] for empty extra group.
     expect(block).not.toContain('snack:');
     expect(block).toContain('extra: []');
+    // Story 3.5-s3: the handle maps to the candidate's catalog id.
+    expect(handleMap.get('m1')).toBe(SLATE.main[0].id);
   });
 });
 
@@ -1973,7 +2018,7 @@ describe('planWeek pre-loaded reads injection (Story 3-S36)', () => {
       pantrySnapshot: { on_hand: ['basmati rice'] },
       recipeCandidates: {
         main: [
-          { name: 'Chana Masala Wraps', cuisine_tags: ['indian'], allergen_flags: [], key_ingredients: ['chickpea'], confidence: 90 },
+          { id: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc', name: 'Chana Masala Wraps', cuisine_tags: ['indian'], allergen_flags: [], key_ingredients: ['chickpea'], confidence: 90 },
         ],
         snack: [],
         extra: [],
@@ -2019,7 +2064,7 @@ describe('planWeek pre-loaded reads injection (Story 3-S36)', () => {
       pantrySnapshot: { on_hand: ['rice'] },
       recipeCandidates: {
         main: [
-          { name: 'Chana Masala Wraps', cuisine_tags: ['indian'], allergen_flags: [], key_ingredients: ['chickpea'], confidence: 90 },
+          { id: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc', name: 'Chana Masala Wraps', cuisine_tags: ['indian'], allergen_flags: [], key_ingredients: ['chickpea'], confidence: 90 },
         ],
         snack: [],
         extra: [],
@@ -2069,13 +2114,12 @@ describe('planWeek loop bound (Story 3-S37)', () => {
     usage: { promptTokens: 1, completionTokens: 1, cachedPromptTokens: 0 },
   });
 
-  // A retained fallback read tool (recipe.search). When the slate misses, the
-  // planner issues one of these before composing — the loop must service it and
-  // continue within the bound.
-  const searchResponse = (id: string): LLMResponse => ({
-    content: null,
-    toolCalls: [{ id, name: 'recipe.search', arguments: { query: 'wrap' } }],
-    finishReason: 'tool_calls',
+  // Story 3.5-s5 — a model that "stops" without emitting plan.compose (the
+  // non-forced / empty-response case the AC2 step-10 guard catches).
+  const stoppedResponse = (): LLMResponse => ({
+    content: 'done',
+    toolCalls: [],
+    finishReason: 'stop',
     usage: { promptTokens: 1, completionTokens: 1, cachedPromptTokens: 0 },
   });
 
@@ -2099,14 +2143,17 @@ describe('planWeek loop bound (Story 3-S37)', () => {
       requestId: 'req-s37-warm',
       recipeCandidates: {
         main: [
-          { name: 'Chana Masala Wraps', cuisine_tags: ['indian'], allergen_flags: [], key_ingredients: ['chickpea'], confidence: 90 },
+          { id: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc', name: 'Chana Masala Wraps', cuisine_tags: ['indian'], allergen_flags: [], key_ingredients: ['chickpea'], confidence: 90 },
         ],
         snack: [],
         extra: [],
       },
     });
 
-    expect(result.plan_id).toBe(MINIMAL_PLAN_OUTPUT.plan_id);
+    // Story 3.5-s3 — the slate triggers a per-run plan.compose spec that routes
+    // through composeTree (the RPC stub), so the plan_id is the stub's, not the
+    // LLM-emitted MINIMAL_PLAN_OUTPUT.plan_id.
+    expect(result.plan_id).toBe(STUB_COMPOSED_PLAN_ID);
     // Single LLM call — plan.compose was the first and only tool turn.
     expect(completeWithMessages).toHaveBeenCalledTimes(1);
   });
@@ -2128,32 +2175,31 @@ describe('planWeek loop bound (Story 3-S37)', () => {
     expect(options.tier).toBe('flagship');
   });
 
-  it('services one fallback read tool then composes, staying within the bound (AC3)', async () => {
-    let call = 0;
-    const completeWithMessages = vi.fn().mockImplementation(() => {
-      call += 1;
-      return Promise.resolve(call === 1 ? searchResponse('tc-search') : composeResponse('tc-after-search'));
-    });
+  it('forces plan.compose as the only tool on the single call (s5)', async () => {
+    const completeWithMessages = vi.fn().mockResolvedValue(composeResponse('tc-forced'));
     const provider = buildProvider('primary', { completeWithMessages });
     const { orchestrator } = buildOrchestrator([provider]);
     wireComposeStub();
 
-    const result = await orchestrator.planWeek({
+    await orchestrator.planWeek({
       householdId: HOUSEHOLD_ID,
       weekOf: '2026-11-09',
-      requestId: 'req-s37-fallback',
+      requestId: 'req-s5-forced',
     });
 
-    expect(result.plan_id).toBe(MINIMAL_PLAN_OUTPUT.plan_id);
-    // recipe.search (1) + plan.compose (1) = 2 turns, well inside the bound of 8.
-    expect(completeWithMessages).toHaveBeenCalledTimes(2);
+    expect(completeWithMessages).toHaveBeenCalledTimes(1);
+    const [tools, options] = [
+      completeWithMessages.mock.calls[0][1] as ToolSpec[],
+      completeWithMessages.mock.calls[0][2] as { forcedToolName?: string },
+    ];
+    expect(tools.map((t) => t.name)).toEqual(['plan.compose']);
+    expect(options.forcedToolName).toBe('plan.compose');
   });
 
-  it('throws the terminal error after exceeding the bound when plan.compose is never called (AC1, AC3)', async () => {
-    // The planner keeps issuing fallback read tools and never composes. The
-    // loop services each one and stops at the lowered MAX_PLAN_ITERATIONS,
-    // throwing the unchanged "did not call plan.compose" terminal error.
-    const completeWithMessages = vi.fn().mockResolvedValue(searchResponse('tc-loop'));
+  it('throws when the single forced call returns no tool call (AC2 step 10)', async () => {
+    // No ReAct loop anymore: a model that stops without composing throws
+    // immediately. There is no iteration ceiling or retry.
+    const completeWithMessages = vi.fn().mockResolvedValue(stoppedResponse());
     const provider = buildProvider('primary', { completeWithMessages });
     const { orchestrator } = buildOrchestrator([provider]);
 
@@ -2161,11 +2207,11 @@ describe('planWeek loop bound (Story 3-S37)', () => {
       orchestrator.planWeek({
         householdId: HOUSEHOLD_ID,
         weekOf: '2026-11-09',
-        requestId: 'req-s37-overbound',
+        requestId: 'req-s5-empty',
       }),
-    ).rejects.toThrow(/did not call plan\.compose within 8 iterations/);
+    ).rejects.toThrow(/did not call plan\.compose/);
 
-    // Bound is 8 — the loop ran exactly that many LLM turns before giving up.
-    expect(completeWithMessages).toHaveBeenCalledTimes(8);
+    // Single call — no loop.
+    expect(completeWithMessages).toHaveBeenCalledTimes(1);
   });
 });

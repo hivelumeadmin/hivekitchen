@@ -4,7 +4,7 @@ import { useAuthStore } from '@/stores/auth.store.js';
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL as string;
 
 export interface HkFetchInit {
-  method: 'GET' | 'POST' | 'PATCH' | 'DELETE';
+  method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
   body?: unknown;
   signal?: AbortSignal;
   headers?: Record<string, string>;  // Story 3.12: caller-provided headers (e.g. Idempotency-Key)
@@ -75,6 +75,7 @@ export function tryRefreshSession(): Promise<string | null> {
       return null;
     } finally {
       _refreshPromise = null;
+      useAuthStore.getState().setRestored();
     }
   })();
 

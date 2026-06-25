@@ -9,7 +9,15 @@ import type {
 // slot's full effective ingredient set (recipe.ingredients − removals + add_ons),
 // not just parent-added add_ons. Bump distinguishes the audit trail pre/post
 // base-ingredient evaluation.
-export const GUARDRAIL_VERSION = '1.2.0' as const;
+// 1.2.0 → 1.3.0 (Story 3-s43): Phase-2 snack-SKU allergen check replaces the
+// Phase-1 attested:true exemption — tagged SKUs are evaluated by set-membership.
+// 1.3.0 → 1.3.1 (Story 3-s43 fix): snack-SKU slots (slot==='snack') are now
+// evaluated against parent_declared rules ONLY, implementing the documented
+// "set-membership against declared allergens" intent. Previously snack tags
+// were run through the full engine, so the FALCPA-9 floor blocked every
+// dairy/wheat/egg-tagged snack for every household regardless of declared
+// allergies — making any plan with such a snack permanently un-composable.
+export const GUARDRAIL_VERSION = '1.3.1' as const;
 
 // Canonical FALCPA keys match `allergen_tags.key` (rule_class='falcpa'). Slice 2.6-s7
 // aligned engine keys with the vocabulary table so the repository can read seeds
@@ -206,6 +214,18 @@ export function evaluate(
   for (const item of planItems) {
     for (const rule of rules) {
       if (!ruleAppliesToChild(rule, item.child_id)) continue;
+      // Story 3-s43 — snack-SKU slots are parent-curated household-shelf items
+      // and are evaluated by set-membership against the family's DECLARED
+      // allergens only, NOT the FALCPA-9 universal floor that governs
+      // (untrusted) LLM-composed recipe content. A parent who stocks "String
+      // Cheese" has vetted dairy for their own family; applying the floor here
+      // would block every dairy/wheat/egg snack for every household even when
+      // no child is allergic. Per-child and household-wide declared allergens
+      // still block snacks via the parent_declared rules below — and the snack
+      // rotation pre-filter (snack-rotation.service) drops declared-conflicting
+      // SKUs upstream, so this commit-time check is defense-in-depth using the
+      // SAME declared-only model.
+      if (item.slot === 'snack' && rule.rule_type !== 'parent_declared') continue;
       for (const ingredient of item.ingredients) {
         if (ingredientMatchesAllergen(ingredient, rule.allergen)) {
           const key = `${item.child_id}|${rule.allergen}|${ingredient}|${item.slot}|${item.day}`;

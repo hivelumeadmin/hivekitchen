@@ -61,8 +61,14 @@ function buildMemoryService() {
 
 function buildRecipeService() {
   return {
-    search: vi.fn(),
+    // Story 3.5-s5 — ensureCandidateCoverage calls search() directly when the
+    // slate is below the Main floor. These planWeek tests pass no slate, so the
+    // pre-flight fires; an empty result keeps it a no-op (recipeAgent is null,
+    // so discover never runs).
+    search: vi.fn().mockResolvedValue({ results: [] }),
     fetch: vi.fn(),
+    discover: vi.fn().mockResolvedValue({ results: [] }),
+    findIdByName: vi.fn().mockResolvedValue(null),
   } as unknown as RecipeService;
 }
 
@@ -125,7 +131,15 @@ function buildProvider(overrides: Partial<LLMProvider> = {}): LLMProvider {
       yield { type: 'done' as const };
     });
   const probe = overrides.probe ?? vi.fn().mockResolvedValue(true);
-  return { name: 'primary', complete, completeWithMessages, stream, probe } as LLMProvider;
+  const supportsStrictTools = overrides.supportsStrictTools ?? ((): boolean => true);
+  return {
+    name: 'primary',
+    complete,
+    completeWithMessages,
+    stream,
+    probe,
+    supportsStrictTools,
+  } as LLMProvider;
 }
 
 function buildOrchestrator(provider: LLMProvider) {
@@ -189,30 +203,13 @@ describe('DomainOrchestrator.planWeek', () => {
     // and re-stubs plan.compose afterwards. No global state to clear here.
   });
 
-  it('runs the agentic loop and returns the parsed PlanComposeOutput', async () => {
-    const planComposeCallId = 'call_compose_1';
-    const responses: LLMResponse[] = [
-      {
-        content: null,
-        toolCalls: [
-          { id: planComposeCallId, name: 'plan.compose', arguments: { stub: true } },
-        ],
-        finishReason: 'tool_calls',
-        usage: { promptTokens: 10, completionTokens: 5, cachedPromptTokens: 0 },
-      },
-      // Second turn returns 'stop' after the tool result is fed back in.
-      {
-        content: 'done',
-        toolCalls: [],
-        finishReason: 'stop',
-        usage: { promptTokens: 20, completionTokens: 5, cachedPromptTokens: 0 },
-      },
-    ];
-    const completeWithMessages = vi.fn().mockImplementation(() => {
-      const next = responses.shift();
-      if (!next) throw new Error('completeWithMessages called too many times');
-      return Promise.resolve(next);
-    });
+  it('makes a single forced plan.compose call and returns the parsed PlanComposeOutput', async () => {
+    const completeWithMessages = vi.fn().mockResolvedValue({
+      content: null,
+      toolCalls: [{ id: 'call_compose_1', name: 'plan.compose', arguments: { stub: true } }],
+      finishReason: 'tool_calls',
+      usage: { promptTokens: 10, completionTokens: 5, cachedPromptTokens: 0 },
+    } satisfies LLMResponse);
     const orchestrator = buildOrchestrator(buildProvider({ completeWithMessages }));
     wirePlanComposeStub(async () => makeValidPlanComposeOutput());
 
@@ -225,21 +222,19 @@ describe('DomainOrchestrator.planWeek', () => {
     expect(result.plan_id).toBe(PLAN_ID);
     expect(result.household_id).toBe(HOUSEHOLD_ID);
     expect(result.week_of).toBe('2026-05-11');
-    expect(completeWithMessages).toHaveBeenCalled();
+    // Story 3.5-s5 — single-shot pipeline: exactly one LLM call.
+    expect(completeWithMessages).toHaveBeenCalledTimes(1);
   });
 
-  it('throws when the planner agent never calls plan.compose within MAX_PLAN_ITERATIONS', async () => {
-    // Always return a non-plan.compose tool call so the loop keeps iterating.
-    // recipe.search is in PLANNER_PROMPT.toolsAllowed so the orchestrator's
-    // forbidden-tool guard does not interfere; the manifest fn throws —
-    // planWeek catches non-plan.compose errors and returns them as JSON, so
-    // the loop continues until MAX_PLAN_ITERATIONS exhausts.
+  it('throws when the single forced call returns no plan.compose tool call', async () => {
+    // Story 3.5-s5 — the ReAct loop is gone. A model that stops without
+    // composing throws immediately (AC2 step 10); there is no iteration ceiling.
     const completeWithMessages = vi.fn().mockResolvedValue({
-      content: null,
-      toolCalls: [{ id: 'call_search', name: 'recipe.search', arguments: { q: 'rice' } }],
-      finishReason: 'tool_calls',
+      content: 'done',
+      toolCalls: [],
+      finishReason: 'stop',
       usage: { promptTokens: 1, completionTokens: 1, cachedPromptTokens: 0 },
-    });
+    } satisfies LLMResponse);
     const orchestrator = buildOrchestrator(buildProvider({ completeWithMessages }));
 
     await expect(
@@ -249,6 +244,7 @@ describe('DomainOrchestrator.planWeek', () => {
         requestId: REQUEST_ID,
       }),
     ).rejects.toThrow(/did not call plan\.compose/);
+    expect(completeWithMessages).toHaveBeenCalledTimes(1);
   });
 
   it('feeds rejectionContext into the system prompt when provided', async () => {

@@ -353,6 +353,7 @@ describe('surface prompt smoke — all surfaces return non-empty prompts', () =>
     'planning',
     'meal-detail',
     'child-profile',
+    'kitchen-profile',
     'grocery-list',
     'evening-check-in',
     'heart-note',
@@ -364,4 +365,78 @@ describe('surface prompt smoke — all surfaces return non-empty prompts', () =>
       expect(getSurfacePrompt(surface).trim().length).toBeGreaterThan(0);
     });
   }
+});
+
+describe('LumiAgent.respond — tool-call loop (7-S15)', () => {
+  const TOOLS = [
+    {
+      type: 'function',
+      function: {
+        name: 'food_preference__declare',
+        description: 'declare a food preference',
+        parameters: { type: 'object', properties: {} },
+      },
+    },
+  ] as unknown as import('openai/resources/chat/completions').ChatCompletionTool[];
+
+  it('executes a tool call then returns the follow-up prose', async () => {
+    const create = vi
+      .fn()
+      .mockResolvedValueOnce({
+        choices: [
+          {
+            finish_reason: 'tool_calls',
+            message: {
+              content: null,
+              tool_calls: [
+                {
+                  id: 'tc1',
+                  type: 'function',
+                  function: {
+                    name: 'food_preference__declare',
+                    arguments: JSON.stringify({
+                      item: 'chili',
+                      valence: 'dislikes',
+                      enforcement: 'strong',
+                    }),
+                  },
+                },
+              ],
+            },
+          },
+        ],
+      })
+      .mockResolvedValueOnce({
+        choices: [{ finish_reason: 'stop', message: { content: 'Got it — noted.' } }],
+      });
+    const openai = { chat: { completions: { create } } } as unknown as OpenAI;
+    const agent = new LumiAgent(openai);
+    const executor = vi.fn().mockResolvedValue(JSON.stringify({ declared: true }));
+
+    const reply = await agent.respond({
+      ...BASE_INPUT,
+      surface: 'kitchen-profile',
+      tools: TOOLS,
+      toolExecutor: executor,
+    });
+
+    expect(reply).toBe('Got it — noted.');
+    expect(executor).toHaveBeenCalledWith('food_preference__declare', {
+      item: 'chili',
+      valence: 'dislikes',
+      enforcement: 'strong',
+    });
+    expect(create).toHaveBeenCalledTimes(2);
+    const secondMessages = (create.mock.calls[1][0] as { messages: Array<{ role: string }> })
+      .messages;
+    expect(secondMessages.some((m) => m.role === 'tool')).toBe(true);
+  });
+
+  it('keeps the single-shot path when no tools are provided', async () => {
+    const { openai, create } = buildFakeOpenAI('Plain reply.');
+    const agent = new LumiAgent(openai);
+    const reply = await agent.respond({ ...BASE_INPUT, surface: 'kitchen-profile' });
+    expect(reply).toBe('Plain reply.');
+    expect(create).toHaveBeenCalledTimes(1);
+  });
 });

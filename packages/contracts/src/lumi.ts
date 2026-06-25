@@ -11,6 +11,10 @@ export const LumiSurfaceSchema = z.enum([
   'brief',
   'meal-detail',
   'child-profile',
+  // Slice 7-S15 — the Kitchen Profile page. Shared-tastes prose edits post a
+  // text turn on this surface so LumiAgent can call the food_preference.declare
+  // tool. Kebab-case matches the sibling multi-word surfaces.
+  'kitchen-profile',
   'grocery-list',
   'evening-check-in',
   'heart-note',

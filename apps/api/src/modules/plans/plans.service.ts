@@ -29,6 +29,7 @@ import type { BriefStateComposer } from './brief-state.composer.js';
 import type { ExtraRemovalSignalService } from './extra-removal-signal.service.js';
 import type { RecipeService } from '../recipe/recipe.service.js';
 import type { RecipesRepository } from '../recipe/recipes.repository.js';
+import type { SnackSkuRepository } from '../recipe/snack-sku.repository.js';
 import type { PlanRegenerationJobData } from '../../jobs/plan-regeneration.job.js';
 import type { PlanGenerationJobData } from '../../jobs/plan-generation.job.js';
 import type { HouseholdsRepository } from '../households/households.repository.js';
@@ -96,6 +97,11 @@ export interface PlansServiceDeps {
   // throws a clear error when either is missing.
   generateQueue?: Queue;
   householdsRepository?: HouseholdsRepository;
+  // Story 3-s43 — Phase-2 snack allergen fail-safe. Optional so pre-3-s43
+  // tests can compose without wiring it; when absent, skuAllergenMap is empty
+  // so every snack-SKU slot falls into the untagged-unverifiable branch
+  // (no attested:true) — strictly more conservative than Phase-1.
+  snackSkuRepository?: SnackSkuRepository;
 }
 
 // Story 3.13 — regeneration rate limit (architecture §3.6).
@@ -126,6 +132,7 @@ export class PlansService {
   private readonly variantProposalService: VariantProposalService | null;
   private readonly generateQueue: Queue | null;
   private readonly householdsRepo: HouseholdsRepository | null;
+  private readonly snackSkuRepo: SnackSkuRepository | null;
 
   constructor(deps: PlansServiceDeps) {
     this.repo = deps.repository;
@@ -142,6 +149,7 @@ export class PlansService {
     this.variantProposalService = deps.variantProposalService ?? null;
     this.generateQueue = deps.generateQueue ?? null;
     this.householdsRepo = deps.householdsRepository ?? null;
+    this.snackSkuRepo = deps.snackSkuRepository ?? null;
   }
 
   // Single-row read from brief_state. Never composes at request time
@@ -1326,6 +1334,21 @@ export class PlansService {
     const seqToRecipe = new Map<number, string>();
     for (const m of input.main_assignments) seqToRecipe.set(m.sequence, m.recipe_id);
 
+    // Story 3-s43 (Phase-2) — batch-load allergen_tags for all snack-SKU slots
+    // in the plan tree so the per-slot inner loop can do a pure Map lookup
+    // (no N+1 queries).
+    const snackSkuIdsInPlan = new Set<string>();
+    for (const day of input.days) {
+      for (const slot of day.slots) {
+        const skuId = (slot as { snack_sku_id?: string | null }).snack_sku_id;
+        if (skuId != null) snackSkuIdsInPlan.add(skuId);
+      }
+    }
+    const skuAllergenMap: Map<string, string[]> =
+      this.snackSkuRepo && snackSkuIdsInPlan.size > 0
+        ? await this.snackSkuRepo.findAllergenTagsByIds([...snackSkuIdsInPlan])
+        : new Map();
+
     const items: PlanItemForGuardrail[] = [];
     const unverifiable: UnverifiableSlot[] = [];
 
@@ -1334,19 +1357,44 @@ export class PlansService {
         // Resolve the slot's base ingredients. `null` = no resolvable recipe
         // row/candidate; `[]` = recipe exists but carries no ingredients. Both
         // are unverifiable.
-        // Story 3-S40 — snack-SKU slots are parent-attested. The allergen
-        // fields live on snack_skus (not recipe.ingredients). Skip the
-        // normal ingredient-resolution path; push each variation as
-        // attested:true so the guardrail exempts them from fail-closed.
+        // Story 3-s43 (Phase-2) — snack-SKU slots are checked by set-membership
+        // against the SKU's allergen_tags. Replaces the Phase-1 attested:true
+        // blanket exemption.
         if ((slot as { snack_sku_id?: string | null }).snack_sku_id != null) {
+          const skuId = (slot as { snack_sku_id: string }).snack_sku_id;
+          const tags = skuAllergenMap.get(skuId) ?? [];
           for (const variation of slot.variations) {
-            unverifiable.push({
-              child_id: variation.child_id,
-              day: day.day,
-              slot: slot.slot_kind,
-              recipe_label: 'snack-sku (parent-attested)',
-              attested: true,
-            });
+            if (tags.length > 0) {
+              // Tagged SKU → verifiable item. The engine evaluates these tags
+              // exactly like recipe ingredients (FALCPA-9 canonical keys match
+              // the engine vocabulary directly — no synonym expansion needed).
+              items.push({
+                child_id: variation.child_id,
+                day: day.day,
+                slot: slot.slot_kind,
+                ingredients: tags,
+              });
+            } else {
+              // Untagged SKU → parent-attested shelf item. snack_skus.allergen_tags
+              // is the authoritative allergen declaration for a curated SKU, so an
+              // empty tag set means "no FALCPA allergens" — NOT "unknown". (There
+              // is no separate reviewed/empty distinction in the schema, and the
+              // seed catalog stocks naturally allergen-free whole foods like apples
+              // and carrots.) Treating these as conservative-unknown fail-closed
+              // every untagged snack for any child with a declared allergen, making
+              // the curated shelf unusable (an apple blocked for a peanut-allergic
+              // child). Mark attested:true so clearOrRejectCommit exempts it,
+              // restoring the Phase-1 parent-attestation doctrine for untagged SKUs.
+              // Genuinely allergenic SKUs (e.g. edamame→soy, hummus→sesame) MUST
+              // carry their tags and so go through the verifiable branch above.
+              unverifiable.push({
+                child_id: variation.child_id,
+                day: day.day,
+                slot: slot.slot_kind,
+                recipe_label: 'snack-sku (parent-attested, no allergen tags)',
+                attested: true,
+              });
+            }
           }
           continue;
         }

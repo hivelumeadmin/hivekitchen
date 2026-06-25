@@ -15,7 +15,14 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-
 // Tree-shape planner tool. Operates on the canonical 4-table tree
 // (main_assignments + days[].slots[].variations). The PLANNER_PROMPT in
 // apps/api/src/agents/prompts/planner.prompt.ts is the matching prompt.
-export function createPlanComposeSpec(planService: PlansService, redis: Redis, recipeService: RecipeService): ToolSpec {
+export function createPlanComposeSpec(
+  planService: PlansService,
+  redis: Redis,
+  recipeService: RecipeService,
+  // Story 3.5-s3 — per-run slate index (handle → catalog UUID). Present only when
+  // planWeek was given a candidate slate; absent on the cold-acquisition path.
+  handleIndex?: ReadonlyMap<string, string>,
+): ToolSpec {
   return {
     name: 'plan.compose',
     description:
@@ -36,12 +43,33 @@ export function createPlanComposeSpec(planService: PlansService, redis: Redis, r
 
         async function resolveRecipeId(value: string): Promise<string> {
           if (UUID_RE.test(value)) return value; // already a UUID
+
+          // Story 3.5-s3 — handle path. The <recipe_candidates> block emits stable
+          // short handles (m1, m2, … for mains; e1, e2, … for extras); the model
+          // returns the handle and we resolve it from the in-memory slate index
+          // with NO DB call. A handle-shaped token absent from the index is a
+          // hard, non-retried error — the s2 forced-schema path guarantees this
+          // can only come from a genuinely bad model choice, not a format slip,
+          // so feeding it back as a self-correction turn would be pointless.
+          if (handleIndex !== undefined && handleIndex.has(value)) {
+            return handleIndex.get(value)!;
+          }
+          if (/^[me][1-9]\d*$/.test(value)) {
+            throw new Error(
+              `Recipe handle "${value}" not found in the candidate slate. ` +
+              `Handles are m1,m2,… (main) and e1,e2,… (extra) from the <recipe_candidates> block.`,
+            );
+          }
+
+          // Cold-acquisition path: a recipe surfaced at runtime by
+          // recipe.search / recipe.fetch / recipe.discover (not in the slate).
           if (nameCache.has(value)) return nameCache.get(value)!;
           const id = await recipeService.findIdByName(value, householdId);
-          if (id == null) {
+          if (id === null) {
             throw new Error(
               `Recipe not found in catalog: "${value}". ` +
-              `Use the exact name from a recipe.search, recipe.fetch, or recipe.discover result.`,
+              `Use the handle (m1, m2, etc.) for candidates in <recipe_candidates>, ` +
+              `or the exact name from a recipe.search/fetch/discover result.`,
             );
           }
           nameCache.set(value, id);
@@ -63,15 +91,13 @@ export function createPlanComposeSpec(planService: PlansService, redis: Redis, r
         }
 
         const result = await planService.composeTree(parsed);
-        // Slice 5-S9 — "reasoning" is planner metadata, not part of the
-        // structural tree, so PlanComposeTreeInputSchema strips it from `parsed`.
-        // Recover it from the raw tool args and merge it into the output the
-        // orchestrator parses. Defensively truncated to the schema max (600) so a
-        // long rationale can never fail the whole plan.compose call.
-        const rawReasoning = (input as { reasoning?: unknown }).reasoning;
+        // Slice 3.5-s2 — "reasoning" is now part of PlanComposeTreeInputSchema, so
+        // it survives schema parsing in `parsed` (and OpenAI strict structured
+        // output, which strips out-of-schema fields). Merge it into the output the
+        // orchestrator returns. The schema's .max(600) already enforces the bound.
         const withReasoning =
-          typeof rawReasoning === 'string' && rawReasoning.length > 0
-            ? { ...result, reasoning: rawReasoning.slice(0, 600) }
+          parsed.reasoning !== undefined && parsed.reasoning.length > 0
+            ? { ...result, reasoning: parsed.reasoning }
             : result;
         return PlanComposeTreeOutputSchema.parse(withReasoning);
       } finally {

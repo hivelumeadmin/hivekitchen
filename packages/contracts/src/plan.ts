@@ -664,15 +664,26 @@ export const PlannerMainAssignmentInputSchema = z.object({
 
 // Full planner tree input — what the agent emits and the orchestrator passes
 // to the RPC. plan.compose's input schema reshapes from flat to tree here.
+// main_assignments allows empty (min:0) for the swap agent, which only changes
+// variations and doesn't need to re-declare main recipes. The orchestrator
+// injects prompt_version before calling this tool from the swap path.
+// CommitPlanTreeInputSchema re-enforces main_assignments.min(1) at commit time.
 export const PlanComposeTreeInputSchema = z.object({
   household_id: z.string().uuid(),
   week_of: z.string().date(),
   main_assignments: z
     .array(PlannerMainAssignmentInputSchema)
-    .min(1)
+    .min(0)
     .max(MAIN_ASSIGNMENTS_PER_PLAN_MAX),
   days: z.array(PlannerDayInputSchema).min(1).max(DAYS_PER_PLAN_MAX),
   prompt_version: z.string().min(1).max(PROMPT_VERSION_MAX),
+  // Slice 3.5-s2 — "Why this?" planner reasoning. Mirrors
+  // PlanComposeTreeOutputSchema.reasoning. Present on the INPUT schema so that
+  // OpenAI strict structured output (which strips out-of-schema fields) keeps
+  // it, letting plan.tools.ts recover it from the parsed input rather than the
+  // raw tool args. Independent string field — does not interact with the
+  // structural cross-reference checks in .superRefine() below.
+  reasoning: z.string().max(600).optional(),
 }).superRefine((val, ctx) => {
   // Cross-validate slot.main_assignment_sequence against the assignments
   // array. This is contract-layer defense; the RPC also fails if the lookup
@@ -713,7 +724,7 @@ export const PlanComposeTreeOutputSchema = z.object({
   week_of: z.string().date(),
   main_assignments: z
     .array(PlannerMainAssignmentInputSchema)
-    .min(1)
+    .min(0)
     .max(MAIN_ASSIGNMENTS_PER_PLAN_MAX),
   days: z.array(PlannerDayInputSchema).min(1).max(DAYS_PER_PLAN_MAX),
   prompt_version: z.string().min(1).max(PROMPT_VERSION_MAX),

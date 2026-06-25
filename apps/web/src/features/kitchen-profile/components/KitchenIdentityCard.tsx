@@ -32,6 +32,17 @@ interface Readonly_KitchenIdentityCardProps {
   readonly onSetEnforcement?: (key: string, tier: Enforcement) => void;
   readonly enforcementBusy?: boolean;
   readonly enforcementError?: string | null;
+  /**
+   * Story 7-S15 — Lumi's confirmation reply after a shared-tastes edit. Shown
+   * inside the edit panel (while refining) and below the pillars (read mode).
+   * Cleared by the parent when the panel re-opens.
+   */
+  readonly lumiResponse?: string | null;
+  /**
+   * Story 7-S15 — inline error when one or more cultural chip-state writes
+   * failed (partial failure must not be swallowed). Shown in the edit panel.
+   */
+  readonly editError?: string | null;
 }
 
 export type KitchenIdentityCardProps = Readonly<Readonly_KitchenIdentityCardProps>;
@@ -49,6 +60,8 @@ export function KitchenIdentityCard({
   onSetEnforcement,
   enforcementBusy = false,
   enforcementError = null,
+  lumiResponse = null,
+  editError = null,
 }: KitchenIdentityCardProps) {
   if (isEditing) {
     return (
@@ -59,6 +72,8 @@ export function KitchenIdentityCard({
           onSendComposite?.(composite, next)
         }
         onDone={() => onDone?.()}
+        lumiResponse={lumiResponse}
+        editError={editError}
       />
     );
   }
@@ -76,6 +91,11 @@ export function KitchenIdentityCard({
         />
         <SharedTastesPillar body={sharedTastes} />
       </div>
+      {lumiResponse !== null && lumiResponse.length > 0 && (
+        <p className="mb-6 font-serif text-sm italic leading-relaxed text-amber-warm">
+          {lumiResponse}
+        </p>
+      )}
       <div className="flex justify-end">
         <button
           type="button"

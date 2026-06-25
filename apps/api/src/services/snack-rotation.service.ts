@@ -68,6 +68,26 @@ function buildPinnedCategories(
   return pinned;
 }
 
+// Story 3-s43 (Phase-2) — drop SKUs whose allergen_tags intersect the union of
+// declared allergens across all snack-ON children. FALCPA-9 canonical keys are
+// shared between snack_skus.allergen_tags and child declared_allergens, so a
+// direct set-membership test (no synonym expansion) is sufficient and exact.
+function filterAllergenConflicts(
+  skus: readonly SnackSkuRow[],
+  snackOnChildIds: readonly string[],
+  declaredAllergensByChildId: ReadonlyMap<string, readonly string[]> | undefined,
+): SnackSkuRow[] {
+  if (!declaredAllergensByChildId || declaredAllergensByChildId.size === 0) {
+    return [...skus];
+  }
+  const declared = new Set<string>();
+  for (const childId of snackOnChildIds) {
+    for (const a of declaredAllergensByChildId.get(childId) ?? []) declared.add(a);
+  }
+  if (declared.size === 0) return [...skus];
+  return skus.filter((sku) => !sku.allergen_tags.some((tag) => declared.has(tag)));
+}
+
 // Filter active SKUs to those not banned by any child sharing the slot.
 function eligibleSkus(
   allSkus: readonly SnackSkuRow[],
@@ -92,14 +112,24 @@ function eligibleSkus(
 //
 // plannedDays: optional subset of weekdays to restrict to (same shape as
 // PlanWeekOptions.plannedDays). If absent, defaults to Mon-Fri.
+//
+// Story 3-s43 (Phase-2, AC6) — declaredAllergensByChildId is the deterministic
+// allergen pre-filter. A SKU is excluded from the entire rotation when its
+// allergen_tags intersect the declared allergens of ANY snack-ON child sharing
+// the slot (the slot is shared, so the pick must be safe for everyone). Unlike
+// the category-ban fallback, there is NO fallback here: if the pre-filter
+// empties the stocked pool, the function returns [] (no snack is safer than an
+// allergenic one — the commit-time guardrail is the second line of defence).
 export function assignSnackRotation(opts: {
   bagCompositions: readonly PlannerBagComposition[];
   extraRules: readonly PlannerExtraRules[];
   activeSkus: readonly SnackSkuRow[];
   weekOf: string;
   plannedDays?: readonly string[];
+  declaredAllergensByChildId?: ReadonlyMap<string, readonly string[]>;
 }): SnackSlotAssignment[] {
-  const { bagCompositions, extraRules, activeSkus, weekOf, plannedDays } = opts;
+  const { bagCompositions, extraRules, activeSkus, weekOf, plannedDays, declaredAllergensByChildId } =
+    opts;
 
   // Build fast lookups.
   const extraRulesByChildId = new Map<string, PlannerExtraRules>(
@@ -111,10 +141,28 @@ export function assignSnackRotation(opts: {
     .filter((bc) => bc.snack)
     .map((bc) => bc.child_id);
 
-  if (snackOnChildIds.length === 0 || activeSkus.length === 0) return [];
+  // Exclude paused (out-of-stock) snacks — they stay on the shelf but never
+  // enter the weekly rotation until the parent re-enables them.
+  const stockedSkus = activeSkus.filter((s) => s.in_stock);
+
+  if (snackOnChildIds.length === 0 || stockedSkus.length === 0) return [];
+
+  // Story 3-s43 (Phase-2) — deterministic allergen pre-filter. Build the union
+  // of every snack-ON child's declared allergens, then drop any SKU whose
+  // allergen_tags intersect that set. Conservative-by-slot: one conflicting
+  // child removes the SKU for the whole shared slot.
+  const safeSkus = filterAllergenConflicts(
+    stockedSkus,
+    snackOnChildIds,
+    declaredAllergensByChildId,
+  );
+
+  // No fallback (unlike category bans): if every stocked SKU conflicts with a
+  // declared allergen, emit no snack slots rather than an unsafe pick.
+  if (safeSkus.length === 0) return [];
 
   // Sort SKUs by id for a stable base ordering.
-  const sortedSkus = [...activeSkus].sort((a, b) => a.id.localeCompare(b.id));
+  const sortedSkus = [...safeSkus].sort((a, b) => a.id.localeCompare(b.id));
 
   // Determine which days to cover.
   const days: string[] =

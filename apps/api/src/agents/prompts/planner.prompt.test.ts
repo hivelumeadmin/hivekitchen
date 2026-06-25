@@ -52,8 +52,8 @@ describe('PLANNER_PROMPT', () => {
     expect(PLANNER_PROMPT.text).toContain('FALLBACK ONLY');
   });
 
-  it('is at version v2.8.0', () => {
-    expect(PLANNER_PROMPT.version).toBe('v2.8.0');
+  it('is at version v2.9.0', () => {
+    expect(PLANNER_PROMPT.version).toBe('v2.9.0');
   });
 
   // Story 3-S33 — no-consecutive-Main distribution rule.

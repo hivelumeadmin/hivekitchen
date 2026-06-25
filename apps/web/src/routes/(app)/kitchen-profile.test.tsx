@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, waitFor, cleanup, fireEvent } from '@testing-library/react';
+import { render, screen, waitFor, cleanup, fireEvent, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import type { KitchenMap, KitchenMapAllergen, KitchenMapChild } from '@hivekitchen/types';
 
@@ -292,6 +292,306 @@ describe('KitchenProfileRoute', () => {
     fireEvent.click(preferBtn);
     await waitFor(() => {
       expect(screen.getByRole('alert').textContent).toMatch(/could not update/i);
+    });
+  });
+
+  // Story 7-S15 (Arc A) — starting-line favorites soft edit
+  it('drops a favorite via the starting-line editor → PUT with the new list', async () => {
+    hkFetchMock.mockImplementation((_path: string, init: { method: string }) => {
+      if (init.method === 'PUT') return Promise.resolve({ items: [] });
+      return Promise.resolve(
+        sampleKitchenMap({
+          favorite_lunches: [{ item: 'Pasta', provenance: 'declared', position: 0 }],
+        }),
+      );
+    });
+    renderRoute();
+    const section = (await screen.findByText("Lumi's starting line")).closest('section');
+    fireEvent.click(within(section as HTMLElement).getByRole('button', { name: 'Edit' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Drop Pasta' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Send message to Lumi' }));
+    await waitFor(() => {
+      expect(hkFetchMock).toHaveBeenCalledWith(
+        `/v1/households/${HOUSEHOLD_ID}/favorite-lunches`,
+        expect.objectContaining({ method: 'PUT', body: { items: [] } }),
+      );
+    });
+  });
+
+  it('reverts the starting line when the favorites PUT fails', async () => {
+    hkFetchMock.mockImplementation((_path: string, init: { method: string }) => {
+      if (init.method === 'PUT') return Promise.reject(new Error('boom'));
+      return Promise.resolve(
+        sampleKitchenMap({
+          favorite_lunches: [{ item: 'Pasta', provenance: 'declared', position: 0 }],
+        }),
+      );
+    });
+    renderRoute();
+    const section = (await screen.findByText("Lumi's starting line")).closest('section');
+    fireEvent.click(within(section as HTMLElement).getByRole('button', { name: 'Edit' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Drop Pasta' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Send message to Lumi' }));
+    await waitFor(() => {
+      expect(hkFetchMock).toHaveBeenCalledWith(
+        `/v1/households/${HOUSEHOLD_ID}/favorite-lunches`,
+        expect.objectContaining({ method: 'PUT' }),
+      );
+    });
+    // Close the editor and confirm the dropped item is restored (revert).
+    fireEvent.click(screen.getByRole('button', { name: /done with my edit/i }));
+    await waitFor(() => {
+      expect(screen.getByText('Pasta')).toBeDefined();
+    });
+  });
+
+  // Story 7-S15 (Arc B) — cultural chip state deltas
+  it('sends opt_in for a kept suggested chip and forget for a dropped active chip', async () => {
+    hkFetchMock.mockImplementation((_path: string, init: { method: string }) => {
+      if (init.method === 'PATCH') return Promise.resolve({ key: 'x', state: 'x' });
+      return Promise.resolve(
+        sampleKitchenMap({
+          cultural: {
+            active: [
+              {
+                key: 'halal',
+                label: 'Halal',
+                state: 'active',
+                tier: 'L1',
+                confidence: 100,
+                presence: 100,
+                enforcement: 'strong',
+              },
+            ],
+            suggested: [
+              {
+                key: 'kosher',
+                label: 'Kosher',
+                state: 'suggested',
+                tier: 'L1',
+                confidence: 80,
+                presence: 80,
+                enforcement: 'default',
+              },
+            ],
+          },
+        }),
+      );
+    });
+    renderRoute();
+    fireEvent.click(await screen.findByRole('button', { name: 'Refine collective identity' }));
+    // Drop the active 'Halal' chip; keep the suggested 'Kosher' chip.
+    fireEvent.click(await screen.findByRole('button', { name: 'Drop Halal' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Send message to Lumi' }));
+    await waitFor(() => {
+      expect(hkFetchMock).toHaveBeenCalledWith(
+        `/v1/households/${HOUSEHOLD_ID}/cultural-priors/state`,
+        expect.objectContaining({ method: 'PATCH', body: { key: 'kosher', action: 'opt_in' } }),
+      );
+    });
+    expect(hkFetchMock).toHaveBeenCalledWith(
+      `/v1/households/${HOUSEHOLD_ID}/cultural-priors/state`,
+      expect.objectContaining({ method: 'PATCH', body: { key: 'halal', action: 'forget' } }),
+    );
+    // chip-only edit (no [Message]) must NOT post a Lumi turn
+    expect(hkFetchMock).not.toHaveBeenCalledWith('/v1/lumi/turns', expect.anything());
+  });
+
+  // Story 7-S15 (Arc C) — shared-tastes prose → Lumi turn → response displayed
+  it('posts a Lumi turn for a typed shared-tastes note and shows the reply', async () => {
+    hkFetchMock.mockImplementation((path: string, init: { method: string }) => {
+      if (init.method === 'POST' && path === '/v1/lumi/turns') {
+        return Promise.resolve({
+          lumi_turn: { body: { type: 'message', content: 'Noted — milder it is.' } },
+        });
+      }
+      return Promise.resolve(
+        sampleKitchenMap({
+          cultural: {
+            active: [
+              {
+                key: 'halal',
+                label: 'Halal',
+                state: 'active',
+                tier: 'L1',
+                confidence: 100,
+                presence: 100,
+                enforcement: 'strong',
+              },
+            ],
+            suggested: [],
+          },
+        }),
+      );
+    });
+    renderRoute();
+    fireEvent.click(await screen.findByRole('button', { name: 'Refine collective identity' }));
+    fireEvent.change(screen.getByRole('textbox'), {
+      target: { value: 'we keep heat mild for the kids' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Send message to Lumi' }));
+    await waitFor(() => {
+      expect(hkFetchMock).toHaveBeenCalledWith(
+        '/v1/lumi/turns',
+        expect.objectContaining({
+          method: 'POST',
+          body: expect.objectContaining({ context_signal: { surface: 'kitchen-profile' } }),
+        }),
+      );
+    });
+    await waitFor(() => {
+      expect(screen.getByText('Noted — milder it is.')).toBeDefined();
+    });
+  });
+
+  // Story 3-S42 — per-child Snack & Extra preferences (pins/bans)
+  it('renders current pins/bans from kitchenMap with the correct toggle state', async () => {
+    hkFetchMock.mockResolvedValue(
+      sampleKitchenMap({
+        children: [makeChild({ extra_rules: { pinned: ['fruit'], banned: ['dairy'] } })],
+      }),
+    );
+    renderRoute();
+    const pinFruit = await screen.findByRole('button', { name: 'Pin fruit' });
+    expect(pinFruit.getAttribute('aria-pressed')).toBe('true');
+    expect(screen.getByRole('button', { name: 'Ban dairy' }).getAttribute('aria-pressed')).toBe(
+      'true',
+    );
+    // an untouched token is neutral on both controls
+    expect(screen.getByRole('button', { name: 'Pin grain' }).getAttribute('aria-pressed')).toBe(
+      'false',
+    );
+    expect(screen.getByRole('button', { name: 'Ban grain' }).getAttribute('aria-pressed')).toBe(
+      'false',
+    );
+  });
+
+  it('pinning a token issues PATCH /extra-rules with the full replacement body', async () => {
+    hkFetchMock.mockImplementation((path: string, init: { method: string }) => {
+      if (init.method === 'PATCH' && path.includes('/extra-rules')) {
+        return Promise.resolve({
+          child_id: CHILD_ID,
+          extra_rules: { pins: ['grain'], bans: [] },
+          updated_at: '2026-06-20T00:00:00.000Z',
+        });
+      }
+      return Promise.resolve(sampleKitchenMap({ children: [makeChild()] }));
+    });
+    renderRoute();
+    fireEvent.click(await screen.findByRole('button', { name: 'Pin grain' }));
+    await waitFor(() => {
+      expect(hkFetchMock).toHaveBeenCalledWith(
+        `/v1/children/${CHILD_ID}/extra-rules`,
+        expect.objectContaining({ method: 'PATCH', body: { pins: ['grain'], bans: [] } }),
+      );
+    });
+  });
+
+  it('selecting pin clears an existing ban on the same token (mutual exclusion)', async () => {
+    hkFetchMock.mockImplementation((path: string, init: { method: string }) => {
+      if (init.method === 'PATCH' && path.includes('/extra-rules')) {
+        return Promise.resolve({
+          child_id: CHILD_ID,
+          extra_rules: { pins: ['fruit'], bans: [] },
+          updated_at: '2026-06-20T00:00:00.000Z',
+        });
+      }
+      return Promise.resolve(
+        sampleKitchenMap({
+          children: [makeChild({ extra_rules: { pinned: [], banned: ['fruit'] } })],
+        }),
+      );
+    });
+    renderRoute();
+    // fruit starts banned; pinning it must drop the ban from the PATCH body.
+    fireEvent.click(await screen.findByRole('button', { name: 'Pin fruit' }));
+    await waitFor(() => {
+      expect(hkFetchMock).toHaveBeenCalledWith(
+        `/v1/children/${CHILD_ID}/extra-rules`,
+        expect.objectContaining({ method: 'PATCH', body: { pins: ['fruit'], bans: [] } }),
+      );
+    });
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'Ban fruit' }).getAttribute('aria-pressed')).toBe(
+        'false',
+      );
+    });
+  });
+
+  it('renders read-only (no toggle controls, no PATCH) for a non-primary role', async () => {
+    useAuthStore.setState({
+      accessToken: 'token',
+      user: {
+        id: '11111111-1111-4111-8111-111111111111',
+        email: 'caregiver@example.com',
+        display_name: 'Caregiver',
+        current_household_id: HOUSEHOLD_ID,
+        role: 'secondary_caregiver',
+      },
+    });
+    hkFetchMock.mockResolvedValue(
+      sampleKitchenMap({
+        children: [makeChild({ extra_rules: { pinned: ['fruit'], banned: [] } })],
+      }),
+    );
+    renderRoute();
+    // read-only chip shows the pinned state…
+    await waitFor(() => {
+      expect(screen.getByText('Pinned')).toBeDefined();
+    });
+    // …but there are no Pin/Ban toggle buttons.
+    expect(screen.queryByRole('button', { name: 'Pin fruit' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Ban fruit' })).toBeNull();
+  });
+
+  it('reverts the optimistic pin and shows an error when the PATCH fails', async () => {
+    hkFetchMock.mockImplementation((path: string, init: { method: string }) => {
+      if (init.method === 'PATCH' && path.includes('/extra-rules')) {
+        return Promise.reject(new Error('boom'));
+      }
+      return Promise.resolve(sampleKitchenMap({ children: [makeChild()] }));
+    });
+    renderRoute();
+    fireEvent.click(await screen.findByRole('button', { name: 'Pin grain' }));
+    await waitFor(() => {
+      expect(screen.getByRole('alert').textContent).toMatch(/could not save those preferences/i);
+    });
+    // reverted — grain is neutral again.
+    expect(screen.getByRole('button', { name: 'Pin grain' }).getAttribute('aria-pressed')).toBe(
+      'false',
+    );
+  });
+
+  it('surfaces an inline error when a cultural chip-state PATCH fails', async () => {
+    hkFetchMock.mockImplementation((path: string, init: { method: string }) => {
+      if (init.method === 'PATCH' && path.includes('/cultural-priors/state')) {
+        return Promise.reject(new Error('boom'));
+      }
+      return Promise.resolve(
+        sampleKitchenMap({
+          cultural: {
+            active: [
+              {
+                key: 'halal',
+                label: 'Halal',
+                state: 'active',
+                tier: 'L1',
+                confidence: 100,
+                presence: 100,
+                enforcement: 'strong',
+              },
+            ],
+            suggested: [],
+          },
+        }),
+      );
+    });
+    renderRoute();
+    fireEvent.click(await screen.findByRole('button', { name: 'Refine collective identity' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Drop Halal' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Send message to Lumi' }));
+    await waitFor(() => {
+      expect(screen.getByRole('alert').textContent).toMatch(/could not be saved/i);
     });
   });
 });

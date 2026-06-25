@@ -12,6 +12,9 @@ import type {
   KitchenMapCultural,
   KitchenMapFavoriteLunch,
   KitchenMapFoodPreference,
+  LumiTurnResponse,
+  SetFavoriteLunchesResponse,
+  UpdateExtraRulesResponse,
 } from '@hivekitchen/types';
 import { hkFetch, HkApiError } from '@/lib/fetch.js';
 import { useLumiContext } from '@/hooks/useLumiContext.js';
@@ -19,10 +22,12 @@ import { useAuthStore } from '@/stores/auth.store.js';
 import { CalendarSummary } from '@/features/kitchen-profile/components/CalendarSummary.js';
 import { ChildProfileCard } from '@/features/kitchen-profile/components/ChildProfileCard.js';
 import { KitchenIdentityCard } from '@/features/kitchen-profile/components/KitchenIdentityCard.js';
+import type { IdentityEditValue } from '@/features/kitchen-profile/components/IdentityEditConversation.js';
 import { ProfileHeader } from '@/features/kitchen-profile/components/ProfileHeader.js';
 import { SchoolsList } from '@/features/kitchen-profile/components/SchoolsList.js';
 import { SectionEyebrow } from '@/features/kitchen-profile/components/SectionEyebrow.js';
 import { StartingLineCard } from '@/features/kitchen-profile/components/StartingLineCard.js';
+import type { StartingLine } from '@/features/kitchen-profile/data/mockData.js';
 
 type LoadState = 'loading' | 'ready' | 'error';
 
@@ -42,6 +47,7 @@ export default function KitchenProfileRoute() {
   const navigate = useNavigate();
   const accessToken = useAuthStore((s) => s.accessToken);
   const householdId = useAuthStore((s) => s.user?.current_household_id ?? null);
+  const role = useAuthStore((s) => s.user?.role ?? null);
   const didLoad = useRef(false);
 
   const [loadState, setLoadState] = useState<LoadState>('loading');
@@ -51,6 +57,13 @@ export default function KitchenProfileRoute() {
   const [allergenErrors, setAllergenErrors] = useState<Record<string, string | null>>({});
   const [enforcementBusy, setEnforcementBusy] = useState(false);
   const [enforcementError, setEnforcementError] = useState<string | null>(null);
+  // Story 3-S42 — per-child Snack & Extra preference (pins/bans) mutation state.
+  const [extraRulesBusyChild, setExtraRulesBusyChild] = useState<string | null>(null);
+  const [extraRulesErrors, setExtraRulesErrors] = useState<Record<string, string | null>>({});
+  // Story 7-S15 — soft-edit conversation state. Only one section edits at a time.
+  const [editingSection, setEditingSection] = useState<'identity' | 'starting-line' | null>(null);
+  const [identityLumiResponse, setIdentityLumiResponse] = useState<string | null>(null);
+  const [identityEditError, setIdentityEditError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!accessToken) {
@@ -155,6 +168,37 @@ export default function KitchenProfileRoute() {
     }
   }
 
+  // Story 3-S42 — deterministic per-child pins/bans. Optimistic local mutation,
+  // server reconcile from the parsed response, revert on catch (mirrors
+  // handleAddAllergen). Forward-only: affects next compose, not the current week.
+  async function handleSetExtraRules(
+    childId: string,
+    next: { pins: string[]; bans: string[] },
+  ): Promise<void> {
+    if (householdId === null) return;
+    const prevMap = kitchenMap;
+    setExtraRulesErrors((e) => ({ ...e, [childId]: null }));
+    setExtraRulesBusyChild(childId);
+    setKitchenMap((m) => (m === null ? m : reconcileChildExtraRules(m, childId, next)));
+    try {
+      const res = await hkFetch<UpdateExtraRulesResponse>(
+        `/v1/children/${childId}/extra-rules`,
+        { method: 'PATCH', body: { pins: next.pins, bans: next.bans } },
+      );
+      setKitchenMap((m) =>
+        m === null ? m : reconcileChildExtraRules(m, childId, res.extra_rules),
+      );
+    } catch {
+      setKitchenMap(prevMap);
+      setExtraRulesErrors((e) => ({
+        ...e,
+        [childId]: 'Could not save those preferences. Please try again.',
+      }));
+    } finally {
+      setExtraRulesBusyChild(null);
+    }
+  }
+
   async function handleSetEnforcement(key: string, tier: UiEnforcement): Promise<void> {
     if (householdId === null) return;
     const prevMap = kitchenMap;
@@ -172,6 +216,114 @@ export default function KitchenProfileRoute() {
       setEnforcementError('Could not update that rule. Please try again.');
     } finally {
       setEnforcementBusy(false);
+    }
+  }
+
+  // Story 7-S15 (Arc A) — replace-semantics favorites edit. Optimistic update,
+  // server reconcile, revert on failure (mirrors handleAddAllergen).
+  async function handleFavoritesComposite(
+    _composite: string,
+    nextValue: StartingLine,
+  ): Promise<void> {
+    if (householdId === null) return;
+    const prevMap = kitchenMap;
+    setKitchenMap((m) =>
+      m === null
+        ? m
+        : {
+            ...m,
+            favorite_lunches: nextValue.items.map((item, i) => ({
+              item,
+              provenance: 'parent_added' as const,
+              position: i,
+            })),
+          },
+    );
+    try {
+      const res = await hkFetch<SetFavoriteLunchesResponse>(
+        `/v1/households/${householdId}/favorite-lunches`,
+        { method: 'PUT', body: { items: nextValue.items } },
+      );
+      setKitchenMap((m) =>
+        m === null
+          ? m
+          : {
+              ...m,
+              favorite_lunches: res.items.map((item, i) => ({
+                item,
+                provenance: 'parent_added' as const,
+                position: i,
+              })),
+            },
+      );
+    } catch {
+      setKitchenMap(prevMap);
+    }
+  }
+
+  // Story 7-S15 (Arc B + Arc C) — identity composite. Cultural chip-state deltas
+  // are deterministic opt_in/forget PATCHes; the shared-tastes [Message] prose,
+  // when present, posts a Lumi turn that may call food_preference.declare. A
+  // kitchen-map re-fetch at the end reconciles both.
+  async function handleIdentityComposite(
+    composite: string,
+    nextValue: IdentityEditValue,
+  ): Promise<void> {
+    if (householdId === null) return;
+    setIdentityEditError(null);
+
+    const currentKeys = new Set(kitchenMap?.cultural.active.map((p) => p.key) ?? []);
+    const nextKeys = new Set(nextValue.cultural.map((c) => c.key));
+    const toAdd = [...nextKeys].filter((k) => !currentKeys.has(k));
+    const toRemove = [...currentKeys].filter((k) => !nextKeys.has(k));
+
+    const calls: Array<Promise<unknown>> = [
+      ...toAdd.map((key) =>
+        hkFetch(`/v1/households/${householdId}/cultural-priors/state`, {
+          method: 'PATCH',
+          body: { key, action: 'opt_in' },
+        }),
+      ),
+      ...toRemove.map((key) =>
+        hkFetch(`/v1/households/${householdId}/cultural-priors/state`, {
+          method: 'PATCH',
+          body: { key, action: 'forget' },
+        }),
+      ),
+    ];
+    if (calls.length > 0) {
+      // Surface partial failures — the trailing kitchen-map re-fetch reconciles
+      // the chips to true server state, but a silent revert would otherwise hide
+      // that a change didn't take (spec OQ-3 / Review-note).
+      const results = await Promise.allSettled(calls);
+      const failed = results.filter((r) => r.status === 'rejected').length;
+      if (failed > 0) setIdentityEditError('Some identity changes could not be saved.');
+    }
+
+    // Shared-tastes prose → Lumi. Only when the composite carries a [Message]
+    // section; chip-only edits skip the LLM round-trip entirely.
+    if (composite.includes('\n[Message]\n')) {
+      try {
+        const lumiRes = await hkFetch<LumiTurnResponse>('/v1/lumi/turns', {
+          method: 'POST',
+          body: { message: composite, context_signal: { surface: 'kitchen-profile' } },
+        });
+        const body = lumiRes.lumi_turn.body;
+        setIdentityLumiResponse(body.type === 'message' ? body.content : null);
+      } catch {
+        // Chip writes already applied — a Lumi failure is non-fatal here.
+      }
+    }
+
+    // Reconcile: catches both the cultural state changes and any food_preferences
+    // the Lumi tool wrote.
+    try {
+      const fresh = await hkFetch<KitchenMap>(`/v1/households/${householdId}/kitchen-map`, {
+        method: 'GET',
+      });
+      setKitchenMap(fresh);
+    } catch {
+      // Keep optimistic/current local state on a refresh failure.
     }
   }
 
@@ -199,10 +351,16 @@ export default function KitchenProfileRoute() {
             sharedTastes={sharedTastes}
             refineLabel="Refine collective identity"
             suggestedAdditions={[]}
-            isEditing={false}
-            onRefine={noop}
-            onSendComposite={(c) => logComposite('Identity', c)}
-            onDone={noop}
+            isEditing={editingSection === 'identity'}
+            onRefine={() => {
+              setIdentityLumiResponse(null);
+              setIdentityEditError(null);
+              setEditingSection('identity');
+            }}
+            onSendComposite={(c, next) => void handleIdentityComposite(c, next)}
+            onDone={() => setEditingSection(null)}
+            lumiResponse={identityLumiResponse}
+            editError={identityEditError}
             onSetEnforcement={(key, tier) => void handleSetEnforcement(key, tier)}
             enforcementBusy={enforcementBusy}
             enforcementError={enforcementError}
@@ -225,6 +383,14 @@ export default function KitchenProfileRoute() {
                 onRemoveAllergen={(name) => void handleRemoveAllergen(child.id, name)}
                 allergenBusy={allergenBusyChild === child.id}
                 allergenError={allergenErrors[child.id] ?? null}
+                extraRules={child.extra_rules}
+                onSetExtraRules={
+                  role === 'primary_parent'
+                    ? (next) => void handleSetExtraRules(child.id, next)
+                    : undefined
+                }
+                extraRulesBusy={extraRulesBusyChild === child.id}
+                extraRulesError={extraRulesErrors[child.id] ?? null}
               />
             ))}
           </div>
@@ -236,10 +402,10 @@ export default function KitchenProfileRoute() {
             description="The lunches you said you'd happily pack tomorrow. Lumi mixes it up from here."
             line={startingLine}
             suggestedAdditions={[]}
-            isEditing={false}
-            onEdit={noop}
-            onSendComposite={(c) => logComposite('Starting line', c)}
-            onDone={noop}
+            isEditing={editingSection === 'starting-line'}
+            onEdit={() => setEditingSection('starting-line')}
+            onSendComposite={(c, next) => void handleFavoritesComposite(c, next)}
+            onDone={() => setEditingSection(null)}
           />
         </section>
 
@@ -305,6 +471,24 @@ function reconcileChildAllergens(
     source: 'parent_edited',
   }));
   return { ...map, allergens: [...others, ...next] };
+}
+
+// Story 3-S42 — replace one child's extra_rules projection ({ pinned, banned }),
+// preserving every other child. Maps the PATCH-body shape ({ pins, bans }) onto
+// the kitchen-map projection vocabulary.
+function reconcileChildExtraRules(
+  map: KitchenMap,
+  childId: string,
+  rules: { readonly pins: readonly string[]; readonly bans: readonly string[] },
+): KitchenMap {
+  return {
+    ...map,
+    children: map.children.map((c) =>
+      c.id === childId
+        ? { ...c, extra_rules: { pinned: [...rules.pins], banned: [...rules.bans] } }
+        : c,
+    ),
+  };
 }
 
 // Optimistically set a cultural prior's enforcement (matched by key) across

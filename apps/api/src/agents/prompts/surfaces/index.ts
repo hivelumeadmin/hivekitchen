@@ -17,6 +17,10 @@ const SURFACE_PROMPTS: Record<LumiSurface, () => string> = {
   brief: planning,
   'meal-detail': mealDetail,
   'child-profile': childProfile,
+  // Slice 7-S15 — the Kitchen Profile shared-tastes edit turn reuses the
+  // child-profile surface voice (both are "what Lumi knows about your kitchen"
+  // editing contexts); no dedicated prompt needed at MVP.
+  'kitchen-profile': childProfile,
   'grocery-list': groceryList,
   'evening-check-in': eveningCheckIn,
   'heart-note': heartNote,

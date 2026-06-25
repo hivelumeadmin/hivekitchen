@@ -41,10 +41,26 @@ interface PriorRow {
   created_at: string;
   updated_at: string;
 }
+interface RecipeRow {
+  id: string;
+  canonical_name: string;
+  created_by_household_id: string;
+  is_active: boolean;
+}
+interface UsageRow {
+  household_id: string;
+  recipe_id: string;
+  is_household_favorite: boolean;
+  is_household_banned: boolean;
+  catalog_provenance: string;
+  last_used_at: string | null;
+}
 interface MockState {
   children: Array<{ id: string; household_id: string }>;
   allergens: AllergenRow[];
   priors: PriorRow[];
+  recipes: RecipeRow[];
+  recipeUsage: UsageRow[];
 }
 
 function seedAllergen(child_id: string, plain: string, household_id = HOUSEHOLD_ID): AllergenRow {
@@ -166,7 +182,17 @@ function buildMockSupabase(state: MockState) {
         };
       }
       if (table === 'cultural_priors') {
+        const matches = (p: PriorRow, f: Record<string, unknown>): boolean =>
+          (f.household_id === undefined || p.household_id === f.household_id) &&
+          (f.key === undefined || p.key === f.key) &&
+          (f.id === undefined || p.id === f.id) &&
+          (f.state === undefined || p.state === f.state);
         return {
+          // findByKeyForHousehold / findByIdForHousehold
+          select() {
+            return thenableChain((f) => state.priors.filter((p) => matches(p, f)));
+          },
+          // updateEnforcementByKey (eq key) AND transition (eq id + eq state)
           update(patch: Partial<PriorRow>) {
             const filters: Record<string, unknown> = {};
             const c = {
@@ -177,14 +203,128 @@ function buildMockSupabase(state: MockState) {
               select() {
                 return {
                   maybeSingle: async () => {
-                    const idx = state.priors.findIndex(
-                      (p) => p.key === filters.key && p.household_id === filters.household_id,
-                    );
+                    const idx = state.priors.findIndex((p) => matches(p, filters));
                     if (idx === -1) return { data: null, error: null };
                     state.priors[idx] = { ...state.priors[idx]!, ...patch };
                     return { data: state.priors[idx], error: null };
                   },
                 };
+              },
+            };
+            return c;
+          },
+        };
+      }
+      if (table === 'recipes') {
+        return {
+          insert(row: Record<string, unknown>) {
+            const stored: RecipeRow = {
+              id: randomUUID(),
+              canonical_name: String(row.canonical_name),
+              created_by_household_id: String(row.created_by_household_id),
+              is_active: true,
+            };
+            state.recipes.push(stored);
+            return {
+              select() {
+                return { single: async () => ({ data: { id: stored.id }, error: null }) };
+              },
+            };
+          },
+          select() {
+            const filters: Record<string, unknown> = {};
+            const c = {
+              eq(col: string, val: unknown) {
+                filters[col] = val;
+                return c;
+              },
+              ilike(col: string, val: unknown) {
+                filters[`ilike_${col}`] = val;
+                return c;
+              },
+              maybeSingle: async () => ({ data: null, error: null }),
+              then(onF: (v: { data: unknown[]; error: null }) => unknown, onR?: (e: unknown) => unknown) {
+                const rows = state.recipes
+                  .filter(
+                    (r) =>
+                      (filters.created_by_household_id === undefined ||
+                        r.created_by_household_id === filters.created_by_household_id) &&
+                      (filters.ilike_canonical_name === undefined ||
+                        r.canonical_name.toLowerCase() ===
+                          String(filters.ilike_canonical_name).toLowerCase()),
+                  )
+                  .map((r) => ({ id: r.id }));
+                return Promise.resolve({ data: rows, error: null }).then(onF, onR);
+              },
+            };
+            return c;
+          },
+        };
+      }
+      if (table === 'household_recipe_usage') {
+        return {
+          insert(row: Record<string, unknown>) {
+            state.recipeUsage.push({
+              household_id: String(row.household_id),
+              recipe_id: String(row.recipe_id),
+              is_household_favorite: row.is_household_favorite === true,
+              is_household_banned: false,
+              catalog_provenance: String(row.catalog_provenance ?? 'declared'),
+              last_used_at: (row.last_used_at as string | undefined) ?? null,
+            });
+            return Promise.resolve({ data: null, error: null });
+          },
+          delete() {
+            const filters: Record<string, unknown> = {};
+            const c = {
+              eq(col: string, val: unknown) {
+                filters[col] = val;
+                return c;
+              },
+              in(_col: string, ids: string[]) {
+                state.recipeUsage = state.recipeUsage.filter(
+                  (u) => !(u.household_id === filters.household_id && ids.includes(u.recipe_id)),
+                );
+                return Promise.resolve({ data: null, error: null });
+              },
+            };
+            return c;
+          },
+          select() {
+            const filters: Record<string, unknown> = {};
+            const c = {
+              eq(col: string, val: unknown) {
+                filters[col] = val;
+                return c;
+              },
+              order() {
+                return c;
+              },
+              then(onF: (v: { data: unknown[]; error: null }) => unknown, onR?: (e: unknown) => unknown) {
+                const rows = state.recipeUsage
+                  .filter(
+                    (u) =>
+                      (filters.household_id === undefined ||
+                        u.household_id === filters.household_id) &&
+                      (filters.is_household_banned === undefined ||
+                        u.is_household_banned === filters.is_household_banned),
+                  )
+                  .map((u) => {
+                    const recipe = state.recipes.find((r) => r.id === u.recipe_id);
+                    return recipe
+                      ? {
+                          is_household_favorite: u.is_household_favorite,
+                          catalog_provenance: u.catalog_provenance,
+                          last_used_at: u.last_used_at,
+                          recipes: {
+                            canonical_name: recipe.canonical_name,
+                            is_active: recipe.is_active,
+                          },
+                        }
+                      : null;
+                  })
+                  .filter((r) => r !== null);
+                return Promise.resolve({ data: rows, error: null }).then(onF, onR);
               },
             };
             return c;
@@ -265,8 +405,31 @@ function emptyState(overrides: Partial<MockState> = {}): MockState {
     children: [{ id: CHILD_ID, household_id: HOUSEHOLD_ID }],
     allergens: [],
     priors: [makePrior()],
+    recipes: [],
+    recipeUsage: [],
     ...overrides,
   };
+}
+
+function seedFavorite(canonical: string, household_id = HOUSEHOLD_ID): {
+  recipe: RecipeRow;
+  usage: UsageRow;
+} {
+  const recipe: RecipeRow = {
+    id: randomUUID(),
+    canonical_name: canonical,
+    created_by_household_id: household_id,
+    is_active: true,
+  };
+  const usage: UsageRow = {
+    household_id,
+    recipe_id: recipe.id,
+    is_household_favorite: true,
+    is_household_banned: false,
+    catalog_provenance: 'declared',
+    last_used_at: '2026-01-01T00:00:00.000Z',
+  };
+  return { recipe, usage };
 }
 
 afterEach(() => {
@@ -457,5 +620,151 @@ describe('PATCH /v1/households/:id/cultural-priors/enforcement', () => {
       payload: { key: 'halal', enforcement: 'strong' },
     });
     expect(res.statusCode).toBe(404);
+  });
+});
+
+// Story 7-S15 (Arc B)
+describe('PATCH /v1/households/:id/cultural-priors/state', () => {
+  let app: FastifyInstance;
+  afterEach(async () => {
+    if (app) await app.close();
+  });
+
+  it('200 opt_in transitions the prior and returns the new state', async () => {
+    const state = emptyState({ priors: [makePrior({ state: 'suggested' })] });
+    const audit = { value: undefined as AuditWriteInput | undefined };
+    app = await buildTestApp(state, audit);
+    const res = await app.inject({
+      method: 'PATCH',
+      url: `/v1/households/${HOUSEHOLD_ID}/cultural-priors/state`,
+      headers: { authorization: `Bearer ${signToken(app)}` },
+      payload: { key: 'halal', action: 'opt_in' },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(JSON.parse(res.body)).toEqual({ key: 'halal', state: 'opt_in_confirmed' });
+    expect(state.priors[0]!.state).toBe('opt_in_confirmed');
+    expect(audit.value?.event_type).toBe('template.state_changed');
+  });
+
+  it('200 forget transitions an opted-in prior to forgotten', async () => {
+    const state = emptyState({ priors: [makePrior({ state: 'opt_in_confirmed' })] });
+    app = await buildTestApp(state);
+    const res = await app.inject({
+      method: 'PATCH',
+      url: `/v1/households/${HOUSEHOLD_ID}/cultural-priors/state`,
+      headers: { authorization: `Bearer ${signToken(app)}` },
+      payload: { key: 'halal', action: 'forget' },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(JSON.parse(res.body)).toEqual({ key: 'halal', state: 'forgotten' });
+  });
+
+  it('404 when the key is not found for the household', async () => {
+    app = await buildTestApp(emptyState({ priors: [] }));
+    const res = await app.inject({
+      method: 'PATCH',
+      url: `/v1/households/${HOUSEHOLD_ID}/cultural-priors/state`,
+      headers: { authorization: `Bearer ${signToken(app)}` },
+      payload: { key: 'halal', action: 'opt_in' },
+    });
+    expect(res.statusCode).toBe(404);
+  });
+
+  it('404 when the path household does not match the caller (no existence leak)', async () => {
+    app = await buildTestApp(emptyState());
+    const res = await app.inject({
+      method: 'PATCH',
+      url: `/v1/households/${randomUUID()}/cultural-priors/state`,
+      headers: { authorization: `Bearer ${signToken(app)}` },
+      payload: { key: 'halal', action: 'opt_in' },
+    });
+    expect(res.statusCode).toBe(404);
+  });
+
+  it('401 without bearer token', async () => {
+    app = await buildTestApp(emptyState());
+    const res = await app.inject({
+      method: 'PATCH',
+      url: `/v1/households/${HOUSEHOLD_ID}/cultural-priors/state`,
+      payload: { key: 'halal', action: 'opt_in' },
+    });
+    expect(res.statusCode).toBe(401);
+  });
+
+  it('403 for a non-primary-parent role', async () => {
+    app = await buildTestApp(emptyState());
+    const res = await app.inject({
+      method: 'PATCH',
+      url: `/v1/households/${HOUSEHOLD_ID}/cultural-priors/state`,
+      headers: { authorization: `Bearer ${signToken(app, { role: 'secondary_caregiver' })}` },
+      payload: { key: 'halal', action: 'opt_in' },
+    });
+    expect(res.statusCode).toBe(403);
+  });
+});
+
+// Story 7-S15 (Arc A)
+describe('PUT /v1/households/:id/favorite-lunches', () => {
+  let app: FastifyInstance;
+  afterEach(async () => {
+    if (app) await app.close();
+  });
+
+  it('200 diffs the list: adds new items and removes dropped ones', async () => {
+    const pasta = seedFavorite('Pasta');
+    const state = emptyState({ recipes: [pasta.recipe], recipeUsage: [pasta.usage] });
+    const audit = { value: undefined as AuditWriteInput | undefined };
+    app = await buildTestApp(state, audit);
+    const res = await app.inject({
+      method: 'PUT',
+      url: `/v1/households/${HOUSEHOLD_ID}/favorite-lunches`,
+      headers: { authorization: `Bearer ${signToken(app)}` },
+      payload: { items: ['Sushi'] },
+    });
+    expect(res.statusCode).toBe(200);
+    const body = JSON.parse(res.body) as { items: string[] };
+    expect(body.items).toEqual(['Sushi']);
+    expect(audit.value?.event_type).toBe('household.profile_updated');
+    expect(audit.value?.metadata).toMatchObject({
+      subject: 'favorite_lunches',
+      added: 1,
+      removed: 1,
+    });
+  });
+
+  it('200 empty list removes all existing favorites', async () => {
+    const pasta = seedFavorite('Pasta');
+    const state = emptyState({ recipes: [pasta.recipe], recipeUsage: [pasta.usage] });
+    app = await buildTestApp(state);
+    const res = await app.inject({
+      method: 'PUT',
+      url: `/v1/households/${HOUSEHOLD_ID}/favorite-lunches`,
+      headers: { authorization: `Bearer ${signToken(app)}` },
+      payload: { items: [] },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(JSON.parse(res.body)).toEqual({ items: [] });
+    expect(state.recipeUsage).toHaveLength(0);
+  });
+
+  it('401 without bearer token', async () => {
+    app = await buildTestApp(emptyState());
+    const res = await app.inject({
+      method: 'PUT',
+      url: `/v1/households/${HOUSEHOLD_ID}/favorite-lunches`,
+      payload: { items: ['Sushi'] },
+    });
+    expect(res.statusCode).toBe(401);
+  });
+
+  it('403 for a non-primary-parent role', async () => {
+    app = await buildTestApp(emptyState());
+    const res = await app.inject({
+      method: 'PUT',
+      url: `/v1/households/${HOUSEHOLD_ID}/favorite-lunches`,
+      headers: { authorization: `Bearer ${signToken(app, { role: 'secondary_caregiver' })}` },
+      payload: { items: ['Sushi'] },
+    });
+    expect(res.statusCode).toBe(403);
   });
 });

@@ -322,6 +322,61 @@ describe('allergy-rules.engine.evaluate', () => {
     expect(evaluate(items, rules).verdict).toBe('blocked');
   });
 
+  // -------- Story 3-s43 fix — snack-SKU slots are declared-only --------
+  // Parent-curated snack SKUs (slot==='snack') are evaluated against
+  // parent_declared rules only, NOT the FALCPA-9 universal floor. A dairy- or
+  // wheat-tagged snack must clear when no child declared that allergen, while
+  // the same tag in a recipe slot (main/extra) is still blocked by the floor.
+  it('clears a dairy-tagged snack SKU when no child declared dairy (FALCPA floor skipped for snacks)', () => {
+    const items = [
+      item({ child_id: CHILD_A, day: 'tuesday', slot: 'snack', ingredients: ['dairy'] }),
+    ];
+    // FALCPA baseline includes 'dairy' but no parent_declared dairy rule exists.
+    const result = evaluate(items, FALCPA_BASELINE);
+    expect(result.verdict).toBe('cleared');
+  });
+
+  it('still blocks a dairy ingredient in a MAIN slot under the FALCPA floor', () => {
+    const items = [
+      item({ child_id: CHILD_A, day: 'tuesday', slot: 'main', ingredients: ['dairy'] }),
+    ];
+    const result = evaluate(items, FALCPA_BASELINE);
+    expect(result.verdict).toBe('blocked');
+  });
+
+  it('blocks a snack SKU tag that matches a household-wide declared allergen', () => {
+    const rules: AllergyRule[] = [
+      ...FALCPA_BASELINE,
+      // household-wide (child_id=null) parent_declared dairy.
+      rule({ allergen: 'dairy', child_id: null, rule_type: 'parent_declared' }),
+    ];
+    const items = [
+      item({ child_id: CHILD_A, day: 'thursday', slot: 'snack', ingredients: ['dairy'] }),
+    ];
+    const result = evaluate(items, rules);
+    expect(result.verdict).toBe('blocked');
+    if (result.verdict === 'blocked') {
+      expect(result.conflicts[0].allergen).toBe('dairy');
+    }
+  });
+
+  it('blocks a snack SKU tag that matches a per-child declared allergen, not the sibling', () => {
+    const rules: AllergyRule[] = [
+      ...FALCPA_BASELINE,
+      rule({ allergen: 'wheat', child_id: CHILD_A, rule_type: 'parent_declared' }),
+    ];
+    const items = [
+      item({ child_id: CHILD_A, day: 'monday', slot: 'snack', ingredients: ['wheat'] }),
+      item({ child_id: CHILD_B, day: 'monday', slot: 'snack', ingredients: ['wheat'] }),
+    ];
+    const result = evaluate(items, rules);
+    expect(result.verdict).toBe('blocked');
+    if (result.verdict === 'blocked') {
+      expect(result.conflicts).toHaveLength(1);
+      expect(result.conflicts[0].child_id).toBe(CHILD_A);
+    }
+  });
+
   // -------------------- Story 3.24 — FALCPA synonym extensions --------------------
 
   it('FALCPA "fish" rule blocks "worcestershire" (3.24 synonym, anchovy-based)', () => {

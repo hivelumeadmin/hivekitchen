@@ -34,6 +34,12 @@ export interface LLMCallOptions {
    *  by agent_type and prompt_version when running evals. Ignored when
    *  storeCompletions is false. Values must be strings (OpenAI requirement). */
   metadata?: Record<string, string>;
+  /** Slice 3.5-s2 — internal dotted tool name (e.g. 'plan.compose') to FORCE.
+   *  When set on a provider that supportsStrictTools(), the adapter pins
+   *  `tool_choice` to that tool and marks its function definition `strict: true`
+   *  so the model cannot stop without calling it and cannot emit schema-invalid
+   *  arguments. Ignored by providers that do not support strict tools. */
+  forcedToolName?: string;
 }
 
 export interface LLMToolCall {
@@ -84,4 +90,9 @@ export interface LLMProvider {
   ): Promise<LLMResponse>;
   stream(prompt: string, tools: ToolSpec[], options: LLMCallOptions): AsyncIterable<LLMStreamEvent>;
   probe(): Promise<boolean>;
+  /** Slice 3.5-s2 — whether this provider enforces OpenAI-style strict tool
+   *  calling (forced `tool_choice` + `strict: true` schema validation at the
+   *  decode layer). When true, the orchestrator can rely on `forcedToolName`
+   *  to guarantee a schema-valid tool call. Default expectation: false. */
+  supportsStrictTools(): boolean;
 }

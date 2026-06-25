@@ -111,6 +111,8 @@ export const AUDIT_EVENT_TYPES = [
   // households
   'household.extra_library_item_created',
   'household.extra_library_item_archived',
+  'household.snack_sku_added', // Story 3-S41 — family snack shelf add
+  'household.snack_sku_archived', // Story 3-S41 — family snack shelf remove
   'household.profile_updated',
   'household.sovereignty_mode_changed',
   'household.geolocation_consent', // 5-S14: geolocation opt-in consent (NFR-PRIV-3)

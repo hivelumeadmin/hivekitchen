@@ -257,6 +257,9 @@ The following starter-level gaps are intentionally not closed here — they belo
 - Feature-flag mechanism (cohort assignment per FR103 needs durable store with audit).
 - **Provider adapter contract shape (Step 5 Patterns):** what does `LLMProvider.complete(prompt, tools, options)` look like such that OpenAI Agents SDK, hand-rolled OpenAI client, and a future Anthropic client all implement it without leaking vendor types? This is the interface that makes the 15-minute failover NFR practically achievable.
 
+> **AR-2.1 — Planner compose pipeline (post-3.5-s5)**
+> After Epic 3.5-s5, `planWeek` is a linear pipeline: `assemble → ensureCandidateCoverage → compose → (guardrail/swap/commit by caller)`. Recipe acquisition is a deterministic pre-flight (`ensureCandidateCoverage`) that calls `RecipeService.search` / `RecipeService.discover` directly — NOT model-driven tool calls. The LLM makes exactly one call: a forced `plan.compose` with no tools other than `plan.compose` itself. The ReAct loop and `MAX_PLAN_ITERATIONS` ceiling no longer exist. The `swapBlockedItems` Swap Agent loop is unchanged.
+
 ## Core Architectural Decisions
 
 Amendments from Step 4 Party Mode (Winston / Mary / John / Sally / Amelia) are integrated inline below. Decisions marked **[amended]** carry a one-line note naming the source; unannotated decisions passed the party review unchanged.
@@ -837,6 +840,7 @@ apps/web/src/
 - SSE reconnect: client uses `EventSource` reconnect with the §Observability backoff curve — 1s × 2× ±20% jitter, cap 60s. Implemented in `apps/web/src/lib/sse.ts`.
 - ElevenLabs WebSocket: same backoff. SDK manages most of it; HiveKitchen surfaces graceful-degradation copy per §UX-Spec-Step-5.
 - LLM provider: orchestrator catches `provider.unavailable` errors, swaps `LLMProvider` instance per the adapter per §Branch-C; fail-over budget 15min per NFR.
+  - **Epic 3.5 (planner re-architecture, approved 2026-06-24 — see `epic-3.5-brief.md`):** the planner `plan.compose` path moves from an open ReAct loop to **forced structured output** at the decode layer (OpenAI strict `json_schema` / Anthropic forced `tool_choice`), and (post-launch) to a **single-shot compose pipeline** `assemble → ensureCandidateCoverage (deterministic; sole tool-call site) → compose (no tools) → guardrail → swap → commit`. The circuit-breaker + 429 reset-token resilience is extracted to a `providers/resilience.ts` decorator; the 15-min failover NFR and audit events (`llm.provider.failover` / `.recovered`) are unchanged. The deterministic Allergy Guardrail Service (AR-3) remains the sole render-eligibility authority throughout — no allergen decision moves into the model (NFR-INT-6).
 
 **5.4 Authentication flow.**
 - Login: `POST /v1/auth/login` → `{ access_token, expires_in }` + Set-Cookie `refresh_token`.

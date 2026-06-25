@@ -229,6 +229,7 @@ describe('assembleRecipeCandidateSlate', () => {
     expect(slate.snack).toHaveLength(1);
     expect(slate.extra).toHaveLength(0);
     expect(slate.main[0]).toEqual({
+      id: 'rec-1',
       name: 'Chana Masala Wraps',
       cuisine_tags: ['indian'],
       allergen_flags: [],
