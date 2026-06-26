@@ -12,6 +12,26 @@ export const MANIFESTED_TOOL_NAMES = ['plan.compose'] as const;
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
+// Story 3.5 — OpenAI strict structured output expresses optional fields as
+// `anyOf: [<schema>, null]` (see openai.adapter.ts addStrictConstraints), so the
+// model emits `null` for fields it means to omit (e.g. recipe_id on a main slot).
+// PlanComposeTreeInputSchema models those fields as `.optional()` (not
+// `.nullable()`) — the whole input tree is optional-not-nullable — so we drop
+// null-valued keys before parsing to turn "explicit null" back into "absent".
+// Recurses through objects and arrays; leaves non-null scalars untouched.
+function stripNulls(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(stripNulls);
+  if (value !== null && typeof value === 'object') {
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(value)) {
+      if (v === null) continue;
+      out[k] = stripNulls(v);
+    }
+    return out;
+  }
+  return value;
+}
+
 // Tree-shape planner tool. Operates on the canonical 4-table tree
 // (main_assignments + days[].slots[].variations). The PLANNER_PROMPT in
 // apps/api/src/agents/prompts/planner.prompt.ts is the matching prompt.
@@ -33,7 +53,7 @@ export function createPlanComposeSpec(
     fn: async (input: unknown) => {
       const start = Date.now();
       try {
-        const parsed = PlanComposeTreeInputSchema.parse(input);
+        const parsed = PlanComposeTreeInputSchema.parse(stripNulls(input));
 
         // Resolve any recipe_id values that are recipe names (not UUIDs) to
         // their catalog UUIDs. The model is more reliable at producing recipe

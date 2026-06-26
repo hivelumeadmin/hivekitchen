@@ -96,20 +96,33 @@ function toJsonSchemaParameters(toolSpec: ToolSpec): Record<string, unknown> {
 
 // Slice 3.5-s2 — recursively apply OpenAI strict-tool schema constraints:
 // every object node gets `additionalProperties: false` and ALL of its
-// properties moved into `required` (OpenAI strict requires this — optional
-// fields become required-but-present, which the model satisfies by emitting
-// null/empty for absent optionals). Non-object nodes (string/number/boolean)
-// are returned unchanged; arrays recurse into `items`; `anyOf` recurses into
-// each branch.
+// properties moved into `required` (OpenAI strict requires `required` to list
+// every property). Non-object nodes (string/number/boolean) are returned
+// unchanged; arrays recurse into `items`; `anyOf` recurses into each branch.
+//
+// CRITICAL — optional fields must be made NULLABLE, not merely required.
+// `z.toJSONSchema` renders `.optional()` as a non-nullable type that is simply
+// absent from `required`; forcing it into `required` without allowing null
+// would compel the model to emit a real value (e.g. a string recipe_id on a
+// `main` slot), which the downstream Zod .superRefine() then rejects. We
+// instead express each originally-optional field as `anyOf: [<schema>, null]`
+// so the model can signal "absent" with null. plan.tools.ts strips null-valued
+// keys before re-validating, so Zod sees the field as genuinely undefined.
 function addStrictConstraints(schema: Record<string, unknown>): Record<string, unknown> {
   if (schema.type === 'object') {
     const props = (schema.properties as Record<string, unknown> | undefined) ?? {};
+    const originallyRequired = new Set(
+      Array.isArray(schema.required) ? (schema.required as string[]) : [],
+    );
     return {
       ...schema,
       additionalProperties: false,
       required: Object.keys(props),
       properties: Object.fromEntries(
-        Object.entries(props).map(([k, v]) => [k, addStrictConstraints(v as Record<string, unknown>)]),
+        Object.entries(props).map(([k, v]) => {
+          const strict = addStrictConstraints(v as Record<string, unknown>);
+          return [k, originallyRequired.has(k) ? strict : makeNullable(strict)];
+        }),
       ),
     };
   }
@@ -123,6 +136,19 @@ function addStrictConstraints(schema: Record<string, unknown>): Record<string, u
     };
   }
   return schema;
+}
+
+// Wrap a schema node as a union with null so OpenAI strict mode accepts an
+// explicit null in place of "field omitted". `anyOf` is strict-compatible and
+// works uniformly for string/number/enum/$ref/array/object nodes. Idempotent:
+// never double-adds a null branch to a schema that already has one.
+function makeNullable(schema: Record<string, unknown>): Record<string, unknown> {
+  if (Array.isArray(schema.anyOf)) {
+    const branches = schema.anyOf as Record<string, unknown>[];
+    const hasNull = branches.some((b) => b.type === 'null');
+    return hasNull ? schema : { ...schema, anyOf: [...branches, { type: 'null' }] };
+  }
+  return { anyOf: [schema, { type: 'null' }] };
 }
 
 // Slice 3.5-s2 — strict variant of toJsonSchemaParameters: the base JSON Schema

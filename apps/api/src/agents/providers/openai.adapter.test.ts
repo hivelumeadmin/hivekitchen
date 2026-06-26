@@ -391,6 +391,22 @@ describe('OpenAIAdapter', () => {
         expect(props.nested.required).toEqual(expect.arrayContaining(['a', 'b']));
       });
 
+      it('makes originally-optional fields nullable (anyOf with null) while keeping required ones plain', () => {
+        const params = toStrictJsonSchemaParameters(strictTool());
+        const props = params.properties as Record<string, Record<string, unknown>>;
+        // optionalField was `.optional()` → wrapped as a union with null so the
+        // model can emit null for "absent" (stripped before Zod re-validation).
+        expect(props.optionalField.anyOf).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({ type: 'string' }),
+            { type: 'null' },
+          ]),
+        );
+        // required fields stay plain (not null-wrapped).
+        expect(props.household_id.type).toBe('string');
+        expect(props.household_id.anyOf).toBeUndefined();
+      });
+
       it('leaves non-object nodes (string, number, array shell) unmodified', () => {
         const params = toStrictJsonSchemaParameters(strictTool());
         const props = params.properties as Record<string, Record<string, unknown>>;
