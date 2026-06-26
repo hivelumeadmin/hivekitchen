@@ -52,18 +52,31 @@ describe('PLANNER_PROMPT', () => {
     expect(PLANNER_PROMPT.text).toContain('FALLBACK ONLY');
   });
 
-  it('is at version v2.9.0', () => {
-    expect(PLANNER_PROMPT.version).toBe('v2.9.0');
+  it('is at version v2.10.0', () => {
+    expect(PLANNER_PROMPT.version).toBe('v2.10.0');
   });
 
-  // Story 3-S33 — no-consecutive-Main distribution rule.
-  it('documents the no-consecutive-Main distribution rule', () => {
-    expect(PLANNER_PROMPT.text).toContain('Main distribution rule');
-    expect(PLANNER_PROMPT.text).toContain(
+  // Story 3.5-s6 — the no-consecutive-Main prose is trimmed to a code-enforced
+  // note (the deterministic validator in post-compose.ts is now the real gate).
+  it('documents the no-consecutive-Main rule as code-enforced', () => {
+    expect(PLANNER_PROMPT.text).toContain('Main distribution');
+    expect(PLANNER_PROMPT.text).toContain('adjacent days must use different Mains');
+    expect(PLANNER_PROMPT.text).toContain('post-compose validator');
+  });
+
+  it('drops the verbose pre-s6 no-consecutive-Main prose', () => {
+    expect(PLANNER_PROMPT.text).not.toContain(
       'NO two consecutive days may share the same Main',
     );
-    expect(PLANNER_PROMPT.text).toContain('A 2-day plan uses 2 distinct Mains');
-    expect(PLANNER_PROMPT.text).toContain('M1, M2, M1, M3, M2');
+    expect(PLANNER_PROMPT.text).not.toContain('A 2-day plan uses 2 distinct Mains');
+    expect(PLANNER_PROMPT.text).not.toContain('M1, M2, M1, M3, M2');
+  });
+
+  // Story 3.5-s6 — portion/spice/texture defaults move to code (post-compose);
+  // the prompt only tells the model to override when the profile asks.
+  it('documents that variation defaults are applied post-compose', () => {
+    expect(PLANNER_PROMPT.text).toContain('safe defaults post-compose');
+    expect(PLANNER_PROMPT.text).toContain('age_band');
   });
 
   it('no longer defaults to the 3-Main consecutive-pairing pattern', () => {

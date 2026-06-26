@@ -28,16 +28,18 @@ import { createPlanComposeSpec } from './tools/plan.tools.js';
 import { createCulturalLookupSpec } from './tools/cultural.tools.js';
 import { PLANNER_PROMPT } from './prompts/planner.prompt.js';
 import { SWAP_PROMPT } from './prompts/swap.prompt.js';
-import { CircuitBreaker } from './circuit-breaker.js';
+import { ResilientProvider } from './providers/resilience.js';
 import type {
   LLMCallOptions,
   LLMMessage,
   LLMProvider,
   LLMResponse,
+  LLMTier,
 } from './providers/llm-provider.interface.js';
 import type { ToolSpec } from './tools.manifest.js';
 import { assemblePlannerContext } from './planner/context/assemble.js';
 import { ensureCandidateCoverage } from './planner/coverage.js';
+import { applyPlanDefaults, enforceNoConsecutiveMain } from './planner/post-compose.js';
 import type {
   PlannerBagComposition,
   PlannerCulturalContext,
@@ -126,6 +128,12 @@ export interface PlanWeekOptions {
   // these are the current Mains on the adjacent days so the planner can avoid
   // matching them (no-consecutive-Main rule). Populated by the regen caller.
   adjacentMains?: ReadonlyArray<{ day: Weekday; main_name: string }>;
+  /**
+   * Story 3.5-s7 — override the LLM tier used for the single forced-compose call.
+   * Default: 'flagship'. Set to 'mini' to run the planner mini-tier eval
+   * (see planner-mini-tier.eval.test.ts). Do NOT change this in production jobs.
+   */
+  composeTier?: LLMTier;
 }
 
 export interface OrchestratorServices {
@@ -146,8 +154,7 @@ const FAILURE_WINDOW_MS = 60_000;
 const RECOVERY_MS = 900_000;
 
 export class DomainOrchestrator {
-  private currentProviderIndex = 0;
-  private readonly breaker: CircuitBreaker;
+  private readonly resilient: ResilientProvider;
   private readonly services: OrchestratorServices;
   // Story 3-31: optional so legacy tests (no discover surface exercised) can
   // construct the orchestrator without mocking a RecipeAgent. planWeek
@@ -155,7 +162,7 @@ export class DomainOrchestrator {
   private readonly recipeAgent: RecipeAgent | null;
 
   constructor(
-    private readonly providers: LLMProvider[],
+    providers: LLMProvider[],
     services: OrchestratorServices,
     private readonly redis: Redis,
     private readonly auditService: AuditService,
@@ -178,45 +185,55 @@ export class DomainOrchestrator {
     TOOL_MANIFEST.set('cultural.lookup', createCulturalLookupSpec(services.culturalPrior, redis));
     TOOL_MANIFEST.set('child_signal', createChildSignalSpec(services.childPrefs, services.children, redis));
 
-    this.breaker = new CircuitBreaker({
+    // Story 3.5-s7 — provider-resilience plumbing (429 retry, circuit breaker,
+    // provider failover) now lives in ResilientProvider. The orchestrator
+    // delegates every LLM call through it; the failover/recovery audit shape is
+    // preserved via the onFailover / onRecovered callbacks below.
+    this.resilient = new ResilientProvider(providers, {
       failureThreshold: FAILURE_THRESHOLD,
       windowMs: FAILURE_WINDOW_MS,
       recoveryMs: RECOVERY_MS,
-      onOpen: () => {
-        this.handleBreakerOpen();
+      logger: this.logger,
+      onFailover: (from, to, reason) => {
+        void this.auditService.write({
+          event_type: 'llm.provider.failover',
+          request_id: randomUUID(),
+          metadata: { from, to, reason },
+        });
       },
-      onRecovered: () => {
-        void this.handleRecoveryAttempt();
+      onRecovered: (from, to) => {
+        void writeAuditWithRetry(
+          this.auditService,
+          {
+            event_type: 'llm.provider.recovered',
+            household_id: 'system',
+            request_id: 'health-check',
+            metadata: { from, to, provider: to },
+          },
+          this.logger,
+        );
       },
     });
   }
 
+  // Story 3.5-s7 — thin wrapper over ResilientProvider. The 429 retry loop and
+  // circuit-breaker accounting moved into ResilientProvider; the orchestrator
+  // keeps the domain concern: filter to the allowed tools and reject any
+  // tool call outside the allowlist. Validation runs AFTER the resilient call
+  // (which already recorded provider success) so a forbidden-tool-call error is
+  // attributed to the agent's tool policy, not the provider's reliability.
   async complete(
     prompt: string,
     tools: ToolSpec[],
     options: LLMCallOptions,
     allowedTools?: readonly string[],
   ): Promise<LLMResponse> {
-    const provider = this.providers[this.currentProviderIndex];
-    if (!provider) {
-      throw new Error(`No active LLM provider at index ${String(this.currentProviderIndex)}`);
-    }
-
     const effectiveTools = allowedTools
       ? tools.filter((t) => allowedTools.includes(t.name))
       : tools;
 
-    let result: LLMResponse;
-    try {
-      result = await provider.complete(prompt, effectiveTools, options);
-      this.breaker.recordSuccess();
-    } catch (err) {
-      this.breaker.recordFailure();
-      throw err;
-    }
+    const result = await this.resilient.complete(prompt, effectiveTools, options);
 
-    // Validation runs AFTER recordSuccess so a forbidden-tool-call error is
-    // attributed to the agent's tool policy, not the provider's reliability.
     if (allowedTools) {
       for (const tc of result.toolCalls ?? []) {
         if (!allowedTools.includes(tc.name)) {
@@ -229,69 +246,20 @@ export class DomainOrchestrator {
   }
 
   // Multi-turn variant of complete() — feeds the full conversation history
-  // (system / user / assistant / tool turns) into the active provider. Mirrors
-  // complete()'s circuit-breaker accounting and forbidden-tool enforcement so
-  // the planner agentic loop gets the same failover guarantees.
+  // (system / user / assistant / tool turns) into the resilient provider, which
+  // owns the 429 retry loop and failover. Mirrors complete()'s allowed-tool
+  // enforcement so the planner gets the same tool-policy guarantees.
   async completeWithMessages(
     messages: LLMMessage[],
     tools: ToolSpec[],
     options: LLMCallOptions,
     allowedTools?: readonly string[],
   ): Promise<LLMResponse> {
-    const provider = this.providers[this.currentProviderIndex];
-    if (!provider) {
-      throw new Error(`No active LLM provider at index ${String(this.currentProviderIndex)}`);
-    }
-
     const effectiveTools = allowedTools
       ? tools.filter((t) => allowedTools.includes(t.name))
       : tools;
 
-    // Retry loop for OpenAI 429 TPM rate limit errors. The SDK's default 2
-    // retries use the `retry-after` header (~3s) but often that's not enough
-    // time for the token window to clear. We read the `x-ratelimit-reset-tokens`
-    // header (seconds until the full TPM window resets) and wait that long.
-    const MAX_RATE_LIMIT_RETRIES = 3;
-    let result: LLMResponse;
-    for (let attempt = 0; ; attempt++) {
-      try {
-        result = await provider.completeWithMessages(messages, effectiveTools, options);
-        this.breaker.recordSuccess();
-        break;
-      } catch (err) {
-        const isRateLimit =
-          err != null &&
-          typeof err === 'object' &&
-          'status' in err &&
-          (err as { status: number }).status === 429;
-        if (isRateLimit && attempt < MAX_RATE_LIMIT_RETRIES) {
-          // Read reset-tokens header if available, else fall back to 90s.
-          const headers =
-            (err as { headers?: Record<string, string> }).headers ?? {};
-          const resetTokensHeader = headers['x-ratelimit-reset-tokens'];
-          // Header formats: "54.726s" (seconds only) or "1m21.587s" (minutes+seconds)
-          let resetSec = 90;
-          if (resetTokensHeader) {
-            const minMatch = /(\d+)m([\d.]+)s/.exec(resetTokensHeader);
-            const secMatch = /^([\d.]+)s$/.exec(resetTokensHeader);
-            if (minMatch) {
-              resetSec = parseInt(minMatch[1], 10) * 60 + parseFloat(minMatch[2]);
-            } else if (secMatch) {
-              resetSec = parseFloat(secMatch[1]);
-            }
-          }
-          const waitMs = Math.ceil(resetSec * 1000) + 1000; // +1s buffer
-          this.logger.warn(
-            { attempt, waitMs, resetTokensHeader },
-            'completeWithMessages: TPM rate limit — waiting for token window reset',
-          );
-          await new Promise<void>((resolve) => setTimeout(resolve, waitMs));
-          continue;
-        }
-        this.breaker.recordFailure();
-        throw err;
-      }
-    }
+    const result = await this.resilient.completeWithMessages(messages, effectiveTools, options);
 
     if (allowedTools) {
       for (const tc of result.toolCalls ?? []) {
@@ -488,7 +456,9 @@ export class DomainOrchestrator {
         // Slice B — semantic tier rather than hardcoded model id. Adapter
         // resolves to gpt-4o today; a future model bump is a one-line change
         // in providers/openai.adapter.ts.
-        tier: 'flagship',
+        // Story 3.5-s7 — `composeTier` lets the mini-tier live eval force 'mini';
+        // every production caller leaves it undefined → 'flagship'.
+        tier: opts.composeTier ?? 'flagship',
         // Story 3-S38 (Opt #3) — 0.2 sharply cuts format drift while keeping a
         // sliver of variety for recipe selection.
         temperature: 0.2,
@@ -511,14 +481,21 @@ export class DomainOrchestrator {
     // allowedTools enforcement in completeWithMessages guarantees tc.name ===
     // 'plan.compose'. plan.tools.ts validates input + output schemas; infra
     // errors (e.g. ZodError, unresolved handle) propagate — no catch.
-    const result = (await planComposeTool.fn(tc.arguments)) as PlanComposeTreeOutput;
+    const composed = (await planComposeTool.fn(tc.arguments)) as PlanComposeTreeOutput;
+
+    // Story 3.5-s6 — post-compose deterministic passes:
+    // applyPlanDefaults fills portion_size/spice_level/texture for any variation
+    // the model left undefined (never touches removals/add_ons).
+    // enforceNoConsecutiveMain throws if adjacent calendar days share a Main.
+    const defaulted = applyPlanDefaults(composed, augmentedCtx);
+    enforceNoConsecutiveMain(defaulted);
 
     this.logger.info(
-      { requestId, householdId, weekOf, planId: result.plan_id },
+      { requestId, householdId, weekOf, planId: defaulted.plan_id },
       'planWeek: plan composed',
     );
 
-    return result;
+    return defaulted;
   }
 
   // Slice E — per-slot Swap Agent. Mirrors planWeek's structure but with a
@@ -720,90 +697,15 @@ export class DomainOrchestrator {
   }
 
   getActiveProvider(): LLMProvider {
-    const provider = this.providers[this.currentProviderIndex];
-    if (!provider) {
-      throw new Error(`No active LLM provider at index ${String(this.currentProviderIndex)}`);
-    }
-    return provider;
+    return this.resilient.getActiveProvider();
   }
 
   getProviderStatus(): { active_provider: string; circuit_open: boolean; providers: string[] } {
-    return {
-      active_provider: this.providers[this.currentProviderIndex]?.name ?? 'unknown',
-      circuit_open: this.breaker.isTripped(),
-      providers: this.providers.map((p) => p.name),
-    };
+    return this.resilient.getStatus();
   }
 
   dispose(): void {
-    this.breaker.dispose();
-  }
-
-  private handleBreakerOpen(): void {
-    const reason = `circuit_breaker_open_after_${String(FAILURE_THRESHOLD)}_failures_in_${String(FAILURE_WINDOW_MS)}ms`;
-    const previousProvider = this.providers[this.currentProviderIndex];
-    this.logger.warn(
-      { provider: previousProvider?.name, reason },
-      'circuit breaker opened — swapping provider',
-    );
-    this.swapProvider(reason);
-  }
-
-  private async handleRecoveryAttempt(): Promise<void> {
-    // Guard: only attempt recovery when we are actually on a non-primary
-    // provider. This also covers the case where a stale recovery callback
-    // fires after `currentProviderIndex` was already reset.
-    if (this.currentProviderIndex === 0) return;
-    const primary = this.providers[0];
-    if (!primary) return;
-    const previous = this.providers[this.currentProviderIndex];
-    let healthy = false;
-    try {
-      healthy = await primary.probe();
-    } catch {
-      healthy = false;
-    }
-    if (healthy) {
-      this.currentProviderIndex = 0;
-      this.logger.info(
-        { event_type: 'llm.provider.recovered', from: previous?.name, to: primary.name },
-        'primary provider recovered',
-      );
-      void writeAuditWithRetry(
-        this.auditService,
-        {
-          event_type: 'llm.provider.recovered',
-          household_id: 'system',
-          request_id: 'health-check',
-          metadata: { from: previous?.name ?? 'unknown', to: primary.name, provider: primary.name },
-        },
-        this.logger,
-      );
-    }
-  }
-
-  private swapProvider(reason: string): void {
-    const previousIndex = this.currentProviderIndex;
-    const nextIndex = Math.min(previousIndex + 1, this.providers.length - 1);
-    if (nextIndex === previousIndex) {
-      this.logger.error(
-        { provider: this.providers[previousIndex]?.name, reason },
-        'no remaining providers to fail over to',
-      );
-      return;
-    }
-    this.currentProviderIndex = nextIndex;
-    const from = this.providers[previousIndex]?.name ?? 'unknown';
-    const to = this.providers[nextIndex]?.name ?? 'unknown';
-    this.logger.error(
-      { event_type: 'llm.provider.failover', from, to, reason },
-      'llm provider failover triggered',
-    );
-    void this.auditService.write({
-      event_type: 'llm.provider.failover',
-      request_id: randomUUID(),
-      metadata: { from, to, reason },
-    });
+    this.resilient.dispose();
   }
 }
 

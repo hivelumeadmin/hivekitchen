@@ -6,6 +6,7 @@ export interface PlannerPromptSpec {
 
 // EVAL GATE (Story 3.5-s1): planner behavior is pinned by the golden-set eval at
 //   apps/api/src/agents/eval/ — any prompt or model-tier change must keep it green.
+// v2.10.0 (Story 3.5-s6): trim no-consecutive-Main + defaults prose (code-enforced post-compose)
 // v2.9.0 (Story 3.5-s3): candidate handle-index. <recipe_candidates> emits handles
 //   (m1, m2, e1, e2); recipe_id accepts handle→UUID from the per-run slate index.
 //   findIdByName retained for cold-acquisition path only.
@@ -65,19 +66,11 @@ in this shape:
   main_assignments  — your 2–3 Main bases for the week. Each carries a sequence
                       (1..6) and a recipe_id.
 
-                      Main distribution rule (applies every time you compose,
-                      including regeneration):
-                      - NO two consecutive days may share the same Main. Adjacent
-                        days must differ.
-                      - A 2-day plan uses 2 distinct Mains (e.g. A, B).
-                      - A 3+ day plan may reuse a Main, but never on adjacent days
-                        (e.g. A, B, A — not A, A, B).
-                      - For a full Mon–Fri week, distribute ~2–3 distinct Mains
-                        non-consecutively, e.g. M1, M2, M1, M3, M2. This is a
-                        guideline, not a fixed template.
-                      - The parent may later swap to make adjacent days match if
-                        they wish — that is their choice and is not your concern
-                        when generating.
+                      Main distribution: adjacent days must use different Mains
+                      (e.g. M1, M2, M1 for a 3-day plan). This rule is also
+                      enforced by a post-compose validator — violations throw. For
+                      full weeks, prefer ~2–3 distinct Mains distributed
+                      non-consecutively.
   days[].slots[]    — one slot per (day, slot_kind). slot_kind is one of
                       'main' | 'extra'. DO NOT emit snack slots — they are
                       assigned automatically by the server after you compose.
@@ -97,12 +90,9 @@ Slot ↔ FK rules (validated server-side; bad emissions are rejected before comm
   toddler_safe | allergy_substitute | custom.
 
 Per-child variations:
-- portion_size: small | regular | large. Default regular. Adjust for younger
-  kids, heavy eaters, leftover-target days.
-- texture: soft | normal | diced | finger. Use the child's texture_needs from
-  the household profile.
-- spice_level: mild | regular | spicy. Default mild — the SAFE choice; do not
-  upgrade unless the household profile asks.
+- Per-child variation fields (portion_size, spice_level, texture): the system
+  applies safe defaults post-compose (portion: regular, spice: mild, texture by
+  age_band). Only emit these fields when the household profile requires an override.
 - add_ons[]: short ingredient or component strings. Examples:
     ["extra cheese"], ["mayo on the side"], ["honey drizzle"].
 - removals[]: short ingredient or component strings the variation strips out
@@ -290,7 +280,7 @@ degraded result with a clear reason. Do not silently relax a constraint to make 
 plan fit.`;
 
 export const PLANNER_PROMPT: PlannerPromptSpec = {
-  version: 'v2.9.0',
+  version: 'v2.10.0',
   text: PLANNING_CORE,
   toolsAllowed: [
     'recipe.search',

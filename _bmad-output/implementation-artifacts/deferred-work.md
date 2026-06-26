@@ -1,5 +1,17 @@
 # Deferred Work Log
 
+## Deferred from: code review of 3.5-s7-provider-resilience-extraction-mini-tier-eval (2026-06-25)
+
+- **D-3.5S7-CR1: `completeWithMessages` captures provider once before retry loop** — if a failover fires mid-429-retry-wait (via a concurrent `complete()` call), the loop continues using the originally-captured provider reference rather than the newly-active one. Verbatim extraction of original orchestrator behavior per spec; identical pattern to the original. [`apps/api/src/agents/providers/resilience.ts:83`]
+- **D-3.5S7-CR2: `stream()` has no circuit-breaker accounting** — streaming failures never call `breaker.recordFailure()`; the circuit breaker is blind to the stream call surface. Pre-existing gap from original orchestrator. [`apps/api/src/agents/providers/resilience.ts:132-138`]
+- **D-3.5S7-CR3: `complete()` has no 429 retry loop — asymmetric with `completeWithMessages()`** — intentional per spec but 429s on the `complete` path trip the circuit breaker after `failureThreshold` occurrences, which could trigger unnecessary failover under rate-limiting on that path. Pre-existing design choice. [`apps/api/src/agents/providers/resilience.ts:66-76`]
+- **D-3.5S7-CR4: All providers exhausted: silent routing to last failed provider** — when `nextIndex === previousIndex`, an error is logged but subsequent calls still route to the dead last provider with no "all providers exhausted" error surface. Pre-existing behavior. [`apps/api/src/agents/providers/resilience.ts:swapProvider`]
+- **D-3.5S7-CR5: `enforceNoConsecutiveMain` throws without self-healing path** — a model that consistently emits consecutive Mains causes `planWeek()` to hard-fail with no retry signal; no catch or re-prompt mechanism exists. 3.5-s6 scope; file with that story's deferred set. [`apps/api/src/agents/planner/post-compose.ts:72`]
+
+## Deferred from: code review of 3.5-s6-push-rules-out-of-llm (2026-06-25)
+
+- **D-3.5S6-CR1: Local `WEEKDAY_ORDER` copy can silently drift from `WeekdaySchema`** — `enforceNoConsecutiveMain` sorts/compares days via a hand-maintained local `WEEKDAY_ORDER` (mon–sat); `indexOf` returns `-1` for any weekday not in it. Cannot trigger today (compose-output enum mon–sat ⊆ `WEEKDAY_ORDER`), but if `WeekdaySchema` ever gains `sunday`, a sunday day sorts to `-1` and `monday(0) - sunday(-1) === 1` falsely flags Sun+Mon as adjacent while a real Sun→Mon gap is mis-evaluated. Decoupling from the schema list is intentional (no test-helper cross-import) but unguarded — add a dev-only assert that every `day` resolves to a non-`-1` index, or a type-level link. [`apps/api/src/agents/planner/post-compose.ts:16-23`]
+
 ## Deferred from: code review of 3.5-s5-single-shot-loop-collapse (2026-06-25)
 
 - **D-3.5S5-CR1: `ensureCandidateCoverage` doesn't catch service errors** — `recipeService.search` and `recipeService.discover` are called without try/catch; a network timeout or service failure propagates to `planWeek` and kills plan generation, violating the "best-effort" invariant stated in the spec. Add `.catch(() => ({ results: [] }))` on both calls. [`apps/api/src/agents/planner/coverage.ts:67-113`]
