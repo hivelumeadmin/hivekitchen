@@ -1,6 +1,6 @@
 import { PlanComposeTreeOutputSchema } from '@hivekitchen/contracts';
 import type { KitchenMap, PlanComposeTreeOutput, PlanItemForGuardrail } from '@hivekitchen/types';
-import { evaluate, type AllergyRule } from '../../modules/allergy-guardrail/allergy-rules.engine.js';
+import { evaluate, FALCPA_TOP_9, type AllergyRule } from '../../modules/allergy-guardrail/allergy-rules.engine.js';
 import type { EvalFixture, RunResult } from './planner-eval.harness.js';
 
 // ===========================================================================
@@ -98,15 +98,26 @@ export function assertAllergenSafe(
     if (allergens.length === 0) continue; // nothing to enforce for this child
     const items = itemsByChild.get(childId);
     if (!items || items.length === 0) continue; // child not placed this plan
-    // Mark the child's allergens as falcpa rules so the engine's fail-closed
-    // baseline check passes; matching is identical regardless of rule_type.
-    const rules: AllergyRule[] = allergens.map((a, i) => ({
-      id: `eval-${childId}-${String(i)}`,
-      household_id: null,
-      child_id: childId,
-      allergen: a,
-      rule_type: 'falcpa',
-    }));
+    // Guardrail 1.4.0 — only parent_declared rules block (the FALCPA-9 set is
+    // no longer a floor). Seed the 9 falcpa rules so the engine's fail-closed
+    // baseline check passes, then add the child's declared allergens as
+    // parent_declared so they actually block.
+    const rules: AllergyRule[] = [
+      ...FALCPA_TOP_9.map((a, i) => ({
+        id: `eval-falcpa-${String(i)}`,
+        household_id: null,
+        child_id: null,
+        allergen: a,
+        rule_type: 'falcpa' as const,
+      })),
+      ...allergens.map((a, i) => ({
+        id: `eval-${childId}-${String(i)}`,
+        household_id: null,
+        child_id: childId,
+        allergen: a,
+        rule_type: 'parent_declared' as const,
+      })),
+    ];
     const result = evaluate(items, rules);
     // Production treats both 'blocked' and 'uncertain' as blocking (fail-closed semantics).
     if (result.verdict === 'blocked' || result.verdict === 'uncertain') {
