@@ -518,32 +518,38 @@ export class DomainOrchestrator {
 
     // allowedTools enforcement in completeWithMessages guarantees tc.name ===
     // 'plan.compose'. plan.tools.ts validates input + output schemas; infra
-    // errors (e.g. ZodError, unresolved handle) propagate — no catch.
-    const composed = (await planComposeTool.fn(tc.arguments)) as PlanComposeTreeOutput;
-
-    // Story 3.5-s6 — post-compose deterministic passes:
-    // applyPlanDefaults fills portion_size/spice_level/texture for any variation
-    // the model left undefined (never touches removals/add_ons).
-    // enforceNoConsecutiveMain throws if adjacent calendar days share a Main.
-    const defaulted = applyPlanDefaults(composed, augmentedCtx);
+    // errors (e.g. ZodError, unresolved handle) propagate unchanged — the
+    // try/catch only records them to the trace and re-throws (the finally
+    // guarantees a trace file on every exit path).
     try {
-      enforceNoConsecutiveMain(defaulted);
+      const composed = (await planComposeTool.fn(tc.arguments)) as PlanComposeTreeOutput;
+
+      // Story 3.5-s6 — post-compose deterministic passes:
+      // applyPlanDefaults fills portion_size/spice_level/texture for any variation
+      // the model left undefined (never touches removals/add_ons).
+      // enforceNoConsecutiveMain throws if adjacent calendar days share a Main.
+      const defaulted = applyPlanDefaults(composed, augmentedCtx);
+      try {
+        enforceNoConsecutiveMain(defaulted);
+      } catch (err) {
+        tracer?.recordPostCompose(false);
+        throw err;
+      }
+      tracer?.recordPostCompose(true);
+      tracer?.recordResult(defaulted, defaulted.plan_id, Date.now() - planStartMs);
+
+      this.logger.info(
+        { requestId, householdId, weekOf, planId: defaulted.plan_id },
+        'planWeek: plan composed',
+      );
+
+      return defaulted;
     } catch (err) {
-      tracer?.recordPostCompose(false);
       tracer?.recordError(err);
-      await tracer?.flush();
       throw err;
+    } finally {
+      await tracer?.flush();
     }
-    tracer?.recordPostCompose(true);
-    tracer?.recordResult(defaulted, defaulted.plan_id, Date.now() - planStartMs);
-    await tracer?.flush();
-
-    this.logger.info(
-      { requestId, householdId, weekOf, planId: defaulted.plan_id },
-      'planWeek: plan composed',
-    );
-
-    return defaulted;
   }
 
   // Slice E — per-slot Swap Agent. Mirrors planWeek's structure but with a
