@@ -40,6 +40,7 @@ import type { ToolSpec } from './tools.manifest.js';
 import { assemblePlannerContext } from './planner/context/assemble.js';
 import { ensureCandidateCoverage } from './planner/coverage.js';
 import { applyPlanDefaults, enforceNoConsecutiveMain } from './planner/post-compose.js';
+import { createPlanTracer } from './planner/plan-tracer.js';
 import type {
   PlannerBagComposition,
   PlannerCulturalContext,
@@ -302,6 +303,29 @@ export class DomainOrchestrator {
     if (plannedDays && plannedDays.length > 0 && dayScope !== undefined) {
       throw new Error('plannedDays and dayScope are mutually exclusive');
     }
+
+    // Per-run agentic trace (opt-in via PLAN_TRACE_DIR). No-op when unset.
+    const planStartMs = Date.now();
+    const tracer = createPlanTracer(
+      {
+        requestId,
+        householdId,
+        weekOf,
+        tier: opts.composeTier ?? 'flagship',
+        attempt:
+          rejectionContext !== undefined && rejectionContext.length > 0
+            ? 'guardrail-retry'
+            : 'initial',
+      },
+      this.logger,
+    );
+    tracer?.recordContext({
+      kitchenMap: opts.kitchenMap,
+      dayScope,
+      plannedDays,
+      rejectionContext,
+      uncertainContext,
+    });
     // Story 3-31 — recipe.discover needs the per-run requestId in its deps
     // closure (for audit correlation), so we override the manifest's stub
     // spec with a per-run live spec. When recipeAgent isn't wired (legacy
@@ -336,6 +360,13 @@ export class DomainOrchestrator {
       householdId,
       logger: this.logger,
     });
+    tracer?.recordCoverage(
+      { main: ctx.recipeCandidates?.main.length ?? 0, extra: ctx.recipeCandidates?.extra.length ?? 0 },
+      {
+        main: augmentedCtx.recipeCandidates?.main.length ?? 0,
+        extra: augmentedCtx.recipeCandidates?.extra.length ?? 0,
+      },
+    );
 
     // Story 3.5-s3 — render the candidate slate once here, so the handle map is
     // available both for the prompt block (assembled below) and the per-run
@@ -442,6 +473,7 @@ export class DomainOrchestrator {
       { role: 'system', content: PLANNER_PROMPT.text },
       { role: 'user', content: contextLines.join('\n') },
     ];
+    tracer?.recordPrompt(messages);
 
     // Story 3.5-s5 — single forced-compose call. `plan.compose` is the sole
     // tool and `forcedToolName` pins tool_choice to it, so a strict-tools
@@ -449,25 +481,29 @@ export class DomainOrchestrator {
     // ReAct loop, iteration ceiling, stopped-without-compose nudge, and
     // toolTrace debug write are gone — recipe acquisition happened in the
     // ensureCandidateCoverage pre-flight above.
+    const composeOptions: LLMCallOptions = {
+      // Slice B — semantic tier rather than hardcoded model id. Adapter
+      // resolves to gpt-4o today; a future model bump is a one-line change
+      // in providers/openai.adapter.ts.
+      // Story 3.5-s7 — `composeTier` lets the mini-tier live eval force 'mini';
+      // every production caller leaves it undefined → 'flagship'.
+      tier: opts.composeTier ?? 'flagship',
+      // Story 3-S38 (Opt #3) — 0.2 sharply cuts format drift while keeping a
+      // sliver of variety for recipe selection.
+      temperature: 0.2,
+      maxTokens: 4096,
+      metadata: { agent_type: 'planner', prompt_version: PLANNER_PROMPT.version },
+      forcedToolName: 'plan.compose',
+    };
+    tracer?.recordLlmCall(composeOptions, messages.length);
+    const llmStartMs = Date.now();
     const response = await this.completeWithMessages(
       messages,
       [planComposeTool],
-      {
-        // Slice B — semantic tier rather than hardcoded model id. Adapter
-        // resolves to gpt-4o today; a future model bump is a one-line change
-        // in providers/openai.adapter.ts.
-        // Story 3.5-s7 — `composeTier` lets the mini-tier live eval force 'mini';
-        // every production caller leaves it undefined → 'flagship'.
-        tier: opts.composeTier ?? 'flagship',
-        // Story 3-S38 (Opt #3) — 0.2 sharply cuts format drift while keeping a
-        // sliver of variety for recipe selection.
-        temperature: 0.2,
-        maxTokens: 4096,
-        metadata: { agent_type: 'planner', prompt_version: PLANNER_PROMPT.version },
-        forcedToolName: 'plan.compose',
-      },
+      composeOptions,
       ['plan.compose'],
     );
+    tracer?.recordLlmResponse(response, Date.now() - llmStartMs);
 
     const tc = response.toolCalls[0];
     if (tc === undefined) {
@@ -477,6 +513,8 @@ export class DomainOrchestrator {
         'planWeek: model did not call plan.compose (non-forced provider or empty response)',
       );
     }
+
+    tracer?.recordToolCall('plan.compose', tc.arguments);
 
     // allowedTools enforcement in completeWithMessages guarantees tc.name ===
     // 'plan.compose'. plan.tools.ts validates input + output schemas; infra
@@ -488,7 +526,17 @@ export class DomainOrchestrator {
     // the model left undefined (never touches removals/add_ons).
     // enforceNoConsecutiveMain throws if adjacent calendar days share a Main.
     const defaulted = applyPlanDefaults(composed, augmentedCtx);
-    enforceNoConsecutiveMain(defaulted);
+    try {
+      enforceNoConsecutiveMain(defaulted);
+    } catch (err) {
+      tracer?.recordPostCompose(false);
+      tracer?.recordError(err);
+      await tracer?.flush();
+      throw err;
+    }
+    tracer?.recordPostCompose(true);
+    tracer?.recordResult(defaulted, defaulted.plan_id, Date.now() - planStartMs);
+    await tracer?.flush();
 
     this.logger.info(
       { requestId, householdId, weekOf, planId: defaulted.plan_id },
@@ -567,133 +615,165 @@ export class DomainOrchestrator {
       { role: 'user', content: contextLines.join('\n') },
     ];
 
-    let swapResult: PlanComposeTreeOutput | null = null;
-
-    for (let i = 0; i < MAX_SWAP_ITERATIONS; i++) {
-      const response = await this.completeWithMessages(
-        messages,
-        tools,
-        // Mini tier: blocked-item count is small, output is small, hard
-        // safety constraints are validated post-hoc by the deterministic
-        // guardrail. A mini-class model has plenty of recall for the common
-        // allergen substitutions this agent handles.
-        {
-          tier: 'mini',
-          temperature: 0.4,
-          maxTokens: 1024,
-          metadata: { agent_type: 'swap', prompt_version: SWAP_PROMPT.version },
-        },
-        SWAP_PROMPT.toolsAllowed,
-      );
-
-      this.logger.debug(
-        {
-          requestId: opts.requestId,
-          householdId: opts.householdId,
-          iteration: i,
-          model_tier: 'mini',
-          prompt_tokens: response.usage.promptTokens,
-          cached_prompt_tokens: response.usage.cachedPromptTokens,
-          completion_tokens: response.usage.completionTokens,
-          tool_call_count: response.toolCalls.length,
-          blocked_item_count: opts.blockedItems.length,
-        },
-        'swapBlockedItems: llm iteration completed',
-      );
-
-      messages.push({
-        role: 'assistant',
-        content: response.content,
-        toolCalls: response.toolCalls,
-      });
-
-      if (response.finishReason === 'stop' || response.toolCalls.length === 0) {
-        break;
-      }
-
-      for (const tc of response.toolCalls) {
-        const spec = TOOL_MANIFEST.get(tc.name);
-        if (!spec) {
-          this.logger.error(
-            { requestId: opts.requestId, toolName: tc.name },
-            'swapBlockedItems: unregistered tool called — treating as fatal',
-          );
-          throw new ForbiddenToolCallError(tc.name);
-        }
-
-        let result: unknown;
-        try {
-          // The swap agent doesn't know the prompt_version string. Inject it
-          // before schema validation so PlanComposeTreeInputSchema doesn't reject
-          // the call. The value is only observability metadata; the final commit
-          // uses previousCommit.prompt_version, not the swap output's.
-          let callArgs: unknown = tc.arguments;
-          if (tc.name === 'plan.compose') {
-            const a = callArgs as Record<string, unknown>;
-            if (typeof a.prompt_version !== 'string') {
-              callArgs = { ...a, prompt_version: SWAP_PROMPT.version };
-            }
-          }
-          result = await spec.fn(callArgs);
-        } catch (err) {
-          // Same policy as planWeek: plan.compose errors are fatal (no point
-          // continuing the loop with no compose result); other tool errors
-          // are surfaced as JSON so the agent can adapt within the loop.
-          if (tc.name === 'plan.compose') throw err;
-          result = { error: err instanceof Error ? err.message : String(err) };
-        }
-
-        if (tc.name === 'plan.compose') {
-          const parseResult = PlanComposeTreeOutputSchema.safeParse(result);
-          if (!parseResult.success) {
-            try {
-              await this.auditService.write({
-                event_type: 'planner.bad_output',
-                household_id: opts.householdId,
-                request_id: opts.requestId,
-                metadata: {
-                  agent: 'swap',
-                  weekOf: opts.weekOf,
-                  zodIssues: parseResult.error.issues,
-                },
-              });
-            } catch {
-              // audit write failure must not suppress the schema error
-            }
-            throw parseResult.error;
-          }
-          swapResult = parseResult.data;
-        }
-
-        messages.push({
-          role: 'tool',
-          content: JSON.stringify(result),
-          toolCallId: tc.id,
-          name: tc.name,
-        });
-      }
-
-      if (swapResult !== null) break;
-    }
-
-    if (swapResult === null) {
-      throw new Error(
-        `swapBlockedItems: swap agent did not call plan.compose within ${String(MAX_SWAP_ITERATIONS)} iterations (householdId=${opts.householdId}, weekOf=${opts.weekOf})`,
-      );
-    }
-
-    this.logger.info(
+    // Per-run agentic trace (opt-in via PLAN_TRACE_DIR). The swap agent is a
+    // multi-iteration ReAct loop, so each LLM turn and every tool execution is
+    // recorded. The try/finally guarantees a trace file on every exit path.
+    const swapStartMs = Date.now();
+    const tracer = createPlanTracer(
       {
         requestId: opts.requestId,
         householdId: opts.householdId,
         weekOf: opts.weekOf,
-        blocked_item_count: opts.blockedItems.length,
-        proposed_day_count: swapResult.days.length,
+        tier: 'mini',
+        attempt: 'initial',
+        agent: 'swap',
       },
-      'swapBlockedItems: replacements proposed',
+      this.logger,
     );
+    tracer?.recordPrompt(messages);
 
-    return swapResult;
+    let swapResult: PlanComposeTreeOutput | null = null;
+
+    try {
+      for (let i = 0; i < MAX_SWAP_ITERATIONS; i++) {
+        // Mini tier: blocked-item count is small, output is small, hard
+        // safety constraints are validated post-hoc by the deterministic
+        // guardrail. A mini-class model has plenty of recall for the common
+        // allergen substitutions this agent handles.
+        const swapCallOptions = {
+          tier: 'mini' as const,
+          temperature: 0.4,
+          maxTokens: 1024,
+          metadata: { agent_type: 'swap', prompt_version: SWAP_PROMPT.version },
+        };
+        tracer?.recordLlmCall(swapCallOptions, messages.length, i);
+        const llmStartMs = Date.now();
+        const response = await this.completeWithMessages(
+          messages,
+          tools,
+          swapCallOptions,
+          SWAP_PROMPT.toolsAllowed,
+        );
+        tracer?.recordLlmResponse(response, Date.now() - llmStartMs, i);
+
+        this.logger.debug(
+          {
+            requestId: opts.requestId,
+            householdId: opts.householdId,
+            iteration: i,
+            model_tier: 'mini',
+            prompt_tokens: response.usage.promptTokens,
+            cached_prompt_tokens: response.usage.cachedPromptTokens,
+            completion_tokens: response.usage.completionTokens,
+            tool_call_count: response.toolCalls.length,
+            blocked_item_count: opts.blockedItems.length,
+          },
+          'swapBlockedItems: llm iteration completed',
+        );
+
+        messages.push({
+          role: 'assistant',
+          content: response.content,
+          toolCalls: response.toolCalls,
+        });
+
+        if (response.finishReason === 'stop' || response.toolCalls.length === 0) {
+          break;
+        }
+
+        for (const tc of response.toolCalls) {
+          const spec = TOOL_MANIFEST.get(tc.name);
+          if (!spec) {
+            this.logger.error(
+              { requestId: opts.requestId, toolName: tc.name },
+              'swapBlockedItems: unregistered tool called — treating as fatal',
+            );
+            throw new ForbiddenToolCallError(tc.name);
+          }
+
+          let result: unknown;
+          try {
+            // The swap agent doesn't know the prompt_version string. Inject it
+            // before schema validation so PlanComposeTreeInputSchema doesn't reject
+            // the call. The value is only observability metadata; the final commit
+            // uses previousCommit.prompt_version, not the swap output's.
+            let callArgs: unknown = tc.arguments;
+            if (tc.name === 'plan.compose') {
+              const a = callArgs as Record<string, unknown>;
+              if (typeof a.prompt_version !== 'string') {
+                callArgs = { ...a, prompt_version: SWAP_PROMPT.version };
+              }
+            }
+            result = await spec.fn(callArgs);
+          } catch (err) {
+            // Same policy as planWeek: plan.compose errors are fatal (no point
+            // continuing the loop with no compose result); other tool errors
+            // are surfaced as JSON so the agent can adapt within the loop.
+            if (tc.name === 'plan.compose') throw err;
+            result = { error: err instanceof Error ? err.message : String(err) };
+          }
+
+          tracer?.recordToolExecution(tc.name, tc.arguments, result);
+
+          if (tc.name === 'plan.compose') {
+            const parseResult = PlanComposeTreeOutputSchema.safeParse(result);
+            if (!parseResult.success) {
+              try {
+                await this.auditService.write({
+                  event_type: 'planner.bad_output',
+                  household_id: opts.householdId,
+                  request_id: opts.requestId,
+                  metadata: {
+                    agent: 'swap',
+                    weekOf: opts.weekOf,
+                    zodIssues: parseResult.error.issues,
+                  },
+                });
+              } catch {
+                // audit write failure must not suppress the schema error
+              }
+              throw parseResult.error;
+            }
+            swapResult = parseResult.data;
+          }
+
+          messages.push({
+            role: 'tool',
+            content: JSON.stringify(result),
+            toolCallId: tc.id,
+            name: tc.name,
+          });
+        }
+
+        if (swapResult !== null) break;
+      }
+
+      if (swapResult === null) {
+        throw new Error(
+          `swapBlockedItems: swap agent did not call plan.compose within ${String(MAX_SWAP_ITERATIONS)} iterations (householdId=${opts.householdId}, weekOf=${opts.weekOf})`,
+        );
+      }
+
+      tracer?.recordResult(swapResult, swapResult.plan_id, Date.now() - swapStartMs);
+
+      this.logger.info(
+        {
+          requestId: opts.requestId,
+          householdId: opts.householdId,
+          weekOf: opts.weekOf,
+          blocked_item_count: opts.blockedItems.length,
+          proposed_day_count: swapResult.days.length,
+        },
+        'swapBlockedItems: replacements proposed',
+      );
+
+      return swapResult;
+    } catch (err) {
+      tracer?.recordError(err);
+      throw err;
+    } finally {
+      await tracer?.flush();
+    }
   }
 
   getActiveProvider(): LLMProvider {
