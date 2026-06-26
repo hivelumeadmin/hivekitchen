@@ -4,6 +4,7 @@
 **Author:** Drafted by Claude (engineering) at Menon's request
 **Status:** DRAFT — pre-epic spec. Not yet sliced.
 **Scope:** The conversational-editing layer for the weekly planner — "talk to your plan" — and the deterministic catalog selector it depends on.
+**Companion doc:** [`lumi-conversational-ux-rebuild-vision.md`](./lumi-conversational-ux-rebuild-vision.md) — the UX *what / why* (valet model, onboarding, planner). This spec is the *how* for that vision's planner conversational-editing (§4). Read them together.
 
 > **⚠️ This doc will move once the Onboarding agent API re-spec (Epic 2.7) lands.**
 > The planner conversational-edit layer is the **same control-inversion pattern** Epic 2.7 applies to onboarding: a deterministic controller owns flow, the LLM is a stateless turn function that only classifies and fills slots. Field names, the provider-seam call shape, the strict-schema path, and the trace facility are all expected to converge with whatever 2.7 settles. Treat the *shapes* here as authoritative and the *exact signatures* as provisional until 2.7's `OnboardingController` / `TurnRunner` split is finalized — then reconcile.
