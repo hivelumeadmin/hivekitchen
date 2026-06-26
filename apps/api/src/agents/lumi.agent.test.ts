@@ -173,8 +173,9 @@ describe('LumiAgent.respond — conversational context (5-S11)', () => {
     const sys = systemMessageOf(create);
     expect(sys).toContain('# Conversational Context');
     expect(sys).toContain('Time of day: evening');
-    expect(sys).toContain('The parent has time to reflect.');
-    expect(sys).toContain('2–4 sentence');
+    expect(sys).toContain('The parent has time.');
+    expect(sys).toContain('2–3 sentences');
+    expect(sys).toContain('do not pad or invite more chat');
   });
 
   it('adds the reflective instruction for timeOfDayBand=night', async () => {
@@ -187,7 +188,7 @@ describe('LumiAgent.respond — conversational context (5-S11)', () => {
       conversationalContext: { timeOfDayBand: 'night' },
     });
 
-    expect(systemMessageOf(create)).toContain('The parent has time to reflect.');
+    expect(systemMessageOf(create)).toContain('The parent has time.');
   });
 
   it('omits the Conversational Context block when conversationalContext is absent', async () => {

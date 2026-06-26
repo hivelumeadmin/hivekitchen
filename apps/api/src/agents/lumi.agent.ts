@@ -222,7 +222,7 @@ export class LumiAgent {
       const instruction =
         timeOfDayBand === 'morning' || timeOfDayBand === 'afternoon'
           ? 'The parent is likely in a hurry. Keep your reply to one or two sentences — direct and warm, not terse.'
-          : 'The parent has time to reflect. A warm 2–4 sentence reply is welcome — be specific to this family, not generic.';
+          : 'The parent has time. A warm 2–3 sentences, specific to this family. Even with time, do not pad or invite more chat — say the useful thing and stop.';
       parts.push(`\n# Conversational Context\nTime of day: ${timeOfDayBand}\n${instruction}`);
     }
 

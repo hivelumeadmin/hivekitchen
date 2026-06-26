@@ -1,0 +1,196 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>HiveKitchen — Lumi as Valet · Rough Mockup</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Public+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#1a1714; --surface:#232019; --surface-2:#2c281f; --surface-3:#363023;
+    --fg:#f4efe6; --fg-muted:#a59c8c; --border:#3a352c;
+    --amber:#D98F3C; --amber-warm:#E8A24E;
+    --lumi-terracotta:#C97B5A; --lumi-terracotta-warmed:#D98E6E;
+    --sacred-plum:#8A6E94; --foliage:#7C9A6B; --safety-teal:#5FA8A0;
+    --r-sm:6px; --r-md:10px; --r-lg:16px; --r-xl:24px;
+    --serif:'Instrument Serif',Georgia,serif; --sans:'Public Sans',system-ui,sans-serif;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--fg);font-family:var(--sans);font-size:15px;line-height:1.5;-webkit-font-smoothing:antialiased}
+  h1,.serif{font-family:var(--serif);font-weight:400}
+
+  .chrome{position:sticky;top:0;z-index:60;background:rgba(26,23,20,.92);backdrop-filter:blur(8px);border-bottom:1px solid var(--border)}
+  .chrome .in{max-width:920px;margin:0 auto;padding:0 24px;display:flex;align-items:center;gap:14px;height:56px}
+  .brand{font-family:var(--serif);font-size:19px;color:var(--amber)}
+  .states{display:flex;gap:6px;margin-left:6px}
+  .stbtn{font:inherit;font-size:12.5px;font-weight:600;color:var(--fg-muted);background:transparent;border:1px solid var(--border);border-radius:999px;padding:6px 13px;cursor:pointer}
+  .stbtn[aria-current="true"]{color:var(--bg);background:var(--amber);border-color:var(--amber)}
+  .hint{margin-left:auto;color:var(--fg-muted);font-size:12px}
+
+  /* ===== THE FINISHED PRODUCT SURFACE — full width, NO chat column ===== */
+  .page{max-width:920px;margin:0 auto;padding:40px 24px 140px}
+  .eyebrow{letter-spacing:.14em;text-transform:uppercase;font-size:11px;font-weight:700;color:var(--fg-muted);margin-bottom:12px}
+  h1.moment{font-size:58px;line-height:1.02;margin:0 0 16px}
+  .lede{font-size:18px;color:var(--fg);max-width:62ch;margin-bottom:6px}
+  /* visible-memory: Lumi "knows you", shown in the WORK not a chat */
+  .mem{color:var(--fg-muted);font-style:italic}
+  .mem b{color:var(--lumi-terracotta);font-style:normal;font-weight:600}
+
+  .week{display:grid;grid-template-columns:repeat(5,1fr);gap:14px;margin-top:34px}
+  .tile{background:var(--surface);border:1px solid var(--border);border-radius:var(--r-lg);padding:16px;position:relative;transition:.18s}
+  .tile .day{font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--fg-muted);font-weight:700}
+  .tile .dish{font-family:var(--serif);font-size:20px;margin:10px 0 12px;line-height:1.12}
+  .tile .sub{font-size:12px;color:var(--fg-muted)}
+  .kid{display:inline-flex;align-items:center;gap:5px;font-size:11px;color:var(--fg-muted);margin-right:8px}
+  .dot{width:7px;height:7px;border-radius:50%}
+  .badge{display:inline-flex;gap:5px;margin-top:12px;font-size:11px;font-weight:600;color:var(--safety-teal);background:rgba(95,168,160,.12);border-radius:999px;padding:3px 9px}
+  .tile.changed{border-color:rgba(217,143,60,.5)}
+  .tile.changed:after{content:"updated";position:absolute;top:12px;right:12px;font-size:9px;letter-spacing:.08em;text-transform:uppercase;color:var(--amber);font-weight:700}
+
+  /* finished, calm action row — present buttons, not a chat box */
+  .actions{display:flex;gap:12px;margin-top:34px;align-items:center}
+  .btn{font:inherit;font-weight:600;font-size:14px;border-radius:var(--r-md);padding:12px 20px;cursor:pointer;border:1px solid transparent;display:inline-flex;gap:8px;align-items:center}
+  .btn.primary{background:var(--fg);color:var(--bg)}
+  .btn.tertiary{background:transparent;color:var(--fg-muted);border:none;text-decoration:underline;text-underline-offset:3px}
+
+  .explain{margin-top:46px;color:var(--fg-muted);font-size:12px;border-left:2px solid var(--border);padding-left:14px;max-width:60ch}
+  .explain b{color:var(--fg)}
+
+  /* ===== LUMI: ambient presence (the valet by the door) ===== */
+  .valet{position:fixed;right:26px;bottom:26px;z-index:40;display:flex;align-items:center;gap:0;cursor:pointer}
+  .pres{width:14px;height:14px;border-radius:50%;background:radial-gradient(circle at 35% 30%,var(--lumi-terracotta-warmed),var(--lumi-terracotta));box-shadow:0 0 14px rgba(201,123,90,.5);transition:.3s}
+  .pres.rest{animation:breathe 5s ease-in-out infinite}      /* barely-there at rest */
+  @keyframes breathe{0%,100%{opacity:.55;transform:scale(1)}50%{opacity:.9;transform:scale(1.12)}}
+  .valet .lab{font-size:12px;font-weight:600;color:var(--fg-muted);max-width:0;overflow:hidden;white-space:nowrap;transition:.3s;opacity:0}
+  .valet:hover .lab{max-width:120px;opacity:1;margin-left:9px}
+
+  /* ===== WHISPER: one quiet line, dismissible, then gone ===== */
+  .whisper{position:fixed;right:26px;bottom:54px;z-index:39;max-width:340px;background:var(--surface-2);border:1px solid var(--border);border-radius:var(--r-lg);padding:14px 15px;box-shadow:0 18px 50px rgba(0,0,0,.45);transform:translateY(14px);opacity:0;pointer-events:none;transition:.35s}
+  .whisper.on{transform:none;opacity:1;pointer-events:auto}
+  .whisper .top{display:flex;gap:9px;align-items:flex-start}
+  .whisper .wdot{width:10px;height:10px;border-radius:50%;background:var(--lumi-terracotta);margin-top:5px;flex:none}
+  .whisper p{margin:0;font-size:13.5px;line-height:1.45}
+  .whisper .row{display:flex;gap:14px;margin-top:11px;padding-left:19px}
+  .whisper .row a{font-size:12.5px;font-weight:600;cursor:pointer}
+  .whisper .row .see{color:var(--amber)}
+  .whisper .row .undo{color:var(--fg-muted)}
+  .whisper .row .dismiss{color:var(--fg-muted);margin-left:auto}
+
+  /* ===== SUMMONED: focused temporary sheet that recedes ===== */
+  .scrim{position:fixed;inset:0;background:rgba(12,10,8,.5);backdrop-filter:blur(2px);z-index:45;opacity:0;pointer-events:none;transition:.3s}
+  .scrim.on{opacity:1;pointer-events:auto}
+  .sheet{position:fixed;right:26px;bottom:26px;z-index:46;width:380px;max-width:calc(100vw - 40px);background:var(--surface);border:1px solid var(--border);border-radius:var(--r-xl);padding:20px;box-shadow:0 26px 70px rgba(0,0,0,.55);transform:translateY(20px) scale(.98);opacity:0;pointer-events:none;transition:.3s}
+  .sheet.on{transform:none;opacity:1;pointer-events:auto}
+  .sheet .sh{display:flex;align-items:center;gap:10px;margin-bottom:14px}
+  .sheet .so{width:24px;height:24px;border-radius:50%;background:radial-gradient(circle at 35% 30%,var(--lumi-terracotta-warmed),var(--lumi-terracotta));box-shadow:0 0 14px rgba(201,123,90,.5)}
+  .sheet .who{font-family:var(--serif);font-size:17px}
+  .sheet .x{margin-left:auto;color:var(--fg-muted);cursor:pointer;font-size:18px;line-height:1}
+  .sheet .said{font-family:var(--serif);font-size:18px;line-height:1.35;margin:2px 0 14px}
+  .sheet .uecho{background:var(--lumi-terracotta);color:#241712;border-radius:13px;border-bottom-right-radius:4px;padding:8px 12px;font-size:13.5px;width:fit-content;margin:0 0 12px auto}
+  .sheet .mini{background:var(--surface-2);border:1px solid var(--border);border-radius:var(--r-md);padding:11px 13px;margin-bottom:14px}
+  .sheet .mini .r{display:flex;justify-content:space-between;font-size:12.5px;color:var(--fg-muted);padding:3px 0}
+  .sheet .mini .r b{color:var(--fg);font-weight:600}
+  .sheet .field{display:flex;gap:8px;align-items:flex-end}
+  .sheet textarea{flex:1;resize:none;background:var(--surface-2);border:1px solid var(--border);border-radius:var(--r-lg);color:var(--fg);font:inherit;font-size:13.5px;padding:10px 12px;height:42px}
+  .sheet .send{flex:none;width:42px;height:42px;border-radius:50%;border:none;background:var(--amber);color:#241712;font-size:17px;cursor:pointer}
+  .sheet .recede{font-size:11px;color:var(--fg-muted);text-align:center;margin-top:12px;font-style:italic}
+
+  .stateNote{position:fixed;left:24px;bottom:24px;z-index:40;max-width:300px;font-size:12px;color:var(--fg-muted);background:var(--surface);border:1px solid var(--border);border-radius:var(--r-md);padding:11px 13px}
+  .stateNote b{color:var(--amber)}
+</style>
+</head>
+<body>
+
+<div class="chrome">
+  <div class="in">
+    <span class="brand">HiveKitchen · Lumi as valet</span>
+    <div class="states">
+      <button class="stbtn" data-st="rest" aria-current="true">At rest</button>
+      <button class="stbtn" data-st="whisper">Lumi whispers</button>
+      <button class="stbtn" data-st="summon">You summon Lumi</button>
+    </div>
+    <span class="hint">same finished surface · Lumi comes &amp; goes</span>
+  </div>
+</div>
+
+<!-- ============ THE PRODUCT (always the same finished surface) ============ -->
+<div class="page">
+  <div class="eyebrow">This week · Mon 29 Jun – Fri 3 Jul</div>
+  <h1 class="moment">An easy week.</h1>
+  <p class="lede">Three cooks, two leftover days, nothing over 25 minutes.</p>
+  <p class="lede mem">Lighter than last week — <b>because you mentioned the school play runs late all week.</b></p>
+
+  <div class="week">
+    <div class="tile"><div class="day">Mon</div><div class="dish">Teriyaki rice bowls</div><span class="kid"><span class="dot" style="background:var(--foliage)"></span>Maya</span><span class="kid"><span class="dot" style="background:var(--lumi-terracotta)"></span>Sam</span><div class="badge">✓ cleared</div></div>
+    <div class="tile"><div class="day">Tue</div><div class="dish">Hummus &amp; pita box</div><div class="sub">no-cook</div><div class="badge">✓ cleared</div></div>
+    <div class="tile"><div class="day">Wed</div><div class="dish">Teriyaki, round two</div><div class="sub">leftovers</div><div class="badge">✓ cleared</div></div>
+    <div class="tile" id="thuTile"><div class="day">Thu</div><div class="dish" id="thuDish">Mini frittata muffins</div><span class="kid"><span class="dot" style="background:var(--foliage)"></span>Maya</span><span class="kid"><span class="dot" style="background:var(--lumi-terracotta)"></span>Sam</span><div class="badge">✓ cleared</div></div>
+    <div class="tile"><div class="day">Fri</div><div class="dish">Build-your-own wraps</div><div class="sub">kids assemble</div><div class="badge">✓ cleared</div></div>
+  </div>
+
+  <div class="actions">
+    <button class="btn primary">✓ Confirm the week</button>
+    <button class="btn tertiary">Why this week</button>
+  </div>
+
+  <p class="explain">Notice what's <b>not</b> here: no chat panel, no message thread, no "Ask Lumi" box sitting open. The product is a finished answer. Lumi is the dot in the corner — <b>present, knows you (see the line under the headline), working in the background.</b> It only steps forward in the other two states.</p>
+</div>
+
+<!-- ============ LUMI — ambient presence ============ -->
+<div class="valet" id="valet"><span class="pres rest" id="pres"></span><span class="lab">Talk to Lumi</span></div>
+
+<!-- whisper -->
+<div class="whisper" id="whisper">
+  <div class="top"><span class="wdot"></span><p><b>I moved Thursday earlier.</b> The yogurt brand in those frittata muffins was recalled this morning — I swapped to a safe one. Nothing else changed.</p></div>
+  <div class="row"><a class="see">See the swap</a><a class="undo">Undo</a><a class="dismiss" id="wdismiss">Dismiss</a></div>
+</div>
+
+<!-- summon sheet -->
+<div class="scrim" id="scrim"></div>
+<div class="sheet" id="sheet">
+  <div class="sh"><span class="so"></span><span class="who">Lumi</span><span class="x" id="sheetX">×</span></div>
+  <div class="said">What can I change?</div>
+  <div class="uecho">Maya's bored of the wraps on Friday</div>
+  <div class="mini"><div class="r"><span>Friday · Main</span><b>Chicken-rice cups</b></div><div class="r"><span>Time</span><b>12 min</b></div><div class="r"><span>Safety</span><b style="color:var(--safety-teal)">✓ cleared</b></div></div>
+  <div class="said" style="font-size:15px">Swapped. Anything else?</div>
+  <div class="field"><textarea placeholder="Tell Lumi…"></textarea><button class="send">↑</button></div>
+  <div class="recede">…then this closes and you're back in your week.</div>
+</div>
+
+<div class="stateNote" id="stateNote">…</div>
+
+<script>
+  const valet=document.getElementById('valet'), pres=document.getElementById('pres');
+  const whisper=document.getElementById('whisper'), scrim=document.getElementById('scrim'), sheet=document.getElementById('sheet');
+  const note=document.getElementById('stateNote');
+  const thuDish=document.getElementById('thuDish'), thuTile=document.getElementById('thuTile');
+
+  const NOTES={
+    rest:'<b>At rest.</b> Lumi is the quiet dot, lower-right. No chat UI. It already knows you — the plan is right and the line under the headline proves it remembers. Hover the dot to see it offer itself, unobtrusively.',
+    whisper:'<b>Lumi whispers.</b> It did something useful in the background (a recall-safety swap) and surfaces ONE dismissible line. Not a notification storm, not a chat turn. Read it, undo or dismiss, it\'s gone.',
+    summon:'<b>You summon Lumi.</b> You tapped the dot. A focused sheet slides in, you say one thing, the plan updates underneath — then it recedes and you\'re back in the finished product. Conversation is a tool, not the home.'
+  };
+
+  function set(st){
+    document.querySelectorAll('.stbtn').forEach(b=>b.setAttribute('aria-current', b.dataset.st===st));
+    whisper.classList.toggle('on', st==='whisper');
+    scrim.classList.toggle('on', st==='summon');
+    sheet.classList.toggle('on', st==='summon');
+    pres.classList.toggle('rest', st!=='whisper');
+    // reflect the background swap in the actual product surface
+    const swapped = (st==='whisper'||st==='summon');
+    thuDish.textContent = (st==='whisper') ? 'Frittata muffins · safe yogurt' : 'Mini frittata muffins';
+    thuTile.classList.toggle('changed', st==='whisper');
+    note.innerHTML=NOTES[st];
+  }
+  document.querySelectorAll('.stbtn').forEach(b=>b.onclick=()=>set(b.dataset.st));
+  valet.onclick=()=>set('summon');
+  document.getElementById('sheetX').onclick=()=>set('rest');
+  scrim.onclick=()=>set('rest');
+  document.getElementById('wdismiss').onclick=()=>set('rest');
+  set('rest');
+</script>
+</body>
+</html>
