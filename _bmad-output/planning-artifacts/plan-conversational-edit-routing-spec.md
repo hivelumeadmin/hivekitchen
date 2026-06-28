@@ -6,8 +6,8 @@
 **Scope:** The conversational-editing layer for the weekly planner — "talk to your plan" — and the deterministic catalog selector it depends on.
 **Companion doc:** [`lumi-conversational-ux-rebuild-vision.md`](./lumi-conversational-ux-rebuild-vision.md) — the UX *what / why* (valet model, onboarding, planner). This spec is the *how* for that vision's planner conversational-editing (§4). Read them together.
 
-> **⚠️ This doc will move once the Onboarding agent API re-spec (Epic 2.7) lands.**
-> The planner conversational-edit layer is the **same control-inversion pattern** Epic 2.7 applies to onboarding: a deterministic controller owns flow, the LLM is a stateless turn function that only classifies and fills slots. Field names, the provider-seam call shape, the strict-schema path, and the trace facility are all expected to converge with whatever 2.7 settles. Treat the *shapes* here as authoritative and the *exact signatures* as provisional until 2.7's `OnboardingController` / `TurnRunner` split is finalized — then reconcile.
+> **✅ RECONCILED 2026-06-28 against the shipped Epic 2.7 (MVP wall reached 2026-06-27).**
+> The planner conversational-edit layer is the **same control-inversion pattern** Epic 2.7 shipped for onboarding: a deterministic controller owns flow, the LLM is a stateless turn function that only classifies and fills slots. The real contracts now exist and this doc points at them: `OnboardingController.nextMoment()` (pure FSM over `MOMENT_SLOT_PREDICATES`), `OnboardingTurnRunner.run()` (the stateless turn fn), the `LLMProvider` seam with named tiers `'flagship'`/`'mini'`, `stripNulls` + `toStrictJsonSchemaParameters`/`makeNullable` for strict schemas, `OnboardingTracer`/`ONBOARDING_TRACE_DIR`, and `onboarding-chips.ts`'s zero-call `applyPureChipTurn`. Signatures below are aligned to those.
 
 ---
 
@@ -21,17 +21,17 @@ Under that rule, engagement ("change anything by talking") goes up while the exp
 
 ---
 
-## 1. Architecture — control inversion (mirrors Epic 2.7)
+## 1. Architecture — control inversion (mirrors shipped Epic 2.7)
 
-| Planner (this doc) | Onboarding (Epic 2.7) | Role |
+| Planner (this doc) | Onboarding — actual shipped contract | Role |
 |---|---|---|
-| `routeIntent()` | the "pure turn function" (2.7-s7) | Stateless LLM classifier. **Agent layer, no DB.** One cheap-tier call. |
-| `dispatchIntent()` | `OnboardingController` (2.7-s6) | Deterministic executor. **API layer, owns data + persistence.** |
-| chip tap → pre-built intent | zero-call chip turns (2.7-s5/4b) | Structured affordance bypasses the LLM entirely. |
-| strict tool schema for the classifier | strict tool schemas (2.7-s2) | `anyOf:[T,null]` + null-strip before Zod. |
-| cheap-tier classifier call | cheap classifier tiers (2.7-s4) | Routes through `LLMProvider`, not raw `OpenAI`. |
-| routing trace | `ONBOARDING_TRACE_DIR` (2.7-s3) | Per-turn trace, off by default. |
-| routing golden eval | onboarding golden eval (2.7-s1) | Regression gate: utterance → expected intent + tier. |
+| `routeIntent()` | `OnboardingTurnRunner.run()` — the stateless turn fn (`onboarding-turn-runner.ts`) | Stateless LLM classifier. **Agent layer, no DB.** One `'mini'`-tier call. |
+| `dispatchIntent()` | `OnboardingController.nextMoment()` over `MOMENT_SLOT_PREDICATES` (`onboarding.controller.ts`, pure fn) | Deterministic executor. **API layer, owns data + persistence.** |
+| chip tap → pre-built intent | `OnboardingTurnRunner.applyPureChipTurn()` + code-filled ack templates (`onboarding-chips.ts`) | Structured affordance bypasses the LLM entirely (zero calls). |
+| strict tool schema for the classifier | `provider.completeWithMessages(..., { strictAllTools:true })` + `stripNulls` before Zod (`openai.adapter.ts`, `onboarding.agent.ts`) | `anyOf:[T,null]` + null-strip before Zod. |
+| `'mini'`-tier classifier call | `LLMProvider` tiers `TEXT_MODEL_TIER='flagship'` / `CLASSIFIER_TIER='mini'` (`onboarding.agent.ts`) | Routes through `LLMProvider`, not raw `OpenAI`. *(Onboarding ships with a bare `OpenAIAdapter`, not `ResilientProvider` — only the planner orchestrator wraps Resilient.)* |
+| routing trace | `OnboardingTracer` / `ONBOARDING_TRACE_DIR` (`onboarding-tracer.ts`, `env.ts`) | Per-turn trace, off by default. |
+| routing golden eval | onboarding golden eval (`agents/eval/onboarding-golden.eval.test.ts`) | Regression gate: utterance → expected intent + tier. |
 
 The architectural boundary is load-bearing: **`routeIntent()` classifies (agent, stateless), `dispatchIntent()` executes (API, owns catalog/tree/guardrail).** This is the only split that lets the deterministic ops touch data without the agent reaching the DB — per the standing doctrine that agents never read/write the DB directly.
 
@@ -42,7 +42,7 @@ The architectural boundary is load-bearing: **`routeIntent()` classifies (agent,
 | Tier | Engine | Per-call cost | Fires when |
 |---|---|---|---|
 | **T0 — Deterministic** | No LLM. Catalog ops, tree mutations, variation writes, stored-data render, allergen writes | $0 | Chip taps; swaps satisfiable from cached catalog; spice/portion/texture changes; inspection; safety writes; confirmations |
-| **T1 — Cheap tier** | Haiku-class via `LLMProvider` seam | ~cents | Parsing free text → structured intent + slots; short clarifying replies |
+| **T1 — Cheap tier** | `'mini'` tier via `LLMProvider` seam (`CLASSIFIER_TIER`, same as onboarding's `extractSummary`/`inferCulturalPriors`) | ~cents | Parsing free text → structured intent + slots; short clarifying replies |
 | **T2 — Expensive agentic** | RecipeAgent + Tavily + `plan.compose` / swap agent | ~dollars | Net-new dish not in catalog (after explicit confirm); explicit full (re)compose |
 
 **Guardrail validation runs deterministically on every mutation** — it is never an LLM cost and is never skipped.
@@ -101,25 +101,32 @@ This matches the family-first doctrine: a Variation narrows *down* from the shar
 
 ## 5. `routeIntent()` — agent layer, stateless, one cheap call
 
+Call shape mirrors onboarding's shipped classifier calls (`extractSummary`/`inferCulturalPriors` use `provider.complete(..., { tier: CLASSIFIER_TIER })`; the tool-loop turn uses `completeWithMessages(..., { strictAllTools: true })`). `routeIntent()` is a single forced-tool classification → use `completeWithMessages` with one strict tool at `tier: 'mini'`.
+
 ```ts
 // apps/api/src/agents/routePlanIntent.ts
 import { PlanIntentResult, PLAN_INTENT_TOOL_SCHEMA } from '@hivekitchen/contracts';
-import { stripNulls } from './strict-schema-utils';  // null -> undefined before Zod
+import { stripNulls } from './onboarding.agent.js';  // real helper shipped in 2.7-s2 (null -> dropped before Zod)
+import type { LLMProvider } from './providers/llm-provider.interface.js';
+
+const CLASSIFIER_TIER = 'mini' as const;             // same tier as onboarding extractSummary/inferCulturalPriors
 
 /** Pure turn fn. No DB. Classifies one utterance against light plan context. */
 export async function routePlanIntent(
   utterance: string,
   ctx: PlanContextLite,   // { weekId, days:[{day, mainTitle, childNames}], childIndex }
-  llm: LLMProvider,       // Epic 3.5 / 2.7-s4 seam — NOT raw OpenAI
+  provider: LLMProvider,  // Epic 3.5 / 2.7 seam — NOT raw OpenAI
 ): Promise<PlanIntentResult> {
-  const res = await llm.completeWithTool({
-    tier: 'cheap',                                   // Haiku-class
-    system: PLAN_ROUTER_SYSTEM,                      // taxonomy + "resolve child/day from ctx, else null"
-    context: ctx,                                    // so "Maya" -> childId resolves HERE, not downstream
-    tool: { name: 'route', schema: PLAN_INTENT_TOOL_SCHEMA },
-    user: utterance,
+  const messages = [
+    { role: 'system', content: PLAN_ROUTER_SYSTEM + renderContext(ctx) }, // "Maya" -> childId resolves HERE
+    { role: 'user', content: utterance },
+  ];
+  const res = await provider.completeWithMessages(messages, [PLAN_ROUTE_TOOL], {
+    tier: CLASSIFIER_TIER,
+    strictAllTools: true,   // anyOf:[T,null] via makeNullable; emitted with strict:true
   });
-  return PlanIntentResult.parse(stripNulls(res.toolArgs));
+  const args = JSON.parse(res.toolCalls[0].arguments);
+  return PlanIntentResult.parse(stripNulls(args));   // stripNulls BEFORE Zod (the bea6d4b rule)
 }
 ```
 
@@ -300,7 +307,7 @@ The schema check found **two** existing safety predicates, not one:
 
 ## 8. Cost instrumentation
 
-One trace tag per turn (reuse the `PLAN_TRACE_DIR` / `plan-tracer.ts` facility; the 2.7 analog is `ONBOARDING_TRACE_DIR`):
+One trace tag per turn (reuse the `PLAN_TRACE_DIR` / `plan-tracer.ts` facility; the shipped 2.7 analog is `OnboardingTracer` / `ONBOARDING_TRACE_DIR` in `onboarding-tracer.ts`, which records `model: null` on a zero-LLM chip turn — do the same here so T0 turns are visibly free):
 
 ```
 plan_intent.routed   { intent, confidence, tier: 'T1' }     // the classifier call
@@ -340,13 +347,13 @@ Chip-driven turns and T0 swaps/variations **do not appear** — they cost nothin
 
 ## 11. Suggested slice shape (when this becomes an epic)
 
-Mirrors Epic 2.7's "regression gate first, deterministic core, LLM last" ordering:
+Mirrors Epic 2.7's "regression gate first, deterministic core, LLM last" ordering — each step now has a shipped reference implementation to copy from:
 
-1. **Routing golden eval** — fixed utterances → expected `{intent, tier}`; the regression gate. *(2.7-s1 analog.)*
-2. **`CatalogRepo.pick()` main/extra branch** over the existing slate + tag-set pre-filter; snack branch = thin wrapper over `assignSnackRotation()`. Pure T0, no LLM — testable with no model mock. *(The keystone; 2.7-s6 analog.)*
-3. **`routeIntent()`** — cheap-tier classifier through `LLMProvider`, strict schema, null-strip. *(2.7-s2 + s4 analog.)*
-4. **`dispatchIntent()` controller** + the escalation confirm gate + variation/safety writes. *(2.7-s6 analog.)*
-5. **Chip-tap bypass** (pre-built intents, zero LLM) + routing trace tags. *(2.7-s5 + s3 analog.)*
+1. **Routing golden eval** — fixed utterances → expected `{intent, tier}`; the regression gate. *(Copy `agents/eval/onboarding-golden.eval.test.ts` + its fixtures/harness.)*
+2. **`CatalogRepo.pick()` main/extra branch** over the existing slate + tag-set pre-filter; snack branch = thin wrapper over `assignSnackRotation()`. Pure T0, no LLM — testable with no model mock. *(The keystone. Determinism reference: `assignSnackRotation`. Pure-fn-controller reference: `OnboardingController`.)*
+3. **`routeIntent()`** — `'mini'`-tier classifier via `provider.completeWithMessages(..., {strictAllTools:true})` + `stripNulls`. *(Reference: `OnboardingAgent.respondWithTools` + `extractSummary`.)*
+4. **`dispatchIntent()` controller** + the escalation confirm gate + variation/safety writes. *(Reference: `OnboardingController.nextMoment` over `MOMENT_SLOT_PREDICATES`; service derives slots, controller is a pure fn.)*
+5. **Chip-tap bypass** (pre-built intents, zero LLM) + routing trace tags. *(Reference: `OnboardingTurnRunner.applyPureChipTurn` + `onboarding-chips.ts` ack templates; `OnboardingTracer` records `model:null`.)*
 
 ---
 
@@ -360,4 +367,11 @@ Mirrors Epic 2.7's "regression gate first, deterministic core, LLM last" orderin
 - `apps/api/src/agents/providers/openai.adapter.ts` — strict-schema machinery (`:97-178`)
 - Migrations: `20260820000200` (recipes), `20261005000000` (canonical/finish_time), `20261010000000` (plan_slots + `plan_slot_variations.spice_level`), `20261008000000` (household_allergens consolidation), `20260730000000` / `20261031000000` (snack_skus + allergen_tags)
 - `_bmad-output/planning-artifacts/epic-2.7-brief.md` — the onboarding control-inversion this doc rhymes with
-- Memory: `strict-tool-schema-nullable-rule`, `guardrail-two-tier-allergen-doctrine`, `snacks-as-household-skus`, `allergen-storage-model`, `family-first-main-then-variations`, `three-main-weekly-pattern`
+- **Shipped Epic 2.7 reference implementations (use as templates):**
+  - `apps/api/src/modules/onboarding/onboarding.controller.ts` — `OnboardingController.nextMoment()`, `MOMENT_SLOT_PREDICATES`, `OnboardingSlots` (pure-fn controller pattern for `dispatchIntent`)
+  - `apps/api/src/modules/onboarding/onboarding-turn-runner.ts` — `OnboardingTurnRunner.run()`, `applyPureChipTurn()` (stateless turn fn + zero-call chip path)
+  - `apps/api/src/modules/onboarding/onboarding-chips.ts` — schema/vocab-derived chips + code-filled ack templates
+  - `apps/api/src/agents/onboarding.agent.ts` — `LLMProvider` seam, `TEXT_MODEL_TIER='flagship'`/`CLASSIFIER_TIER='mini'`, `stripNulls`, `respondWithTools` (`strictAllTools`)
+  - `apps/api/src/agents/onboarding-tracer.ts` — `OnboardingTracer` / `ONBOARDING_TRACE_DIR` (per-turn trace, `model:null` on zero-LLM turns)
+  - `apps/api/src/agents/eval/onboarding-golden.eval.test.ts` — golden-eval harness pattern
+- Memory: `epic-2-7-brief-drafted` (now MVP-wall-reached), `strict-tool-schema-nullable-rule`, `guardrail-two-tier-allergen-doctrine`, `snacks-as-household-skus`, `allergen-storage-model`, `family-first-main-then-variations`, `three-main-weekly-pattern`, `lumi-valet-not-chat-app`

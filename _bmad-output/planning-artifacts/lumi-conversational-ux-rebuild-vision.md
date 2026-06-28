@@ -5,7 +5,7 @@
 **Status:** DRAFT — design north star. Not sliced. Paired with the technical spec below.
 **Companion doc:** [`plan-conversational-edit-routing-spec.md`](./plan-conversational-edit-routing-spec.md) — the cost-safe intent-routing + `CatalogRepo.pick()` layer that makes the "talk to your plan" interaction affordable. Read that for the *how*; this doc is the *what / why*.
 
-> **⚠️ Come-back note.** This is captured mid-design, before the Onboarding agent API re-spec (Epic 2.7) is finalized. The UX direction here assumes the same control-inversion the API is moving toward (deterministic controller owns flow, LLM is a stateless conversational turn). Once the API side lands, reconcile §3 (onboarding) and §4 (planner) against the finalized contracts and the companion routing spec.
+> **✅ Come-back note — Epic 2.7 shipped (MVP wall 2026-06-27); reconciled 2026-06-28.** The control-inversion this doc assumed now exists in code: `OnboardingController` owns the moment FSM (pure fn over `MOMENT_SLOT_PREDICATES`), `OnboardingTurnRunner` is the stateless turn fn, the LLM no longer drives flow (no `[NEXT_MOMENT:]`/`[CHIP_PROMPT:]`), chips are deterministic (`onboarding-chips.ts`, zero-call pure-chip path), and `ONBOARDING_TRACE_DIR` exists. §3 (onboarding UX) and §4 (planner) below now land *on top of* that real backend; the companion routing spec's signatures are reconciled to the shipped tiers (`'flagship'`/`'mini'`) and call shapes. **The deferred-onboarding tension in §6.1 is now testable against the real `m1Complete`/`m2Complete` slot predicates.**
 
 ---
 
@@ -87,7 +87,7 @@ Onboarding is the deliberate exception (it *must* ask) — its restraint is a se
 
 Current: `OnboardingText.tsx` (~2,460 lines) — two-column chat + live Kitchen Profile panel + 6 Moments + focused/history view toggle + chip-bracket encoding + regex fallback extraction. The *concept* is right (interview, not form; build the Kitchen Map as you talk). The *execution* is heavy with too many modes.
 
-> **Aligns with Epic 2.7.** The API is already inverting onboarding control (controller owns the moment FSM; LLM becomes a stateless turn function; safety nets/sentinels deleted). The UX changes below should land *on top of* that inverted backend, not fight it.
+> **Aligns with Epic 2.7 (shipped 2026-06-27).** The API inversion is done: `OnboardingController` owns the moment FSM via slot predicates; `OnboardingTurnRunner` is the stateless turn fn; safety nets/sentinels deleted; ~1 LLM call/turn (0 on pure-chip). The UX changes below land *on top of* that inverted backend, not fight it. Concretely: the "one conversation mode" and "profile-as-hero" changes map onto `OnboardingTurnRunner.run()`'s rendered blocks (`kitchenMap`, `momentState`, `vocabulary`); the deterministic chip rendering is already `onboarding-chips.ts`.
 
 a) **Make the live profile panel the hero, not the sidebar.** The most delightful thing you have is "the Kitchen Profile fills in as you talk." Flip the weighting: conversation is a slim focused column; the **Kitchen Map building itself in real time** is the showpiece — a child appears, an allergen pill clicks into place with safety-teal, a dish lands in the bag. That "I'm being understood" feeling is the core anti-fatigue lever.
 
@@ -149,13 +149,15 @@ Lowest-risk-first, mirroring how Epic 2.7 sequences (gate → deterministic core
 
 ---
 
-## 8. What to do when you come back (post-API)
+## 8. Reconciliation status (Epic 2.7 shipped 2026-06-27 · reconciled 2026-06-28)
 
-1. Read the finalized Epic 2.7 onboarding contracts (`OnboardingController` / `TurnRunner` split, the slot-predicate model, the chip-as-deterministic-state output).
-2. Reconcile §3 (onboarding UX) against those contracts — the "one conversation mode" and "profile-as-hero" changes should map cleanly onto the inverted backend.
-3. Reconcile the companion routing spec (`plan-conversational-edit-routing-spec.md`) §5 signatures against whatever 2.7 settles for the provider-seam call shape, strict-schema path, and trace facility — rename, don't rethink.
-4. Resolve the three open decisions in the routing spec §9 (snack attestation, recency source, `plan_slots` snack storage).
-5. Pick the pilot surface (§7.2) and prototype the dock (§7.1).
+1. ✅ **Read the finalized Epic 2.7 contracts** — done. `OnboardingController.nextMoment()` over `MOMENT_SLOT_PREDICATES`; `OnboardingTurnRunner.run()` (stateless turn fn); `onboarding-chips.ts` (deterministic chips + `applyPureChipTurn` zero-call path); `OnboardingTracer`/`ONBOARDING_TRACE_DIR`.
+2. ✅ **Reconcile §3 (onboarding UX) against those contracts** — done. "One conversation mode" and "profile-as-hero" map onto the runner's rendered blocks (`kitchenMap`/`momentState`/`vocabulary`); chips already deterministic. (UX *build* still pending — this was a contract reconciliation, not the implementation.)
+3. ✅ **Reconcile the companion routing spec signatures** — done. Tiers `'flagship'`/`'mini'`, `provider.completeWithMessages(..., {strictAllTools:true})`, `stripNulls`, `OnboardingTracer` — all aligned in the spec, with shipped reference implementations cited.
+4. ⬜ **Resolve the three open decisions in the routing spec §9** (snack attestation, recency source, `plan_slots` snack storage) — *still open; these are planner-DB questions 2.7 doesn't answer.*
+5. ⬜ **Pick the pilot surface (§7.2) and prototype the dock (§7.1)** — *next real build step, now unblocked.*
+
+**Now genuinely unblocked (the bigger work):** Epic 2.7 is the proven template, so the planner conversational-edit layer (routing spec) can be built by copying its controller / turn-runner / chip / trace patterns. Suggested first move per §7: the Lumi dock spec + an artifact-in-thread pilot on the Brief, then the routing layer (which needs `CatalogRepo.pick()` first — the cost keystone).
 
 ---
 
