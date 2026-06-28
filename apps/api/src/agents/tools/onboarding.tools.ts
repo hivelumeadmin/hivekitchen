@@ -628,6 +628,12 @@ export function createDietaryDeclareToolSpec(
         parsed.source,
       );
 
+      // Slice 2.7-s5 — replaces the [CHIP_PROMPT:elevation:…] prose sentinel.
+      // Echo the model's ratification request back on the structured result so
+      // the service renders the M3 ratification chip from this value (never
+      // from a regex over the prose).
+      const ratificationRequested = parsed.request_ratification === true;
+
       ctx.logger.info(
         {
           module: 'onboarding-tools',
@@ -637,6 +643,7 @@ export function createDietaryDeclareToolSpec(
           child_scoped: parsed.child_id !== null && parsed.child_id !== undefined,
           tag: parsed.tag,
           enforcement: parsed.enforcement,
+          request_ratification: ratificationRequested,
           was_existing: result.was_existing,
         },
         'dietary.declare handled',
@@ -645,6 +652,7 @@ export function createDietaryDeclareToolSpec(
       return DietaryDeclareOutputSchema.parse({
         dietary_id: result.dietary_id,
         was_existing: result.was_existing,
+        ratification_requested: ratificationRequested ? true : undefined,
       });
     },
   };
@@ -685,6 +693,9 @@ export function createCuisineDeclareToolSpec(
         enforcement: parsed.enforcement,
       });
 
+      // Slice 2.7-s5 — same structured ratification channel as dietary.declare.
+      const ratificationRequested = parsed.request_ratification === true;
+
       ctx.logger.info(
         {
           module: 'onboarding-tools',
@@ -693,6 +704,7 @@ export function createCuisineDeclareToolSpec(
           user_id: ctx.userId,
           key: parsed.key,
           enforcement: parsed.enforcement,
+          request_ratification: ratificationRequested,
           prior_id: result.id,
           was_existing: result.was_existing,
         },
@@ -702,6 +714,7 @@ export function createCuisineDeclareToolSpec(
       return CuisineDeclareOutputSchema.parse({
         prior_id: result.id,
         was_existing: result.was_existing,
+        ratification_requested: ratificationRequested ? true : undefined,
       });
     },
   };

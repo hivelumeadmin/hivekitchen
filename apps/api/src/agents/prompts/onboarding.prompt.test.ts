@@ -13,8 +13,9 @@ import { getOnboardingSystemPrompt, ONBOARDING_SYSTEM_PROMPT } from './onboardin
 describe('getOnboardingSystemPrompt("text") — v2', () => {
   const prompt = getOnboardingSystemPrompt('text');
 
-  it('uses the v2 chaptered-conversation prompt (contains [NEXT_MOMENT directive syntax)', () => {
-    expect(prompt).toContain('[NEXT_MOMENT:');
+  it('no longer instructs the model to emit control directives (Slice 2.7-s7 — controller owns the FSM)', () => {
+    expect(prompt).not.toContain('[NEXT_MOMENT:');
+    expect(prompt).not.toContain('[CHIP_PROMPT:');
   });
 
   it('documents the five moment keys', () => {
@@ -63,9 +64,9 @@ describe('getOnboardingSystemPrompt("text") — v2', () => {
     expect(prompt.toLowerCase()).toContain('do not narrate');
   });
 
-  it('includes the TEXT_RULES directive-syntax guard', () => {
-    expect(prompt).toContain('[NEXT_MOMENT:<key>]');
-    expect(prompt.toLowerCase()).toContain('end of your response');
+  it('tells the model the system owns control flow and it emits no control tokens (Slice 2.7-s7)', () => {
+    expect(prompt.toLowerCase()).toContain('the system advances');
+    expect(prompt.toLowerCase()).toContain('never emit any control token');
   });
 
   // ---- Story 12-S9 / D2 patch: Lumi identity guard --------
@@ -79,18 +80,20 @@ describe('getOnboardingSystemPrompt("text") — v2', () => {
     expect(prompt).toContain('You are Lumi');
   });
 
-  it('keeps the moment-advance directive (12-S9)', () => {
-    expect(prompt).toContain('[NEXT_MOMENT:');
+  it('no longer carries the moment-advance directive (Slice 2.7-s7 — controller owns the FSM)', () => {
+    expect(prompt).not.toContain('[NEXT_MOMENT:');
   });
 
-  // ---- Slice 2.5-s7: elevation directive --------------------------------
+  // ---- Slice 2.7-s5: enforcement ratification via tool field ------------
 
-  it('teaches the [CHIP_PROMPT:elevation:<tag_key>:<tag_label>] directive (Slice 2.5-s7)', () => {
-    expect(prompt).toContain('[CHIP_PROMPT:elevation:');
+  it('teaches request_ratification on the dietary/cuisine tools, not a prose sentinel', () => {
+    expect(prompt).toContain('request_ratification');
+    // The legacy [CHIP_PROMPT:elevation:...] sentinel is gone.
+    expect(prompt).not.toContain('[CHIP_PROMPT:elevation:');
   });
 
-  it('scopes the elevation directive to M3 only', () => {
-    expect(prompt).toMatch(/M3 only|M3-only/);
+  it('scopes request_ratification to dietary.declare / cuisine.declare', () => {
+    expect(prompt).toMatch(/request_ratification only\s+has an effect on dietary\.declare and cuisine\.declare/);
   });
 
   it('documents the three elevation chip keys and their enforcement mapping', () => {

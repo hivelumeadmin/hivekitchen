@@ -1,0 +1,922 @@
+{
+  "spine-happy-path": {
+    "momentSequence": [
+      "m1_table",
+      "m2_safe",
+      "m3_taste",
+      "m4_bag",
+      "m5_starting_line",
+      "m5_starting_line",
+      "summary"
+    ],
+    "toolCalls": [
+      {
+        "tool": "household.set_name",
+        "args": {
+          "display_name": "The Menons"
+        }
+      },
+      {
+        "tool": "child.upsert",
+        "args": {
+          "name": "Layla",
+          "age_band": "preteen"
+        }
+      },
+      {
+        "tool": "favorite_lunch.add",
+        "args": {
+          "item": "Dosa"
+        }
+      },
+      {
+        "tool": "favorite_lunch.add",
+        "args": {
+          "item": "Idli"
+        }
+      },
+      {
+        "tool": "favorite_lunch.add",
+        "args": {
+          "item": "Lemon rice"
+        }
+      },
+      {
+        "tool": "favorite_lunch.add",
+        "args": {
+          "item": "Dal"
+        }
+      },
+      {
+        "tool": "favorite_lunch.add",
+        "args": {
+          "item": "Yogurt rice"
+        }
+      }
+    ],
+    "finalSlots": {
+      "household": {
+        "display_name": "The Menons",
+        "cultural_identifiers": [],
+        "dietary_preferences": [],
+        "declared_allergens": []
+      },
+      "children": [
+        {
+          "name": "Layla",
+          "age_band": "preteen",
+          "bag_composition_pattern": "main_plus_snack",
+          "declared_allergens": [],
+          "dietary_preferences": [],
+          "cultural_identifiers": []
+        }
+      ],
+      "allergens": [
+        {
+          "scope": "__household__",
+          "allergen": "peanut"
+        },
+        {
+          "scope": "__household__",
+          "allergen": "dairy"
+        }
+      ],
+      "dietary": [
+        {
+          "scope": "__household__",
+          "tag": "vegetarian",
+          "enforcement": "default"
+        }
+      ],
+      "culturalPriors": [
+        {
+          "key": "south_indian",
+          "enforcement": "just_for_context"
+        }
+      ],
+      "foodPreferences": [],
+      "rules": [],
+      "favorites": [
+        "Dosa",
+        "Idli",
+        "Lemon rice",
+        "Dal",
+        "Yogurt rice"
+      ]
+    },
+    "momentState": {
+      "current_moment": "summary",
+      "required_set_status": {
+        "m1_household_name": true,
+        "m1_child_declared": true,
+        "m2_allergen_response": true,
+        "m5_favorite_count": 5,
+        "m5_complete": true
+      },
+      "cold_start_triggered": false,
+      "cold_start_trigger_reason": null
+    },
+    "lastTurn": {
+      "chip_config": null,
+      "required_set_complete": true,
+      "missing_required_set": [],
+      "cold_start_mode": false,
+      "is_complete": true
+    },
+    "finalize": {
+      "ok": true,
+      "summary": {
+        "cultural_templates": [
+          "south_asian"
+        ],
+        "palate_notes": [
+          "mild spice"
+        ],
+        "allergens_mentioned": [
+          "peanut",
+          "dairy"
+        ],
+        "family_rhythms": [
+          "friday is dosa night"
+        ]
+      }
+    }
+  },
+  "m3-elevation-strict": {
+    "momentSequence": [
+      "m2_safe",
+      "m3_taste",
+      "m3_taste"
+    ],
+    "toolCalls": [
+      {
+        "tool": "household.set_name",
+        "args": {
+          "display_name": "The Khans"
+        }
+      },
+      {
+        "tool": "child.upsert",
+        "args": {
+          "name": "Adam",
+          "age_band": "teen"
+        }
+      },
+      {
+        "tool": "dietary.declare",
+        "args": {
+          "tag": "halal",
+          "enforcement": "non_negotiable",
+          "request_ratification": true
+        }
+      }
+    ],
+    "finalSlots": {
+      "household": {
+        "display_name": "The Khans",
+        "cultural_identifiers": [],
+        "dietary_preferences": [],
+        "declared_allergens": []
+      },
+      "children": [
+        {
+          "name": "Adam",
+          "age_band": "teen",
+          "bag_composition_pattern": null,
+          "declared_allergens": [],
+          "dietary_preferences": [],
+          "cultural_identifiers": []
+        }
+      ],
+      "allergens": [],
+      "dietary": [
+        {
+          "scope": "__household__",
+          "tag": "halal",
+          "enforcement": "non_negotiable"
+        }
+      ],
+      "culturalPriors": [],
+      "foodPreferences": [],
+      "rules": [],
+      "favorites": []
+    },
+    "momentState": {
+      "current_moment": "m3_taste",
+      "required_set_status": {
+        "m1_household_name": true,
+        "m1_child_declared": true,
+        "m2_allergen_response": true,
+        "m5_favorite_count": 0,
+        "m5_complete": false
+      },
+      "cold_start_triggered": false,
+      "cold_start_trigger_reason": null
+    },
+    "lastTurn": {
+      "chip_config": {
+        "mode": "action",
+        "options": [
+          {
+            "key": "always-respect",
+            "label": "Always respect"
+          },
+          {
+            "key": "prefer",
+            "label": "Prefer when possible"
+          },
+          {
+            "key": "just-context",
+            "label": "Just for context"
+          }
+        ]
+      },
+      "required_set_complete": false,
+      "missing_required_set": [
+        "m5_starting_line"
+      ],
+      "cold_start_mode": false,
+      "is_complete": false
+    }
+  },
+  "safety-net-chip-only": {
+    "momentSequence": [
+      "m2_safe",
+      "m3_taste",
+      "m4_bag",
+      "m5_starting_line"
+    ],
+    "toolCalls": [
+      {
+        "tool": "household.set_name",
+        "args": {
+          "display_name": "The Patels"
+        }
+      },
+      {
+        "tool": "child.upsert",
+        "args": {
+          "name": "Aarav",
+          "age_band": "child"
+        }
+      }
+    ],
+    "finalSlots": {
+      "household": {
+        "display_name": "The Patels",
+        "cultural_identifiers": [],
+        "dietary_preferences": [],
+        "declared_allergens": []
+      },
+      "children": [
+        {
+          "name": "Aarav",
+          "age_band": "child",
+          "bag_composition_pattern": "main_plus_snack",
+          "declared_allergens": [],
+          "dietary_preferences": [],
+          "cultural_identifiers": []
+        }
+      ],
+      "allergens": [
+        {
+          "scope": "__household__",
+          "allergen": "peanut"
+        }
+      ],
+      "dietary": [],
+      "culturalPriors": [
+        {
+          "key": "south_indian",
+          "enforcement": "just_for_context"
+        }
+      ],
+      "foodPreferences": [],
+      "rules": [],
+      "favorites": []
+    },
+    "momentState": {
+      "current_moment": "m5_starting_line",
+      "required_set_status": {
+        "m1_household_name": true,
+        "m1_child_declared": true,
+        "m2_allergen_response": true,
+        "m5_favorite_count": 0,
+        "m5_complete": false
+      },
+      "cold_start_triggered": false,
+      "cold_start_trigger_reason": null
+    },
+    "lastTurn": {
+      "chip_config": null,
+      "required_set_complete": false,
+      "missing_required_set": [
+        "m5_starting_line"
+      ],
+      "cold_start_mode": false,
+      "is_complete": false
+    }
+  },
+  "safety-net-reanchor": {
+    "momentSequence": [
+      "m4_bag"
+    ],
+    "toolCalls": [],
+    "finalSlots": {
+      "household": {
+        "display_name": "The Owusus",
+        "cultural_identifiers": [],
+        "dietary_preferences": [],
+        "declared_allergens": []
+      },
+      "children": [
+        {
+          "name": "Ama",
+          "age_band": "child",
+          "bag_composition_pattern": null,
+          "declared_allergens": [],
+          "dietary_preferences": [],
+          "cultural_identifiers": []
+        }
+      ],
+      "allergens": [
+        {
+          "scope": "Ama",
+          "allergen": "peanut"
+        }
+      ],
+      "dietary": [],
+      "culturalPriors": [],
+      "foodPreferences": [],
+      "rules": [],
+      "favorites": []
+    },
+    "momentState": {
+      "current_moment": "m4_bag",
+      "required_set_status": {
+        "m1_household_name": true,
+        "m1_child_declared": true,
+        "m2_allergen_response": true,
+        "m5_favorite_count": 0,
+        "m5_complete": false
+      },
+      "cold_start_triggered": false,
+      "cold_start_trigger_reason": null
+    },
+    "lastTurn": {
+      "chip_config": {
+        "mode": "action",
+        "options": [
+          {
+            "key": "main_only",
+            "label": "Main only"
+          },
+          {
+            "key": "main_plus_snack",
+            "label": "Main + snack"
+          },
+          {
+            "key": "main_plus_extra",
+            "label": "Main + sides"
+          },
+          {
+            "key": "main_plus_snack_plus_extra",
+            "label": "Full bag"
+          }
+        ]
+      },
+      "required_set_complete": false,
+      "missing_required_set": [
+        "m5_starting_line"
+      ],
+      "cold_start_mode": false,
+      "is_complete": false
+    }
+  },
+  "pre-start-bootstrap": {
+    "momentSequence": [
+      "m1_table"
+    ],
+    "toolCalls": [],
+    "finalSlots": {
+      "household": {
+        "display_name": null,
+        "cultural_identifiers": [],
+        "dietary_preferences": [],
+        "declared_allergens": []
+      },
+      "children": [],
+      "allergens": [],
+      "dietary": [],
+      "culturalPriors": [],
+      "foodPreferences": [],
+      "rules": [],
+      "favorites": []
+    },
+    "momentState": {
+      "current_moment": "m1_table",
+      "required_set_status": {
+        "m1_household_name": false,
+        "m1_child_declared": false,
+        "m2_allergen_response": false,
+        "m5_favorite_count": 0,
+        "m5_complete": false
+      },
+      "cold_start_triggered": false,
+      "cold_start_trigger_reason": null
+    },
+    "lastTurn": {
+      "chip_config": {
+        "mode": "hint",
+        "hints": [
+          "two kids, Layla 10 and Adam 12",
+          "three girls, Shelly 5, Anne 7, and Cathy 11",
+          "Just my son Aarav, 8 years old"
+        ]
+      },
+      "required_set_complete": false,
+      "missing_required_set": [
+        "m1_table",
+        "m2_safe",
+        "m5_starting_line"
+      ],
+      "cold_start_mode": false,
+      "is_complete": false
+    }
+  },
+  "m5-cold-start": {
+    "momentSequence": [
+      "m2_safe",
+      "m3_taste",
+      "m4_bag",
+      "m5_starting_line"
+    ],
+    "toolCalls": [
+      {
+        "tool": "household.set_name",
+        "args": {
+          "display_name": "The Lees"
+        }
+      },
+      {
+        "tool": "child.upsert",
+        "args": {
+          "name": "Mia",
+          "age_band": "child"
+        }
+      }
+    ],
+    "finalSlots": {
+      "household": {
+        "display_name": "The Lees",
+        "cultural_identifiers": [],
+        "dietary_preferences": [],
+        "declared_allergens": []
+      },
+      "children": [
+        {
+          "name": "Mia",
+          "age_band": "child",
+          "bag_composition_pattern": "main_plus_snack",
+          "declared_allergens": [],
+          "dietary_preferences": [],
+          "cultural_identifiers": []
+        }
+      ],
+      "allergens": [],
+      "dietary": [],
+      "culturalPriors": [],
+      "foodPreferences": [],
+      "rules": [],
+      "favorites": []
+    },
+    "momentState": {
+      "current_moment": "m5_starting_line",
+      "required_set_status": {
+        "m1_household_name": true,
+        "m1_child_declared": true,
+        "m2_allergen_response": true,
+        "m5_favorite_count": 0,
+        "m5_complete": false
+      },
+      "cold_start_triggered": true,
+      "cold_start_trigger_reason": "per_cuisine_floor"
+    },
+    "lastTurn": {
+      "chip_config": null,
+      "required_set_complete": false,
+      "missing_required_set": [
+        "m5_starting_line"
+      ],
+      "cold_start_mode": true,
+      "is_complete": false
+    }
+  },
+  "resume-in-progress": {
+    "momentSequence": [
+      "m2_safe",
+      "m3_taste"
+    ],
+    "toolCalls": [
+      {
+        "tool": "household.set_name",
+        "args": {
+          "display_name": "The Tanakas"
+        }
+      },
+      {
+        "tool": "child.upsert",
+        "args": {
+          "name": "Ren",
+          "age_band": "child"
+        }
+      }
+    ],
+    "finalSlots": {
+      "household": {
+        "display_name": "The Tanakas",
+        "cultural_identifiers": [],
+        "dietary_preferences": [],
+        "declared_allergens": []
+      },
+      "children": [
+        {
+          "name": "Ren",
+          "age_band": "child",
+          "bag_composition_pattern": null,
+          "declared_allergens": [],
+          "dietary_preferences": [],
+          "cultural_identifiers": []
+        }
+      ],
+      "allergens": [
+        {
+          "scope": "__household__",
+          "allergen": "shellfish"
+        }
+      ],
+      "dietary": [],
+      "culturalPriors": [],
+      "foodPreferences": [],
+      "rules": [],
+      "favorites": []
+    },
+    "momentState": {
+      "current_moment": "m3_taste",
+      "required_set_status": {
+        "m1_household_name": true,
+        "m1_child_declared": true,
+        "m2_allergen_response": true,
+        "m5_favorite_count": 0,
+        "m5_complete": false
+      },
+      "cold_start_triggered": false,
+      "cold_start_trigger_reason": null
+    },
+    "lastTurn": {
+      "chip_config": {
+        "mode": "choice",
+        "options": [
+          {
+            "key": "halal",
+            "label": "Halal"
+          },
+          {
+            "key": "kosher",
+            "label": "Kosher"
+          },
+          {
+            "key": "vegetarian",
+            "label": "Vegetarian"
+          },
+          {
+            "key": "vegan",
+            "label": "Vegan"
+          },
+          {
+            "key": "pescatarian",
+            "label": "Pescatarian"
+          },
+          {
+            "key": "gluten_free",
+            "label": "Gluten-free"
+          },
+          {
+            "key": "dairy_free",
+            "label": "Dairy-free"
+          },
+          {
+            "key": "south_indian",
+            "label": "South Indian"
+          },
+          {
+            "key": "north_indian",
+            "label": "North Indian"
+          },
+          {
+            "key": "east_african",
+            "label": "East African"
+          },
+          {
+            "key": "caribbean",
+            "label": "Caribbean"
+          },
+          {
+            "key": "levantine",
+            "label": "Levantine"
+          },
+          {
+            "key": "italian",
+            "label": "Italian"
+          },
+          {
+            "key": "mexican",
+            "label": "Mexican"
+          },
+          {
+            "key": "japanese",
+            "label": "Japanese"
+          },
+          {
+            "key": "chinese",
+            "label": "Chinese"
+          },
+          {
+            "key": "mediterranean",
+            "label": "Mediterranean"
+          }
+        ],
+        "skip_label": "Skip this moment"
+      },
+      "required_set_complete": false,
+      "missing_required_set": [
+        "m5_starting_line"
+      ],
+      "cold_start_mode": false,
+      "is_complete": false
+    },
+    "state": {
+      "status": "in_progress",
+      "current_moment": "m3_taste",
+      "turn_count": 4
+    }
+  },
+  "reset-interview": {
+    "momentSequence": [
+      "m2_safe"
+    ],
+    "toolCalls": [
+      {
+        "tool": "household.set_name",
+        "args": {
+          "display_name": "The Romanos"
+        }
+      },
+      {
+        "tool": "child.upsert",
+        "args": {
+          "name": "Sofia",
+          "age_band": "child"
+        }
+      }
+    ],
+    "finalSlots": {
+      "household": {
+        "display_name": "The Romanos",
+        "cultural_identifiers": [],
+        "dietary_preferences": [],
+        "declared_allergens": []
+      },
+      "children": [
+        {
+          "name": "Sofia",
+          "age_band": "child",
+          "bag_composition_pattern": null,
+          "declared_allergens": [],
+          "dietary_preferences": [],
+          "cultural_identifiers": []
+        }
+      ],
+      "allergens": [],
+      "dietary": [],
+      "culturalPriors": [],
+      "foodPreferences": [],
+      "rules": [],
+      "favorites": []
+    },
+    "momentState": {
+      "current_moment": "m2_safe",
+      "required_set_status": {
+        "m1_household_name": true,
+        "m1_child_declared": true,
+        "m2_allergen_response": false,
+        "m5_favorite_count": 0,
+        "m5_complete": false
+      },
+      "cold_start_triggered": false,
+      "cold_start_trigger_reason": null
+    },
+    "lastTurn": {
+      "chip_config": {
+        "mode": "choice",
+        "options": [
+          {
+            "key": "none",
+            "label": "No known allergens"
+          },
+          {
+            "key": "peanut",
+            "label": "Peanut"
+          },
+          {
+            "key": "tree_nut",
+            "label": "Tree nuts"
+          },
+          {
+            "key": "dairy",
+            "label": "Dairy"
+          },
+          {
+            "key": "egg",
+            "label": "Eggs"
+          },
+          {
+            "key": "soy",
+            "label": "Soy"
+          },
+          {
+            "key": "wheat",
+            "label": "Wheat / gluten"
+          },
+          {
+            "key": "fish",
+            "label": "Fish"
+          },
+          {
+            "key": "shellfish",
+            "label": "Shellfish"
+          },
+          {
+            "key": "sesame",
+            "label": "Sesame"
+          }
+        ]
+      },
+      "required_set_complete": false,
+      "missing_required_set": [
+        "m2_safe",
+        "m5_starting_line"
+      ],
+      "cold_start_mode": false,
+      "is_complete": false
+    },
+    "state": {
+      "status": "not_started",
+      "current_moment": null,
+      "turn_count": 0
+    }
+  },
+  "finalize-gate-negative": {
+    "momentSequence": [
+      "m2_safe",
+      "m3_taste"
+    ],
+    "toolCalls": [
+      {
+        "tool": "household.set_name",
+        "args": {
+          "display_name": "The Garcias"
+        }
+      },
+      {
+        "tool": "child.upsert",
+        "args": {
+          "name": "Mateo",
+          "age_band": "preteen"
+        }
+      }
+    ],
+    "finalSlots": {
+      "household": {
+        "display_name": "The Garcias",
+        "cultural_identifiers": [],
+        "dietary_preferences": [],
+        "declared_allergens": []
+      },
+      "children": [
+        {
+          "name": "Mateo",
+          "age_band": "preteen",
+          "bag_composition_pattern": null,
+          "declared_allergens": [],
+          "dietary_preferences": [],
+          "cultural_identifiers": []
+        }
+      ],
+      "allergens": [],
+      "dietary": [],
+      "culturalPriors": [],
+      "foodPreferences": [],
+      "rules": [],
+      "favorites": []
+    },
+    "momentState": {
+      "current_moment": "m3_taste",
+      "required_set_status": {
+        "m1_household_name": true,
+        "m1_child_declared": true,
+        "m2_allergen_response": true,
+        "m5_favorite_count": 0,
+        "m5_complete": false
+      },
+      "cold_start_triggered": false,
+      "cold_start_trigger_reason": null
+    },
+    "lastTurn": {
+      "chip_config": {
+        "mode": "choice",
+        "options": [
+          {
+            "key": "halal",
+            "label": "Halal"
+          },
+          {
+            "key": "kosher",
+            "label": "Kosher"
+          },
+          {
+            "key": "vegetarian",
+            "label": "Vegetarian"
+          },
+          {
+            "key": "vegan",
+            "label": "Vegan"
+          },
+          {
+            "key": "pescatarian",
+            "label": "Pescatarian"
+          },
+          {
+            "key": "gluten_free",
+            "label": "Gluten-free"
+          },
+          {
+            "key": "dairy_free",
+            "label": "Dairy-free"
+          },
+          {
+            "key": "south_indian",
+            "label": "South Indian"
+          },
+          {
+            "key": "north_indian",
+            "label": "North Indian"
+          },
+          {
+            "key": "east_african",
+            "label": "East African"
+          },
+          {
+            "key": "caribbean",
+            "label": "Caribbean"
+          },
+          {
+            "key": "levantine",
+            "label": "Levantine"
+          },
+          {
+            "key": "italian",
+            "label": "Italian"
+          },
+          {
+            "key": "mexican",
+            "label": "Mexican"
+          },
+          {
+            "key": "japanese",
+            "label": "Japanese"
+          },
+          {
+            "key": "chinese",
+            "label": "Chinese"
+          },
+          {
+            "key": "mediterranean",
+            "label": "Mediterranean"
+          }
+        ],
+        "skip_label": "Skip this moment"
+      },
+      "required_set_complete": false,
+      "missing_required_set": [
+        "m5_starting_line"
+      ],
+      "cold_start_mode": false,
+      "is_complete": false
+    },
+    "finalize": {
+      "ok": false,
+      "error": "onboarding summary not reached — complete all five moments before finalizing"
+    }
+  }
+}

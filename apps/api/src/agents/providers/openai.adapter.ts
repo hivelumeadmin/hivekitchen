@@ -160,10 +160,17 @@ export function toStrictJsonSchemaParameters(toolSpec: ToolSpec): Record<string,
 
 // `strictForToolName` is the INTERNAL dotted name (e.g. 'plan.compose'). When
 // it matches a tool, that tool's parameters are hardened and `strict: true` is
-// set; all other tools keep the default (non-strict) projection.
-function toOpenAITools(tools: ToolSpec[], strictForToolName?: string): ChatCompletionTool[] {
+// set; all other tools keep the default (non-strict) projection. Slice 2.7-s4 —
+// `strictAll` hardens EVERY tool (the onboarding multi-tool auto path); it is
+// independent of `strictForToolName` and a tool is hardened if either applies.
+function toOpenAITools(
+  tools: ToolSpec[],
+  strictForToolName?: string,
+  strictAll?: boolean,
+): ChatCompletionTool[] {
   return tools.map((spec) => {
-    const isStrict = strictForToolName !== undefined && spec.name === strictForToolName;
+    const isStrict =
+      strictAll === true || (strictForToolName !== undefined && spec.name === strictForToolName);
     return {
       type: 'function',
       function: {
@@ -178,14 +185,17 @@ function toOpenAITools(tools: ToolSpec[], strictForToolName?: string): ChatCompl
 
 // Slice 3.5-s2 — builds the `tools` + `tool_choice` params. When
 // `forcedToolName` is set the named tool is forced and made strict; otherwise
-// the prior `tool_choice: 'auto'` behaviour is preserved exactly.
+// the prior `tool_choice: 'auto'` behaviour is preserved exactly. Slice 2.7-s4 —
+// `strictAll` hardens every tool while keeping `tool_choice: 'auto'` (forced
+// mode takes precedence, so strictAll is ignored when a tool is forced).
 function buildToolParams(
   tools: ToolSpec[],
   forcedToolName: string | undefined,
+  strictAll?: boolean,
 ): Pick<ChatCompletionCreateParams, 'tools' | 'tool_choice'> | Record<string, never> {
   if (tools.length === 0) return {};
   return {
-    tools: toOpenAITools(tools, forcedToolName),
+    tools: toOpenAITools(tools, forcedToolName, forcedToolName === undefined && strictAll === true),
     tool_choice:
       forcedToolName !== undefined
         ? { type: 'function', function: { name: toExternalName(forcedToolName) } }
@@ -343,7 +353,10 @@ export class OpenAIAdapter implements LLMProvider {
       messages: buildMessages(prompt, options.systemPrompt),
       ...(options.temperature !== undefined ? { temperature: options.temperature } : {}),
       ...(options.maxTokens !== undefined ? { max_tokens: options.maxTokens } : {}),
-      ...buildToolParams(tools, options.forcedToolName),
+      ...(options.responseFormat !== undefined
+        ? { response_format: { type: options.responseFormat } }
+        : {}),
+      ...buildToolParams(tools, options.forcedToolName, options.strictAllTools),
       ...(this.storeCompletions ? { store: true } : {}),
       ...(this.storeCompletions && options.metadata !== undefined
         ? { metadata: options.metadata }
@@ -374,7 +387,10 @@ export class OpenAIAdapter implements LLMProvider {
       messages: buildMessagesFromLLM(messages),
       ...(options.temperature !== undefined ? { temperature: options.temperature } : {}),
       ...(options.maxTokens !== undefined ? { max_tokens: options.maxTokens } : {}),
-      ...buildToolParams(tools, options.forcedToolName),
+      ...(options.responseFormat !== undefined
+        ? { response_format: { type: options.responseFormat } }
+        : {}),
+      ...buildToolParams(tools, options.forcedToolName, options.strictAllTools),
       ...(this.storeCompletions ? { store: true } : {}),
       ...(this.storeCompletions && options.metadata !== undefined
         ? { metadata: options.metadata }

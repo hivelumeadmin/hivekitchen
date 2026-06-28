@@ -22,6 +22,7 @@ import type {
 import { authorize } from '../../middleware/authorize.hook.js';
 import { NotFoundError } from '../../common/errors.js';
 import { OnboardingAgent } from '../../agents/onboarding.agent.js';
+import { OpenAIAdapter } from '../../agents/providers/openai.adapter.js';
 import { ChildAllergensRepository } from '../children/child-allergens.repository.js';
 import { ChildrenRepository } from '../children/children.repository.js';
 import { CulturalPriorRepository } from '../cultural-priors/cultural-prior.repository.js';
@@ -55,7 +56,7 @@ const kitchenProfileEditRoutesPlugin: FastifyPluginAsync = async (fastify) => {
   const culturalPriorService = new CulturalPriorService({
     repository: culturalPriors,
     threads: new ThreadRepository(fastify.supabase),
-    agent: new OnboardingAgent(fastify.openai),
+    agent: new OnboardingAgent(new OpenAIAdapter(fastify.openai)),
     logger: fastify.log,
   });
   // Story 7-S15 (Arc A) — starting-line favorites live in recipes +

@@ -1,11 +1,15 @@
-import { describe, it, expect, vi } from 'vitest';
+import { afterEach, describe, it, expect, vi } from 'vitest';
+import { mkdtemp, readdir, readFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import type { FastifyBaseLogger } from 'fastify';
 import {
   OnboardingService,
   momentToChipConfig,
-  renderMomentStateBlock,
   type OnboardingServiceDeps,
 } from './onboarding.service.js';
+// Slice 2.7-s7 — renderMomentStateBlock moved to the extracted turn runner.
+import { renderMomentStateBlock } from './onboarding-turn-runner.js';
 import type { MomentState } from './onboarding-moment.repository.js';
 import { ConflictError } from '../../common/errors.js';
 
@@ -72,6 +76,10 @@ interface BuildOpts {
   // test can assert the Stage 1 seed is enqueued at m2_safe exit (the ordering
   // anchor that keeps seeding ahead of the first plan composition).
   wireCatalogSeedQueue?: boolean;
+  // Slice 2.7-s5 — recorded tool-call summaries the agent mock returns. Used by
+  // the ratification-via-tool tests to assert the M3 ratification chip renders
+  // from a dietary.declare / cuisine.declare RESULT (not a prose sentinel).
+  toolCallsSummary?: Array<{ tool: string; error: boolean; args?: unknown; result?: unknown }>;
 }
 
 function normalizeMomentState(
@@ -110,7 +118,7 @@ function buildService(opts: BuildOpts) {
     respond: vi.fn().mockResolvedValue({
       text: opts.agentText,
       complete: false,
-      toolCallsSummary: [],
+      toolCallsSummary: opts.toolCallsSummary ?? [],
       usage: {
         promptTokens: 100,
         completionTokens: 50,
@@ -141,7 +149,12 @@ function buildService(opts: BuildOpts) {
 
   const catalogProjection =
     opts.catalogProjectionGetM5Chips !== undefined
-      ? { getM5Chips: opts.catalogProjectionGetM5Chips }
+      ? {
+          getM5Chips: opts.catalogProjectionGetM5Chips,
+          // 2.6-s6 cold-start re-check polls Stage 1 before re-projecting; the
+          // mock reports it complete so the projection runs.
+          isStage1Complete: vi.fn().mockResolvedValue(true),
+        }
       : undefined;
 
   const catalogSeedQueue = opts.wireCatalogSeedQueue
@@ -387,27 +400,32 @@ describe('OnboardingService.submitTextTurn — catalog-seed enqueue at m2_safe e
     expect(payload).toMatchObject({ household_id: HOUSEHOLD_ID });
   });
 
-  it('does NOT enqueue the seed while still inside m2_safe (no advance)', async () => {
+  it('does NOT enqueue the seed on a turn that does not leave m2_safe', async () => {
+    // Slice 2.7-s7 — the seed fires only on the controller's m2_safe EXIT. A
+    // turn still in M1 (household not yet fully declared) never touches that
+    // edge, so no Stage-1 seed fires. (The old "in m2 but no directive →
+    // no advance" case is gone: under the deterministic controller any parent
+    // response while in m2_safe IS the allergen answer and advances.)
     const { service, catalogSeedQueue } = buildService({
-      agentText: 'Anything else to add to the allergy list?',
+      agentText: 'And who else is at the table?',
       preTurnMomentState: {
-        current_moment: 'm2_safe',
+        current_moment: 'm1_table',
         required_set_status: {
-          m1_household_name: true,
-          m1_child_declared: true,
+          m1_household_name: false,
+          m1_child_declared: false,
           m2_allergen_response: false,
           m5_favorite_count: 0,
           m5_complete: false,
         },
       },
-      countsOverride: { household_name_set: true, child_count: 1 },
+      countsOverride: { household_name_set: false, child_count: 0 },
       wireCatalogSeedQueue: true,
     });
 
     await service.submitTextTurn({
       userId: USER_ID,
       householdId: HOUSEHOLD_ID,
-      message: 'peanuts',
+      message: 'Just me so far',
     });
 
     expect(catalogSeedQueue?.add).not.toHaveBeenCalled();
@@ -474,20 +492,12 @@ describe('OnboardingService.submitTextTurn — directive stripping', () => {
     expect(result.lumi_response).toContain('Carry on.');
   });
 
-  it('strips all directives when duplicates appear; last key is used for advance', async () => {
-    const { service, momentRepository } = buildService({
+  it('strips all directives from the prose when duplicates appear (defense-in-depth)', async () => {
+    // Slice 2.7-s7 — the directive is no longer PARSED to drive the moment
+    // (the controller derives it from slot state); the strip stays purely so a
+    // stray sentinel can never leak to the user.
+    const { service } = buildService({
       agentText: 'Step one. [NEXT_MOMENT:m2_safe] Step two. [NEXT_MOMENT:m3_taste]',
-      preTurnMomentState: {
-        current_moment: 'm1_table',
-        required_set_status: {
-          m1_household_name: true,
-          m1_child_declared: true,
-          m2_allergen_response: false,
-          m5_favorite_count: 0,
-          m5_complete: false,
-        },
-      },
-      countsOverride: { household_name_set: true, child_count: 1 },
     });
 
     const result = await service.submitTextTurn({
@@ -496,13 +506,8 @@ describe('OnboardingService.submitTextTurn — directive stripping', () => {
       message: 'x',
     });
 
-    // Both directives stripped from prose
     expect(result.lumi_response).not.toContain('[NEXT_MOMENT:');
-    // Last directive (m3_taste) wins for the advance key
-    expect(momentRepository.upsertState).toHaveBeenCalledWith(
-      HOUSEHOLD_ID,
-      expect.objectContaining({ current_moment: 'm3_taste' }),
-    );
+    expect(result.lumi_response).toContain('Step two.');
   });
 });
 
@@ -908,10 +913,11 @@ describe('OnboardingService.submitTextTurn — moment state advance', () => {
 });
 
 // ===========================================================================
-// Slice 2.5-s7 — [CHIP_PROMPT:elevation:...] directive parser + chip override
+// Slice 2.7-s5 — elevation via structured tool result (replaces the
+// [CHIP_PROMPT:elevation:...] prose sentinel of 2.5-s7)
 // ===========================================================================
 
-describe('OnboardingService.submitTextTurn — elevation directive (Slice 2.5-s7)', () => {
+describe('OnboardingService.submitTextTurn — ratification via tool result (Slice 2.7-s5)', () => {
   const m3State: MomentState = {
     current_moment: 'm3_taste',
     required_set_status: {
@@ -925,33 +931,19 @@ describe('OnboardingService.submitTextTurn — elevation directive (Slice 2.5-s7
     cold_start_trigger_reason: null,
   };
 
-  it('strips both [CHIP_PROMPT:elevation:...] and [NEXT_MOMENT:m3_taste] from the persisted prose', async () => {
+  const ratifyingDietary = {
+    tool: 'dietary.declare',
+    error: false,
+    args: { tag: 'halal', enforcement: 'non_negotiable', request_ratification: true },
+    result: { dietary_id: 'd1', was_existing: false, ratification_requested: true },
+  };
+
+  it('renders the 3 ratification chips from a dietary.declare result, no sentinel in the prose', async () => {
     const { service, threads } = buildService({
       agentText:
-        "Got it — 'strictly Halal.' Should I treat that as a hard rule or more like a preference? [CHIP_PROMPT:elevation:halal:Halal] [NEXT_MOMENT:m3_taste]",
+        "Got it — 'strictly Halal.' Should I treat that as a hard rule or more like a preference? [NEXT_MOMENT:m3_taste]",
       preTurnMomentState: m3State,
-    });
-
-    await service.submitTextTurn({
-      userId: USER_ID,
-      householdId: HOUSEHOLD_ID,
-      message: "We're strictly Halal.",
-    });
-
-    const lumiAppend = threads.appendTurnNext.mock.calls.find(
-      (c) => (c[0] as { role?: string }).role === 'lumi',
-    );
-    const body = lumiAppend?.[0].body as { type: string; content: string };
-    expect(body.content).not.toContain('[CHIP_PROMPT:');
-    expect(body.content).not.toContain('[NEXT_MOMENT:');
-    expect(body.content).toContain("'strictly Halal.'");
-  });
-
-  it('overrides chip_config to action with 3 elevation options when CHIP_PROMPT is present', async () => {
-    const { service } = buildService({
-      agentText:
-        "Got it. Should I treat that as a hard rule or more like a preference? [CHIP_PROMPT:elevation:halal:Halal] [NEXT_MOMENT:m3_taste]",
-      preTurnMomentState: m3State,
+      toolCallsSummary: [ratifyingDietary],
     });
 
     const result = await service.submitTextTurn({
@@ -960,21 +952,28 @@ describe('OnboardingService.submitTextTurn — elevation directive (Slice 2.5-s7
       message: "We're strictly Halal.",
     });
 
-    expect(result.chip_config).not.toBeNull();
     expect(result.chip_config?.mode).toBe('action');
-    expect(result.chip_config?.options).toHaveLength(3);
-    const keys = result.chip_config?.options?.map((o) => o.key) ?? [];
-    expect(keys).toEqual(['always-respect', 'prefer', 'just-context']);
-    // Elevation prompt has NO skip — the parent must pick one (just-context is
-    // the soft path).
+    expect(result.chip_config?.options?.map((o) => o.key)).toEqual([
+      'always-respect',
+      'prefer',
+      'just-context',
+    ]);
     expect(result.chip_config?.skip_label).toBeUndefined();
+
+    const lumiAppend = threads.appendTurnNext.mock.calls.find(
+      (c) => (c[0] as { role?: string }).role === 'lumi',
+    );
+    const body = lumiAppend?.[0].body as { type: string; content: string };
+    expect(body.content).not.toContain('[NEXT_MOMENT:');
+    expect(body.content).toContain("'strictly Halal.'");
   });
 
-  it('keeps moment at m3_taste when only [CHIP_PROMPT:] is emitted (no [NEXT_MOMENT:])', async () => {
+  it('renders the ratification chips even when the agent omits [NEXT_MOMENT:] (stays at m3_taste)', async () => {
     const { service, momentRepository } = buildService({
-      agentText: 'Should I treat that as a hard rule? [CHIP_PROMPT:elevation:halal:Halal]',
+      agentText: 'Should I treat that as a hard rule or a preference?',
       preTurnMomentState: m3State,
       countsOverride: { household_name_set: true, child_count: 1, child_allergen_count: 1 },
+      toolCallsSummary: [ratifyingDietary],
     });
 
     const result = await service.submitTextTurn({
@@ -990,10 +989,13 @@ describe('OnboardingService.submitTextTurn — elevation directive (Slice 2.5-s7
     );
   });
 
-  it('without CHIP_PROMPT: falls through to the default M3 choice chip config', async () => {
+  it('does NOT render ratification chips when no tool result asked for it', async () => {
     const { service } = buildService({
       agentText: 'Tell me about your kitchen. [NEXT_MOMENT:m3_taste]',
       preTurnMomentState: m3State,
+      toolCallsSummary: [
+        { tool: 'dietary.declare', error: false, result: { dietary_id: 'd1', was_existing: false } },
+      ],
     });
 
     const result = await service.submitTextTurn({
@@ -1003,43 +1005,28 @@ describe('OnboardingService.submitTextTurn — elevation directive (Slice 2.5-s7
     });
 
     expect(result.chip_config?.mode).toBe('choice');
-    expect(result.chip_config?.options).toBeDefined();
     expect(result.chip_config?.skip_label).toBe('Skip this moment');
   });
 
-  it('handles CHIP_PROMPT before NEXT_MOMENT in either order', async () => {
-    const { service } = buildService({
+  it('defensively strips any stray legacy elevation sentinel from the persisted prose', async () => {
+    const { service, threads } = buildService({
       agentText:
-        '[NEXT_MOMENT:m3_taste] Got it. [CHIP_PROMPT:elevation:south_indian:South Indian]',
+        'Got it. [CHIP_PROMPT:elevation:halal:Halal] [NEXT_MOMENT:m3_taste]',
       preTurnMomentState: m3State,
     });
 
-    const result = await service.submitTextTurn({
+    await service.submitTextTurn({
       userId: USER_ID,
       householdId: HOUSEHOLD_ID,
       message: 'x',
     });
 
-    expect(result.chip_config?.mode).toBe('action');
-  });
-
-  it('ignores malformed CHIP_PROMPT (missing label) and falls through to default chip_config', async () => {
-    const { service } = buildService({
-      // Missing the label after the colon — regex requires `key:label`. The
-      // malformed directive is left in the prose (we should ideally strip it
-      // too, but a noisy passthrough is safer than a silent override). The
-      // chip_config falls through to the M3 default.
-      agentText: 'Got it. [CHIP_PROMPT:elevation:halal] [NEXT_MOMENT:m3_taste]',
-      preTurnMomentState: m3State,
-    });
-
-    const result = await service.submitTextTurn({
-      userId: USER_ID,
-      householdId: HOUSEHOLD_ID,
-      message: 'x',
-    });
-
-    expect(result.chip_config?.mode).toBe('choice');
+    const lumiAppend = threads.appendTurnNext.mock.calls.find(
+      (c) => (c[0] as { role?: string }).role === 'lumi',
+    );
+    const body = lumiAppend?.[0].body as { type: string; content: string };
+    expect(body.content).not.toContain('[CHIP_PROMPT:');
+    expect(body.content).not.toContain('[NEXT_MOMENT:');
   });
 });
 
@@ -1497,5 +1484,72 @@ describe('OnboardingService.submitTextTurn — cold-start fallback (Slice 2.6-s6
     const upsertCall = momentRepository.upsertState.mock.calls[0];
     expect(upsertCall?.[1].cold_start_triggered).toBe(true);
     expect(upsertCall?.[1].cold_start_trigger_reason).toBe('stage1_timeout');
+  });
+});
+
+// Slice 2.7-s3 — ONBOARDING_TRACE_DIR per-turn agentic trace wiring. These
+// cover the service-level gating (one artifact per turn when set; none when
+// unset) and that the captured artifact reflects this turn's moment-state and
+// usage. The OnboardingTracer's own field-by-field coverage lives in
+// onboarding-tracer.test.ts.
+describe('OnboardingService.submitTextTurn — ONBOARDING_TRACE_DIR (Slice 2.7-s3)', () => {
+  const prev = process.env.ONBOARDING_TRACE_DIR;
+  let dir: string | null = null;
+
+  afterEach(async () => {
+    if (prev === undefined) delete process.env.ONBOARDING_TRACE_DIR;
+    else process.env.ONBOARDING_TRACE_DIR = prev;
+    if (dir !== null) {
+      await rm(dir, { recursive: true, force: true });
+      dir = null;
+    }
+  });
+
+  it('writes exactly one per-turn artifact capturing usage + moment-state when set', async () => {
+    dir = await mkdtemp(join(tmpdir(), 'onboarding-trace-svc-'));
+    process.env.ONBOARDING_TRACE_DIR = dir;
+
+    const { service } = buildService({
+      agentText: 'Got it. [NEXT_MOMENT:m2_safe]',
+      preTurnMomentState: {
+        current_moment: 'm1_table',
+        required_set_status: {
+          m1_household_name: true,
+          m1_child_declared: true,
+          m2_allergen_response: false,
+          m5_favorite_count: 0,
+          m5_complete: false,
+        },
+      },
+      countsOverride: { household_name_set: true, child_count: 1 },
+    });
+
+    await service.submitTextTurn({ userId: USER_ID, householdId: HOUSEHOLD_ID, message: 'next' });
+    // The trace write is fire-and-forget inside the service — wait for the
+    // artifact to land (event-driven, not a fixed sleep).
+    const traceDir = dir;
+    await vi.waitFor(async () => {
+      expect(await readdir(traceDir)).toHaveLength(1);
+    });
+
+    const files = await readdir(dir);
+    expect(files[0]).toContain(`${HOUSEHOLD_ID}__`);
+
+    const json = JSON.parse(await readFile(join(dir, files[0]!), 'utf8')) as Record<string, unknown>;
+    expect(json.household_id).toBe(HOUSEHOLD_ID);
+    expect(json.usage).toMatchObject({ promptTokens: 100, completionTokens: 50, iterations: 1 });
+    expect(json.moment_before).toMatchObject({ current_moment: 'm1_table' });
+    expect(json.moment_after).toMatchObject({ current_moment: 'm2_safe' });
+  });
+
+  it('writes no artifact and does no trace work when unset', async () => {
+    dir = await mkdtemp(join(tmpdir(), 'onboarding-trace-off-'));
+    delete process.env.ONBOARDING_TRACE_DIR;
+
+    const { service } = buildService({ agentText: 'Hello there.', preTurnMomentState: null });
+    await service.submitTextTurn({ userId: USER_ID, householdId: HOUSEHOLD_ID, message: 'Hi' });
+    await new Promise((r) => setImmediate(r));
+
+    expect(await readdir(dir)).toHaveLength(0);
   });
 });

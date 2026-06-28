@@ -1,24 +1,12 @@
 import type { ZodTypeAny } from 'zod';
 import { NotImplementedError } from '../common/errors.js';
 import {
-  AllergenDeclareInputSchema,
-  AllergenDeclareOutputSchema,
   AllergyCheckInputSchema,
   AllergyCheckOutputSchema,
   ChildSignalInputSchema,
   ChildSignalOutputSchema,
-  CuisineDeclareInputSchema,
-  CuisineDeclareOutputSchema,
   CulturalLookupInputSchema,
   CulturalLookupOutputSchema,
-  DietaryDeclareInputSchema,
-  DietaryDeclareOutputSchema,
-  FavoriteLunchAddInputSchema,
-  FavoriteLunchAddOutputSchema,
-  FoodPreferenceDeclareInputSchema,
-  FoodPreferenceDeclareOutputSchema,
-  HouseholdSetNameInputSchema,
-  HouseholdSetNameOutputSchema,
   MemoryNoteInputSchema,
   MemoryNoteOutputSchema,
   MemoryRecallInputSchema,
@@ -33,8 +21,6 @@ import {
   RecipeFetchOutputSchema,
   RecipeSearchInputSchema,
   RecipeSearchOutputSchema,
-  RuleSetInputSchema,
-  RuleSetOutputSchema,
 } from '@hivekitchen/contracts';
 
 export interface ToolSpec {
@@ -168,74 +154,13 @@ const childSignalStubSpec = stubSpec(
   'child_signal not wired — DomainOrchestrator constructor must inject createChildSignalSpec(childPrefsRepo, childrenRepo, redis)',
 );
 
-// Slice 2.5-s1 — seven new onboarding tools. Registered as stubs in this
-// slice; factory functions exist in onboarding.tools.ts as deterministic-
-// stub successes (input validated, no DB write, Pino log emitted). Full
-// service wiring + agent exposure happens in slice 2.5-s4 alongside the
-// agent prompt v2 that knows how to call them.
-
-const householdSetNameStubSpec = stubSpec(
-  'household.set_name',
-  "Set the parent-chosen household label (e.g. 'The Menons'). Captured in Moment 1 of Epic 2.5 onboarding.",
-  HouseholdSetNameInputSchema,
-  HouseholdSetNameOutputSchema,
-  80,
-  'household.set_name not wired — OnboardingService must inject createHouseholdSetNameToolSpec(householdsService) when 2.5-s4 ships',
-);
-
-const allergenDeclareStubSpec = stubSpec(
-  'allergen.declare',
-  'Declare a per-child medical allergen. One allergen per call (the agent fires one call per allergen the parent names). Uniform-strength — no severity gradient (FR122).',
-  AllergenDeclareInputSchema,
-  AllergenDeclareOutputSchema,
-  120,
-  'allergen.declare not wired — OnboardingService must inject createAllergenDeclareToolSpec(childAllergensService) when 2.5-s4 ships',
-);
-
-const dietaryDeclareStubSpec = stubSpec(
-  'dietary.declare',
-  "Declare a dietary identity tag (e.g. 'halal', 'vegetarian'). Per-child (rare) or household-scoped (default). Carries an enforcement strength.",
-  DietaryDeclareInputSchema,
-  DietaryDeclareOutputSchema,
-  100,
-  'dietary.declare not wired — OnboardingService must inject createDietaryDeclareToolSpec(dietaryPreferencesService) when 2.5-s4 ships',
-);
-
-const cuisineDeclareStubSpec = stubSpec(
-  'cuisine.declare',
-  "Register a cuisine preference identifier (e.g. 'south_indian', 'levantine'). Shares the cultural_priors table with cultural.note; cuisine.declare is for cuisine preference, cultural.note is for cultural/religious identity.",
-  CuisineDeclareInputSchema,
-  CuisineDeclareOutputSchema,
-  100,
-  'cuisine.declare not wired — OnboardingService must inject createCuisineDeclareToolSpec(culturalPriorRepository) when 2.5-s4 ships',
-);
-
-const foodPreferenceDeclareStubSpec = stubSpec(
-  'food_preference.declare',
-  "Record a like/dislike/refuses food preference. Per-child or household-scoped. Open vocabulary (free-text item name). Use this for 'hates X' — NOT allergen.declare (which is medical-only).",
-  FoodPreferenceDeclareInputSchema,
-  FoodPreferenceDeclareOutputSchema,
-  120,
-  'food_preference.declare not wired — OnboardingService must inject createFoodPreferenceDeclareToolSpec(foodPreferencesService) when 2.5-s4 ships',
-);
-
-const favoriteLunchAddStubSpec = stubSpec(
-  'favorite_lunch.add',
-  'Append a favorite lunch item to the household cold-start seed (Moment 5). Household-scoped. Target: 10 items for FR124 completion.',
-  FavoriteLunchAddInputSchema,
-  FavoriteLunchAddOutputSchema,
-  120,
-  'favorite_lunch.add not wired — OnboardingService must inject createFavoriteLunchAddToolSpec(favoriteLunchesService) when 2.5-s4 ships',
-);
-
-const ruleSetStubSpec = stubSpec(
-  'rule.set',
-  "Set a household-wide rule (no_pork, no_alcohol, no_beef, no_overnight_leftovers, no_microwave_at_school, custom). custom_label required iff rule_type='custom'.",
-  RuleSetInputSchema,
-  RuleSetOutputSchema,
-  100,
-  'rule.set not wired — OnboardingService must inject createRuleSetToolSpec(householdRulesService) when 2.5-s4 ships',
-);
+// Slice 2.7-s4 — the seven onboarding tool stubs (household.set_name,
+// allergen.declare, dietary.declare, cuisine.declare, food_preference.declare,
+// favorite_lunch.add, rule.set) were deleted from this manifest. They were dead
+// duplicates: the real, fully-wired specs are built per-turn by
+// createOnboardingToolSpecs() in tools/onboarding.tools.ts (the single source of
+// truth), and the planner — the only consumer of TOOL_MANIFEST — never offered
+// onboarding tools. Two definitions of the same tool names was a maintenance trap.
 
 export const TOOL_MANIFEST = new Map<string, ToolSpec>([
   ['allergy.check', allergyCheckStubSpec],
@@ -248,11 +173,4 @@ export const TOOL_MANIFEST = new Map<string, ToolSpec>([
   ['plan.compose', planComposeStubSpec],
   ['cultural.lookup', culturalLookupStubSpec],
   ['child_signal', childSignalStubSpec],
-  ['household.set_name', householdSetNameStubSpec],
-  ['allergen.declare', allergenDeclareStubSpec],
-  ['dietary.declare', dietaryDeclareStubSpec],
-  ['cuisine.declare', cuisineDeclareStubSpec],
-  ['food_preference.declare', foodPreferenceDeclareStubSpec],
-  ['favorite_lunch.add', favoriteLunchAddStubSpec],
-  ['rule.set', ruleSetStubSpec],
 ]);

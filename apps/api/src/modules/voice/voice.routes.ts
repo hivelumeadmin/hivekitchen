@@ -12,6 +12,7 @@ import {
 import { VoiceRepository } from './voice.repository.js';
 import { VoiceService } from './voice.service.js';
 import { OnboardingAgent } from '../../agents/onboarding.agent.js';
+import { OpenAIAdapter } from '../../agents/providers/openai.adapter.js';
 import { ThreadRepository } from '../threads/thread.repository.js';
 import { CulturalPriorRepository } from '../cultural-priors/cultural-prior.repository.js';
 import { CulturalPriorService } from '../cultural-priors/cultural-prior.service.js';
@@ -22,7 +23,7 @@ const SessionParamsSchema = z.object({
 
 const voiceRoutesPlugin: FastifyPluginAsync = async (fastify) => {
   const repository = new VoiceRepository(fastify.supabase);
-  const agent = new OnboardingAgent(fastify.openai);
+  const agent = new OnboardingAgent(new OpenAIAdapter(fastify.openai));
   const threads = new ThreadRepository(fastify.supabase);
   const culturalPriorRepository = new CulturalPriorRepository(fastify.supabase);
   const culturalPriorService = new CulturalPriorService({

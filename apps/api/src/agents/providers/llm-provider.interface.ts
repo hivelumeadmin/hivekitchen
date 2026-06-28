@@ -40,6 +40,18 @@ export interface LLMCallOptions {
    *  so the model cannot stop without calling it and cannot emit schema-invalid
    *  arguments. Ignored by providers that do not support strict tools. */
   forcedToolName?: string;
+  /** Slice 2.7-s4 — harden EVERY tool with OpenAI strict-mode constraints
+   *  (additionalProperties:false, all props required, originally-optional fields
+   *  expressed as `anyOf:[<schema>, null]`) and emit each with `strict: true`,
+   *  while leaving `tool_choice: 'auto'`. This is the multi-tool strict path the
+   *  onboarding agent relies on; the planner's single forced tool uses
+   *  `forcedToolName` instead. Ignored when `forcedToolName` is set (forced mode
+   *  hardens its own tool) or the provider does not support strict tools. */
+  strictAllTools?: boolean;
+  /** Slice 2.7-s4 — OpenAI `response_format` passthrough. 'json_object' forces a
+   *  JSON-object response (used by the onboarding extractor/classifier calls).
+   *  The prompt must still instruct the model to return JSON. */
+  responseFormat?: 'json_object';
 }
 
 export interface LLMToolCall {
