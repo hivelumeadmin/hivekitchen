@@ -524,3 +524,25 @@ development_status:
   12-s11-proactive-nudge-turn-persistence: done                               # folds: 12.11 (persistence)
   12-s12-orb-breathing-nudge-sse-opt-out: done                                # folds: 12.11 (SSE), 12.12
   epic-12-retrospective: optional
+
+  # ==========================================================================
+  # Epic 13: Lumi-Led UX Rebuild (Valet Model) — 12 slices / 6 phases.
+  # Interaction-topology rebuild, NOT a visual redesign (Editorial Hearth frozen).
+  # Gate-first; presence + SSE foundation before surfaces; route-collapse last.
+  # Backend s8/s9 built in PR #52 (UNMERGED, stacked on the 2.7 branch).
+  # See: _bmad-output/planning-artifacts/epic-13-lumi-ux-rebuild-brief.md. Added 2026-06-28.
+  # ==========================================================================
+  epic-13: in-progress
+  13-s1-ux-regression-baseline: backlog                                        # WALL: baseline — gate for every surface-touching slice
+  13-s2-lumi-presence-primitive: backlog                                       # WALL: presence — replaces LumiOrb/LumiPanel/LumiFAB (ambient→whisper→summoned-recede)
+  13-s2.5-sse-push-completion: backlog                                         # WALL: push — finish "Story 5.2" (sse-remediation-spec.md); dependency of s3 + s10
+  13-s3-whisper-channel: backlog                                               # depends s2 + s2.5
+  13-s4-brief-finished-surface-pilot: backlog                                  # WALL: pilot — valet model proven on one surface
+  13-s5-onboarding-one-mode-kitchen-map-hero: backlog                         # on the shipped 2.7 backend; converge/delete onboarding-mockups
+  13-s6-recognition-ending-entry-continuity: backlog                          # WALL: onboarding parity; resolve defer-non-safety §6.1 decision first
+  13-s7-planner-finished-surface-stickybar: backlog                           # converge features/plan + features/weekly-plan; StickyBottomBar fix
+  13-s8-catalog-repo-pick: done                                                # PR #52 (UNMERGED) — pickCatalogCandidate + CatalogRepo.pickRecipe; 21 tests; routing-spec §9 #1/#2 resolved
+  13-s9-route-dispatch-intent: in-progress                                     # PR #52 — routePlanIntent + dispatchPlanIntent DECISION layer done (21 tests); REMAINING: HTTP edit endpoint + execute T0 (plans.service/declareIfNew/assignSnackRotation) + slot-id resolution + routing-spec §9 #3 + trace tags
+  13-s10-talk-to-your-plan-ui: backlog                                         # WALL: MVP — depends s2 + s2.5 + s9(wired) + s8; optimistic + plan.updated reconcile
+  13-s11-route-collapse-4-anchors: backlog                                     # WALL: topology — deep-link audit first; child/grandparent/ops scopes preserved
+  epic-13-retrospective: optional
