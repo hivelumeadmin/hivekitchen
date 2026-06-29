@@ -1,5 +1,11 @@
 # Deferred Work Log
 
+## Deferred from: code review of 13-s1-ux-regression-baseline (2026-06-29)
+
+- **D-13S1-CR1: Confirm-week button is an inert no-op in production** — `BriefCanvas.tsx:689` renders `<PlanActionSection>` with no `onConfirm`/`onTalkToLumi`, so the "Confirm the week" button's `onClick` is `undefined` and permanently inert. AC1.3's visible+enabled assertion is satisfied but the baseline pins a confirm surface that does not confirm; a rebuild could ship the same dead button and pass. Pre-existing product issue, not a 13-s1 defect. [`apps/web/src/features/plan/BriefCanvas.tsx:689`; `PlanActionSection.tsx:21-27`]
+- **D-13S1-CR2: Axe a11y baseline does not scan the opened LumiPanel/picker, and the orb/panel `aria-expanded`/`aria-controls` contract is unasserted** — `checkA11y(page,'.app-scope',…)` runs only on the default brief view; the panel textarea, mode toggles, and DisambiguationPicker are outside the a11y gate the story claims protects "ambient LumiOrb/Panel." Coverage enhancement (AC2 as written is met); no `src/` change needed to extend. [`apps/web/test/e2e/13-s1-ux-regression-baseline.spec.ts:269-276`]
+- **D-13S1-CR3: PlanTile `past`/`today`/`locked` visual variants uncovered after AC3 snapshot descope** — only `paused` is covered behaviorally (AC5); the other PlanTile states AC3 enumerated have no behavioral substitute. Consequence of the user-approved pixel-snapshot descope; flag for a later behavioral or visual-regression slice. [`apps/web/src/features/plan/PlanTile.tsx`]
+
 ## Deferred from: code review of 2.7-s3-onboarding-trace-dir (2026-06-28, pass 2)
 
 - **D-2.7S3-CR6: `turn_index` off-by-one between a fresh turn and an orphan-recovery resume** — `turnIndex: existingTurns.length` is read before the user turn is appended on a normal turn, but on the orphan-recovery path (`isOrphanedUserTurn`) the user turn is already counted, so two semantically-equivalent turns get `turn_index` values differing by one, breaking the docstring's "stable, monotonic per-household index" promise. Distinct from CR3 (concurrent collisions); deterministic but single-user/low-impact. [`onboarding.service.ts:1183` vs orphan branch `~:699-719`]

@@ -29,6 +29,7 @@
     "zustand": "^5.0.0"
   },
   "devDependencies": {
+    "@axe-core/playwright": "^4.12.1",
     "@hivekitchen/eslint-config": "workspace:*",
     "@hivekitchen/tsconfig": "workspace:*",
     "@hivekitchen/ui": "workspace:*",
