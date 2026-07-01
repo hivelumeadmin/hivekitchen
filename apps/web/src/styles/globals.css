@@ -7,6 +7,28 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Epic 13-s2 — summoned sheet slides up from the corner (AC3). The panel starts
+   slightly below and fades in; motion-reduce:animate-none collapses it to static. */
+@keyframes hk-slide-in-sheet {
+  from { opacity: 0; transform: translateY(0.5rem); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* Epic 13-s3 — whisper line slides up from below (AC3). Subtle entry; collapses
+   to static under prefers-reduced-motion via motion-reduce:animate-none at the call site. */
+@keyframes hk-slide-up-whisper {
+  from { opacity: 0; transform: translateY(0.375rem); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* Epic 13-s5 — Kitchen Map hero cards/pills land as slots fill during onboarding
+   (AC4). First-appearance fade + rise; motion-reduce:animate-none at the call site
+   collapses it to static. */
+@keyframes hk-land {
+  from { opacity: 0; transform: translateY(0.625rem); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
 /* Slice 5-S12 — sacred-plum proposal-pending pulse on PlanTile. Reduced-motion
    suppression is handled at the call site via Tailwind's motion-reduce variant
    (compiles to @media (prefers-reduced-motion: reduce)). */

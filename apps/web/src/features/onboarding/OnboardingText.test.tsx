@@ -1,11 +1,13 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, waitFor, cleanup } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
+import type * as ReactRouterDom from 'react-router-dom';
 import { OnboardingText } from './OnboardingText.js';
+import { formatUserEcho } from './onboarding-conversation.js';
 
 const navigateMock = vi.fn();
 vi.mock('react-router-dom', async () => {
-  const actual = await vi.importActual<typeof import('react-router-dom')>('react-router-dom');
+  const actual = await vi.importActual<typeof ReactRouterDom>('react-router-dom');
   return { ...actual, useNavigate: () => navigateMock };
 });
 
@@ -22,6 +24,9 @@ function mockTurnResponse(opts: {
   errorBody?: object;
   moment_key?: string | null;
   chip_config?: unknown;
+  required_set_complete?: boolean | null;
+  missing_required_set?: string[];
+  cold_start_mode?: boolean;
 }): Response {
   const status = opts.status ?? 200;
   const body =
@@ -34,6 +39,13 @@ function mockTurnResponse(opts: {
           is_complete: opts.is_complete ?? false,
           ...(opts.moment_key !== undefined ? { moment_key: opts.moment_key } : {}),
           ...(opts.chip_config !== undefined ? { chip_config: opts.chip_config } : {}),
+          ...(opts.required_set_complete !== undefined
+            ? { required_set_complete: opts.required_set_complete }
+            : {}),
+          ...(opts.missing_required_set !== undefined
+            ? { missing_required_set: opts.missing_required_set }
+            : {}),
+          ...(opts.cold_start_mode !== undefined ? { cold_start_mode: opts.cold_start_mode } : {}),
         }
       : (opts.errorBody ?? { type: '/errors/upstream', status, title: 'Upstream' });
   return new Response(JSON.stringify(body), {
@@ -41,6 +53,65 @@ function mockTurnResponse(opts: {
     headers: { 'Content-Type': 'application/json' },
   });
 }
+
+function renderOnboarding() {
+  return render(
+    <MemoryRouter>
+      <OnboardingText />
+    </MemoryRouter>,
+  );
+}
+
+function sendText(value: string): void {
+  fireEvent.change(screen.getByLabelText(/your message to lumi/i), { target: { value } });
+  fireEvent.submit(screen.getByRole('button', { name: /send/i }).closest('form')!);
+}
+
+const M2_CHIP_CONFIG = {
+  mode: 'choice',
+  options: [
+    { key: 'none', label: 'No known allergens' },
+    { key: 'peanut', label: 'Peanut' },
+    { key: 'tree_nut', label: 'Tree nuts' },
+    { key: 'dairy', label: 'Dairy' },
+    { key: 'egg', label: 'Eggs' },
+    { key: 'soy', label: 'Soy' },
+    { key: 'wheat', label: 'Wheat / gluten' },
+    { key: 'fish', label: 'Fish' },
+    { key: 'shellfish', label: 'Shellfish' },
+    { key: 'sesame', label: 'Sesame' },
+  ],
+};
+
+async function arriveAtM2(): Promise<void> {
+  globalThis.fetch = vi.fn().mockResolvedValueOnce(
+    mockTurnResponse({
+      lumi_response: 'What do we need to keep safe?',
+      moment_key: 'm2_safe',
+      chip_config: M2_CHIP_CONFIG,
+    }),
+  ) as unknown as typeof fetch;
+
+  renderOnboarding();
+  sendText('Just my daughter Layla, 10.');
+  await waitFor(() => {
+    expect(screen.getByText(/What do we need to keep safe/i)).toBeDefined();
+  });
+}
+
+describe('formatUserEcho', () => {
+  it('strips the wire chip sentinel, keeping the readable selections', () => {
+    expect(formatUserEcho('[Chips selected: Peanut, Dairy]')).toBe('Peanut, Dairy');
+    expect(formatUserEcho('[Chips selected: Peanut] and a note')).toBe('Peanut — and a note');
+    expect(formatUserEcho('plain free text')).toBe('plain free text');
+  });
+
+  it('strips an empty sentinel and multiple sentinels (P5)', () => {
+    expect(formatUserEcho('[Chips selected: ]')).toBe('');
+    expect(formatUserEcho('[Chips selected: ] just a note')).toBe('just a note');
+    expect(formatUserEcho('[Chips selected: A] [Chips selected: B]')).toBe('A');
+  });
+});
 
 describe('OnboardingText', () => {
   beforeEach(() => {
@@ -53,44 +124,32 @@ describe('OnboardingText', () => {
     vi.clearAllMocks();
   });
 
-  it('renders the opening Lumi greeting on mount', () => {
-    render(
-      <MemoryRouter>
-        <OnboardingText />
-      </MemoryRouter>,
-    );
-
+  it('renders the opening Lumi greeting and the input on mount', () => {
+    renderOnboarding();
     expect(screen.getByText(/planning lunches/i)).toBeDefined();
     expect(screen.getByLabelText(/your message to lumi/i)).toBeDefined();
   });
 
-  it('disables the input while a turn is in flight, then appends both turns', async () => {
+  it('is one calm mode — no conversation-history toggle', () => {
+    renderOnboarding();
+    expect(screen.queryByTitle(/conversation history/i)).toBeNull();
+  });
+
+  it('disables the input while a turn is in flight, then appends the Lumi reply', async () => {
     let resolveFetch: (v: Response) => void = () => undefined;
     globalThis.fetch = vi.fn().mockImplementation(
-      () =>
-        new Promise<Response>((resolve) => {
-          resolveFetch = resolve;
-        }),
+      () => new Promise<Response>((resolve) => { resolveFetch = resolve; }),
     ) as unknown as typeof fetch;
 
-    render(
-      <MemoryRouter>
-        <OnboardingText />
-      </MemoryRouter>,
-    );
-
+    renderOnboarding();
     const textarea = screen.getByLabelText(/your message to lumi/i) as HTMLTextAreaElement;
-    fireEvent.change(textarea, { target: { value: 'Grandma made dal every Sunday.' } });
-    fireEvent.submit(screen.getByRole('button', { name: /send/i }).closest('form')!);
+    sendText('Grandma made dal every Sunday.');
 
-    // Optimistic turn fired: textarea cleared and input disabled while in flight.
-    // User turns are intentionally hidden in focused mode (history-only).
     await waitFor(() => {
       expect(textarea.value).toBe('');
       expect(textarea.disabled).toBe(true);
     });
 
-    // Resolve the fetch with a Lumi reply
     resolveFetch(mockTurnResponse({ lumi_response: "What's a Friday in your house?" }));
 
     await waitFor(() => {
@@ -101,111 +160,121 @@ describe('OnboardingText', () => {
     });
   });
 
-  it('on 502 error, re-enables input and shows inline error; user turn stays', async () => {
+  it('echoes a chip turn cleanly — never the [Chips selected: …] sentinel', async () => {
+    globalThis.fetch = vi.fn()
+      .mockResolvedValueOnce(
+        mockTurnResponse({
+          lumi_response: 'Pick a cuisine.',
+          moment_key: 'm3_taste',
+          chip_config: { mode: 'action', options: [{ key: 'south_indian', label: 'South Indian' }] },
+        }),
+      )
+      .mockResolvedValueOnce(mockTurnResponse({ lumi_response: 'Lovely.', moment_key: 'm3_taste' })) as unknown as typeof fetch;
+
+    renderOnboarding();
+    sendText('first');
+    fireEvent.click(await screen.findByText('South Indian'));
+    fireEvent.submit(screen.getByRole('button', { name: /send/i }).closest('form')!);
+
+    await waitFor(() => {
+      expect(screen.getByText(/Lovely\./)).toBeDefined();
+    });
+    expect(screen.queryByText(/\[Chips selected/)).toBeNull();
+  });
+
+  it('on 502, keeps the turn, leaves the draft empty, re-enables input, shows an error', async () => {
     globalThis.fetch = vi.fn().mockResolvedValue(
       mockTurnResponse({ status: 502, errorBody: { type: '/errors/upstream', status: 502 } }),
     ) as unknown as typeof fetch;
 
-    render(
-      <MemoryRouter>
-        <OnboardingText />
-      </MemoryRouter>,
-    );
-
-    fireEvent.change(screen.getByLabelText(/your message to lumi/i), {
-      target: { value: 'Sometimes she made roti.' },
-    });
-    fireEvent.submit(screen.getByRole('button', { name: /send/i }).closest('form')!);
+    renderOnboarding();
+    sendText('Sometimes she made roti.');
 
     await waitFor(() => {
       expect(screen.getByRole('alert')).toBeDefined();
     });
-    // 502 path: draft stays empty (turn was persisted server-side — not restored).
-    // Non-upstream errors restore the draft so the user can re-send without retyping.
-    // User turns are hidden in focused mode (visible via history toggle).
-    expect((screen.getByLabelText(/your message to lumi/i) as HTMLTextAreaElement).value).toBe('');
-    // Input re-enabled
-    expect((screen.getByLabelText(/your message to lumi/i) as HTMLTextAreaElement).disabled).toBe(false);
+    const textarea = screen.getByLabelText(/your message to lumi/i) as HTMLTextAreaElement;
+    expect(textarea.value).toBe('');
+    expect(textarea.disabled).toBe(false);
   });
 
-  it('renders "Finish onboarding" when is_complete=true', async () => {
+  it('on a non-502 error, restores the draft so the parent can re-send', async () => {
     globalThis.fetch = vi.fn().mockResolvedValue(
-      mockTurnResponse({
-        lumi_response: 'Sounds like a South Asian household. Does that sound right?',
-        is_complete: true,
-      }),
+      mockTurnResponse({ status: 500, errorBody: { type: '/errors/internal', status: 500 } }),
     ) as unknown as typeof fetch;
 
-    render(
-      <MemoryRouter>
-        <OnboardingText />
-      </MemoryRouter>,
-    );
+    renderOnboarding();
+    sendText('roti and dal');
 
-    fireEvent.change(screen.getByLabelText(/your message to lumi/i), {
-      target: { value: 'Yes that sounds right.' },
+    await waitFor(() => {
+      expect((screen.getByLabelText(/your message to lumi/i) as HTMLTextAreaElement).value).toBe('roti and dal');
     });
-    fireEvent.submit(screen.getByRole('button', { name: /send/i }).closest('form')!);
+  });
+
+  it('renders the legacy "Finish onboarding" CTA when is_complete=true and no moment_key', async () => {
+    globalThis.fetch = vi.fn().mockResolvedValueOnce(
+      mockTurnResponse({ lumi_response: 'All done.', is_complete: true }),
+    ) as unknown as typeof fetch;
+
+    renderOnboarding();
+    sendText('done');
 
     await waitFor(() => {
       expect(screen.getByRole('button', { name: /finish onboarding/i })).toBeDefined();
     });
   });
 
-  it('renders moment-based header when moment_key is m1_table', async () => {
-    globalThis.fetch = vi.fn().mockResolvedValue(
-      mockTurnResponse({
-        lumi_response: 'Tell me about your household.',
-        moment_key: 'm1_table',
-      }),
-    ) as unknown as typeof fetch;
+  it('clicking "Finish onboarding" finalizes and navigates to /app', async () => {
+    globalThis.fetch = vi.fn()
+      .mockResolvedValueOnce(mockTurnResponse({ lumi_response: 'All done.', is_complete: true }))
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            thread_id: SAMPLE_THREAD_ID,
+            summary: { cultural_templates: [], palate_notes: [], allergens_mentioned: [] },
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        ),
+      ) as unknown as typeof fetch;
 
-    render(
-      <MemoryRouter>
-        <OnboardingText />
-      </MemoryRouter>,
-    );
-
-    // Initial mount: no moment_key yet — falls back to the legacy step counter.
-    expect(screen.getByText(/Step \d of ~8/i)).toBeDefined();
-
-    fireEvent.change(screen.getByLabelText(/your message to lumi/i), {
-      target: { value: "We're the Sharma kitchen." },
-    });
-    fireEvent.submit(screen.getByRole('button', { name: /send/i }).closest('form')!);
+    renderOnboarding();
+    sendText('done');
+    fireEvent.click(await screen.findByRole('button', { name: /finish onboarding/i }));
 
     await waitFor(() => {
-      expect(screen.getByText(/Moment 1 of 5 · Who's at the table/i)).toBeDefined();
+      expect(navigateMock).toHaveBeenCalledWith('/app');
     });
   });
 
-  it('keeps the step-counter fallback when the response omits moment_key', async () => {
-    globalThis.fetch = vi.fn().mockResolvedValue(
+  it('renders the moment-based header subtitle when moment_key is m1_table', async () => {
+    globalThis.fetch = vi.fn().mockResolvedValueOnce(
+      mockTurnResponse({ lumi_response: 'Who is at the table?', moment_key: 'm1_table' }),
+    ) as unknown as typeof fetch;
+
+    renderOnboarding();
+    sendText('hi');
+
+    await waitFor(() => {
+      expect(screen.getByText(/moment 1 of 5 · who's at the table/i)).toBeDefined();
+    });
+  });
+
+  it('falls back to the step counter when the response omits moment_key', async () => {
+    globalThis.fetch = vi.fn().mockResolvedValueOnce(
       mockTurnResponse({ lumi_response: 'Tell me more.' }),
     ) as unknown as typeof fetch;
 
-    render(
-      <MemoryRouter>
-        <OnboardingText />
-      </MemoryRouter>,
-    );
-
-    fireEvent.change(screen.getByLabelText(/your message to lumi/i), {
-      target: { value: 'Hi.' },
-    });
-    fireEvent.submit(screen.getByRole('button', { name: /send/i }).closest('form')!);
+    renderOnboarding();
+    sendText('hi');
 
     await waitFor(() => {
-      expect(screen.getByText(/Tell me more/i)).toBeDefined();
+      expect(screen.getByText(/step \d of ~8/i)).toBeDefined();
     });
-    // No moment_key → legacy step header remains.
-    expect(screen.getByText(/Step \d of ~8/i)).toBeDefined();
   });
 
-  it('clicking SkipChip submits a chip turn with ["skip"]', async () => {
-    // Need to seed an initial turn so chip_config (with skip_label) is present.
+  it('clicking the SkipChip submits a chip turn with ["skip"]', async () => {
     let firstCall = true;
-    const fetchMock = vi.fn().mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const fetchMock = vi.fn().mockImplementation(async (_input: RequestInfo | URL, init?: RequestInit) => {
       if (firstCall) {
         firstCall = false;
         return mockTurnResponse({
@@ -218,7 +287,6 @@ describe('OnboardingText', () => {
           },
         });
       }
-      // Capture the SkipChip POST body for assertion.
       const reqBody = init?.body ? JSON.parse(init.body as string) : null;
       return new Response(
         JSON.stringify({
@@ -233,87 +301,29 @@ describe('OnboardingText', () => {
     });
     globalThis.fetch = fetchMock as unknown as typeof fetch;
 
-    render(
-      <MemoryRouter>
-        <OnboardingText />
-      </MemoryRouter>,
-    );
-
-    // Trigger the first turn so chip_config (with a skip chip) appears.
-    fireEvent.change(screen.getByLabelText(/your message to lumi/i), {
-      target: { value: 'first turn' },
-    });
-    fireEvent.submit(screen.getByRole('button', { name: /send/i }).closest('form')!);
-
-    const skipBtn = await screen.findByText(/Skip this moment/i);
-    fireEvent.click(skipBtn);
+    renderOnboarding();
+    sendText('first turn');
+    fireEvent.click(await screen.findByText(/Skip this moment/i));
 
     await waitFor(() => {
       expect(fetchMock).toHaveBeenCalledTimes(2);
     });
     const secondCallBody = fetchMock.mock.calls[1]?.[1]?.body;
-    expect(secondCallBody).toBeDefined();
-    const parsed = JSON.parse(secondCallBody as string);
-    expect(parsed).toEqual({ chip_selections: ['skip'] });
+    expect(JSON.parse(secondCallBody as string)).toEqual({ chip_selections: ['skip'] });
   });
 
-  // -------------------------------------------------------------------------
-  // Slice 2.5-s6 — Moment 2 ("What I need to keep safe")
-  // -------------------------------------------------------------------------
-
-  const M2_CHIP_CONFIG = {
-    mode: 'choice',
-    options: [
-      { key: 'none', label: 'No known allergens' },
-      { key: 'peanut', label: 'Peanut' },
-      { key: 'tree_nut', label: 'Tree nuts' },
-      { key: 'dairy', label: 'Dairy' },
-      { key: 'egg', label: 'Eggs' },
-      { key: 'soy', label: 'Soy' },
-      { key: 'wheat', label: 'Wheat / gluten' },
-      { key: 'fish', label: 'Fish' },
-      { key: 'shellfish', label: 'Shellfish' },
-      { key: 'sesame', label: 'Sesame' },
-    ],
-  };
-
-  async function arriveAtM2(): Promise<void> {
-    globalThis.fetch = vi.fn().mockResolvedValueOnce(
-      mockTurnResponse({
-        lumi_response: 'What do we need to keep safe?',
-        moment_key: 'm2_safe',
-        chip_config: M2_CHIP_CONFIG,
-      }),
-    ) as unknown as typeof fetch;
-
-    render(
-      <MemoryRouter>
-        <OnboardingText />
-      </MemoryRouter>,
-    );
-
-    fireEvent.change(screen.getByLabelText(/your message to lumi/i), {
-      target: { value: 'Just my daughter Layla, 10.' },
-    });
-    fireEvent.submit(screen.getByRole('button', { name: /send/i }).closest('form')!);
-
-    await waitFor(() => {
-      expect(screen.getByText(/What do we need to keep safe/i)).toBeDefined();
-    });
-  }
+  // --- Moment 2 — the safety wall ------------------------------------------
 
   it('shows the 10 M2 allergen chips with "No known allergens" first', async () => {
     await arriveAtM2();
-
     expect(screen.getByText('No known allergens')).toBeDefined();
     expect(screen.getByText('Peanut')).toBeDefined();
     expect(screen.getByText('Sesame')).toBeDefined();
   });
 
-  it('"No known allergens" is mutually exclusive with allergen chips', async () => {
+  it('makes "No known allergens" mutually exclusive with allergen chips', async () => {
     await arriveAtM2();
 
-    // Select Peanut, then "No known allergens" — peanut should be deselected.
     fireEvent.click(screen.getByText('Peanut'));
     await waitFor(() => {
       expect(screen.getByTestId('m2-status-line').textContent).toMatch(/1 selection/);
@@ -321,50 +331,45 @@ describe('OnboardingText', () => {
 
     fireEvent.click(screen.getByText('No known allergens'));
     await waitFor(() => {
-      expect(screen.getByTestId('m2-status-line').textContent).toMatch(
-        /No known allergens — confirmed/,
-      );
+      expect(screen.getByTestId('m2-status-line').textContent).toMatch(/No known allergens — confirmed/);
     });
 
-    // Now tap Peanut again — 'none' clears, peanut selected.
     fireEvent.click(screen.getByText('Peanut'));
     await waitFor(() => {
       expect(screen.getByTestId('m2-status-line').textContent).toMatch(/1 selection/);
     });
   });
 
-  it('shows the Required status line when no chips and no draft in M2', async () => {
+  it('shows the Required status line with no chips and no draft in M2', async () => {
     await arriveAtM2();
-
     expect(screen.getByTestId('m2-status-line').textContent).toMatch(/Required —/);
   });
 
-  it('updates status line to a count after selecting multiple chips', async () => {
+  it('updates the status line to a count after selecting multiple chips', async () => {
     await arriveAtM2();
-
     fireEvent.click(screen.getByText('Peanut'));
     fireEvent.click(screen.getByText('Dairy'));
-
     await waitFor(() => {
       expect(screen.getByTestId('m2-status-line').textContent).toMatch(/2 selections/);
     });
   });
 
-  it('Send is disabled in M2 with no selection + no text, enabled after a chip', async () => {
+  it('disables Send in M2 with no selection and no text, enables it after a chip', async () => {
     await arriveAtM2();
-
     const sendBtn = screen.getByRole('button', { name: /send/i }) as HTMLButtonElement;
     expect(sendBtn.disabled).toBe(true);
-
     fireEvent.click(screen.getByText('Peanut'));
     await waitFor(() => {
       expect(sendBtn.disabled).toBe(false);
     });
   });
 
-  it('renders the M2 safety card on the profile panel after submitting "No known allergens"', async () => {
-    // Two responses: first arrives in M2; second is the response to the chip turn.
-    const fetchMock = vi.fn()
+  it('shows the safety card (never a premature "All clear") after M2 with no loaded projection', async () => {
+    // No household is seeded, so GET /kitchen-map never runs and the projection
+    // stays null. Post-fix, the hero must NOT fabricate "All clear" from an
+    // unloaded map — it shows the placeholder. (The affirmative "All clear" path
+    // is covered in KitchenMapHero.test.tsx with a real projection.)
+    globalThis.fetch = vi.fn()
       .mockResolvedValueOnce(
         mockTurnResponse({
           lumi_response: 'What do we need to keep safe?',
@@ -373,25 +378,11 @@ describe('OnboardingText', () => {
         }),
       )
       .mockResolvedValueOnce(
-        mockTurnResponse({
-          lumi_response: 'Got it.',
-          moment_key: 'm3_taste',
-          chip_config: null,
-        }),
-      );
-    globalThis.fetch = fetchMock as unknown as typeof fetch;
+        mockTurnResponse({ lumi_response: 'Got it.', moment_key: 'm3_taste', chip_config: null }),
+      ) as unknown as typeof fetch;
 
-    render(
-      <MemoryRouter>
-        <OnboardingText />
-      </MemoryRouter>,
-    );
-
-    fireEvent.change(screen.getByLabelText(/your message to lumi/i), {
-      target: { value: 'Hi.' },
-    });
-    fireEvent.submit(screen.getByRole('button', { name: /send/i }).closest('form')!);
-
+    renderOnboarding();
+    sendText('Hi.');
     await waitFor(() => {
       expect(screen.getByText(/What do we need to keep safe/i)).toBeDefined();
     });
@@ -400,749 +391,176 @@ describe('OnboardingText', () => {
     fireEvent.submit(screen.getByRole('button', { name: /send/i }).closest('form')!);
 
     await waitFor(() => {
-      const cards = screen.getAllByTestId('m2-safety-card');
-      expect(cards.length).toBeGreaterThan(0);
-      expect(cards[0]!.textContent).toMatch(/All clear/);
+      expect(screen.getAllByTestId('m2-safety-card').length).toBeGreaterThan(0);
     });
+    expect(screen.queryByText(/all clear/i)).toBeNull();
+    expect(screen.getAllByText(/noting what to keep safe/i).length).toBeGreaterThan(0);
   });
 
-  it('clicking "Finish onboarding" calls finalize and navigates to /app', async () => {
-    let callCount = 0;
-    globalThis.fetch = vi.fn().mockImplementation(async () => {
-      callCount++;
-      if (callCount === 1) {
-        // turn endpoint
-        return mockTurnResponse({
-          lumi_response: 'Sounds about right. Does that sound right?',
-          is_complete: true,
-        });
-      }
-      // finalize endpoint
-      return new Response(
-        JSON.stringify({
-          thread_id: SAMPLE_THREAD_ID,
-          summary: {
-            cultural_templates: ['South Asian'],
-            palate_notes: [],
-            allergens_mentioned: ['nuts'],
-          },
-        }),
-        { status: 200, headers: { 'Content-Type': 'application/json' } },
-      );
-    }) as unknown as typeof fetch;
-
-    render(
-      <MemoryRouter>
-        <OnboardingText />
-      </MemoryRouter>,
-    );
-
-    fireEvent.change(screen.getByLabelText(/your message to lumi/i), {
-      target: { value: 'Yes that all sounds right.' },
-    });
-    fireEvent.submit(screen.getByRole('button', { name: /send/i }).closest('form')!);
-
-    const finishBtn = await screen.findByRole('button', { name: /finish onboarding/i });
-    fireEvent.click(finishBtn);
-
-    await waitFor(() => {
-      expect(navigateMock).toHaveBeenCalledWith('/app');
-    });
-  });
-
-  // -------------------------------------------------------------------------
-  // Slice 2.5-s7 — Moment 3 ("How your kitchen tastes")
-  // -------------------------------------------------------------------------
-
-  const M3_HINT_CHIP_CONFIG = {
-    mode: 'hint',
-    hints: [
-      'Halal Punjabi household, mostly home-cooked Indian',
-      'Italian heritage, kids love pasta — dairy-light for the youngest',
-      'Hindu vegetarian — South Indian for me, Mexican for them',
-    ],
-    skip_label: 'Skip this moment',
-  };
-
-  const M3_ELEVATION_CHIP_CONFIG = {
-    mode: 'action',
-    options: [
-      { key: 'always-respect', label: 'Always respect' },
-      { key: 'prefer', label: 'Prefer when possible' },
-      { key: 'just-context', label: 'Just for context' },
-    ],
-  };
-
-  async function arriveAtM3(): Promise<void> {
+  it('renders M3 elevation action chips with single-select behaviour', async () => {
     globalThis.fetch = vi.fn().mockResolvedValueOnce(
       mockTurnResponse({
-        lumi_response: 'Tell me how your kitchen tastes.',
+        lumi_response: 'How strict is that?',
         moment_key: 'm3_taste',
-        chip_config: M3_HINT_CHIP_CONFIG,
+        chip_config: {
+          mode: 'action',
+          options: [
+            { key: 'always-respect', label: 'Always respect' },
+            { key: 'prefer', label: 'Prefer' },
+            { key: 'just-context', label: 'Just context' },
+          ],
+        },
       }),
     ) as unknown as typeof fetch;
 
-    render(
-      <MemoryRouter>
-        <OnboardingText />
-      </MemoryRouter>,
-    );
+    renderOnboarding();
+    sendText('halal');
+    fireEvent.click(await screen.findByText('Always respect'));
+    fireEvent.click(screen.getByText('Prefer'));
 
-    fireEvent.change(screen.getByLabelText(/your message to lumi/i), {
-      target: { value: 'No allergens for Layla.' },
-    });
-    fireEvent.submit(screen.getByRole('button', { name: /send/i }).closest('form')!);
-
+    // Single-select: exactly one chip is aria-checked.
     await waitFor(() => {
-      expect(screen.getByText(/Tell me how your kitchen tastes/i)).toBeDefined();
-    });
-  }
-
-  it('renders the M3 taste card in "capturing" state when the moment is reached', async () => {
-    await arriveAtM3();
-
-    await waitFor(() => {
-      const cards = screen.getAllByTestId('m3-taste-card');
-      expect(cards.length).toBeGreaterThan(0);
-      expect(cards[0]!.textContent).toMatch(/Waiting on your response/);
+      const checked = screen.getAllByRole('radio').filter((el) => el.getAttribute('aria-checked') === 'true');
+      expect(checked.length).toBe(1);
+      expect(checked[0]!.textContent).toMatch(/Prefer/);
     });
   });
 
-  it('renders "Skipped for now" copy after the Skip chip is tapped', async () => {
-    const fetchMock = vi.fn()
-      .mockResolvedValueOnce(
-        mockTurnResponse({
-          lumi_response: 'Tell me how your kitchen tastes.',
-          moment_key: 'm3_taste',
-          chip_config: M3_HINT_CHIP_CONFIG,
-        }),
-      )
-      .mockResolvedValueOnce(
-        mockTurnResponse({
-          lumi_response: 'Of course, we can fill that in anytime.',
-          moment_key: 'm4_bag',
-          chip_config: null,
-        }),
-      );
-    globalThis.fetch = fetchMock as unknown as typeof fetch;
-
-    render(
-      <MemoryRouter>
-        <OnboardingText />
-      </MemoryRouter>,
-    );
-
-    fireEvent.change(screen.getByLabelText(/your message to lumi/i), {
-      target: { value: 'No allergens for Layla.' },
-    });
-    fireEvent.submit(screen.getByRole('button', { name: /send/i }).closest('form')!);
-
-    await waitFor(() => {
-      expect(screen.getByText(/Tell me how your kitchen tastes/i)).toBeDefined();
-    });
-
-    // Tap the Skip chip (skip_label) — this submits ['skip'] as chip selections.
-    fireEvent.click(screen.getByText('Skip this moment'));
-
-    await waitFor(() => {
-      const cards = screen.getAllByTestId('m3-taste-card');
-      expect(cards[0]!.textContent).toMatch(/Skipped for now/);
-    });
-  });
-
-  it('renders "Noted" copy when the agent advances out of M3 to M4', async () => {
-    const fetchMock = vi.fn()
-      .mockResolvedValueOnce(
-        mockTurnResponse({
-          lumi_response: 'Tell me how your kitchen tastes.',
-          moment_key: 'm3_taste',
-          chip_config: M3_HINT_CHIP_CONFIG,
-        }),
-      )
-      .mockResolvedValueOnce(
-        mockTurnResponse({
-          lumi_response: 'Noted — what goes in the bag?',
-          moment_key: 'm4_bag',
-          chip_config: null,
-        }),
-      );
-    globalThis.fetch = fetchMock as unknown as typeof fetch;
-
-    render(
-      <MemoryRouter>
-        <OnboardingText />
-      </MemoryRouter>,
-    );
-
-    // 1st turn → arrive at M3
-    fireEvent.change(screen.getByLabelText(/your message to lumi/i), {
-      target: { value: 'No allergens.' },
-    });
-    fireEvent.submit(screen.getByRole('button', { name: /send/i }).closest('form')!);
-    await waitFor(() => {
-      expect(screen.getByText(/Tell me how your kitchen tastes/i)).toBeDefined();
-    });
-
-    // 2nd turn — free-text M3 response that advances to M4
-    fireEvent.change(screen.getByLabelText(/your message to lumi/i), {
-      target: { value: "We're a Halal Punjabi household." },
-    });
-    fireEvent.submit(screen.getByRole('button', { name: /send/i }).closest('form')!);
-
-    await waitFor(() => {
-      const cards = screen.getAllByTestId('m3-taste-card');
-      expect(cards[0]!.textContent).toMatch(/Noted/);
-    });
-  });
-
-  it('does NOT render the M3 taste card before M3 is reached', async () => {
+  it('renders a ＋ badge on chips with provenance="parent_added"', async () => {
     globalThis.fetch = vi.fn().mockResolvedValueOnce(
       mockTurnResponse({
-        lumi_response: 'Tell me about your household.',
-        moment_key: 'm1_table',
-      }),
-    ) as unknown as typeof fetch;
-
-    render(
-      <MemoryRouter>
-        <OnboardingText />
-      </MemoryRouter>,
-    );
-
-    fireEvent.change(screen.getByLabelText(/your message to lumi/i), {
-      target: { value: 'Hi.' },
-    });
-    fireEvent.submit(screen.getByRole('button', { name: /send/i }).closest('form')!);
-
-    await waitFor(() => {
-      expect(screen.getByText(/Tell me about your household/i)).toBeDefined();
-    });
-    expect(screen.queryAllByTestId('m3-taste-card')).toHaveLength(0);
-  });
-
-  it('renders the three elevation action chips with single-select behaviour (AC12)', async () => {
-    globalThis.fetch = vi.fn().mockResolvedValueOnce(
-      mockTurnResponse({
-        lumi_response:
-          "Got it — 'strictly Halal.' Should I treat that as a hard rule or more like a preference?",
-        moment_key: 'm3_taste',
-        chip_config: M3_ELEVATION_CHIP_CONFIG,
-      }),
-    ) as unknown as typeof fetch;
-
-    render(
-      <MemoryRouter>
-        <OnboardingText />
-      </MemoryRouter>,
-    );
-
-    fireEvent.change(screen.getByLabelText(/your message to lumi/i), {
-      target: { value: "We're strictly Halal." },
-    });
-    fireEvent.submit(screen.getByRole('button', { name: /send/i }).closest('form')!);
-
-    await waitFor(() => {
-      expect(screen.getByText(/strictly Halal/)).toBeDefined();
-    });
-
-    expect(screen.getByText('Always respect')).toBeDefined();
-    expect(screen.getByText('Prefer when possible')).toBeDefined();
-    expect(screen.getByText('Just for context')).toBeDefined();
-
-    // Action mode has no skip option (no skip_label in M3 elevation config).
-    expect(screen.queryByText('Skip this moment')).toBeNull();
-
-    // Send is disabled until one is selected.
-    const sendBtn = screen.getByRole('button', { name: /send/i }) as HTMLButtonElement;
-    expect(sendBtn.disabled).toBe(true);
-
-    fireEvent.click(screen.getByText('Always respect'));
-    await waitFor(() => {
-      expect(sendBtn.disabled).toBe(false);
-    });
-  });
-
-  // -------------------------------------------------------------------------
-  // Slice 2.5-s8 — Moment 4 ("What goes in the bag")
-  // -------------------------------------------------------------------------
-
-  const M4_BAG_CHIP_CONFIG = {
-    mode: 'action',
-    options: [
-      { key: 'main_only', label: 'Main only' },
-      { key: 'main_plus_snack', label: 'Main + snack' },
-      { key: 'main_plus_extra', label: 'Main + sides' },
-      { key: 'main_plus_snack_plus_extra', label: 'Full bag' },
-    ],
-  };
-
-  it('renders the M4 bag card in "capturing" state when the agent advances into m4_bag', async () => {
-    globalThis.fetch = vi.fn().mockResolvedValueOnce(
-      mockTurnResponse({
-        lumi_response: 'What goes in their bag?',
-        moment_key: 'm4_bag',
-        chip_config: M4_BAG_CHIP_CONFIG,
-      }),
-    ) as unknown as typeof fetch;
-
-    render(
-      <MemoryRouter>
-        <OnboardingText />
-      </MemoryRouter>,
-    );
-
-    fireEvent.change(screen.getByLabelText(/your message to lumi/i), {
-      target: { value: 'Halal household.' },
-    });
-    fireEvent.submit(screen.getByRole('button', { name: /send/i }).closest('form')!);
-
-    await waitFor(() => {
-      const cards = screen.getAllByTestId('m4-bag-card');
-      expect(cards.length).toBeGreaterThan(0);
-      expect(cards[0]!.textContent).toMatch(/Still listening/);
-    });
-  });
-
-  it('renders the M4 bag card in "captured" state once the agent advances out of m4_bag', async () => {
-    const fetchMock = vi.fn()
-      .mockResolvedValueOnce(
-        mockTurnResponse({
-          lumi_response: 'What goes in their bag?',
-          moment_key: 'm4_bag',
-          chip_config: M4_BAG_CHIP_CONFIG,
-        }),
-      )
-      .mockResolvedValueOnce(
-        mockTurnResponse({
-          lumi_response: "Got it — let's pick favourites.",
-          moment_key: 'm5_starting_line',
-          chip_config: null,
-        }),
-      );
-    globalThis.fetch = fetchMock as unknown as typeof fetch;
-
-    render(
-      <MemoryRouter>
-        <OnboardingText />
-      </MemoryRouter>,
-    );
-
-    // 1st turn → arrive at m4_bag (card flips to "capturing")
-    fireEvent.change(screen.getByLabelText(/your message to lumi/i), {
-      target: { value: 'Halal household.' },
-    });
-    fireEvent.submit(screen.getByRole('button', { name: /send/i }).closest('form')!);
-    await waitFor(() => {
-      expect(screen.getByText(/What goes in their bag/i)).toBeDefined();
-    });
-
-    // 2nd turn — tap a bag chip; backend response advances past m4_bag,
-    // flipping the card to "captured".
-    fireEvent.click(screen.getByText('Main + snack'));
-    fireEvent.submit(screen.getByRole('button', { name: /send/i }).closest('form')!);
-
-    await waitFor(() => {
-      const cards = screen.getAllByTestId('m4-bag-card');
-      expect(cards[0]!.textContent).toMatch(/Saved/);
-    });
-  });
-
-  // -------------------------------------------------------------------------
-  // Slice 2.5-s9 — Moment 5 ("A starting line for Lumi")
-  // -------------------------------------------------------------------------
-
-  const M5_STARTING_LINE_CHIP_CONFIG = {
-    mode: 'choice',
-    options: [
-      { key: 'paratha-roll', label: 'Paratha roll' },
-      { key: 'dal-rice-thermos', label: 'Dal + rice (thermos)' },
-      { key: 'sandwich', label: 'Sandwich' },
-      { key: 'wrap', label: 'Wrap' },
-      { key: 'rice-bowl', label: 'Rice bowl' },
-    ],
-  };
-
-  it('renders the M5 starting-line card in "capturing" state when the agent advances into m5_starting_line', async () => {
-    globalThis.fetch = vi.fn().mockResolvedValueOnce(
-      mockTurnResponse({
-        lumi_response: "Let's pick favourites for Lumi to start with.",
+        lumi_response: 'Your starting line?',
         moment_key: 'm5_starting_line',
-        chip_config: M5_STARTING_LINE_CHIP_CONFIG,
+        chip_config: {
+          mode: 'choice',
+          options: [{ key: 'x', label: 'Paratha roll', provenance: 'parent_added' }],
+        },
       }),
     ) as unknown as typeof fetch;
 
-    render(
-      <MemoryRouter>
-        <OnboardingText />
-      </MemoryRouter>,
-    );
-
-    fireEvent.change(screen.getByLabelText(/your message to lumi/i), {
-      target: { value: 'Halal household.' },
-    });
-    fireEvent.submit(screen.getByRole('button', { name: /send/i }).closest('form')!);
-
-    await waitFor(() => {
-      const cards = screen.getAllByTestId('m5-starting-line-card');
-      expect(cards.length).toBeGreaterThan(0);
-      expect(cards[0]!.textContent).toMatch(/Still listening/);
-    });
+    renderOnboarding();
+    sendText('go');
+    await screen.findByText('Paratha roll');
+    expect(screen.getByTestId('chip-parent-added-badge')).toBeDefined();
   });
 
-  it('renders the M5 card in "captured" state without the override suffix when the agent advances to summary', async () => {
-    const fetchMock = vi.fn()
-      .mockResolvedValueOnce(
-        mockTurnResponse({
-          lumi_response: "Let's pick favourites.",
-          moment_key: 'm5_starting_line',
-          chip_config: M5_STARTING_LINE_CHIP_CONFIG,
-        }),
-      )
-      .mockResolvedValueOnce(
-        mockTurnResponse({
-          lumi_response: "All set — here's what we've gathered.",
-          moment_key: 'summary',
-          chip_config: null,
-        }),
-      );
-    globalThis.fetch = fetchMock as unknown as typeof fetch;
-
-    render(
-      <MemoryRouter>
-        <OnboardingText />
-      </MemoryRouter>,
-    );
-
-    // 1st turn → arrive at m5_starting_line.
-    fireEvent.change(screen.getByLabelText(/your message to lumi/i), {
-      target: { value: 'Halal household.' },
-    });
-    fireEvent.submit(screen.getByRole('button', { name: /send/i }).closest('form')!);
-    await waitFor(() => {
-      expect(screen.getByText(/Let's pick favourites/i)).toBeDefined();
-    });
-
-    // 2nd turn — tap two M5 chips; backend advances past m5_starting_line,
-    // flipping the card to "captured" with a count of 2.
-    fireEvent.click(screen.getByText('Paratha roll'));
-    fireEvent.click(screen.getByText('Sandwich'));
-    fireEvent.submit(screen.getByRole('button', { name: /send/i }).closest('form')!);
-
-    await waitFor(() => {
-      const cards = screen.getAllByTestId('m5-starting-line-card');
-      expect(cards[0]!.textContent).toMatch(/2 lunches — Lumi has a starting line\./);
-      expect(cards[0]!.textContent).not.toMatch(/started with fewer/);
-    });
-  });
-
-  it('renders the M5 card with "(started with fewer)" suffix when the parent invokes the override chip', async () => {
-    const M5_WITH_OVERRIDE = {
-      mode: 'choice',
-      options: [
-        ...M5_STARTING_LINE_CHIP_CONFIG.options,
-        { key: 'override_fewer', label: 'Start with fewer' },
-      ],
-    };
-    const fetchMock = vi.fn()
-      .mockResolvedValueOnce(
-        mockTurnResponse({
-          lumi_response: "Let's pick favourites.",
-          moment_key: 'm5_starting_line',
-          chip_config: M5_WITH_OVERRIDE,
-        }),
-      )
-      .mockResolvedValueOnce(
-        mockTurnResponse({
-          lumi_response: "Starting strong with what we've got.",
-          moment_key: 'summary',
-          chip_config: null,
-        }),
-      );
-    globalThis.fetch = fetchMock as unknown as typeof fetch;
-
-    render(
-      <MemoryRouter>
-        <OnboardingText />
-      </MemoryRouter>,
-    );
-
-    fireEvent.change(screen.getByLabelText(/your message to lumi/i), {
-      target: { value: 'Halal household.' },
-    });
-    fireEvent.submit(screen.getByRole('button', { name: /send/i }).closest('form')!);
-    await waitFor(() => {
-      expect(screen.getByText(/Let's pick favourites/i)).toBeDefined();
-    });
-
-    // Tap a real chip + the override chip; backend response advances to summary.
-    // The override key is NOT counted but DOES flip the overridden flag on.
-    fireEvent.click(screen.getByText('Paratha roll'));
-    fireEvent.click(screen.getByText('Start with fewer'));
-    fireEvent.submit(screen.getByRole('button', { name: /send/i }).closest('form')!);
-
-    await waitFor(() => {
-      const cards = screen.getAllByTestId('m5-starting-line-card');
-      expect(cards[0]!.textContent).toMatch(/1 lunches — Lumi has a starting line\./);
-      expect(cards[0]!.textContent).toMatch(/started with fewer/);
-    });
-  });
-
-  // -------------------------------------------------------------------------
-  // Slice 2.6-s4 — M5 chip provenance badge (parent_added marker)
-  // -------------------------------------------------------------------------
-
-  it('renders a ＋ badge on M5 chips with provenance="parent_added" (Slice 2.6-s4)', async () => {
-    const M5_PERSONALIZED = {
-      mode: 'choice',
-      options: [
-        { key: 'r-1', label: 'Anjero + suqaar', provenance: 'inferred' },
-        { key: 'r-2', label: 'Bariis iskukaris', provenance: 'declared' },
-        { key: 'r-3', label: 'Date bread + halib', provenance: 'parent_added' },
-      ],
-    };
+  it('renders no badge on chips without a parent_added provenance', async () => {
     globalThis.fetch = vi.fn().mockResolvedValueOnce(
       mockTurnResponse({
-        lumi_response: "Tap any that fit.",
+        lumi_response: 'Your starting line?',
         moment_key: 'm5_starting_line',
-        chip_config: M5_PERSONALIZED,
+        chip_config: {
+          mode: 'choice',
+          options: [
+            { key: 'a', label: 'Wrap', provenance: 'inferred' },
+            { key: 'b', label: 'Pasta' },
+          ],
+        },
       }),
     ) as unknown as typeof fetch;
 
-    render(
-      <MemoryRouter>
-        <OnboardingText />
-      </MemoryRouter>,
-    );
-
-    fireEvent.change(screen.getByLabelText(/your message to lumi/i), {
-      target: { value: 'Halal household.' },
-    });
-    fireEvent.submit(screen.getByRole('button', { name: /send/i }).closest('form')!);
-
-    await waitFor(() => {
-      const badges = screen.getAllByTestId('chip-parent-added-badge');
-      expect(badges.length).toBe(1);
-      expect(badges[0]!.textContent).toBe('＋');
-    });
+    renderOnboarding();
+    sendText('go');
+    await screen.findByText('Wrap');
+    expect(screen.queryByTestId('chip-parent-added-badge')).toBeNull();
   });
 
-  it('renders no badge on M5 chips with provenance="inferred" or "declared" (Slice 2.6-s4)', async () => {
-    const M5_NO_PARENT_ADDED = {
-      mode: 'choice',
-      options: [
-        { key: 'r-1', label: 'Anjero + suqaar', provenance: 'inferred' },
-        { key: 'r-2', label: 'Bariis iskukaris', provenance: 'declared' },
-      ],
-    };
+  it('shows the cold-start gate line in M5 cold-start mode', async () => {
     globalThis.fetch = vi.fn().mockResolvedValueOnce(
       mockTurnResponse({
-        lumi_response: "Tap any that fit.",
+        lumi_response: 'Tell me some dishes.',
         moment_key: 'm5_starting_line',
-        chip_config: M5_NO_PARENT_ADDED,
+        chip_config: null,
+        cold_start_mode: true,
       }),
     ) as unknown as typeof fetch;
 
-    render(
-      <MemoryRouter>
-        <OnboardingText />
-      </MemoryRouter>,
-    );
-
-    fireEvent.change(screen.getByLabelText(/your message to lumi/i), {
-      target: { value: 'Halal household.' },
-    });
-    fireEvent.submit(screen.getByRole('button', { name: /send/i }).closest('form')!);
+    renderOnboarding();
+    sendText('go');
 
     await waitFor(() => {
-      expect(screen.getByText('Anjero + suqaar')).toBeDefined();
+      expect(screen.getByTestId('cold-start-gate-line').textContent).toMatch(/three dishes/i);
     });
-    expect(screen.queryAllByTestId('chip-parent-added-badge')).toHaveLength(0);
   });
 
-  it('renders no badge on legacy chips without a provenance field (Slice 2.6-s4)', async () => {
-    // M2 allergen chips never carry provenance; this asserts the badge branch
-    // does not fire on non-M5 chip surfaces.
-    const M2_LEGACY = {
-      mode: 'choice',
-      options: [
-        { key: 'none', label: 'No known allergens' },
-        { key: 'peanut', label: 'Peanut' },
-      ],
-    };
-    globalThis.fetch = vi.fn().mockResolvedValueOnce(
-      mockTurnResponse({
-        lumi_response: 'Any allergens?',
-        moment_key: 'm2_safe',
-        chip_config: M2_LEGACY,
-      }),
-    ) as unknown as typeof fetch;
+  // --- Summary + finalize gate ---------------------------------------------
 
-    render(
-      <MemoryRouter>
-        <OnboardingText />
-      </MemoryRouter>,
-    );
-
-    fireEvent.change(screen.getByLabelText(/your message to lumi/i), {
-      target: { value: 'Hi' },
-    });
-    fireEvent.submit(screen.getByRole('button', { name: /send/i }).closest('form')!);
-
-    await waitFor(() => {
-      expect(screen.getByText('Peanut')).toBeDefined();
-    });
-    expect(screen.queryAllByTestId('chip-parent-added-badge')).toHaveLength(0);
-  });
-
-  // =========================================================================
-  // Slice 2.5-s10 — summary finalize gate + gap callouts
-  // =========================================================================
-
-  function mockS10TurnResponse(opts: {
-    moment_key: string;
+  function mockSummary(opts: {
     required_set_complete: boolean | null;
     missing_required_set?: string[];
-    lumi_response?: string;
   }): Response {
-    return new Response(
-      JSON.stringify({
-        thread_id: SAMPLE_THREAD_ID,
-        turn_id: SAMPLE_TURN_ID,
-        lumi_turn_id: SAMPLE_LUMI_TURN_ID,
-        lumi_response: opts.lumi_response ?? "Here's what I have.",
-        is_complete: false,
-        moment_key: opts.moment_key,
-        required_set_complete: opts.required_set_complete,
-        missing_required_set: opts.missing_required_set ?? [],
-        chip_config: null,
-      }),
-      { status: 200, headers: { 'Content-Type': 'application/json' } },
-    );
+    return mockTurnResponse({
+      lumi_response: "Here's what I have.",
+      moment_key: 'summary',
+      required_set_complete: opts.required_set_complete,
+      missing_required_set: opts.missing_required_set ?? [],
+      chip_config: null,
+    });
   }
 
-  it('renders the finalize gate when moment_key is summary (Slice 2.5-s10)', async () => {
+  it('renders the finalize gate in the summary moment', async () => {
     globalThis.fetch = vi.fn().mockResolvedValueOnce(
-      mockS10TurnResponse({
-        moment_key: 'summary',
-        required_set_complete: true,
-        missing_required_set: [],
-      }),
+      mockSummary({ required_set_complete: true }),
     ) as unknown as typeof fetch;
 
-    render(
-      <MemoryRouter>
-        <OnboardingText />
-      </MemoryRouter>,
-    );
-
-    fireEvent.change(screen.getByLabelText(/your message to lumi/i), {
-      target: { value: 'all set' },
-    });
-    fireEvent.submit(screen.getByRole('button', { name: /send/i }).closest('form')!);
+    renderOnboarding();
+    sendText('all set');
 
     await waitFor(() => {
       expect(screen.getByTestId('finalize-gate')).toBeDefined();
     });
-    // Input bar is replaced by the gate when in summary.
-    expect(screen.queryByLabelText(/your message to lumi/i)).toBeNull();
   });
 
-  it('enables the Finalize button when required-set is complete (Slice 2.5-s10)', async () => {
+  it('enables Finalize when the required set is complete', async () => {
     globalThis.fetch = vi.fn().mockResolvedValueOnce(
-      mockS10TurnResponse({
-        moment_key: 'summary',
-        required_set_complete: true,
-        missing_required_set: [],
-      }),
+      mockSummary({ required_set_complete: true }),
     ) as unknown as typeof fetch;
 
-    render(
-      <MemoryRouter>
-        <OnboardingText />
-      </MemoryRouter>,
-    );
-
-    fireEvent.change(screen.getByLabelText(/your message to lumi/i), {
-      target: { value: 'all set' },
-    });
-    fireEvent.submit(screen.getByRole('button', { name: /send/i }).closest('form')!);
+    renderOnboarding();
+    sendText('all set');
 
     await waitFor(() => {
-      const btn = screen.getByTestId('finalize-button') as HTMLButtonElement;
-      expect(btn.disabled).toBe(false);
+      expect((screen.getByTestId('finalize-button') as HTMLButtonElement).disabled).toBe(false);
     });
   });
 
-  it('renders the gap callout when missing_required_set contains m5_starting_line (Slice 2.5-s10)', async () => {
+  it('renders a gap callout and disables Finalize when a required moment is missing', async () => {
     globalThis.fetch = vi.fn().mockResolvedValueOnce(
-      mockS10TurnResponse({
-        moment_key: 'summary',
-        required_set_complete: false,
-        missing_required_set: ['m5_starting_line'],
-      }),
+      mockSummary({ required_set_complete: false, missing_required_set: ['m5_starting_line'] }),
     ) as unknown as typeof fetch;
 
-    render(
-      <MemoryRouter>
-        <OnboardingText />
-      </MemoryRouter>,
-    );
-
-    fireEvent.change(screen.getByLabelText(/your message to lumi/i), {
-      target: { value: 'skip ahead' },
-    });
-    fireEvent.submit(screen.getByRole('button', { name: /send/i }).closest('form')!);
+    renderOnboarding();
+    sendText('skip ahead');
 
     await waitFor(() => {
       expect(screen.getByTestId('gap-callout-m5_starting_line')).toBeDefined();
     });
+    expect((screen.getByTestId('finalize-button') as HTMLButtonElement).disabled).toBe(true);
   });
 
-  it('disables the Finalize button when a gap callout is visible (Slice 2.5-s10)', async () => {
+  it('jumps back to the named moment from a gap callout', async () => {
     globalThis.fetch = vi.fn().mockResolvedValueOnce(
-      mockS10TurnResponse({
-        moment_key: 'summary',
-        required_set_complete: false,
-        missing_required_set: ['m5_starting_line'],
-      }),
+      mockSummary({ required_set_complete: false, missing_required_set: ['m5_starting_line'] }),
     ) as unknown as typeof fetch;
 
-    render(
-      <MemoryRouter>
-        <OnboardingText />
-      </MemoryRouter>,
-    );
+    renderOnboarding();
+    sendText('skip ahead');
 
-    fireEvent.change(screen.getByLabelText(/your message to lumi/i), {
-      target: { value: 'skip ahead' },
-    });
-    fireEvent.submit(screen.getByRole('button', { name: /send/i }).closest('form')!);
+    fireEvent.click(await screen.findByRole('button', { name: /back to moment 5/i }));
 
     await waitFor(() => {
-      const btn = screen.getByTestId('finalize-button') as HTMLButtonElement;
-      expect(btn.disabled).toBe(true);
+      expect(screen.getByText(/moment 5 of 5 · a starting line for lumi/i)).toBeDefined();
     });
+    expect(screen.queryByTestId('finalize-gate')).toBeNull();
   });
 
-  it('shows "Summary · Lock in your kitchen" subtitle when moment_key is summary (Slice 2.5-s10)', async () => {
+  it('shows the summary subtitle in the summary moment', async () => {
     globalThis.fetch = vi.fn().mockResolvedValueOnce(
-      mockS10TurnResponse({
-        moment_key: 'summary',
-        required_set_complete: true,
-        missing_required_set: [],
-      }),
+      mockSummary({ required_set_complete: true }),
     ) as unknown as typeof fetch;
 
-    render(
-      <MemoryRouter>
-        <OnboardingText />
-      </MemoryRouter>,
-    );
-
-    fireEvent.change(screen.getByLabelText(/your message to lumi/i), {
-      target: { value: 'all set' },
-    });
-    fireEvent.submit(screen.getByRole('button', { name: /send/i }).closest('form')!);
+    renderOnboarding();
+    sendText('all set');
 
     await waitFor(() => {
       expect(screen.getByText(/summary · lock in your kitchen/i)).toBeDefined();
