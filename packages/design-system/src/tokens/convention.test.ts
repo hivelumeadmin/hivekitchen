@@ -90,7 +90,7 @@ describe('v2.0 semantic aliases — repo-pinned hex per theme', () => {
       '--surface-2': '#dccfb5',
       '--surface-3': '#c8b791',
       '--fg': '#141210',
-      '--fg-muted': '#56524a',
+      '--fg-muted': '#474339',
       '--border': '#b5a784',
       '--lumi-terracotta': '#a15838',
       '--lumi-terracotta-dim': '#753a24',

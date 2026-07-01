@@ -155,9 +155,10 @@ function isKnownContrastDebtNode(node: { html: string; target: unknown }): boole
   // amber-warm token family: wordmark + active sidebar nav (text-/border-amber-warm)
   // and the "Confirm the week" button (bg-amber-warm).
   if (hay.includes('amber-warm')) return true;
-  // text-fg-muted is used widely (panel, header, action row), so allow it ONLY
-  // inside the footer — a text-fg-muted contrast miss anywhere else must fail.
-  return hay.includes('footer') && hay.includes('text-fg-muted');
+  // NOTE: the former footer text-fg-muted exemption was removed once --fg-muted
+  // was darkened to #474339 (Epic 13 contrast-debt fix) — text-fg-muted now
+  // clears 4.5:1 on all light surfaces, so any remaining miss is a real regression.
+  return false;
 }
 
 // Private axe helper (AC2). Not exported. Filters the documented color-contrast
@@ -265,42 +266,56 @@ test.describe('13-s1 / AC1.3 — Confirm-week surface', () => {
 });
 
 // ===========================================================================
-// AC1.4 — LumiOrb / LumiPanel ambient surface
+// AC1.4 — Lumi presence: ambient dot + summoned sheet
+//
+// REBUILT for Epic 13-s2 (presence primitive). The old orb→complementary-panel
+// model was replaced by a quiet dot that summons a focused, modal <Dialog> sheet
+// (role=dialog, name "Lumi") which recedes on Escape / close / scrim. This block
+// characterizes the NEW model; the durable gates (AC2 axe, AC4 reduced motion,
+// AC5 safety) are unchanged.
 // ===========================================================================
-test.describe('13-s1 / AC1.4 — Ambient Lumi orb + panel', () => {
-  test('orb is visible in AppLayout; clicking opens the panel; dismiss closes it', async ({
+test.describe('13-s1 / AC1.4 — Lumi presence (dot + summoned sheet)', () => {
+  test('dot is visible in AppLayout; tapping summons the sheet; close recedes it', async ({
     page,
   }) => {
     await navigateToApp(page);
 
-    const orb = page.getByRole('button', { name: /open lumi/i });
-    await expect(orb).toBeVisible();
+    const dot = page.getByRole('button', { name: /open lumi/i });
+    await expect(dot).toBeVisible();
+    await expect(dot).toHaveAttribute('aria-expanded', 'false');
+    await expect(dot).toHaveAttribute('aria-controls', 'lumi-sheet');
 
-    await orb.click();
-    const panel = page.getByRole('complementary', { name: /lumi panel/i });
-    await expect(panel).toBeVisible();
+    await dot.click();
+    const sheet = page.getByRole('dialog', { name: /lumi/i });
+    await expect(sheet).toBeVisible();
+    await expect(page.getByRole('button', { name: /lumi is open/i })).toHaveAttribute(
+      'aria-expanded',
+      'true',
+    );
 
-    // DEVIATION: the story's AC1.4 says "pressing Escape closes it", but
-    // LumiPanel/LumiOrb implement NO Escape handler today. The real close
-    // affordances are the panel's dismiss button and tapping the orb again.
-    // Characterizing actual behavior so Epic 13's rebuild can decide whether to
-    // ADD Escape-to-close (an improvement) without this baseline lying about it.
-    await panel.getByRole('button', { name: /close lumi panel/i }).click();
-    await expect(panel).not.toBeVisible();
+    await sheet.getByRole('button', { name: /close lumi/i }).click();
+    await expect(sheet).not.toBeVisible();
   });
 
-  test('Escape does NOT close the panel today (documents the gap to fix in Epic 13)', async ({
+  test('Escape recedes the summoned sheet (Epic 13-s2 improvement — the flipped gap)', async ({
     page,
   }) => {
     await navigateToApp(page);
     await page.getByRole('button', { name: /open lumi/i }).click();
-    const panel = page.getByRole('complementary', { name: /lumi panel/i });
-    await expect(panel).toBeVisible();
+    const sheet = page.getByRole('dialog', { name: /lumi/i });
+    await expect(sheet).toBeVisible();
 
+    // 13-s1 originally documented "Escape does NOT close" as a gap; 13-s2's
+    // Dialog-based sheet ADDS Escape-to-close, so this expectation is flipped.
     await page.keyboard.press('Escape');
-    // Still open — there is no Escape handler. If a later Epic 13 slice ADDS
-    // Escape-to-close, this expectation flips and the spec is updated alongside.
-    await expect(panel).toBeVisible();
+    await expect(sheet).not.toBeVisible();
+  });
+
+  test('the dot is keyboard-activatable (Enter summons the sheet)', async ({ page }) => {
+    await navigateToApp(page);
+    await page.getByRole('button', { name: /open lumi/i }).focus();
+    await page.keyboard.press('Enter');
+    await expect(page.getByRole('dialog', { name: /lumi/i })).toBeVisible();
   });
 });
 
@@ -308,27 +323,26 @@ test.describe('13-s1 / AC1.4 — Ambient Lumi orb + panel', () => {
 // AC4 — prefers-reduced-motion baseline (behavioral)
 //
 // The pixel-snapshot half of AC4 is descoped, but reduced-motion coverage lived
-// ONLY in AC4 — without this, 13-s2's LumiOrb rebuild could regress reduced
+// ONLY in AC4 — without this, 13-s2's presence rebuild could regress reduced
 // motion undetected. This is the non-pixel substitute: emulate reduced motion
-// and assert the orb's transition is actually disabled (no src/ change needed).
+// and assert the dot's transition is actually disabled (no src/ change needed).
 // ===========================================================================
 test.describe('13-s1 / AC4 — Reduced-motion baseline', () => {
-  test('LumiOrb honors prefers-reduced-motion (transitions disabled)', async ({ page }) => {
+  test('the Lumi presence dot honors prefers-reduced-motion (transitions disabled)', async ({
+    page,
+  }) => {
     await page.emulateMedia({ reducedMotion: 'reduce' });
     await navigateToApp(page);
 
-    const orb = page.getByRole('button', { name: /open lumi/i });
-    await expect(orb).toBeVisible();
+    const dot = page.getByRole('button', { name: /open lumi/i });
+    await expect(dot).toBeVisible();
 
-    // The orb carries `transition-colors motion-reduce:transition-none`; under
+    // The dot carries `transition-colors motion-reduce:transition-none`; under
     // reduced-motion emulation Tailwind's motion-reduce variant resolves the
-    // computed transition-property to `none`. (The breathing animate-pulse only
-    // mounts in nudge/voice/thinking states, which require VITE_E2E store
-    // seeding; those are unit-covered in LumiOrb.test.tsx via
-    // `motion-reduce:animate-none`.)
-    const transitionProperty = await orb.evaluate(
-      (el) => getComputedStyle(el).transitionProperty,
-    );
+    // computed transition-property to `none`. (The resting breathing animate-pulse
+    // also carries `motion-reduce:animate-none`; that + nudge/voice/thinking
+    // states are unit-covered in LumiPresence.test.tsx.)
+    const transitionProperty = await dot.evaluate((el) => getComputedStyle(el).transitionProperty);
     expect(transitionProperty).toBe('none');
   });
 });
@@ -347,6 +361,19 @@ test.describe('13-s1 / AC2 — Accessibility (axe)', () => {
 
     // useScope('app-scope') sets the class on <html>, so include the whole
     // authenticated document. wcag2a + wcag2aa = the full AA gate.
+    await checkA11y(page, '.app-scope', ['wcag2a', 'wcag2aa']);
+  });
+
+  // Epic 13-s2 — the 13-s1 baseline never scanned the OPENED Lumi surface (a
+  // documented deferral). The summoned sheet is a modal dialog portaled into
+  // <body> (inside <html class="app-scope">), so re-scanning .app-scope with the
+  // sheet open covers the new presence component's a11y (focus-trap dialog,
+  // labels, contrast). No NEW violation category may appear.
+  test('opened Lumi sheet has no new WCAG 2.0 A/AA violations', async ({ page }) => {
+    await navigateToApp(page);
+    await page.getByRole('button', { name: /open lumi/i }).click();
+    await expect(page.getByRole('dialog', { name: /lumi/i })).toBeVisible();
+
     await checkA11y(page, '.app-scope', ['wcag2a', 'wcag2aa']);
   });
 
