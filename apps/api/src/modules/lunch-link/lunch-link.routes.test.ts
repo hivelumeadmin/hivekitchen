@@ -271,6 +271,12 @@ async function buildTestApp(
   app.decorate('briefStateComposer', {
     refreshTree: vi.fn().mockResolvedValue(undefined),
   } as unknown as FastifyInstance['briefStateComposer']);
+  // Story 13-s2.5 — the child request-a-lunch route now emits child_request.received.
+  app.decorate('sseDispatcher', {
+    emit: vi.fn(),
+    register: vi.fn(),
+    unregister: vi.fn(),
+  } as unknown as FastifyInstance['sseDispatcher']);
 
   await app.register(jwt, { secret: env.JWT_SECRET, sign: { expiresIn: '15m' } });
   await app.register(authenticateHook);
@@ -927,6 +933,12 @@ describe('POST /v1/lunch-link/:token/child-request (public)', () => {
     expect(res.statusCode).toBe(201);
     const body = JSON.parse(res.body) as { id: string };
     expect(body.id).toBe('99999999-9999-4999-8999-999999999999');
+    // Story 13-s2.5 — pushes child_request.received so the parent's Brief refetches.
+    expect(vi.mocked(app.sseDispatcher.emit)).toHaveBeenCalledWith(
+      expect.any(String),
+      'message',
+      expect.stringContaining('"type":"child_request.received"'),
+    );
   });
 
   it('does not require an Authorization header (auth-exclusion regex covers it)', async () => {

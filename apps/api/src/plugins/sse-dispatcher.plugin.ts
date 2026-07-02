@@ -26,6 +26,25 @@ declare module 'fastify' {
 
 const CHANNEL_PREFIX = 'sse:household:';
 
+// Story 13-s2.5 — Last-Event-ID replay. Every emit also appends to a per-
+// household Redis Stream so a reconnecting EventSource can replay the events it
+// missed during the gap (native `EventSource` sends `Last-Event-ID` on
+// reconnect). MAXLEN ~ N caps the buffer; a TTL prunes idle households.
+export const SSE_STREAM_PREFIX = 'sse:stream:household:';
+const STREAM_MAXLEN = 200;
+const STREAM_TTL_SECONDS = 3600; // 1h — reconnect windows are far shorter.
+
+// Reconstruct an SSE frame (with its `id:`) from a Redis Stream entry. Exported
+// for unit testing the replay path without a live Redis. Stream entries store
+// the event name + data as flat [field, value, …] pairs.
+export function streamEntryToFrame(id: string, fields: readonly string[]): string {
+  const map: Record<string, string> = {};
+  for (let i = 0; i + 1 < fields.length; i += 2) {
+    map[fields[i]!] = fields[i + 1]!;
+  }
+  return `id: ${id}\nevent: ${map.event ?? 'message'}\ndata: ${map.data ?? ''}\n\n`;
+}
+
 const sseDispatcherFn: FastifyPluginAsync = async (fastify) => {
   const connections = new Map<string, Set<ServerResponse>>();
 
@@ -80,10 +99,46 @@ const sseDispatcherFn: FastifyPluginAsync = async (fastify) => {
       }
     },
     emit(householdId, event, data) {
-      const payload = `event: ${event}\ndata: ${data}\n\n`;
-      fastify.redis
-        .publish(`${CHANNEL_PREFIX}${householdId}`, payload)
-        .catch((err) => fastify.log.error({ err, householdId }, 'sse-dispatcher: publish failed'));
+      // Public signature stays sync/fire-and-forget. Internally: append to the
+      // household stream (for replay) to get a monotonic id, stamp the frame
+      // with `id: <streamId>`, then publish it live. XADD `*` ids are monotonic
+      // regardless of concurrent emits, so replay order is always correct even
+      // if two live publishes race.
+      void (async () => {
+        const streamKey = `${SSE_STREAM_PREFIX}${householdId}`;
+        let frameId: string | null = null;
+        try {
+          frameId = await fastify.redis.xadd(
+            streamKey,
+            'MAXLEN',
+            '~',
+            String(STREAM_MAXLEN),
+            '*',
+            'event',
+            event,
+            'data',
+            data,
+          );
+        } catch (err) {
+          fastify.log.error({ err, householdId }, 'sse-dispatcher: xadd failed — publishing without stream anchor');
+        }
+        // TTL refresh is best-effort; failure must not prevent live delivery.
+        if (frameId !== null) {
+          fastify.redis.expire(streamKey, STREAM_TTL_SECONDS).catch((err) =>
+            fastify.log.warn({ err, householdId }, 'sse-dispatcher: expire failed'),
+          );
+        }
+        // Only stamp `id:` when xadd returned a real id — an empty id: field resets
+        // the browser's Last-Event-ID buffer, corrupting the replay cursor.
+        const payload = frameId !== null
+          ? `id: ${frameId}\nevent: ${event}\ndata: ${data}\n\n`
+          : `event: ${event}\ndata: ${data}\n\n`;
+        try {
+          await fastify.redis.publish(`${CHANNEL_PREFIX}${householdId}`, payload);
+        } catch (err) {
+          fastify.log.error({ err, householdId }, 'sse-dispatcher: publish failed');
+        }
+      })();
     },
   } satisfies SseDispatcher);
 

@@ -24,6 +24,7 @@ import { PlanTile, type PlanTileState, type ChildDotColor, type ChildInfo } from
 import { PackerChip } from './PackerChip.js';
 import { PresenceIndicator } from '@/features/thread/PresenceIndicator.js';
 import { useLumiStore } from '@/stores/lumi.store.js';
+import { usePlanProgressStore, planProgressLabel } from '@/stores/plan-progress.store.js';
 import { QuietDiff } from './QuietDiff.js';
 import { usePlanQuery } from './queries.js';
 import { QueryKeys } from '@/lib/realtime/query-keys.js';
@@ -72,49 +73,44 @@ function DevTriggerButton() {
 // next-week-full) from the household timezone; on success we poll the brief
 // until the plan lands (this branch unmounts when brief !== null).
 function ComposeMyPlanButton() {
-  const queryClient = useQueryClient();
   const generate = useGenerateOnDemandMutation();
   const [isComposing, setIsComposing] = useState(false);
   const [hasError, setHasError] = useState(false);
+  // Story 13-s2.5 — the composing lifecycle is now push-driven. On success the
+  // background job emits `plan.progress` stages then `plan.updated`; the latter
+  // invalidates ['brief']+['plan'], the parent refetches, brief becomes non-null
+  // and this empty-state branch unmounts. A permanent failure pushes
+  // `plan.progress: failed`, which restores the button with an error. (Replaces
+  // the old 5s setInterval poll + 2-min give-up timer.)
+  const progressStage = usePlanProgressStore((s) => s.stage);
 
   useEffect(() => {
     if (!isComposing) return;
-    let attempts = 0;
-    const id = setInterval(() => {
-      attempts += 1;
-      // After ~2 min (24 × 5 s) the background job has likely failed.
-      // Surface an error and restore the button so the parent can retry.
-      if (attempts >= 24) {
-        clearInterval(id);
-        setIsComposing(false);
-        setHasError(true);
-        return;
-      }
-      void queryClient.invalidateQueries({ queryKey: ['brief'] });
-      void queryClient.invalidateQueries({ queryKey: ['plan'] });
-    }, 5000);
-    return () => clearInterval(id);
-  }, [isComposing, queryClient]);
+    if (progressStage === 'failed') {
+      setIsComposing(false);
+      setHasError(true);
+      usePlanProgressStore.getState().reset();
+    }
+  }, [isComposing, progressStage]);
 
   if (isComposing) {
     return (
       <p className="text-sm text-fg-muted text-center" role="status">
-        Lumi is composing your plan… this can take a minute.
+        {planProgressLabel(progressStage) ?? 'Lumi is composing your plan…'} this can take a minute.
       </p>
     );
   }
 
   function handleClick() {
     setHasError(false);
+    // Clear any terminal stage from a prior compose so a stale `failed`/`ready`
+    // does not immediately trip the effect above for this new run.
+    usePlanProgressStore.getState().reset();
     // Capture the key once so React Query retries reuse it — a fresh UUID per
     // retry would defeat deduplication and consume extra rate-limit slots.
     const idempotencyKey = crypto.randomUUID();
     generate.mutate(idempotencyKey, {
-      onSuccess: () => {
-        setIsComposing(true);
-        void queryClient.invalidateQueries({ queryKey: ['brief'] });
-        void queryClient.invalidateQueries({ queryKey: ['plan'] });
-      },
+      onSuccess: () => setIsComposing(true),
       onError: () => setHasError(true),
     });
   }
@@ -311,18 +307,23 @@ export function BriefCanvas() {
         ? 'stale'
         : 'fresh';
 
-  // Story 3.13 — while regenerating, poll the brief every 5s. SSE plan.updated
-  // is deferred to Story 5.2; this short-poll fills the gap.
+  // Story 13-s2.5 — regeneration is now push-driven. The server emits
+  // `plan.updated` on commit, which invalidates ['brief']; the refetch bumps
+  // plan_revision and the effect below clears the flag. A permanent failure
+  // pushes `plan.progress: failed`, which clears the flag without a bump so the
+  // spinner stops. (Replaces the old 5s setInterval poll.)
+  const planProgressStage = usePlanProgressStore((s) => s.stage);
   useEffect(() => {
     if (!isRegenerating) return;
-    const interval = setInterval(() => {
-      void queryClient.invalidateQueries({ queryKey: ['brief'] });
-    }, 5000);
-    return () => clearInterval(interval);
-  }, [isRegenerating, queryClient]);
+    if (planProgressStage === 'failed') {
+      setIsRegenerating(false);
+      usePlanProgressStore.getState().reset();
+    }
+  }, [isRegenerating, planProgressStage]);
 
-  // Story 3.13 — detect plan_revision bump to stop polling. The first time the
-  // brief loads, capture the baseline; any subsequent increase clears the flag.
+  // Story 3.13 — detect plan_revision bump to stop the regenerating state. The
+  // first time the brief loads, capture the baseline; any subsequent increase
+  // clears the flag.
   useEffect(() => {
     if (!brief) return;
     if (lastPlanRevisionRef.current === null) {
@@ -342,6 +343,7 @@ export function BriefCanvas() {
       { householdId, input: { sovereignty_mode: 'alternating' }, idempotencyKey: crypto.randomUUID() },
       {
         onSuccess: () => {
+          usePlanProgressStore.getState().reset();
           if (brief) {
             lastPlanRevisionRef.current = brief.plan_revision;
           }
@@ -361,6 +363,7 @@ export function BriefCanvas() {
       { planId, scope, day },
       {
         onSuccess: () => {
+          usePlanProgressStore.getState().reset();
           if (brief) {
             lastPlanRevisionRef.current = brief.plan_revision;
           }

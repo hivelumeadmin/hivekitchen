@@ -7,20 +7,17 @@ import { AppSidebar } from '@/components/AppSidebar.js';
 import { LumiPresence } from '@/components/LumiPresence.js';
 import { VoiceSessionProvider } from '@/contexts/VoiceSessionContext.js';
 import { useLumiVoiceSession } from '@/hooks/useLumiVoiceSession.js';
-import { useLumiNudgeSSE } from '@/hooks/useLumiNudgeSSE.js';
 import { useLumiStore } from '@/stores/lumi.store.js';
-import { useAuthStore } from '@/stores/auth.store.js';
 
 export default function AppScopeLayout() {
   useScope('app-scope');
   const onLunchRoute = useMatch('/lunch/*');
   const [mobileOpen, setMobileOpen] = useState(false);
 
-  // Story 12-S12 — subscribe to proactive Lumi nudges so the orb breathes the
-  // moment a nudge lands. Keyed on accessToken: the EventSource reopens on login
-  // / refresh and closes on logout.
-  const accessToken = useAuthStore((s) => s.accessToken);
-  useLumiNudgeSSE(accessToken);
+  // Story 13-s2.5 — proactive Lumi nudges are now delivered on the single SSE
+  // bridge (see providers/query-provider.tsx + lib/realtime/sse.ts), which folds
+  // in the `lumi.nudge` listener. The dedicated useLumiNudgeSSE EventSource was
+  // removed so each tab holds exactly one connection to /v1/events.
 
   // Mount the ambient voice session hook at layout level so it survives route
   // changes and the LumiPresence dot + sheet can access startSession/endSession

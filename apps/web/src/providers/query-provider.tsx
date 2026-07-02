@@ -3,6 +3,7 @@ import { lazy, Suspense, useEffect, useRef } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { createSseBridge } from '@/lib/realtime/index.js';
 import type { SseBridge } from '@/lib/realtime/index.js';
+import { useAuthStore } from '@/stores/auth.store.js';
 
 // Dynamic import keeps @tanstack/react-query-devtools out of the production
 // bundle — Vite tree-shakes the unused import in builds where DEV is false.
@@ -46,11 +47,25 @@ export function QueryProvider({ children }: QueryProviderProps) {
     bridgeRef.current = bridge;
     bridge.connect();
 
+    // Story 13-s2.5 — the bridge is now the single SSE owner (proactive nudges
+    // folded in). The connection embeds the access token in its URL, so a login
+    // or refresh must reconnect to pick up the new token; otherwise a cold login
+    // would wait for the next error/backoff cycle before nudges surface. connect()
+    // closes the old EventSource and opens a fresh one — still one per tab.
+    let prevToken = useAuthStore.getState().accessToken;
+    const unsubscribe = useAuthStore.subscribe((state) => {
+      if (state.accessToken !== prevToken) {
+        prevToken = state.accessToken;
+        bridge.connect();
+      }
+    });
+
     return () => {
+      unsubscribe();
       bridge.disconnect();
       bridgeRef.current = null;
     };
-  }, []); // Empty deps — connect once on mount, disconnect on unmount.
+  }, []); // Empty deps — connect once on mount; reconnect only on token change.
 
   return (
     <QueryClientProvider client={queryClient}>

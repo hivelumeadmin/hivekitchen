@@ -4,6 +4,8 @@ import type { QueryClient } from '@tanstack/react-query';
 import { createSseBridge } from './sse.js';
 import * as threadIntegrity from './thread-integrity.js';
 import { hkFetch } from '@/lib/fetch.js';
+import { useLumiStore } from '@/stores/lumi.store.js';
+import { usePlanProgressStore } from '@/stores/plan-progress.store.js';
 import type { z } from 'zod';
 import type { InvalidationEvent } from '@hivekitchen/contracts';
 
@@ -580,5 +582,120 @@ describe('SseBridge — reconnect backoff', () => {
 
     expect(FakeEventSource.instances).toHaveLength(2);
     expect(FakeEventSource.instances[0]!.readyState).toBe(2); // closed
+  });
+});
+
+describe('SseBridge — plan.progress (Story 13-s2.5)', () => {
+  beforeEach(() => {
+    usePlanProgressStore.getState().reset();
+  });
+
+  it('writes the pushed stage + week_id into the plan-progress store', () => {
+    const qc = makeMockQueryClient();
+    createSseBridge(qc).connect();
+    const [es] = FakeEventSource.instances;
+
+    es.dispatch('message', makeMessageEvent({ type: 'plan.progress', week_id: UUID1, stage: 'guardrail' }));
+
+    expect(usePlanProgressStore.getState().stage).toBe('guardrail');
+    expect(usePlanProgressStore.getState().weekId).toBe(UUID1);
+    // A progress event is not a query invalidation.
+    expect(vi.mocked(qc.invalidateQueries)).not.toHaveBeenCalled();
+  });
+
+  it('advances to the terminal failed stage', () => {
+    const qc = makeMockQueryClient();
+    createSseBridge(qc).connect();
+    const [es] = FakeEventSource.instances;
+
+    es.dispatch('message', makeMessageEvent({ type: 'plan.progress', week_id: UUID1, stage: 'failed' }));
+
+    expect(usePlanProgressStore.getState().stage).toBe('failed');
+  });
+});
+
+// Story 13-s2.5 — the proactive-nudge listener folded into the single bridge
+// (was a second EventSource in the now-deleted useLumiNudgeSSE). These cases are
+// ported from useLumiNudgeSSE.test.ts to keep coverage on the consolidated path.
+describe('SseBridge — lumi.nudge (folded from useLumiNudgeSSE, 13-s2.5)', () => {
+  const NUDGE_TURN = {
+    id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+    thread_id: UUID1,
+    server_seq: 1,
+    created_at: DT,
+    role: 'lumi' as const,
+    body: { type: 'message' as const, content: 'Your plan is ready.' },
+  };
+
+  function nudgeEvent(surface = 'brief', turn = NUDGE_TURN): MessageEvent {
+    return new MessageEvent('lumi.nudge', {
+      data: JSON.stringify({ type: 'lumi.nudge', turn, surface }),
+    });
+  }
+
+  beforeEach(() => {
+    useLumiStore.getState().reset();
+  });
+
+  it('registers the lumi.nudge listener on the single bridge connection', () => {
+    createSseBridge(makeMockQueryClient()).connect();
+    expect(FakeEventSource.instances).toHaveLength(1);
+    const [es] = FakeEventSource.instances;
+
+    es.dispatch('lumi.nudge', nudgeEvent());
+
+    // The listener fired → the nudge landed in the store (proves registration).
+    expect(useLumiStore.getState().pendingNudge?.id).toBe(NUDGE_TURN.id);
+  });
+
+  it('appends the turn live when the sheet is summoned on the matching surface', () => {
+    useLumiStore.setState({ presenceState: 'summoned', surface: 'brief' });
+    createSseBridge(makeMockQueryClient()).connect();
+    const [es] = FakeEventSource.instances;
+
+    es.dispatch('lumi.nudge', nudgeEvent('brief'));
+
+    expect(useLumiStore.getState().turns).toHaveLength(1);
+  });
+
+  it('does not append when the sheet is summoned on a different surface', () => {
+    useLumiStore.setState({ presenceState: 'summoned', surface: 'planning' });
+    createSseBridge(makeMockQueryClient()).connect();
+    const [es] = FakeEventSource.instances;
+
+    es.dispatch('lumi.nudge', nudgeEvent('brief'));
+
+    expect(useLumiStore.getState().turns).toHaveLength(0);
+  });
+
+  it('whispers when proactiveNudges is on and the sheet is at rest', () => {
+    useLumiStore.setState({ proactiveNudges: true, presenceState: 'atRest' });
+    createSseBridge(makeMockQueryClient()).connect();
+    const [es] = FakeEventSource.instances;
+
+    es.dispatch('lumi.nudge', nudgeEvent());
+
+    expect(useLumiStore.getState().presenceState).toBe('whisper');
+  });
+
+  it('does NOT whisper when proactiveNudges is off (dot breath is the only signal)', () => {
+    useLumiStore.setState({ proactiveNudges: false, presenceState: 'atRest' });
+    createSseBridge(makeMockQueryClient()).connect();
+    const [es] = FakeEventSource.instances;
+
+    es.dispatch('lumi.nudge', nudgeEvent());
+
+    expect(useLumiStore.getState().presenceState).toBe('atRest');
+    expect(useLumiStore.getState().pendingNudge?.id).toBe(NUDGE_TURN.id);
+  });
+
+  it('ignores a malformed nudge frame without throwing or mutating state', () => {
+    createSseBridge(makeMockQueryClient()).connect();
+    const [es] = FakeEventSource.instances;
+
+    expect(() =>
+      es.dispatch('lumi.nudge', new MessageEvent('lumi.nudge', { data: 'not json{' })),
+    ).not.toThrow();
+    expect(useLumiStore.getState().pendingNudge).toBeNull();
   });
 });

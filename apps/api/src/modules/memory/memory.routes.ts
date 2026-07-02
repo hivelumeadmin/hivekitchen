@@ -60,6 +60,14 @@ const memoryRoutesPlugin: FastifyPluginAsync = async (fastify) => {
         reason,
       );
       if (node === null) throw new NotFoundError('Memory node not found');
+      // Story 13-s2.5 — push a memory.updated invalidation so a second tab /
+      // device refetches the edited sentence. Fire-and-forget; the client
+      // handler already invalidates the memory(node_id) query.
+      fastify.sseDispatcher.emit(
+        request.user.household_id,
+        'message',
+        JSON.stringify({ type: 'memory.updated', node_id: nodeId }),
+      );
       return { node };
     },
   );
@@ -87,9 +95,19 @@ const memoryRoutesPlugin: FastifyPluginAsync = async (fastify) => {
         reason?.trim() || null,
       );
       if (node === null) throw new NotFoundError('Memory node not found');
-      // SSE forget.completed — server-side emit is deferred; web uses the
-      // API response for optimistic update. ForgetCompletedEvent contract
-      // is already defined in @hivekitchen/contracts for future fan-out.
+      // Story 13-s2.5 — push memory.forget.completed so other tabs drop the
+      // soft-forgotten node. Fire-and-forget; the client handler invalidates
+      // the memory(node_id) query. (Replaces the 5.2 deferral noted here.)
+      fastify.sseDispatcher.emit(
+        request.user.household_id,
+        'message',
+        JSON.stringify({
+          type: 'memory.forget.completed',
+          node_id: nodeId,
+          mode: 'soft',
+          completed_at: new Date().toISOString(),
+        }),
+      );
       return { node };
     },
   );

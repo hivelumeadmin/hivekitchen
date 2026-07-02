@@ -295,6 +295,16 @@ const lunchLinkRoutesPlugin: FastifyPluginAsync = async (fastify) => {
         },
         body.request_text,
       );
+      // Story 13-s2.5 — push child_request.received so the parent's open Brief
+      // refetches the pending-requests list the moment the child submits. This
+      // is child-scoped (Lunch Link), but the event is household-scoped so it
+      // reaches the parent's tabs. Fire-and-forget; client handler invalidates
+      // childRequests(household_id).
+      fastify.sseDispatcher.emit(
+        verified.householdId,
+        'message',
+        JSON.stringify({ type: 'child_request.received', household_id: verified.householdId }),
+      );
       return reply.status(201).send(created);
     },
   );

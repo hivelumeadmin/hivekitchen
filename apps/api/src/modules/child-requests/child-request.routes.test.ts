@@ -1,4 +1,4 @@
-import { describe, it, expect, afterEach } from 'vitest';
+import { describe, it, expect, afterEach, vi } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import Fastify, { type FastifyInstance } from 'fastify';
 import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod';
@@ -93,6 +93,12 @@ async function buildTestApp(supabaseMock: unknown): Promise<FastifyInstance> {
   const env = { NODE_ENV: 'test', JWT_SECRET, ENVELOPE_ENCRYPTION_MASTER_KEY: undefined };
   app.decorate('env', env as unknown as FastifyInstance['env']);
   app.decorate('supabase', supabaseMock as unknown as FastifyInstance['supabase']);
+  // Story 13-s2.5 — approve/decline now emit child_request.resolved.
+  app.decorate('sseDispatcher', {
+    emit: vi.fn(),
+    register: vi.fn(),
+    unregister: vi.fn(),
+  } as unknown as FastifyInstance['sseDispatcher']);
 
   await app.register(jwt, { secret: env.JWT_SECRET, sign: { expiresIn: '15m' } });
   await app.register(authenticateHook);
@@ -222,6 +228,12 @@ describe('POST /v1/child-requests/:id/approve', () => {
     expect(JSON.parse(res.body)).toEqual({ ok: true });
     // The approval must mirror the request into food_preferences as a soft signal.
     expect(mock.tables).toContain('food_preferences');
+    // Story 13-s2.5 — pushes child_request.resolved so the parent's other tabs refetch.
+    expect(vi.mocked(app.sseDispatcher.emit)).toHaveBeenCalledWith(
+      HOUSEHOLD_ID,
+      'message',
+      JSON.stringify({ type: 'child_request.resolved', household_id: HOUSEHOLD_ID }),
+    );
   });
 
   it('404 when the id is not in the caller household', async () => {
@@ -275,6 +287,12 @@ describe('POST /v1/child-requests/:id/decline', () => {
     });
     expect(res.statusCode).toBe(200);
     expect(mock.tables).not.toContain('food_preferences');
+    // Story 13-s2.5 — decline also resolves the request → same push.
+    expect(vi.mocked(app.sseDispatcher.emit)).toHaveBeenCalledWith(
+      HOUSEHOLD_ID,
+      'message',
+      JSON.stringify({ type: 'child_request.resolved', household_id: HOUSEHOLD_ID }),
+    );
   });
 
   it('404 when the id is not in the caller household', async () => {

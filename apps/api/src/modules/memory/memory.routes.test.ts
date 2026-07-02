@@ -73,6 +73,13 @@ async function buildTestApp(
       (async () => null)) as FastifyInstance['memoryService']['softForget'],
   } as unknown as FastifyInstance['memoryService']);
 
+  // Story 13-s2.5 — the edit/forget routes now emit SSE invalidations.
+  app.decorate('sseDispatcher', {
+    emit: vi.fn(),
+    register: vi.fn(),
+    unregister: vi.fn(),
+  } as unknown as FastifyInstance['sseDispatcher']);
+
   await app.register(memoryRoutes);
   await app.ready();
   return app;

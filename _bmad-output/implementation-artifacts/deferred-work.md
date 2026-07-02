@@ -1,5 +1,11 @@
 # Deferred Work Log
 
+## Deferred from: code review of 13-s2.5-sse-push-completion (2026-07-02)
+
+- **D-13S2.5-CR1: Stage emit ordering (guardrail/persisting before commit)** — `guardrail` emits after `planWeek()` but before `commit()` (which runs the actual allergen check); `persisting` also fires before commit. Both are best-effort boundary markers — commit() bundles guardrail+persist atomically so there is no clean split point. Acknowledged in dev notes. Misleading during a guardrail-triggered regen cycle. [`apps/api/src/jobs/plan-generation.job.ts:564-592`]
+- **D-13S2.5-CR2: `isRegenerating` renders hardcoded copy, not pushed stage** — While composing empty-state renders `planProgressLabel(stage)`, the regenerating path shows a fixed string unaffected by `plan.progress` events. Spec AC3 targets the draft spinner in the empty-state composing flow; regen copy update is ambiguous scope. [`apps/web/src/features/plan/BriefCanvas.tsx`]
+- **D-13S2.5-CR3: Stale replayed `failed` event race** — A reconnect after a prior failed compose can replay the old `failed` event after `reset()` but before the new job's `composing` event arrives, tripping the error state for a fresh compose. Fix requires a nonce/generation counter in `plan-progress.store` so events from a previous job are ignored. [`apps/web/src/stores/plan-progress.store.ts`, `BriefCanvas.tsx`]
+
 ## Deferred from: code review of 13-s7-planner-finished-surface-stickybar (2026-07-02)
 
 - **W1 — `onConfirm` / `onTalkToLumi` dead buttons on both render sites**: AC3 explicitly defers wiring to s10. PlanPage passes no props; BriefCanvas passes only `onSwapDay`. `TalkToLumiButton` renders but `onClick` is undefined at both sites. [`apps/web/src/features/plan/PlanActionBar.tsx`, `PlanPage.tsx`, `BriefCanvas.tsx`]

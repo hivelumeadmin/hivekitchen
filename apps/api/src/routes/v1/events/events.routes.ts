@@ -3,6 +3,7 @@ import type { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
 import type { SurfaceKind } from '@hivekitchen/types';
 import { emitPresenceEvent, getPresenceKey } from '../../../modules/presence/presence.helpers.js';
+import { SSE_STREAM_PREFIX, streamEntryToFrame } from '../../../plugins/sse-dispatcher.plugin.js';
 
 interface StoredPresence {
   surface: SurfaceKind;
@@ -26,6 +27,28 @@ const EventsQuerystring = z.object({
   client_id: z.string().uuid(),
   token: z.string().min(1),
 });
+
+// Story 13-s2.5 — Last-Event-ID replay. Reads the household stream for entries
+// strictly after `lastEventId` and writes each reconstructed frame in order.
+// Extracted + exported so the ordered-replay + exclusive-range contract is
+// unit-testable without the hijacked SSE response or a live Redis.
+type StreamReader = {
+  xrange(key: string, start: string, end: string, countKeyword?: 'COUNT', count?: number): Promise<[string, string[]][]>;
+};
+
+export async function replayMissedEvents(
+  redis: StreamReader,
+  householdId: string,
+  lastEventId: string,
+  write: (frame: string) => void,
+): Promise<void> {
+  // Exclusive start `(id` → only entries strictly after the last seen id.
+  // COUNT matches STREAM_MAXLEN so XRANGE is bounded even if the trim lags.
+  const entries = await redis.xrange(`${SSE_STREAM_PREFIX}${householdId}`, `(${lastEventId}`, '+', 'COUNT', 200);
+  for (const [id, fields] of entries) {
+    write(streamEntryToFrame(id, fields));
+  }
+}
 
 interface AccessTokenPayload {
   sub: string;
@@ -74,9 +97,28 @@ export const eventsRoutes: FastifyPluginAsync = async (fastify) => {
       // Initial heartbeat — keeps the connection alive before real events land.
       reply.raw.write(':ping\n\n');
 
-      // Story 12-S12 — register this live connection so background workers (the
-      // lumi-nudge job) can fan out events to every open tab for the household.
+      // Story 12-S12 — register BEFORE replay so no live event is lost during
+      // the XRANGE window. Duplicate delivery of an invalidation event is harmless
+      // (React Query refetches are idempotent).
       fastify.sseDispatcher.register(payload.hh, reply.raw);
+
+      // Story 13-s2.5 — Last-Event-ID replay. On reconnect, native EventSource
+      // sends the id of the last frame it saw; replay everything after it from
+      // the household stream so the gap is filled. Best-effort: a replay failure
+      // (missing stream, Redis blip) falls through to live-only.
+      const lastEventId = request.headers['last-event-id'];
+      if (typeof lastEventId === 'string' && lastEventId.length > 0) {
+        try {
+          await replayMissedEvents(fastify.redis, payload.hh, lastEventId, (frame) => {
+            if (!reply.raw.writableEnded) reply.raw.write(frame);
+          });
+        } catch (err) {
+          fastify.log.warn(
+            { err, module: 'events', clientId },
+            'SSE Last-Event-ID replay failed — continuing live-only',
+          );
+        }
+      }
 
       // An unhandled 'error' event on the raw stream crashes Node's EventEmitter.
       reply.raw.on('error', (err) => {

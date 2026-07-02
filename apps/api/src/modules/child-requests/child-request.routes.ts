@@ -29,6 +29,18 @@ const childRequestRoutesPlugin: FastifyPluginAsync = async (fastify) => {
 
   const requireMember = authorize(['primary_parent', 'secondary_caregiver']);
 
+  // Story 13-s2.5 — push child_request.resolved so the parent's other tabs /
+  // devices refetch the pending-requests list. Fire-and-forget; the client
+  // handler invalidates childRequests(household_id). (The header note's 5.2
+  // deferral is now resolved — the dispatcher exists.)
+  const emitChildRequestResolved = (householdId: string): void => {
+    fastify.sseDispatcher.emit(
+      householdId,
+      'message',
+      JSON.stringify({ type: 'child_request.resolved', household_id: householdId }),
+    );
+  };
+
   fastify.get(
     '/v1/child-requests',
     {
@@ -58,6 +70,7 @@ const childRequestRoutesPlugin: FastifyPluginAsync = async (fastify) => {
         resolvedByUserId: request.user.id,
         householdId: request.user.household_id,
       });
+      emitChildRequestResolved(request.user.household_id);
       return reply.send({ ok: true });
     },
   );
@@ -77,6 +90,7 @@ const childRequestRoutesPlugin: FastifyPluginAsync = async (fastify) => {
         resolvedByUserId: request.user.id,
         householdId: request.user.household_id,
       });
+      emitChildRequestResolved(request.user.household_id);
       return reply.send({ ok: true });
     },
   );

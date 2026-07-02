@@ -49,6 +49,17 @@ export const PlanUpdatedEvent = z.object({
   guardrail_verdict: AllergyVerdict,
 });
 
+// Story 13-s2.5 — plan-generation progress. Emitted at each phase boundary of
+// the generation job so the Brief draft spinner reflects the real stage instead
+// of a fixed "~30s". `ready` coincides with the terminal PlanUpdatedEvent;
+// `failed` is emitted on the job's permanent-failure path (SSE-facing signal so
+// the UI stops waiting — distinct from the audit-only plan.generation.failed).
+export const PlanProgressEvent = z.object({
+  type: z.literal('plan.progress'),
+  week_id: z.string().uuid(),
+  stage: z.enum(['queued', 'composing', 'guardrail', 'persisting', 'ready', 'failed']),
+});
+
 // --- Story 3.1: deterministic allergy guardrail ---
 // AllergyVerdict above carries the SSE-facing summary; the schemas below are the
 // authoritative result shape returned by allergyGuardrailService.evaluate() /

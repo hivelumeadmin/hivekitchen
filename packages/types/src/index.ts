@@ -20,6 +20,7 @@ import {
   CreatePlanResponse,
   AllergyVerdict,
   PlanUpdatedEvent,
+  PlanProgressEvent,
   ConflictSchema,
   FlaggedCompoundItemSchema,
   GuardrailResultSchema,
@@ -384,6 +385,7 @@ export type WeeklyPlan = z.infer<typeof WeeklyPlan>;
 export type CreatePlanResponse = z.infer<typeof CreatePlanResponse>;
 export type AllergyVerdict = z.infer<typeof AllergyVerdict>;
 export type PlanUpdatedEvent = z.infer<typeof PlanUpdatedEvent>;
+export type PlanProgressEvent = z.infer<typeof PlanProgressEvent>;
 
 // Allergy guardrail (Story 3.1)
 export type Conflict = z.infer<typeof ConflictSchema>;
