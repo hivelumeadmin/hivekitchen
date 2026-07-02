@@ -38,9 +38,9 @@ export interface OnboardingSlots {
   m1ChildDeclared: boolean;
   /** An allergen response is recorded — the M2 safety gate (required slot). */
   m2AllergenResponse: boolean;
-  /** M3 dietary/cuisine identity answered (or explicitly skipped). M3 is
-   *  optional, so there is no required-set bit; this reproduces the M3
-   *  chip-only auto-advance safety net (AC5). */
+  /** M3 dietary/cuisine identity answered (or explicitly skipped). Slice 13-s6 —
+   *  M3 is now a REQUIRED-set moment (§6.1 defer-line); `m3_answered` is
+   *  persisted in `RequiredSetStatus` and gates `required_set_complete`. */
   m3Answered: boolean;
   /** M4 bag-composition pattern chosen. Reproduces the M4 chip-only
    *  auto-advance safety net (AC5). */
@@ -58,7 +58,9 @@ export const MOMENT_SLOT_PREDICATES = {
   m1Complete: (s: OnboardingSlots): boolean => s.m1HouseholdName && s.m1ChildDeclared,
   /** M2 (`m2_safe`): an allergen_response recorded (the required safety gate). */
   m2Complete: (s: OnboardingSlots): boolean => s.m2AllergenResponse,
-  /** M3 (`m3_taste`): dietary/cuisine answered or skipped (optional moment). */
+  /** M3 (`m3_taste`): dietary/cuisine answered or skipped. Slice 13-s6 —
+   *  M3 is now a REQUIRED-set moment (§6.1 defer-line); the predicate body is
+   *  unchanged, but re-anchor no longer skips it. */
   m3Complete: (s: OnboardingSlots): boolean => s.m3Answered,
   /** M4 (`m4_bag`): bag-composition pattern chosen. */
   m4Complete: (s: OnboardingSlots): boolean => s.m4Answered,
@@ -97,12 +99,12 @@ export class OnboardingController {
 
   // AC6 / AC5 — reconstruct `current_moment` purely from slot state when there
   // is no prior moment row (resume / reset, or a fresh session whose data
-  // already exists). This reproduces the kitchen-map-inference re-anchoring
-  // safety net, which skips the OPTIONAL M3 when M1 and M2 are already
-  // satisfied (a re-anchored interview lands on M4, not M3).
+  // already exists). Slice 13-s6 — M3 is now REQUIRED, so re-anchor lands a
+  // household with M1+M2 done but M3 unanswered on `m3_taste` (not `m4_bag`).
   reconstructMoment(slots: OnboardingSlots): CurrentMoment {
     if (!MOMENT_SLOT_PREDICATES.m1Complete(slots)) return 'm1_table';
     if (!MOMENT_SLOT_PREDICATES.m2Complete(slots)) return 'm2_safe';
+    if (!MOMENT_SLOT_PREDICATES.m3Complete(slots)) return 'm3_taste';
     if (!MOMENT_SLOT_PREDICATES.m4Complete(slots)) return 'm4_bag';
     if (!MOMENT_SLOT_PREDICATES.m5Complete(slots)) return 'm5_starting_line';
     return 'summary';

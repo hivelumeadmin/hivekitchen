@@ -94,18 +94,15 @@ export const SCENARIOS: Scenario[] = [
             ],
             finishReason: 'tool_calls',
           },
-          // Slice 2.7-s7 — five free-text favourites (< 10) no longer auto-advance:
-          // the LLM directive that used to jump to `summary` is gone, so the
-          // controller deterministically holds at m5_starting_line until the
-          // count gate (≥10) OR the override_fewer chip (≥4) is satisfied. The
-          // override chip is injected once the count reaches 4 (next turn).
+          // Slice 13-s6 — five free-text favourites now clear the M5 natural
+          // gate (threshold dropped 10→5), so the controller advances straight
+          // to summary this turn; no override_fewer tap is needed.
           { content: 'Wonderful list — that gives me plenty to start with.', finishReason: 'stop' },
         ],
       },
       {
-        // The parent taps "Start with fewer" (override_fewer, ≥4 favourites) —
-        // the deterministic M5 exit. The controller advances to summary; the
-        // ack carries no directive.
+        // The parent taps "Start with fewer" after M5 already completed — a
+        // no-op that holds at summary (kept to exercise the override path).
         userInput: '[Chips selected: override_fewer]',
         llmSteps: [
           { content: 'Your kitchen is ready — tap Finalize on the right whenever you are.', finishReason: 'stop' },

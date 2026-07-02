@@ -94,10 +94,23 @@ describe('OnboardingController.reconstructMoment — resume/reset from slots (AC
     ).toBe('m2_safe');
   });
 
-  it('re-anchors to m4_bag when M1 and M2 are done, skipping the optional M3 (AC5)', () => {
+  it('re-anchors to m3_taste when M1 and M2 are done but M3 is unanswered (Slice 13-s6 — M3 now required)', () => {
     expect(
       controller.reconstructMoment(
         slots({ m1HouseholdName: true, m1ChildDeclared: true, m2AllergenResponse: true }),
+      ),
+    ).toBe('m3_taste');
+  });
+
+  it('re-anchors to m4_bag when M1, M2 and M3 are done', () => {
+    expect(
+      controller.reconstructMoment(
+        slots({
+          m1HouseholdName: true,
+          m1ChildDeclared: true,
+          m2AllergenResponse: true,
+          m3Answered: true,
+        }),
       ),
     ).toBe('m4_bag');
   });
@@ -109,6 +122,7 @@ describe('OnboardingController.reconstructMoment — resume/reset from slots (AC
           m1HouseholdName: true,
           m1ChildDeclared: true,
           m2AllergenResponse: true,
+          m3Answered: true,
           m4Answered: true,
         }),
       ),
@@ -122,6 +136,7 @@ describe('OnboardingController.reconstructMoment — resume/reset from slots (AC
           m1HouseholdName: true,
           m1ChildDeclared: true,
           m2AllergenResponse: true,
+          m3Answered: true,
           m4Answered: true,
           m5Complete: true,
         }),

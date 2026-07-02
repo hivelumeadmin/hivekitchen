@@ -32,6 +32,7 @@ function m3State(current: MomentState['current_moment']): MomentState {
       m1_household_name: true,
       m1_child_declared: true,
       m2_allergen_response: current !== 'm2_safe',
+      m3_answered: current !== 'm2_safe' && current !== 'm3_taste',
       m5_favorite_count: 0,
       m5_complete: false,
     },

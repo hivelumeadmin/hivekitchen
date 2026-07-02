@@ -101,8 +101,8 @@ describe('useLumiNudgeSSE', () => {
     expect(useLumiStore.getState().pendingNudge?.id).toBe(TURN.id);
   });
 
-  it('appends the turn live when the panel is open on the matching surface', () => {
-    useLumiStore.setState({ isPanelOpen: true, surface: 'brief' });
+  it('appends the turn live when the sheet is summoned on the matching surface', () => {
+    useLumiStore.setState({ presenceState: 'summoned', surface: 'brief' });
     renderHook(() => useLumiNudgeSSE('token-1'));
 
     FakeEventSource.instances[0]!.emit('lumi.nudge', nudgePayload('brief'));
@@ -110,7 +110,7 @@ describe('useLumiNudgeSSE', () => {
     expect(useLumiStore.getState().turns).toHaveLength(1);
   });
 
-  it('does not append when the panel is closed', () => {
+  it('does not append when the sheet is at rest', () => {
     renderHook(() => useLumiNudgeSSE('token-1'));
 
     FakeEventSource.instances[0]!.emit('lumi.nudge', nudgePayload('brief'));
@@ -119,8 +119,8 @@ describe('useLumiNudgeSSE', () => {
     expect(useLumiStore.getState().pendingNudge?.id).toBe(TURN.id);
   });
 
-  it('does not append when the panel is open on a different surface', () => {
-    useLumiStore.setState({ isPanelOpen: true, surface: 'planning' });
+  it('does not append when the sheet is summoned on a different surface', () => {
+    useLumiStore.setState({ presenceState: 'summoned', surface: 'planning' });
     renderHook(() => useLumiNudgeSSE('token-1'));
 
     FakeEventSource.instances[0]!.emit('lumi.nudge', nudgePayload('brief'));
@@ -155,5 +155,54 @@ describe('useLumiNudgeSSE', () => {
     unmount();
 
     expect(es.closed).toBe(true);
+  });
+
+  // 13-s3 — whisper surfacing gate
+  it('transitions to whisper when proactiveNudges=true and sheet is at rest (13-s3 AC2)', () => {
+    useLumiStore.setState({ proactiveNudges: true, presenceState: 'atRest' });
+    renderHook(() => useLumiNudgeSSE('token-1'));
+
+    FakeEventSource.instances[0]!.emit('lumi.nudge', nudgePayload());
+
+    expect(useLumiStore.getState().presenceState).toBe('whisper');
+  });
+
+  it('does NOT whisper when proactiveNudges=false — dot breath is the only signal (13-s3 AC2)', () => {
+    useLumiStore.setState({ proactiveNudges: false, presenceState: 'atRest' });
+    renderHook(() => useLumiNudgeSSE('token-1'));
+
+    FakeEventSource.instances[0]!.emit('lumi.nudge', nudgePayload());
+
+    expect(useLumiStore.getState().presenceState).toBe('atRest');
+    expect(useLumiStore.getState().pendingNudge?.id).toBe(TURN.id);
+  });
+
+  it('does NOT whisper when sheet is already summoned — live append only (13-s3 AC2)', () => {
+    useLumiStore.setState({ proactiveNudges: true, presenceState: 'summoned', surface: 'brief' });
+    renderHook(() => useLumiNudgeSSE('token-1'));
+
+    FakeEventSource.instances[0]!.emit('lumi.nudge', nudgePayload('brief'));
+
+    // Already summoned — presenceState stays summoned, turn appended live
+    expect(useLumiStore.getState().presenceState).toBe('summoned');
+    expect(useLumiStore.getState().turns).toHaveLength(1);
+  });
+
+  it('replaces whisper text on second nudge while already whispering (no stacking) (13-s3 AC2)', () => {
+    const secondTurn = { ...TURN, id: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb' };
+    useLumiStore.setState({ proactiveNudges: true, presenceState: 'atRest' });
+    renderHook(() => useLumiNudgeSSE('token-1'));
+
+    FakeEventSource.instances[0]!.emit('lumi.nudge', nudgePayload());
+    expect(useLumiStore.getState().presenceState).toBe('whisper');
+
+    FakeEventSource.instances[0]!.emit(
+      'lumi.nudge',
+      JSON.stringify({ type: 'lumi.nudge', turn: secondTurn, surface: 'brief' }),
+    );
+
+    // Still whisper, nudge replaced
+    expect(useLumiStore.getState().presenceState).toBe('whisper');
+    expect(useLumiStore.getState().pendingNudge?.id).toBe(secondTurn.id);
   });
 });

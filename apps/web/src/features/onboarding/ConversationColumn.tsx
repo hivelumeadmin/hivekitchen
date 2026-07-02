@@ -1,6 +1,8 @@
 import type { ChipConfig } from '@hivekitchen/contracts';
+import type { KitchenMap } from '@hivekitchen/types';
 import { formatUserEcho, type Turn } from './onboarding-conversation.js';
 import { OnboardingChips } from './OnboardingChips.js';
+import { RecognitionEnding } from './RecognitionEnding.js';
 import {
   StatusLine,
   WaveformGlyph,
@@ -8,12 +10,6 @@ import {
   momentSubtitle,
   inputPlaceholder,
 } from './conversation-column-helpers.js';
-
-const GAP_LABELS: Record<string, { label: string; moment: number }> = {
-  m1_table: { label: "Who's at the table", moment: 1 },
-  m2_safe: { label: 'What I need to keep safe', moment: 2 },
-  m5_starting_line: { label: 'A starting line for Lumi', moment: 5 },
-};
 
 interface ConversationColumnProps {
   turns: Turn[];
@@ -27,6 +23,7 @@ interface ConversationColumnProps {
   finalizing: boolean;
   requiredSetComplete: boolean | null;
   missingRequiredSet: string[];
+  kitchenMap: KitchenMap | null;
   coldStartMode: boolean;
   coldStartDishCount: number;
   isResume: boolean;
@@ -56,6 +53,7 @@ export function ConversationColumn({
   finalizing,
   requiredSetComplete,
   missingRequiredSet,
+  kitchenMap,
   coldStartMode,
   coldStartDishCount,
   isResume,
@@ -111,39 +109,6 @@ export function ConversationColumn({
               {lumiTurn?.content ?? ''}
             </p>
 
-            {currentMomentKey === 'summary' && missingRequiredSet.length > 0 && (
-              <div className="flex w-full max-w-xl flex-col gap-3">
-                {missingRequiredSet.map((momentKey) => {
-                  const info = GAP_LABELS[momentKey] ?? { label: momentKey, moment: 0 };
-                  return (
-                    <div
-                      key={momentKey}
-                      data-testid={`gap-callout-${momentKey}`}
-                      className="flex flex-col gap-2 rounded-xl border border-amber-warm/50 bg-amber/5 px-4 py-3 text-left"
-                    >
-                      <div className="flex items-center justify-between gap-3">
-                        <span className="font-sans text-sm font-medium text-amber-warm">
-                          Still missing · {info.label}
-                        </span>
-                        {info.moment > 0 && (
-                          <button
-                            type="button"
-                            onClick={() => onJumpToMoment(momentKey)}
-                            className="inline-flex items-center gap-1 rounded-full border border-amber-warm/40 px-3 py-1 font-sans text-[11px] text-amber-warm transition-colors hover:bg-amber-warm/10"
-                          >
-                            Back to Moment {info.moment}
-                          </button>
-                        )}
-                      </div>
-                      <p className="font-sans text-[12px] italic text-fg-muted">
-                        Lumi needs this to build a safe, personalized plan.
-                      </p>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-
             <OnboardingChips
               chipConfig={chipConfig}
               selections={chipSelections}
@@ -174,46 +139,14 @@ export function ConversationColumn({
       )}
 
       {currentMomentKey === 'summary' && (
-        <div className="shrink-0 px-6 pb-1 pt-3 md:px-8">
-          <div className="mx-auto flex max-w-2xl flex-col gap-2">
-            <div
-              data-testid="finalize-gate"
-              className="flex items-center gap-3 rounded-2xl border border-border/30 bg-surface/50 px-4 py-3 shadow-lg backdrop-blur-md"
-            >
-              <p
-                className={[
-                  'flex-1 font-sans text-[13px] italic',
-                  requiredSetComplete === true ? 'text-foliage' : 'text-amber-warm',
-                ].join(' ')}
-              >
-                {missingRequiredSet.length > 0
-                  ? 'A few things still need to be answered above.'
-                  : requiredSetComplete === true
-                    ? 'Ready when you are.'
-                    : 'Reply above to pick up where you left off.'}
-              </p>
-              <button
-                type="button"
-                data-testid="finalize-button"
-                onClick={onFinalize}
-                disabled={finalizing || requiredSetComplete !== true}
-                className={[
-                  'inline-flex items-center gap-2 rounded-full px-5 py-2.5 font-sans text-sm font-medium transition-all',
-                  finalizing || requiredSetComplete !== true
-                    ? 'cursor-not-allowed bg-amber/20 text-amber-warm/60'
-                    : 'bg-amber text-bg shadow-md hover:bg-amber-warm active:scale-[0.98]',
-                ].join(' ')}
-              >
-                {finalizing ? 'Finalizing…' : 'Finalize'}
-              </button>
-            </div>
-            <p className="text-center font-sans text-xs italic text-fg-muted">
-              {missingRequiredSet.length > 0
-                ? 'Complete the moments above to seal your kitchen.'
-                : 'Finalize seals your kitchen and starts your first plan.'}
-            </p>
-          </div>
-        </div>
+        <RecognitionEnding
+          kitchenMap={kitchenMap}
+          requiredSetComplete={requiredSetComplete}
+          missingRequiredSet={missingRequiredSet}
+          finalizing={finalizing}
+          onFinalize={onFinalize}
+          onJumpToMoment={onJumpToMoment}
+        />
       )}
 
       {/* Legacy completion CTA — pre-chaptered flow only (no moment_key). In the

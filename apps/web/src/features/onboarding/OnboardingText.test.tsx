@@ -498,7 +498,7 @@ describe('OnboardingText', () => {
     });
   }
 
-  it('renders the finalize gate in the summary moment', async () => {
+  it('renders the recognition ending in the summary moment', async () => {
     globalThis.fetch = vi.fn().mockResolvedValueOnce(
       mockSummary({ required_set_complete: true }),
     ) as unknown as typeof fetch;
@@ -507,11 +507,11 @@ describe('OnboardingText', () => {
     sendText('all set');
 
     await waitFor(() => {
-      expect(screen.getByTestId('finalize-gate')).toBeDefined();
+      expect(screen.getByTestId('recognition-ending')).toBeDefined();
     });
   });
 
-  it('enables Finalize when the required set is complete', async () => {
+  it('shows the "Show me my first week" CTA when the required set is complete', async () => {
     globalThis.fetch = vi.fn().mockResolvedValueOnce(
       mockSummary({ required_set_complete: true }),
     ) as unknown as typeof fetch;
@@ -520,25 +520,27 @@ describe('OnboardingText', () => {
     sendText('all set');
 
     await waitFor(() => {
-      expect((screen.getByTestId('finalize-button') as HTMLButtonElement).disabled).toBe(false);
+      const cta = screen.getByTestId('show-first-week-button') as HTMLButtonElement;
+      expect(cta.disabled).toBe(false);
     });
   });
 
-  it('renders a gap callout and disables Finalize when a required moment is missing', async () => {
+  it('replaces the CTA with a calm jump-back affordance when a required moment is missing', async () => {
     globalThis.fetch = vi.fn().mockResolvedValueOnce(
-      mockSummary({ required_set_complete: false, missing_required_set: ['m5_starting_line'] }),
+      mockSummary({ required_set_complete: false, missing_required_set: ['m3_taste'] }),
     ) as unknown as typeof fetch;
 
     renderOnboarding();
     sendText('skip ahead');
 
     await waitFor(() => {
-      expect(screen.getByTestId('gap-callout-m5_starting_line')).toBeDefined();
+      expect(screen.getByTestId('gap-jump-m3_taste')).toBeDefined();
     });
-    expect((screen.getByTestId('finalize-button') as HTMLButtonElement).disabled).toBe(true);
+    // No raw disabled Finalize button — the incomplete state shows no CTA.
+    expect(screen.queryByTestId('show-first-week-button')).toBeNull();
   });
 
-  it('jumps back to the named moment from a gap callout', async () => {
+  it('jumps back to the named moment from the recognition affordance', async () => {
     globalThis.fetch = vi.fn().mockResolvedValueOnce(
       mockSummary({ required_set_complete: false, missing_required_set: ['m5_starting_line'] }),
     ) as unknown as typeof fetch;
@@ -551,7 +553,37 @@ describe('OnboardingText', () => {
     await waitFor(() => {
       expect(screen.getByText(/moment 5 of 5 · a starting line for lumi/i)).toBeDefined();
     });
-    expect(screen.queryByTestId('finalize-gate')).toBeNull();
+    expect(screen.queryByTestId('recognition-ending')).toBeNull();
+  });
+
+  it('clicking "Show me my first week" finalizes and navigates to /app', async () => {
+    globalThis.fetch = vi.fn().mockImplementation(
+      async (input: RequestInfo | URL): Promise<Response> => {
+        const url = typeof input === 'string' ? input : input.toString();
+        if (url.includes('/onboarding/text/finalize')) {
+          return new Response(
+            JSON.stringify({
+              thread_id: SAMPLE_THREAD_ID,
+              summary: { cultural_templates: [], palate_notes: [], allergens_mentioned: [] },
+            }),
+            { status: 200, headers: { 'Content-Type': 'application/json' } },
+          );
+        }
+        if (url.includes('/kitchen-map')) {
+          return new Response('{}', { status: 200, headers: { 'Content-Type': 'application/json' } });
+        }
+        return mockSummary({ required_set_complete: true });
+      },
+    ) as unknown as typeof fetch;
+
+    renderOnboarding();
+    sendText('all set');
+
+    fireEvent.click(await screen.findByTestId('show-first-week-button'));
+
+    await waitFor(() => {
+      expect(navigateMock).toHaveBeenCalledWith('/app');
+    });
   });
 
   it('shows the summary subtitle in the summary moment', async () => {

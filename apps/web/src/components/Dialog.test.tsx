@@ -123,4 +123,40 @@ describe('Dialog', () => {
     fireEvent.keyDown(document, { key: 'Tab' });
     expect(document.activeElement).toBe(dialog);
   });
+
+  // Epic 13-s2 — chrome override escape hatches (used by LumiSheet).
+  it('defaults to the centered white modal chrome when no overrides are passed', () => {
+    render(
+      <Dialog open onClose={() => undefined} titleId="t">
+        <p id="t">x</p>
+      </Dialog>,
+    );
+    expect(screen.getByRole('dialog').className).toContain('bg-white');
+    expect(document.querySelector('[aria-hidden="true"]')!.className).toContain('bg-stone-900/60');
+  });
+
+  it('applies id, panelClassName, scrimClassName, and bottom-right placement overrides', () => {
+    render(
+      <Dialog
+        open
+        onClose={() => undefined}
+        titleId="t"
+        id="my-sheet"
+        panelClassName="bg-surface rounded-2xl"
+        scrimClassName="bg-stone-900/40"
+        placement="bottom-right"
+      >
+        <p id="t">x</p>
+      </Dialog>,
+    );
+    const dialog = screen.getByRole('dialog');
+    expect(dialog.getAttribute('id')).toBe('my-sheet');
+    expect(dialog.className).toContain('bg-surface');
+    expect(dialog.className).not.toContain('bg-white');
+    const scrim = document.querySelector('[aria-hidden="true"]')!;
+    expect(scrim.className).toContain('bg-stone-900/40');
+    // bottom-right placement positions the wrapper at the corner.
+    expect(dialog.parentElement!.className).toContain('items-end');
+    expect(dialog.parentElement!.className).toContain('justify-end');
+  });
 });

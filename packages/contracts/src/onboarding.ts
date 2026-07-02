@@ -91,8 +91,9 @@ export const TextOnboardingTurnResponseSchema = z.object({
   // summary moment can enable/disable the finalize gate. null = no moment
   // repository wired (legacy/test path); true/false = computed status.
   required_set_complete: z.boolean().nullable().optional(),
-  // Slice 2.5-s10 — moment keys ('m1_table'|'m2_safe'|'m5_starting_line')
-  // whose required answers are still missing. Empty when all complete.
+  // Slice 2.5-s10 — moment keys whose required answers are still missing.
+  // Empty when all complete. Slice 13-s6 — M3 joined the required set:
+  // 'm1_table'|'m2_safe'|'m3_taste'|'m5_starting_line'.
   missing_required_set: z.array(z.string()).optional(),
   // Slice 2.6-s6 — cold-start fallback mode for M5. When true, the client
   // renders the conversational tail (no chip card, "3 dishes" gate) instead

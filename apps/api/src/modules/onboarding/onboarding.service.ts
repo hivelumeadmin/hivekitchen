@@ -946,7 +946,7 @@ export class OnboardingService {
           previousMoment === 'm5_starting_line' &&
           submittedChipKeys.includes('override_fewer') &&
           counts.favorite_lunch_count >= m5OverrideFloor;
-        const m5NaturalThreshold = coldStartTriggered ? 3 : 10;
+        const m5NaturalThreshold = coldStartTriggered ? 3 : 5;
         const m5_complete =
           counts.favorite_lunch_count >= m5NaturalThreshold ||
           m5OverrideThisTurn ||
@@ -997,6 +997,12 @@ export class OnboardingService {
           m1_household_name: counts.household_name_set,
           m1_child_declared: counts.child_count > 0,
           m2_allergen_response,
+          // Slice 13-s6 — M3 sticky-once-true: carry forward a prior true so a
+          // re-anchored/later turn (which recomputes m3Answered from turn-local
+          // signals) never clears an answered required-set bit.
+          m3_answered:
+            m3Answered ||
+            preTurnMomentState?.required_set_status.m3_answered === true,
           m5_favorite_count: counts.favorite_lunch_count,
           m5_complete,
         };
@@ -1106,6 +1112,7 @@ export class OnboardingService {
           requiredSetStatus.m1_household_name &&
           requiredSetStatus.m1_child_declared &&
           requiredSetStatus.m2_allergen_response &&
+          requiredSetStatus.m3_answered &&
           requiredSetStatus.m5_complete;
         missing_required_set = [];
         if (
@@ -1116,6 +1123,9 @@ export class OnboardingService {
         }
         if (!requiredSetStatus.m2_allergen_response) {
           missing_required_set.push('m2_safe');
+        }
+        if (!requiredSetStatus.m3_answered) {
+          missing_required_set.push('m3_taste');
         }
         if (!requiredSetStatus.m5_complete) {
           missing_required_set.push('m5_starting_line');
@@ -1326,6 +1336,7 @@ export class OnboardingService {
           rss.m1_household_name &&
           rss.m1_child_declared &&
           rss.m2_allergen_response &&
+          rss.m3_answered &&
           rss.m5_complete;
         if (!reqComplete) {
           throw new ConflictError(
@@ -1350,6 +1361,7 @@ export class OnboardingService {
       finalizeState.required_set_status.m1_household_name &&
       finalizeState.required_set_status.m1_child_declared &&
       finalizeState.required_set_status.m2_allergen_response &&
+      finalizeState.required_set_status.m3_answered &&
       finalizeState.required_set_status.m5_complete;
 
     if (!structuredGatePassed) {

@@ -4,6 +4,12 @@ import type { LumiSurface, LumiContextSignal, Turn } from '@hivekitchen/types';
 type VoiceStatus = 'idle' | 'connecting' | 'active' | 'ended' | 'error';
 type PanelMode = 'text' | 'voice';
 
+// Epic 13-s2 — the valet presence machine. `atRest` = the quiet ambient dot, no
+// open sheet. `summoned` = the focused temporary sheet is open (runs a turn, then
+// recedes). `whisper` is reserved for 13-s3 (the single dismissible nudge line);
+// this slice defines the value but drives only atRest ↔ summoned.
+export type PresenceState = 'atRest' | 'whisper' | 'summoned';
+
 interface LumiState {
   surface: LumiSurface;
   contextSignal: LumiContextSignal | null;
@@ -30,7 +36,7 @@ interface LumiState {
   // leaves the pulse hanging.
   lumiThinking: boolean;
 
-  isPanelOpen: boolean;
+  presenceState: PresenceState;
   panelMode: PanelMode;
 
   pendingNudge: Turn | null;
@@ -49,8 +55,13 @@ interface LumiState {
 interface LumiActions {
   setContext: (signal: LumiContextSignal) => void;
   appendAction: (description: string) => void;
-  openPanel: (mode?: PanelMode) => void;
-  closePanel: () => void;
+  summon: (mode?: PanelMode) => void;
+  recede: () => void;
+  // 13-s3 — drives the whisper channel (one quiet dismissible line).
+  whisper: () => void;
+  // 13-s3 — atomic nudge dismiss: clears the nudge and recedes in one set() call
+  // to prevent a torn intermediate state (pendingNudge=null + presenceState='whisper').
+  dismissNudge: () => void;
   hydrateThread: (surface: LumiSurface, threadId: string, turns: Turn[]) => void;
   appendTurn: (turn: Turn) => void;
   removeTurn: (turnId: string) => void;
@@ -85,7 +96,7 @@ const INITIAL_STATE: LumiState = {
 
   lumiThinking: false,
 
-  isPanelOpen: false,
+  presenceState: 'atRest',
   panelMode: 'text',
 
   pendingNudge: null,
@@ -113,16 +124,27 @@ export const useLumiStore = create<LumiState & LumiActions>()((set) => ({
       return { contextSignal: { ...state.contextSignal, recent_actions: next } };
     }),
 
-  openPanel: (mode) =>
+  // Summon the focused sheet. Acknowledges any waiting nudge — the dot reverts to
+  // calm (Story 12-S12 AC#10, carried forward to the valet model).
+  summon: (mode) =>
     set((state) => ({
-      isPanelOpen: true,
+      presenceState: 'summoned',
       panelMode: mode ?? state.panelMode,
-      // Opening the panel acknowledges any waiting nudge — the orb (driven by
-      // pendingNudge !== null) reverts to calm. (Story 12-S12 AC#10.)
       pendingNudge: null,
     })),
 
-  closePanel: () => set({ isPanelOpen: false }),
+  // Recede back into the finished product (valet rule 5). Works from both
+  // 'summoned' and 'whisper' states — returns to the calm at-rest dot.
+  recede: () => set({ presenceState: 'atRest' }),
+
+  // Surface a pending nudge as one quiet dismissible line (valet rule 3).
+  // Called by useLumiNudgeSSE when proactiveNudges is true and the sheet is
+  // not already open. The dot stops breathing — the whisper IS the signal.
+  whisper: () => set({ presenceState: 'whisper' }),
+
+  // Atomic dismiss: clears the nudge and recedes in one set() call so no
+  // subscriber ever sees presenceState='whisper' with pendingNudge=null.
+  dismissNudge: () => set({ pendingNudge: null, presenceState: 'atRest' }),
 
   // surface arg guards against TOCTOU: caller passes the surface it fetched for,
   // so a mid-flight setContext() cannot write the thread ID under the wrong key.

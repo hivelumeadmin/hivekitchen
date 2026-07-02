@@ -7,8 +7,9 @@ interface Readonly_OnboardingActionsProps {
   readonly onLookAround?: () => void;
   /** Override the primary CTA label. Default: mock copy "Begin the kitchen interview". */
   readonly primaryLabel?: string;
-  /** Override the secondary link label. Default: mock copy "I'd like to look around first". */
-  readonly secondaryLabel?: string;
+  /** Override the secondary link label. Default: mock copy "I'd like to look
+   *  around first". Pass `null` to hide the secondary link entirely. */
+  readonly secondaryLabel?: string | null;
   /** Override the privacy reassurance line. Default: mock copy. */
   readonly privacyLine?: string;
   /** Override the step indicator (dots + label). Pass `null` to hide entirely. */
@@ -43,13 +44,15 @@ export function OnboardingActions({
           <PrimaryButton size="lg" icon={<ArrowRightIcon />} onClick={onBegin}>
             {primaryLabel ?? m.primaryCta}
           </PrimaryButton>
-          <button
-            type="button"
-            onClick={onLookAround}
-            className="text-sm text-fg-muted underline decoration-border underline-offset-8 transition-colors hover:text-amber-warm hover:decoration-amber-warm"
-          >
-            {secondaryLabel ?? m.secondaryCta}
-          </button>
+          {secondaryLabel !== null && (
+            <button
+              type="button"
+              onClick={onLookAround}
+              className="text-sm text-fg-muted underline decoration-border underline-offset-8 transition-colors hover:text-amber-warm hover:decoration-amber-warm"
+            >
+              {secondaryLabel ?? m.secondaryCta}
+            </button>
+          )}
         </div>
       </div>
     </section>
@@ -70,7 +73,7 @@ function StepIndicator({
           {state === 'active' ? '●' : '○'}
         </span>
       ))}
-      <span className="ml-2">{label}</span>
+      <span className="ms-2">{label}</span>
     </div>
   );
 }

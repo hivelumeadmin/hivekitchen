@@ -8,13 +8,23 @@ import { useAuthStore } from '@/stores/auth.store.js';
 import { useFamilyLanguageTerms } from '@/hooks/useFamilyLanguageTerms.js';
 import { QueryKeys } from '@/lib/realtime/query-keys.js';
 import { useVoiceSessionContext } from '@/contexts/VoiceSessionContext.js';
+import { Dialog } from './Dialog.js';
 import { CaptionRibbon } from './CaptionRibbon.js';
 import { FamilyLanguageRatificationCard } from './FamilyLanguageRatificationCard.js';
 
 const MAX_VISIBLE_TURNS = 8;
+const SHEET_TITLE_ID = 'lumi-sheet-title';
+export const LUMI_SHEET_ID = 'lumi-sheet';
 
-export function LumiPanel() {
-  const isPanelOpen = useLumiStore((s) => s.isPanelOpen);
+// Epic 13-s2 — the valet "summoned" surface. A focused, temporary sheet that
+// slides in from the corner, runs a turn, and recedes back into the finished
+// product. Built on <Dialog> so it inherits focus-trap / Escape / scrim-close /
+// scroll-lock / focus-restoration (the dot is restored on close). It is NOT a
+// persistent chat column — it only exists while presenceState === 'summoned'.
+// Carries forward every shipped LumiPanel function: text turns, voice (5-S5),
+// captions (5-S13), family-language ratification (5-S10), pause-nudges (12-S12).
+export function LumiSheet() {
+  const presenceState = useLumiStore((s) => s.presenceState);
   const panelMode = useLumiStore((s) => s.panelMode);
   const turns = useLumiStore((s) => s.turns);
   const isHydrating = useLumiStore((s) => s.isHydrating);
@@ -34,6 +44,8 @@ export function LumiPanel() {
   const [sendError, setSendError] = useState<string | null>(null);
   const [nudgeToggleSaving, setNudgeToggleSaving] = useState(false);
 
+  const isSummoned = presenceState === 'summoned';
+
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
     const message = draft.trim();
@@ -41,9 +53,8 @@ export function LumiPanel() {
 
     setIsSending(true);
     setSendError(null);
-    // Clear any lingering voice notice (Premium fallback / connection error)
-    // now that the user is acting in text. Direct setState avoids setVoiceError's
-    // voiceStatus side effect.
+    // Clear any lingering voice notice now that the user is acting in text.
+    // Direct setState avoids setVoiceError's voiceStatus side effect.
     if (useLumiStore.getState().voiceError !== null) {
       useLumiStore.setState({ voiceError: null });
     }
@@ -55,9 +66,8 @@ export function LumiPanel() {
       });
       const data = LumiTurnResponseSchema.parse(raw);
 
-      // Pin threadIds[surface] so the next panel open pre-hydrates from the
-      // lazily-created thread. Append both turns rather than re-hydrating
-      // (hydrateThread would replace the whole list — see 12.7 invariants).
+      // Pin threadIds[surface] so the next summon pre-hydrates from the lazily
+      // created thread. Append both turns rather than re-hydrating.
       useLumiStore.setState((s) => ({
         threadIds: { ...s.threadIds, [surface]: data.thread_id },
       }));
@@ -77,10 +87,10 @@ export function LumiPanel() {
     }
   }
 
-  // Hydrate when the panel opens or the surface changes (Story 12.7 wires setContext).
-  // AbortController cancels the in-flight request on panel close or surface switch.
+  // Hydrate when the sheet is summoned or the surface changes. AbortController
+  // cancels the in-flight request on recede or surface switch.
   useEffect(() => {
-    if (!isPanelOpen) return;
+    if (!isSummoned) return;
     const { threadIds, isHydrating: hydratingNow, turns: turnsNow } = useLumiStore.getState();
     const threadId = threadIds[surface];
     if (threadId === undefined || hydratingNow || turnsNow.length > 0) return;
@@ -97,33 +107,26 @@ export function LumiPanel() {
         const parsed = LumiThreadTurnsResponseSchema.parse(raw);
         useLumiStore.getState().hydrateThread(surface as LumiSurface, threadId, parsed.turns);
       } catch (err) {
-        // Always reset on abort so the next panel open can re-attempt hydration.
         useLumiStore.setState({ isHydrating: false });
         if (controller.signal.aborted) return;
-        console.warn('LumiPanel: thread hydration failed', err);
+        console.warn('LumiSheet: thread hydration failed', err);
       }
     })();
 
     return () => controller.abort();
-  }, [isPanelOpen, surface]);
+  }, [isSummoned, surface]);
 
-  // Slice 5-S10 (review patch) — a family_language_prompt turn is persisted, so on
-  // re-hydration it would replay even after the parent already answered it. Read
-  // the household's terms and suppress any prompt whose term is no longer
-  // `candidate` (already opted-in / forgotten). Fails OPEN: an unknown term (stale
-  // cache, fresh prompt) still shows. Only fetched when the panel is open with a
-  // prompt present. NOTE: this hook must run before the early return below.
+  // Slice 5-S10 — suppress a persisted family_language_prompt whose term is no
+  // longer `candidate` (already opted-in / forgotten). Fails OPEN. Only fetched
+  // while summoned with a prompt present. Hook must run before any early return.
   const hasPromptTurn = turns.some((t) => t.body.type === 'family_language_prompt');
-  const familyLanguageTerms = useFamilyLanguageTerms(householdId, isPanelOpen && hasPromptTurn);
+  const familyLanguageTerms = useFamilyLanguageTerms(householdId, isSummoned && hasPromptTurn);
   const resolvedTermNames = new Set(
     familyLanguageTerms.filter((t) => t.state !== 'candidate').map((t) => t.term),
   );
 
-  if (!isPanelOpen) return null;
-
   // Filter to renderable turns before slicing so non-renderable turns don't
-  // consume slots and leave the panel blank. Slice 5-S10 adds the
-  // family_language_prompt card alongside plain message turns.
+  // consume slots. Slice 5-S10 adds the family_language_prompt card.
   const visibleTurns = turns
     .filter((t) => {
       if (t.body.type === 'message') return true;
@@ -135,7 +138,7 @@ export function LumiPanel() {
   const isVoiceMode = panelMode === 'voice';
 
   function handleClose() {
-    useLumiStore.getState().closePanel();
+    useLumiStore.getState().recede();
   }
 
   // Optimistically flip the proactive-nudge opt-out, then persist. Revert the
@@ -169,24 +172,28 @@ export function LumiPanel() {
   }
 
   return (
-    <aside
-      id="lumi-panel"
-      aria-label="Lumi panel"
-      className="fixed bottom-20 right-6 z-50 w-full max-w-xs rounded-lg border border-border bg-surface shadow-xl"
+    <Dialog
+      open={isSummoned}
+      onClose={handleClose}
+      id={LUMI_SHEET_ID}
+      titleId={SHEET_TITLE_ID}
+      placement="bottom-right"
+      scrimClassName="bg-stone-900/40"
+      panelClassName="flex w-full max-w-sm max-h-[80vh] flex-col rounded-2xl border border-border bg-surface p-5 shadow-xl animate-[hk-slide-in-sheet_150ms_ease-out] motion-reduce:animate-none"
     >
-      <header className="flex items-center justify-between px-4 pt-3 pb-2">
-        <p className="font-serif text-sm text-fg">Lumi</p>
+      <header className="flex items-center justify-between pb-2">
+        <h2 id={SHEET_TITLE_ID} className="font-serif text-sm text-fg">
+          Lumi
+        </h2>
         <div className="flex items-center gap-2">
           <div className="flex items-center gap-1 rounded border border-border bg-surface-2 p-0.5">
             <button
               type="button"
-              onClick={() => useLumiStore.getState().openPanel('text')}
+              onClick={() => useLumiStore.getState().summon('text')}
               aria-label="Text mode"
               className={[
                 'font-sans text-xs px-2 py-0.5 rounded transition-colors motion-reduce:transition-none',
-                !isVoiceMode
-                  ? 'bg-surface text-fg shadow-sm'
-                  : 'text-fg-muted hover:text-fg',
+                !isVoiceMode ? 'bg-surface text-fg shadow-sm' : 'text-fg',
               ].join(' ')}
             >
               Text
@@ -198,9 +205,7 @@ export function LumiPanel() {
               disabled={voiceStatus === 'connecting'}
               className={[
                 'font-sans text-xs px-2 py-0.5 rounded transition-colors motion-reduce:transition-none',
-                isVoiceMode
-                  ? 'bg-surface text-fg shadow-sm'
-                  : 'text-fg-muted hover:text-fg',
+                isVoiceMode ? 'bg-surface text-fg shadow-sm' : 'text-fg',
                 voiceStatus === 'connecting' ? 'opacity-50 cursor-not-allowed' : '',
               ]
                 .filter(Boolean)
@@ -212,7 +217,7 @@ export function LumiPanel() {
           <button
             type="button"
             onClick={handleClose}
-            aria-label="Close Lumi panel"
+            aria-label="Close Lumi"
             className="text-fg-muted hover:text-fg transition-colors motion-reduce:transition-none focus:outline-none focus:ring-2 focus:ring-foliage rounded"
           >
             <span aria-hidden="true">×</span>
@@ -221,30 +226,24 @@ export function LumiPanel() {
       </header>
 
       {voiceStatus === 'connecting' && (
-        <p className="px-4 pb-1 font-sans text-xs text-fg-muted italic">
-          Connecting to Lumi voice…
-        </p>
+        <p className="pb-1 font-sans text-xs text-fg-muted italic">Connecting to Lumi voice…</p>
       )}
       {voiceStatus === 'active' && (
-        <p className="px-4 pb-1 font-sans text-xs text-fg-muted italic">
-          Listening…
-        </p>
+        <p className="pb-1 font-sans text-xs text-fg-muted italic">Listening…</p>
       )}
       {voiceStatus === 'active' && (
-        <div className="px-4 pb-2">
+        <div className="pb-2">
           <CaptionRibbon userTranscript={captionTranscript} lumiCaption={captionLumiReply} />
         </div>
       )}
 
-      <div className="px-4 pb-3 max-h-72 overflow-y-auto flex flex-col gap-2">
+      <div className="flex max-h-72 flex-col gap-2 overflow-y-auto pb-3">
         {showLoading ? (
           <p role="status" className="font-sans text-xs text-fg-muted italic">
             Catching up with Lumi…
           </p>
         ) : visibleTurns.length === 0 ? (
-          <p className="font-sans text-xs text-fg-muted">
-            Nothing to show yet.
-          </p>
+          <p className="font-sans text-xs text-fg-muted">Nothing to show yet.</p>
         ) : (
           visibleTurns.map((turn) => (
             <TurnRow key={turn.id} turn={turn} householdId={householdId} />
@@ -253,18 +252,16 @@ export function LumiPanel() {
       </div>
 
       {isVoiceMode && (
-        <p className="px-4 pb-2 font-sans text-xs text-fg-muted">
-          Tap the orb to end voice session.
-        </p>
+        <p className="pb-2 font-sans text-xs text-fg-muted">Use Voice tab above to end session.</p>
       )}
 
       {voiceError !== null && (
-        <p role="alert" className="px-4 pb-2 font-sans text-xs text-lumi-terracotta">
+        <p role="alert" className="pb-2 font-sans text-xs text-lumi-terracotta">
           {voiceError}
         </p>
       )}
 
-      <form onSubmit={handleSubmit} className="border-t border-border px-4 py-3">
+      <form onSubmit={handleSubmit} className="border-t border-border pt-3">
         <textarea
           aria-label="Ask Lumi"
           placeholder="Ask Lumi…"
@@ -280,6 +277,15 @@ export function LumiPanel() {
           }}
           className="w-full resize-none rounded-md border border-border bg-surface text-fg px-2 py-1 font-sans text-sm placeholder:text-fg-muted disabled:bg-surface-2 disabled:cursor-not-allowed focus:outline-none focus:ring-2 focus:ring-foliage"
         />
+        <div className="mt-2 flex justify-end">
+          <button
+            type="submit"
+            disabled={isSending || !draft.trim()}
+            className="font-sans text-xs px-3 py-1 rounded bg-lumi-terracotta text-white hover:bg-lumi-terracotta-warmed transition-colors motion-reduce:transition-none disabled:opacity-50 disabled:cursor-not-allowed focus:outline-none focus:ring-2 focus:ring-foliage"
+          >
+            {isSending ? 'Sending…' : 'Send'}
+          </button>
+        </div>
         {sendError !== null && (
           <p role="alert" className="mt-1 font-sans text-xs text-lumi-terracotta">
             {sendError}
@@ -287,7 +293,7 @@ export function LumiPanel() {
         )}
       </form>
 
-      <div className="flex justify-end border-t border-border px-4 py-2">
+      <div className="flex justify-end border-t border-border pt-2">
         <button
           type="button"
           onClick={() => void handleNudgeToggle()}
@@ -297,7 +303,7 @@ export function LumiPanel() {
           {proactiveNudges ? 'Pause nudges' : 'Resume nudges'}
         </button>
       </div>
-    </aside>
+    </Dialog>
   );
 }
 
@@ -312,8 +318,6 @@ function TurnRow({ turn, householdId }: { turn: Turn; householdId: string }) {
         householdId={householdId}
         onResolved={() => {
           useLumiStore.getState().removeTurn(turn.id);
-          // Refresh the suppression set so the resolved term stays hidden even if
-          // the thread re-hydrates within this session (server is now the truth).
           void queryClient.invalidateQueries({
             queryKey: QueryKeys.familyLanguage(householdId),
           });
@@ -332,9 +336,7 @@ function TurnRow({ turn, householdId }: { turn: Turn; householdId: string }) {
       <span className="font-sans text-[11px] uppercase tracking-wide text-fg-muted">
         {senderLabel}
       </span>
-      <p className="font-sans text-sm text-fg whitespace-pre-wrap">
-        {turn.body.content}
-      </p>
+      <p className="font-sans text-sm text-fg whitespace-pre-wrap">{turn.body.content}</p>
     </div>
   );
 }

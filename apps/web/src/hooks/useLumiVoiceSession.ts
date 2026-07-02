@@ -353,7 +353,14 @@ export function useLumiVoiceSession({
 
       const data = VoiceTalkSessionResponseSchema.parse(raw);
       useLumiStore.getState().setTalkSession(data.talk_session_id);
-      useLumiStore.getState().openPanel('voice');
+      // Open the sheet in voice mode. If already summoned (e.g. user opened it
+      // while the connect was in flight), update panelMode only — avoids clearing
+      // pendingNudge or re-triggering Dialog mount machinery.
+      if (useLumiStore.getState().presenceState === 'summoned') {
+        useLumiStore.setState({ panelMode: 'voice' });
+      } else {
+        useLumiStore.getState().summon('voice');
+      }
       useLumiStore.getState().setVoiceStatus('active');
 
       try {

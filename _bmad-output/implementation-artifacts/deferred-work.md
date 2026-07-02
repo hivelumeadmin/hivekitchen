@@ -1,10 +1,38 @@
 # Deferred Work Log
 
+## Deferred from: code review of 13-s7-planner-finished-surface-stickybar (2026-07-02)
+
+- **W1 — `onConfirm` / `onTalkToLumi` dead buttons on both render sites**: AC3 explicitly defers wiring to s10. PlanPage passes no props; BriefCanvas passes only `onSwapDay`. `TalkToLumiButton` renders but `onClick` is undefined at both sites. [`apps/web/src/features/plan/PlanActionBar.tsx`, `PlanPage.tsx`, `BriefCanvas.tsx`]
+- **W2 — `pb-28` magic number coupling `<main>` to the bar's fixed height**: if the bar wraps on mobile the clearance breaks. StickyBottomBar documents this as a caller responsibility — pre-existing pattern across all consumers. [`apps/web/src/features/plan/PlanPage.tsx`, `BriefCanvas.tsx`]
+
 ## Deferred from: code review of 13-s1-ux-regression-baseline (2026-06-29)
+
+## Deferred from: code review of 13-s2-lumi-presence-primitive (2026-06-29)
+
+## Deferred from: code review of 13-s3-whisper-channel (2026-06-29)
+
+- **D-13S3-CR1: `aria-controls` references sheet element that may not be in DOM** — `LumiPresence.tsx`: `aria-controls="lumi-sheet"` is set unconditionally but the sheet element is conditionally rendered; dangling `aria-controls` causes AT to ignore the attribute. Pre-existing from 13-s2.
+- **D-13S3-CR2: `w-[calc(100vw-3rem)]` undocumented width utility** — `LumiWhisper.tsx`: AC3 specifies only `max-w-xs`; the extra intrinsic-width utility makes the widget expand to nearly full viewport on narrow screens. Better UX in practice; low risk.
+- **D-13S3-CR3: "See why" opens on the stored surface, not the nudge's surface** — Inherent in `summon()` with no surface argument; if a nudge arrived for a different surface while the sheet was open (and was not appended due to mismatch), "See why" will show unrelated content. Needs a dedicated `summon(surface)` call with the nudge's surface.
+- **D-13S3-CR4: No runtime guard on `pendingNudge.body` being undefined** — `LumiWhisper.tsx:14`: if upstream contract is violated and `body` is undefined, `body.type` throws. Upstream contract responsibility.
+- **D-13S3-CR5: No axe E2E assertion for whisper state (AC5)** — The 13-s1 baseline spec predates this slice and does not enter `presenceState='whisper'`; AA coverage for LumiWhisper is unit-only. Not a regression.
+- **D-13S3-CR6: `setNudge(null)` in dismiss clears a pointer already appended to the thread** — Semantic coupling between `pendingNudge` (the "surface" pointer) and `turns` (the appended thread entries). Clearing `pendingNudge` after append is safe (the data is in `turns`), but the coupling is non-obvious.
+
+- **D-13S2-CR1: Stale turns after surface switch while summoned** — `LumiSheet.tsx:96`: `turnsNow.length > 0` guard prevents hydration for the new surface when old surface's turns are still in the store. Fix requires `setContext()` to clear `turns` (or scope turns per surface). [`LumiSheet.tsx:96`]
+- **D-13S2-CR2: Concurrent text submit + active VAD unguarded** — `LumiSheet.tsx:49`: no guard on `voiceStatus === 'active'` before sending a text turn; two concurrent POSTs to `/v1/lumi/turns` can race, making turn order in the UI dependent on promise resolution order rather than `server_seq`. Pre-existing pattern from LumiPanel. [`LumiSheet.tsx:49`]
+- **D-13S2-CR3: 401 near abort fires unnecessary auth refresh round-trip** — `LumiSheet.tsx:103`: `hkFetch`'s 401 handler invokes `tryRefreshSession()` before the abort signal propagates, issuing two extra auth network requests after the user has navigated away. Pre-existing behavior in `hkFetch`. [`lib/fetch.ts`]
 
 - **D-13S1-CR1: Confirm-week button is an inert no-op in production** — `BriefCanvas.tsx:689` renders `<PlanActionSection>` with no `onConfirm`/`onTalkToLumi`, so the "Confirm the week" button's `onClick` is `undefined` and permanently inert. AC1.3's visible+enabled assertion is satisfied but the baseline pins a confirm surface that does not confirm; a rebuild could ship the same dead button and pass. Pre-existing product issue, not a 13-s1 defect. [`apps/web/src/features/plan/BriefCanvas.tsx:689`; `PlanActionSection.tsx:21-27`]
 - **D-13S1-CR2: Axe a11y baseline does not scan the opened LumiPanel/picker, and the orb/panel `aria-expanded`/`aria-controls` contract is unasserted** — `checkA11y(page,'.app-scope',…)` runs only on the default brief view; the panel textarea, mode toggles, and DisambiguationPicker are outside the a11y gate the story claims protects "ambient LumiOrb/Panel." Coverage enhancement (AC2 as written is met); no `src/` change needed to extend. [`apps/web/test/e2e/13-s1-ux-regression-baseline.spec.ts:269-276`]
 - **D-13S1-CR3: PlanTile `past`/`today`/`locked` visual variants uncovered after AC3 snapshot descope** — only `paused` is covered behaviorally (AC5); the other PlanTile states AC3 enumerated have no behavioral substitute. Consequence of the user-approved pixel-snapshot descope; flag for a later behavioral or visual-regression slice. [`apps/web/src/features/plan/PlanTile.tsx`]
+
+## Deferred from: code review of 13-s4-brief-finished-surface-pilot (2026-06-30)
+
+- **D-13S4-CR1: 13-s1 LumiSheet axe contrast failure** — Pre-existing s2 LumiSheet `text-fg-muted` on elevated oat surface (light mode <4.5:1); confirmed not introduced by 13-s4. Recommend bumping LumiSheet labels off `text-fg-muted` or extending `isKnownContrastDebtNode()`. [`apps/web/test/e2e/13-s1-ux-regression-baseline.spec.ts`]
+- **D-13S4-CR2: Safety band / QuietDiff render above headline in DOM** — Intentional; 13-s1 gate asserts this order and moving it would regress AC5. AC1's listed order is approximate — gate-required placement wins. [`apps/web/src/features/plan/BriefCanvas.tsx`]
+- **D-13S4-CR3: `t.day as SchoolDay` type cast with lowercase fallback** — `DAY_LABELS[t.day as SchoolDay] ?? t.day` produces lowercase day strings for unmapped values; cosmetic inconsistency. [`apps/api/src/modules/plans/brief-state.composer.ts` `composeEditorialProse`]
+- **D-13S4-CR4: Empty allergen/child_name bypasses sentence guard** — `dedupeInOrder` includes `''` if `ClearedAllergyEntry.allergen` is empty, producing a dangling possessive. `ClearedAllergyEntrySchema` should enforce non-empty; fix at schema layer.
+- **D-13S4-CR5: `lumi_note` generic for allergen-free families before catalog wired** — "N lunch days, planned and ready." carries no household-specific fact for allergen-free families in dev/seed environments. Resolves when recipe catalog is populated in production.
 
 ## Deferred from: code review of 2.7-s3-onboarding-trace-dir (2026-06-28, pass 2)
 
@@ -1841,3 +1869,20 @@
 - **D-2.7S1-CR6: `summaryConfirmed: 'yes'` path untested** — `OpenAIMock.currentSummaryVerdict` defaults to `'no'` and no scenario ever sets it to `'yes'`. If `finalizeTextOnboarding` branches on the LLM confirmation verdict, that branch is un-golded. Add a scenario with `summaryConfirmed: 'yes'` if the path is reachable. [`apps/api/src/agents/eval/onboarding-eval.fixtures.ts`]
 - **D-2.7S1-CR7: `makeFoodPrefsRepoFake.declare` never deduplicates** — always pushes and returns `was_existing: false`. Production uses an upsert. If the agent double-fires a `food_pref.declare`, the fake locks in a duplicate count in the golden that production would suppress. Not triggered by current scenarios. [`apps/api/src/agents/eval/onboarding-eval.harness.ts makeFoodPrefsRepoFake`]
 - **D-2.7S1-CR8: `makeKitchenMapFake` returns `cultural.active: []` always** — any OnboardingService logic gated on active confirmed cultural priors is invisible to the harness. Potentially relevant to re-anchor logic or M3 skip decisions. [`apps/api/src/agents/eval/onboarding-eval.harness.ts makeKitchenMapFake line 385`]
+
+## Deferred from: code review of 13-s5-onboarding-one-mode-kitchen-map-hero (2026-07-01)
+
+- W1 — Resumed chip echo may show slugs if the server persisted chip keys rather than labels (`formatUserEcho` has no key→label resolution on the resume path; chipConfig for a resumed turn isn't available). Unverifiable from the client; server-storage-dependent. [`apps/web/src/features/onboarding/onboarding-conversation.ts`]
+- W2 — M2 "No known allergens" mutual exclusivity is bypassed if the backend ever sends M2 in `action` mode (the `action` early-return in `toggleChip` precedes the `m2_safe` branch). The 2.7 backend sends M2 as `choice`, so latent. [`apps/web/src/features/onboarding/onboarding-conversation.ts`]
+- W3 — Tapping the Skip chip discards currently-selected chips + typed draft with no warning (data-loss path on the always-visible skip affordance). Pre-existing. [`apps/web/src/features/onboarding/OnboardingChips.tsx`]
+- W4 — In cold-start M5, chip-tapped dishes (catalog seeded late) never advance the cold-start gate line; only free-text turns increment `coldStartDishCount`. Pre-existing. [`apps/web/src/features/onboarding/onboarding-conversation.ts`]
+- W5 — No colocated `*.test.tsx` for `ConversationColumn` / `OnboardingChips`; their behavior is covered via the `OnboardingText.test.tsx` integration harness. [`apps/web/src/features/onboarding/`]
+
+## Deferred from: code review of 13-s6-recognition-ending-entry-continuity (2026-07-02)
+
+- **D-13S6-CR1: `household.declared_allergens` reads from a dropped DB column** — `recognition-prose.ts:allergenNames` reads `kitchenMap.household.declared_allergens ?? []`; this column was dropped in migration 20261008000000. The `?? []` guard makes it a silent no-op today; allergens from the consolidated `household_allergens` table are captured via `kitchenMap.allergens`. Should remove the dead read or verify KitchenMap projection. [`recognition-prose.ts:allergenNames`]
+- **D-13S6-CR2: Gap-jump chipConfig not reset on client-side moment navigation** — after `onJumpToMoment('m3_taste')` fires, `chipConfig` retains the summary-moment value (null/undefined); parent sees no chip prompt until next API response. Pre-existing pattern for all gap-jumps (m1/m2/m5). [`onboarding-conversation.ts`]
+- **D-13S6-CR3: Gap-jump doesn't update backend current_moment; chips at summary context don't call dietary/cuisine tools** — `setCurrentMomentKey` is client-only; backend processes the next turn as `preTurnMoment='summary'`, so the M3 zero-call path never fires from a gap-jump context. Pre-existing architecture. [`onboarding-conversation.ts`]
+- **D-13S6-CR4: `joinWithAnd` indexed access without `!` assertions in length=2 and n>2 branches** — runtime-safe due to length guards; only fails compilation if `noUncheckedIndexedAccess` is in tsconfig. [`recognition-prose.ts:joinWithAnd`]
+- **D-13S6-CR5: `m5NaturalThreshold` comment wrong about same-turn vs next-turn cold-start relaxation** — comment says threshold relaxes "from the NEXT turn" but `coldStartTriggered` is read after same-turn mutation. Harmless (count ≈ 0 at M5 entry either way). [`onboarding.service.ts`]
+- **D-13S6-CR6: M3 free-text answers don't satisfy `m3Answered` (chip-driven signal only)** — a parent who types at M3 without tapping any chip stays at `m3_taste` indefinitely after M3 was promoted to required. Pre-existing chip-driven design; M3 presents choice chips including a skip option. Monitor in production for drop-off at M3. [`onboarding.service.ts:909-923`]

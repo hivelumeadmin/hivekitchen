@@ -203,13 +203,16 @@ test.describe('13-s1 / AC1.1 — Onboarding spine', () => {
     );
   });
 
-  test('/onboarding renders the landing with both entry paths', async ({ page }) => {
+  test('/onboarding renders the text-first entry with the continuity promise', async ({ page }) => {
     await loginAndNavigate(page, '/onboarding', { isFirstLogin: true });
 
-    // Two entry paths. NOTE (deviation): the voice CTA label is "Start with
-    // voice", not the story's "Start talking" — characterizing actual copy.
-    await expect(page.getByRole('button', { name: /start with voice/i })).toBeVisible();
+    // Epic 13-s6 (AC7) — text-first entry: primary "Start with Lumi" (→ text)
+    // plus the "I'd rather type" secondary (kept, still → text). Voice is
+    // deferred (Q2a) — no "Start with voice" CTA; the continuity line stands in.
+    await expect(page.getByRole('button', { name: /start with lumi/i })).toBeVisible();
     await expect(page.getByRole('button', { name: /i'd rather type/i })).toBeVisible();
+    await expect(page.getByRole('button', { name: /start with voice/i })).toHaveCount(0);
+    await expect(page.getByText(/voice is coming soon/i)).toBeVisible();
   });
 
   test('"I\'d rather type" mounts OnboardingText with Lumi\'s opening greeting', async ({

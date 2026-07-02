@@ -14,7 +14,6 @@ import { DevLoginPage } from './routes/_dev-login.js';
 import { DevLunchLinkPage } from './routes/_dev-lunch-link.js';
 import { DevOnboardingPage } from './routes/_dev-onboarding.js';
 import { DevTokensPage } from './routes/_dev-tokens.js';
-import { DevWeeklyPlanPage } from './routes/_dev-weekly-plan.js';
 import LoginPage from './routes/auth/login.js';
 import AuthCallbackPage from './routes/auth/callback.js';
 import ResetPasswordPage from './routes/auth/reset-password.js';
@@ -137,13 +136,6 @@ export function App() {
     window.location.pathname === '/_dev-tokens'
   ) {
     return <DevTokensPage />;
-  }
-  if (
-    import.meta.env.DEV &&
-    typeof window !== 'undefined' &&
-    window.location.pathname === '/_dev-weekly-plan'
-  ) {
-    return <DevWeeklyPlanPage />;
   }
   if (
     import.meta.env.DEV &&

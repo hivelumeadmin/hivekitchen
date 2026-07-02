@@ -27,14 +27,14 @@ describe('useLumiStore', () => {
     useLumiStore.getState().reset();
   });
 
-  it('starts with sensible defaults — surface "general", panel closed, no talk session', () => {
+  it('starts with sensible defaults — surface "general", presence at rest, no talk session', () => {
     const s = useLumiStore.getState();
 
     expect(s.surface).toBe('general');
     expect(s.contextSignal).toBeNull();
     expect(s.threadIds).toEqual({});
     expect(s.turns).toEqual([]);
-    expect(s.isPanelOpen).toBe(false);
+    expect(s.presenceState).toBe('atRest');
     expect(s.panelMode).toBe('text');
     expect(s.talkSessionId).toBeNull();
     expect(s.voiceStatus).toBe('idle');
@@ -131,12 +131,12 @@ describe('useLumiStore', () => {
     expect(s.threadIds).toEqual({});
   });
 
-  it('endTalkSession clears voice fields but leaves panel open state alone', () => {
-    const { setTalkSession, setVoiceStatus, openPanel, endTalkSession } =
+  it('endTalkSession clears voice fields but leaves presenceState alone', () => {
+    const { setTalkSession, setVoiceStatus, summon, endTalkSession } =
       useLumiStore.getState();
     setTalkSession('44444444-4444-4444-8444-444444444444');
     setVoiceStatus('active');
-    openPanel('voice');
+    summon('voice');
 
     endTalkSession();
 
@@ -145,7 +145,8 @@ describe('useLumiStore', () => {
     expect(s.voiceStatus).toBe('idle');
     expect(s.isSpeaking).toBe(false);
     expect(s.voiceError).toBeNull();
-    expect(s.isPanelOpen).toBe(true);
+    // Ending a voice session does not recede the sheet — the user closes it.
+    expect(s.presenceState).toBe('summoned');
   });
 
   it('setLumiThinking toggles the non-verbal pulse flag (5-S6)', () => {
@@ -181,25 +182,96 @@ describe('useLumiStore', () => {
     expect(useLumiStore.getState().voiceError).toBeNull();
   });
 
-  it('openPanel clears a pending nudge so the orb stops breathing (AC #10)', () => {
-    const { setNudge, openPanel } = useLumiStore.getState();
+  it('summon clears a pending nudge so the dot stops breathing (12-S12 AC#10)', () => {
+    const { setNudge, summon } = useLumiStore.getState();
     setNudge(turn('nudge'));
     expect(useLumiStore.getState().pendingNudge).not.toBeNull();
 
-    openPanel();
+    summon();
 
     expect(useLumiStore.getState().pendingNudge).toBeNull();
   });
 
-  it('openPanel preserves prior panelMode when invoked without an argument', () => {
-    const { openPanel, closePanel } = useLumiStore.getState();
-    openPanel('voice');
-    closePanel();
+  it('summon sets presenceState to "summoned"; recede returns it to "atRest" (Epic 13-s2)', () => {
+    const { summon, recede } = useLumiStore.getState();
 
-    openPanel();
+    summon();
+    expect(useLumiStore.getState().presenceState).toBe('summoned');
+
+    recede();
+    expect(useLumiStore.getState().presenceState).toBe('atRest');
+  });
+
+  it('summon preserves prior panelMode when invoked without an argument', () => {
+    const { summon, recede } = useLumiStore.getState();
+    summon('voice');
+    recede();
+
+    summon();
 
     const s = useLumiStore.getState();
-    expect(s.isPanelOpen).toBe(true);
+    expect(s.presenceState).toBe('summoned');
     expect(s.panelMode).toBe('voice');
+  });
+
+  it('summon("voice") sets voice mode', () => {
+    useLumiStore.getState().summon('voice');
+
+    const s = useLumiStore.getState();
+    expect(s.presenceState).toBe('summoned');
+    expect(s.panelMode).toBe('voice');
+  });
+
+  it('reset() restores presenceState to "atRest" regardless of prior state (AC1)', () => {
+    useLumiStore.getState().summon('voice');
+    expect(useLumiStore.getState().presenceState).toBe('summoned');
+
+    useLumiStore.getState().reset();
+
+    expect(useLumiStore.getState().presenceState).toBe('atRest');
+    expect(useLumiStore.getState().panelMode).toBe('text');
+  });
+
+  it('whisper() sets presenceState to "whisper" (13-s3 AC1)', () => {
+    useLumiStore.getState().whisper();
+
+    expect(useLumiStore.getState().presenceState).toBe('whisper');
+  });
+
+  it('recede() from "whisper" returns to "atRest" (13-s3 AC1)', () => {
+    useLumiStore.getState().whisper();
+    useLumiStore.getState().recede();
+
+    expect(useLumiStore.getState().presenceState).toBe('atRest');
+  });
+
+  it('summon() from "whisper" transitions to "summoned" and clears pendingNudge (13-s3 AC1)', () => {
+    const { setNudge, whisper, summon } = useLumiStore.getState();
+    setNudge(turn('n1'));
+    whisper();
+    expect(useLumiStore.getState().presenceState).toBe('whisper');
+
+    summon();
+
+    expect(useLumiStore.getState().presenceState).toBe('summoned');
+    expect(useLumiStore.getState().pendingNudge).toBeNull();
+  });
+
+  it('reset() from "whisper" returns to "atRest" (13-s3 AC1)', () => {
+    useLumiStore.getState().whisper();
+    useLumiStore.getState().reset();
+
+    expect(useLumiStore.getState().presenceState).toBe('atRest');
+  });
+
+  it('dismissNudge() atomically clears pendingNudge and recedes to atRest (13-s3 patch)', () => {
+    useLumiStore.getState().setNudge(turn('n1'));
+    useLumiStore.getState().whisper();
+
+    useLumiStore.getState().dismissNudge();
+
+    const s = useLumiStore.getState();
+    expect(s.pendingNudge).toBeNull();
+    expect(s.presenceState).toBe('atRest');
   });
 });

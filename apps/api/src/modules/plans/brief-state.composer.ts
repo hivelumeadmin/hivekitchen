@@ -360,21 +360,31 @@ export class BriefStateComposer {
         suppressedUntil,
       );
 
+      // Story 13-s4 — compose the tile + cleared-allergy projections first so the
+      // deterministic editorial prose (answer-as-a-sentence headline + visible-
+      // memory lumi_note) can be templated from them. No LLM, no memory pipeline.
+      const tileSummaries = this.buildTileSummariesTree(
+        tree,
+        suppressionByDay,
+        ratingsMap,
+        snackSkuNames,
+        recipeNames,
+      );
+      const clearedAllergies = this.buildClearedAllergiesTree(tree, children);
+      const { moment_headline, lumi_note } = composeEditorialProse({
+        tileSummaries,
+        clearedAllergies,
+      });
+
       const upsertInput: BriefStateUpsertInput = {
         household_id: householdId,
         plan_id: plan.id,
-        moment_headline: '',
-        lumi_note: '',
+        moment_headline,
+        lumi_note,
         memory_prose: '',
         payload: {
-          tile_summaries: this.buildTileSummariesTree(
-            tree,
-            suppressionByDay,
-            ratingsMap,
-            snackSkuNames,
-            recipeNames,
-          ),
-          cleared_allergies: this.buildClearedAllergiesTree(tree, children),
+          tile_summaries: tileSummaries,
+          cleared_allergies: clearedAllergies,
           scaffolding_diff: this.buildScaffoldingDiffTree(
             previousTileSummaries,
             tree,
@@ -637,6 +647,115 @@ export class BriefStateComposer {
 }
 
 // ===========================================================================
+// Story 13-s4 — deterministic editorial prose for the finished Brief surface.
+// Pure + exported for testing. NO LLM: the answer-as-a-sentence headline and
+// the visible-memory lumi_note are templated from facts already computed for
+// the plan (cook/leftover counts, cleared allergens, paused days). Always
+// returns non-empty strings so the Brief never falls back to generic copy.
+const DAY_LABELS: Record<SchoolDay, string> = {
+  monday: 'Monday',
+  tuesday: 'Tuesday',
+  wednesday: 'Wednesday',
+  thursday: 'Thursday',
+  friday: 'Friday',
+  saturday: 'Saturday',
+};
+
+function joinWithAnd(parts: readonly string[]): string {
+  if (parts.length <= 1) return parts[0] ?? '';
+  if (parts.length === 2) return `${parts[0]} and ${parts[1]}`;
+  return `${parts.slice(0, -1).join(', ')}, and ${parts[parts.length - 1]}`;
+}
+
+function dedupeInOrder(values: readonly string[]): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const v of values) {
+    if (!seen.has(v)) {
+      seen.add(v);
+      out.push(v);
+    }
+  }
+  return out;
+}
+
+export function composeEditorialProse(input: {
+  tileSummaries: PlanTileSummary[];
+  clearedAllergies: ClearedAllergyEntry[];
+}): { moment_headline: string; lumi_note: string } {
+  const activeTiles = input.tileSummaries.filter((t) => !t.paused);
+  const pausedTiles = input.tileSummaries.filter((t) => t.paused);
+  const activeDays = activeTiles.length;
+
+  // Distinct main dishes across active days → cook count; repeats run on
+  // leftovers. main `name` is only resolved when the recipes repo is wired —
+  // when it isn't, mainNames is empty and we fall back to the day-count line.
+  const mainNames: string[] = [];
+  for (const tile of activeTiles) {
+    const main = tile.items.find(
+      (i) => i.slot === 'main' && typeof i.name === 'string' && i.name !== '',
+    );
+    const mainName = main?.name;
+    if (mainName !== undefined) mainNames.push(mainName);
+  }
+  const distinctMains = new Set(mainNames).size;
+  // P1: only claim leftover days when ALL active tiles have resolved names;
+  // a partial-catalog case (some named, some not) would produce wrong counts.
+  const allTilesNamed = mainNames.length === activeDays;
+  const leftoverDays = allTilesNamed ? mainNames.length - distinctMains : 0;
+
+  // P3: build per-child allergen map for accurate attribution.
+  const allergensByChild = new Map<string, string[]>();
+  for (const entry of input.clearedAllergies) {
+    const list = allergensByChild.get(entry.child_name) ?? [];
+    if (!list.includes(entry.allergen)) list.push(entry.allergen);
+    allergensByChild.set(entry.child_name, list);
+  }
+
+  // --- Headline: a confident, completed-state sentence. ---
+  let moment_headline: string;
+  if (activeDays === 0) {
+    moment_headline = "Your week's ready.";
+  } else if (leftoverDays >= 1) {
+    moment_headline = 'An easy week.';
+  } else {
+    moment_headline = 'Your week, ready.';
+  }
+
+  // --- lumi_note: Lumi's voice, weaving in at least one concrete fact. ---
+  const sentences: string[] = [];
+
+  // P2: skip the "planned and ready" sentence when the whole week is paused —
+  // it would directly contradict the paused-days sentence that follows.
+  const allPaused = pausedTiles.length === input.tileSummaries.length && input.tileSummaries.length > 0;
+
+  if (allTilesNamed && leftoverDays >= 1) {
+    sentences.push(
+      `You cook ${distinctMains} time${distinctMains === 1 ? '' : 's'}, not ${activeDays} — ${leftoverDays} day${leftoverDays === 1 ? '' : 's'} ${leftoverDays === 1 ? 'runs' : 'run'} on leftovers.`,
+    );
+  } else if (activeDays > 0) {
+    sentences.push(`${activeDays} lunch day${activeDays === 1 ? '' : 's'}, planned and ready.`);
+  } else if (!allPaused) {
+    sentences.push('Your week is planned and ready.');
+  }
+
+  // P3: one sentence per child, each with their own allergen list.
+  for (const [childName, allergens] of allergensByChild) {
+    sentences.push(
+      `${childName}'s meals are ${joinWithAnd(allergens)}-free — I kept that in mind.`,
+    );
+  }
+
+  if (pausedTiles.length > 0) {
+    const pausedLabels = pausedTiles.map((t) => DAY_LABELS[t.day as SchoolDay] ?? t.day);
+    sentences.push(
+      `${joinWithAnd(pausedLabels)} ${pausedTiles.length === 1 ? 'is' : 'are'} paused, just as you asked.`,
+    );
+  }
+
+  return { moment_headline, lumi_note: sentences.join(' ') };
+}
+
 // Story 3-DM-C1 Phase 4 — pure tree-composition helper. Exported for testing.
 //
 // Given the four parallel reads from §9.1, build an in-memory tree:

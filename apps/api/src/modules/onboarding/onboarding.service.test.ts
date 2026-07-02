@@ -199,6 +199,7 @@ describe('renderMomentStateBlock', () => {
         m1_household_name: true,
         m1_child_declared: true,
         m2_allergen_response: true,
+        m3_answered: true,
         m5_favorite_count: 10,
         m5_complete: true,
       },
@@ -218,6 +219,7 @@ describe('renderMomentStateBlock', () => {
         m1_household_name: true,
         m1_child_declared: true,
         m2_allergen_response: true,
+        m3_answered: true,
         m5_favorite_count: 8,
         m5_complete: false,
       },
@@ -236,6 +238,7 @@ describe('renderMomentStateBlock', () => {
         m1_household_name: true,
         m1_child_declared: true,
         m2_allergen_response: true,
+        m3_answered: true,
         m5_favorite_count: 0,
         m5_complete: false,
       },
@@ -253,6 +256,7 @@ describe('renderMomentStateBlock', () => {
         m1_household_name: false,
         m1_child_declared: false,
         m2_allergen_response: false,
+        m3_answered: false,
         m5_favorite_count: 0,
         m5_complete: false,
       },
@@ -348,6 +352,7 @@ describe('OnboardingService.submitTextTurn — moment_key in response (Slice 2.5
           m1_household_name: true,
           m1_child_declared: true,
           m2_allergen_response: false,
+          m3_answered: false,
           m5_favorite_count: 0,
           m5_complete: false,
         },
@@ -380,6 +385,7 @@ describe('OnboardingService.submitTextTurn — catalog-seed enqueue at m2_safe e
           m1_household_name: true,
           m1_child_declared: true,
           m2_allergen_response: true,
+          m3_answered: true,
           m5_favorite_count: 0,
           m5_complete: false,
         },
@@ -414,6 +420,7 @@ describe('OnboardingService.submitTextTurn — catalog-seed enqueue at m2_safe e
           m1_household_name: false,
           m1_child_declared: false,
           m2_allergen_response: false,
+          m3_answered: false,
           m5_favorite_count: 0,
           m5_complete: false,
         },
@@ -525,6 +532,7 @@ describe('OnboardingService.submitTextTurn — chip_config passthrough', () => {
           m1_household_name: false,
           m1_child_declared: false,
           m2_allergen_response: false,
+          m3_answered: false,
           m5_favorite_count: 0,
           m5_complete: false,
         },
@@ -555,6 +563,7 @@ describe('OnboardingService.submitTextTurn — chip_config passthrough', () => {
           m1_household_name: true,
           m1_child_declared: true,
           m2_allergen_response: true,
+          m3_answered: true,
           m5_favorite_count: 0,
           m5_complete: false,
         },
@@ -592,13 +601,16 @@ describe('OnboardingService.submitTextTurn — chip_config passthrough', () => {
           m1_household_name: true,
           m1_child_declared: true,
           m2_allergen_response: true,
+          m3_answered: true,
           m5_favorite_count: 4,
           m5_complete: false,
         },
         cold_start_triggered: false,
         cold_start_trigger_reason: null,
       },
-      countsOverride: { favorite_lunch_count: 5 },
+      // Slice 13-s6 — M5 natural threshold is now 5, so keep the count at the
+      // override floor (4) to stay at m5_starting_line and surface the chip.
+      countsOverride: { favorite_lunch_count: 4 },
       catalogProjectionGetM5Chips: getM5Chips,
     });
     const result = await service.submitTextTurn({
@@ -624,6 +636,7 @@ describe('OnboardingService.submitTextTurn — chip_config passthrough', () => {
           m1_household_name: true,
           m1_child_declared: true,
           m2_allergen_response: true,
+          m3_answered: true,
           m5_favorite_count: 0,
           m5_complete: false,
         },
@@ -649,6 +662,7 @@ describe('OnboardingService.submitTextTurn — chip_config passthrough', () => {
           m1_household_name: true,
           m1_child_declared: true,
           m2_allergen_response: true,
+          m3_answered: true,
           m5_favorite_count: 0,
           m5_complete: false,
         },
@@ -692,6 +706,7 @@ describe('OnboardingService.submitTextTurn — backward transition rejection', (
           m1_household_name: true,
           m1_child_declared: true,
           m2_allergen_response: true,
+          m3_answered: true,
           m5_favorite_count: 0,
           m5_complete: false,
         },
@@ -723,6 +738,7 @@ describe('OnboardingService.submitTextTurn — moment state advance', () => {
           m1_household_name: true,
           m1_child_declared: true,
           m2_allergen_response: false,
+          m3_answered: false,
           m5_favorite_count: 0,
           m5_complete: false,
         },
@@ -751,6 +767,7 @@ describe('OnboardingService.submitTextTurn — moment state advance', () => {
           m1_household_name: true,
           m1_child_declared: true,
           m2_allergen_response: true,
+          m3_answered: true,
           m5_favorite_count: 10,
           m5_complete: true,
         },
@@ -784,6 +801,7 @@ describe('OnboardingService.submitTextTurn — moment state advance', () => {
           m1_household_name: true,
           m1_child_declared: true,
           m2_allergen_response: false,
+          m3_answered: false,
           m5_favorite_count: 0,
           m5_complete: false,
         },
@@ -832,6 +850,7 @@ describe('OnboardingService.submitTextTurn — moment state advance', () => {
           m1_household_name: true,
           m1_child_declared: true,
           m2_allergen_response: true,
+          m3_answered: true,
           m5_favorite_count: 9,
           m5_complete: false,
         },
@@ -859,6 +878,7 @@ describe('OnboardingService.submitTextTurn — moment state advance', () => {
           m1_household_name: true,
           m1_child_declared: true,
           m2_allergen_response: true,
+          m3_answered: true,
           m5_favorite_count: 10,
           m5_complete: true,
         },
@@ -924,6 +944,7 @@ describe('OnboardingService.submitTextTurn — ratification via tool result (Sli
       m1_household_name: true,
       m1_child_declared: true,
       m2_allergen_response: true,
+      m3_answered: true,
       m5_favorite_count: 0,
       m5_complete: false,
     },
@@ -1044,6 +1065,7 @@ describe('OnboardingService.submitTextTurn — required_set_complete surface (Sl
           m1_household_name: true,
           m1_child_declared: true,
           m2_allergen_response: true,
+          m3_answered: true,
           m5_favorite_count: 10,
           m5_complete: true,
         },
@@ -1066,7 +1088,7 @@ describe('OnboardingService.submitTextTurn — required_set_complete surface (Sl
     expect(result.missing_required_set).toEqual([]);
   });
 
-  it('returns missing_required_set=["m5_starting_line"] when m5_complete is false (count below 10, no override)', async () => {
+  it('returns missing_required_set=["m5_starting_line"] when m5_complete is false (count below 5, no override)', async () => {
     const { service } = buildService({
       agentText: 'A few more lunches?',
       preTurnMomentState: {
@@ -1075,6 +1097,7 @@ describe('OnboardingService.submitTextTurn — required_set_complete surface (Sl
           m1_household_name: true,
           m1_child_declared: true,
           m2_allergen_response: true,
+          m3_answered: true,
           m5_favorite_count: 4,
           m5_complete: false,
         },
@@ -1083,7 +1106,7 @@ describe('OnboardingService.submitTextTurn — required_set_complete surface (Sl
         household_name_set: true,
         child_count: 1,
         child_allergen_count: 1,
-        favorite_lunch_count: 5,
+        favorite_lunch_count: 4,
       },
     });
 
@@ -1095,6 +1118,40 @@ describe('OnboardingService.submitTextTurn — required_set_complete surface (Sl
 
     expect(result.required_set_complete).toBe(false);
     expect(result.missing_required_set).toContain('m5_starting_line');
+    expect(result.missing_required_set).not.toContain('m1_table');
+    expect(result.missing_required_set).not.toContain('m2_safe');
+  });
+
+  it('returns required_set_complete=false and missing includes "m3_taste" when M3 is unanswered (Slice 13-s6)', async () => {
+    const { service } = buildService({
+      agentText: 'Tell me how your family likes to eat.',
+      preTurnMomentState: {
+        current_moment: 'summary',
+        required_set_status: {
+          m1_household_name: true,
+          m1_child_declared: true,
+          m2_allergen_response: true,
+          m3_answered: false,
+          m5_favorite_count: 10,
+          m5_complete: true,
+        },
+      },
+      countsOverride: {
+        household_name_set: true,
+        child_count: 1,
+        child_allergen_count: 1,
+        favorite_lunch_count: 10,
+      },
+    });
+
+    const result = await service.submitTextTurn({
+      userId: USER_ID,
+      householdId: HOUSEHOLD_ID,
+      message: 'ok',
+    });
+
+    expect(result.required_set_complete).toBe(false);
+    expect(result.missing_required_set).toContain('m3_taste');
     expect(result.missing_required_set).not.toContain('m1_table');
     expect(result.missing_required_set).not.toContain('m2_safe');
   });
@@ -1110,6 +1167,7 @@ describe('OnboardingService.submitTextTurn — m5 override + sticky m5_complete 
           m1_household_name: true,
           m1_child_declared: true,
           m2_allergen_response: true,
+          m3_answered: true,
           m5_favorite_count: 6,
           m5_complete: false,
         },
@@ -1146,6 +1204,7 @@ describe('OnboardingService.submitTextTurn — m5 override + sticky m5_complete 
           m1_household_name: true,
           m1_child_declared: true,
           m2_allergen_response: true,
+          m3_answered: true,
           m5_favorite_count: 4,
           m5_complete: false,
         },
@@ -1179,6 +1238,7 @@ describe('OnboardingService.submitTextTurn — m5 override + sticky m5_complete 
           m1_household_name: true,
           m1_child_declared: true,
           m2_allergen_response: true,
+          m3_answered: true,
           m5_favorite_count: 6,
           m5_complete: true,
         },
@@ -1297,6 +1357,7 @@ describe('OnboardingService.finalizeTextOnboarding — required-set gate (Slice 
           m1_household_name: true,
           m1_child_declared: true,
           m2_allergen_response: true,
+          m3_answered: true,
           m5_favorite_count: 10,
           m5_complete: true,
         },
@@ -1319,8 +1380,29 @@ describe('OnboardingService.finalizeTextOnboarding — required-set gate (Slice 
           m1_household_name: true,
           m1_child_declared: true,
           m2_allergen_response: true,
+          m3_answered: true,
           m5_favorite_count: 4,
           m5_complete: false,
+        },
+      },
+    });
+
+    await expect(
+      service.finalizeTextOnboarding({ userId: USER_ID, householdId: HOUSEHOLD_ID }),
+    ).rejects.toThrowError(/required fields incomplete/);
+  });
+
+  it('rejects with ConflictError when M3 (taste) is unanswered (Slice 13-s6)', async () => {
+    const { service } = buildFinalizableService({
+      preTurnMomentState: {
+        current_moment: 'summary',
+        required_set_status: {
+          m1_household_name: true,
+          m1_child_declared: true,
+          m2_allergen_response: true,
+          m3_answered: false,
+          m5_favorite_count: 10,
+          m5_complete: true,
         },
       },
     });
@@ -1338,6 +1420,7 @@ describe('OnboardingService.finalizeTextOnboarding — required-set gate (Slice 
           m1_household_name: true,
           m1_child_declared: true,
           m2_allergen_response: true,
+          m3_answered: true,
           m5_favorite_count: 10,
           m5_complete: true,
         },
@@ -1370,6 +1453,7 @@ describe('OnboardingService.submitTextTurn — cold-start fallback (Slice 2.6-s6
           m1_household_name: true,
           m1_child_declared: true,
           m2_allergen_response: true,
+          m3_answered: true,
           m5_favorite_count: 0,
           m5_complete: false,
         },
@@ -1402,6 +1486,7 @@ describe('OnboardingService.submitTextTurn — cold-start fallback (Slice 2.6-s6
           m1_household_name: true,
           m1_child_declared: true,
           m2_allergen_response: true,
+          m3_answered: true,
           m5_favorite_count: 2,
           m5_complete: false,
         },
@@ -1434,6 +1519,7 @@ describe('OnboardingService.submitTextTurn — cold-start fallback (Slice 2.6-s6
           m1_household_name: true,
           m1_child_declared: true,
           m2_allergen_response: true,
+          m3_answered: true,
           m5_favorite_count: 2,
           m5_complete: false,
         },
@@ -1466,6 +1552,7 @@ describe('OnboardingService.submitTextTurn — cold-start fallback (Slice 2.6-s6
           m1_household_name: true,
           m1_child_declared: true,
           m2_allergen_response: true,
+          m3_answered: true,
           m5_favorite_count: 1,
           m5_complete: false,
         },
@@ -1517,6 +1604,7 @@ describe('OnboardingService.submitTextTurn — ONBOARDING_TRACE_DIR (Slice 2.7-s
           m1_household_name: true,
           m1_child_declared: true,
           m2_allergen_response: false,
+          m3_answered: false,
           m5_favorite_count: 0,
           m5_complete: false,
         },

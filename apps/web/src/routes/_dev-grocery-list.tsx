@@ -1,6 +1,5 @@
 import { AppFooter } from '../components/AppFooter.js';
 import { AppHeader } from '../components/AppHeader.js';
-import { LumiFAB } from '../components/LumiFAB.js';
 import { AddItemComposer } from '../features/grocery-list/components/AddItemComposer.js';
 import { GroceryHero } from '../features/grocery-list/components/GroceryHero.js';
 import { LumiHint } from '../features/grocery-list/components/LumiHint.js';
@@ -38,7 +37,6 @@ export function DevGroceryListPage() {
           </div>
         </div>
       </main>
-      <LumiFAB notification />
       <AppFooter />
     </div>
   );

@@ -1,4 +1,3 @@
-import { LumiFAB } from '@/components/LumiFAB.js';
 import { InspirationActions } from '@/features/kitchen-inspiration/components/InspirationActions.js';
 import { InspirationHeader } from '@/features/kitchen-inspiration/components/InspirationHeader.js';
 import { RecipeCard } from '@/features/kitchen-inspiration/components/RecipeCard.js';
@@ -27,7 +26,6 @@ export default function KitchenInspirationRoute() {
           talkToLumiLabel={m.actions.talkToLumiLabel}
         />
       </main>
-      <LumiFAB />
     </>
   );
 }

@@ -46,6 +46,7 @@ export function OnboardingText(props: OnboardingTextProps = {}) {
           finalizing={c.finalizing}
           requiredSetComplete={c.requiredSetComplete}
           missingRequiredSet={c.missingRequiredSet}
+          kitchenMap={c.kitchenMap}
           coldStartMode={c.coldStartMode}
           coldStartDishCount={c.coldStartDishCount}
           isResume={c.isResume}

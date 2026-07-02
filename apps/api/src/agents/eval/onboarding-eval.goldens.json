@@ -6,7 +6,7 @@
       "m3_taste",
       "m4_bag",
       "m5_starting_line",
-      "m5_starting_line",
+      "summary",
       "summary"
     ],
     "toolCalls": [
@@ -110,6 +110,7 @@
         "m1_household_name": true,
         "m1_child_declared": true,
         "m2_allergen_response": true,
+        "m3_answered": true,
         "m5_favorite_count": 5,
         "m5_complete": true
       },
@@ -207,6 +208,7 @@
         "m1_household_name": true,
         "m1_child_declared": true,
         "m2_allergen_response": true,
+        "m3_answered": false,
         "m5_favorite_count": 0,
         "m5_complete": false
       },
@@ -233,6 +235,7 @@
       },
       "required_set_complete": false,
       "missing_required_set": [
+        "m3_taste",
         "m5_starting_line"
       ],
       "cold_start_mode": false,
@@ -301,6 +304,7 @@
         "m1_household_name": true,
         "m1_child_declared": true,
         "m2_allergen_response": true,
+        "m3_answered": true,
         "m5_favorite_count": 0,
         "m5_complete": false
       },
@@ -319,7 +323,7 @@
   },
   "safety-net-reanchor": {
     "momentSequence": [
-      "m4_bag"
+      "m3_taste"
     ],
     "toolCalls": [],
     "finalSlots": {
@@ -352,11 +356,12 @@
       "favorites": []
     },
     "momentState": {
-      "current_moment": "m4_bag",
+      "current_moment": "m3_taste",
       "required_set_status": {
         "m1_household_name": true,
         "m1_child_declared": true,
         "m2_allergen_response": true,
+        "m3_answered": false,
         "m5_favorite_count": 0,
         "m5_complete": false
       },
@@ -365,28 +370,82 @@
     },
     "lastTurn": {
       "chip_config": {
-        "mode": "action",
+        "mode": "choice",
         "options": [
           {
-            "key": "main_only",
-            "label": "Main only"
+            "key": "halal",
+            "label": "Halal"
           },
           {
-            "key": "main_plus_snack",
-            "label": "Main + snack"
+            "key": "kosher",
+            "label": "Kosher"
           },
           {
-            "key": "main_plus_extra",
-            "label": "Main + sides"
+            "key": "vegetarian",
+            "label": "Vegetarian"
           },
           {
-            "key": "main_plus_snack_plus_extra",
-            "label": "Full bag"
+            "key": "vegan",
+            "label": "Vegan"
+          },
+          {
+            "key": "pescatarian",
+            "label": "Pescatarian"
+          },
+          {
+            "key": "gluten_free",
+            "label": "Gluten-free"
+          },
+          {
+            "key": "dairy_free",
+            "label": "Dairy-free"
+          },
+          {
+            "key": "south_indian",
+            "label": "South Indian"
+          },
+          {
+            "key": "north_indian",
+            "label": "North Indian"
+          },
+          {
+            "key": "east_african",
+            "label": "East African"
+          },
+          {
+            "key": "caribbean",
+            "label": "Caribbean"
+          },
+          {
+            "key": "levantine",
+            "label": "Levantine"
+          },
+          {
+            "key": "italian",
+            "label": "Italian"
+          },
+          {
+            "key": "mexican",
+            "label": "Mexican"
+          },
+          {
+            "key": "japanese",
+            "label": "Japanese"
+          },
+          {
+            "key": "chinese",
+            "label": "Chinese"
+          },
+          {
+            "key": "mediterranean",
+            "label": "Mediterranean"
           }
-        ]
+        ],
+        "skip_label": "Skip this moment"
       },
       "required_set_complete": false,
       "missing_required_set": [
+        "m3_taste",
         "m5_starting_line"
       ],
       "cold_start_mode": false,
@@ -419,6 +478,7 @@
         "m1_household_name": false,
         "m1_child_declared": false,
         "m2_allergen_response": false,
+        "m3_answered": false,
         "m5_favorite_count": 0,
         "m5_complete": false
       },
@@ -438,6 +498,7 @@
       "missing_required_set": [
         "m1_table",
         "m2_safe",
+        "m3_taste",
         "m5_starting_line"
       ],
       "cold_start_mode": false,
@@ -496,6 +557,7 @@
         "m1_household_name": true,
         "m1_child_declared": true,
         "m2_allergen_response": true,
+        "m3_answered": true,
         "m5_favorite_count": 0,
         "m5_complete": false
       },
@@ -567,6 +629,7 @@
         "m1_household_name": true,
         "m1_child_declared": true,
         "m2_allergen_response": true,
+        "m3_answered": false,
         "m5_favorite_count": 0,
         "m5_complete": false
       },
@@ -650,6 +713,7 @@
       },
       "required_set_complete": false,
       "missing_required_set": [
+        "m3_taste",
         "m5_starting_line"
       ],
       "cold_start_mode": false,
@@ -710,6 +774,7 @@
         "m1_household_name": true,
         "m1_child_declared": true,
         "m2_allergen_response": false,
+        "m3_answered": false,
         "m5_favorite_count": 0,
         "m5_complete": false
       },
@@ -765,6 +830,7 @@
       "required_set_complete": false,
       "missing_required_set": [
         "m2_safe",
+        "m3_taste",
         "m5_starting_line"
       ],
       "cold_start_mode": false,
@@ -826,6 +892,7 @@
         "m1_household_name": true,
         "m1_child_declared": true,
         "m2_allergen_response": true,
+        "m3_answered": false,
         "m5_favorite_count": 0,
         "m5_complete": false
       },
@@ -909,6 +976,7 @@
       },
       "required_set_complete": false,
       "missing_required_set": [
+        "m3_taste",
         "m5_starting_line"
       ],
       "cold_start_mode": false,

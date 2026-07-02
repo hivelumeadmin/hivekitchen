@@ -1,4 +1,3 @@
-import { LumiFAB } from '@/components/LumiFAB.js';
 import { AddItemComposer } from '@/features/grocery-list/components/AddItemComposer.js';
 import { GroceryHero } from '@/features/grocery-list/components/GroceryHero.js';
 import { LumiHint } from '@/features/grocery-list/components/LumiHint.js';
@@ -35,7 +34,6 @@ export default function GroceryListRoute() {
           </div>
         </div>
       </main>
-      <LumiFAB notification />
     </>
   );
 }

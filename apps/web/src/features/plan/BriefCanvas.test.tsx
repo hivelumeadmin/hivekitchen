@@ -630,3 +630,54 @@ describe('BriefCanvas — Why this? reasoning panel (5-S9)', () => {
     expect(screen.queryByText(/Lumi.s thinking/)).toBeNull();
   });
 });
+
+// Story 13-s4 — Brief as a finished surface (the pilot): Lumi-voice note,
+// thread-less draft state, and the no-chat-layout invariant.
+describe('BriefCanvas — 13-s4 finished surface', () => {
+  it('renders the lumi_note as a Lumi-voice line with a terracotta "Lumi —" tag', async () => {
+    const { hkFetch } = await import('@/lib/fetch.js');
+    vi.mocked(hkFetch).mockResolvedValue({ brief: makeBrief() } satisfies BriefResponse);
+
+    renderWithClient(<BriefCanvas />);
+
+    await waitFor(() => {
+      expect(screen.getByText('Tuesday flexes around your late meeting.')).toBeDefined();
+    });
+    expect(screen.getByText(/Lumi\s*—/)).toBeDefined();
+  });
+
+  it('omits the Lumi-voice line when lumi_note is empty', async () => {
+    const { hkFetch } = await import('@/lib/fetch.js');
+    vi.mocked(hkFetch).mockResolvedValue({
+      brief: makeBrief({ lumi_note: '' }),
+    } satisfies BriefResponse);
+
+    renderWithClient(<BriefCanvas />);
+
+    await waitFor(() => expect(screen.getByLabelText('Weekly plan')).toBeDefined());
+    expect(screen.queryByText(/Lumi\s*—/)).toBeNull();
+  });
+
+  it('shows a thread-less "Lumi is drafting…" state while the brief loads', async () => {
+    const { hkFetch } = await import('@/lib/fetch.js');
+    vi.mocked(hkFetch).mockImplementation(() => new Promise<BriefResponse>(() => {}));
+
+    renderWithClient(<BriefCanvas />);
+
+    expect(screen.getByText(/Lumi is drafting/i)).toBeDefined();
+    // Thread-less: the draft state mounts no Lumi sheet/dialog and no composer.
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(screen.queryByRole('textbox')).toBeNull();
+  });
+
+  it('renders no chat composer or message log on the finished surface', async () => {
+    const { hkFetch } = await import('@/lib/fetch.js');
+    vi.mocked(hkFetch).mockResolvedValue({ brief: makeBrief() } satisfies BriefResponse);
+
+    renderWithClient(<BriefCanvas />);
+
+    await waitFor(() => expect(screen.getByLabelText('Weekly plan')).toBeDefined());
+    expect(screen.queryByRole('textbox')).toBeNull();
+    expect(screen.queryByRole('log')).toBeNull();
+  });
+});

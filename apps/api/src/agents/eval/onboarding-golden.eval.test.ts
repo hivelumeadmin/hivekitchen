@@ -68,11 +68,12 @@ describe('onboarding eval — behaviour spot checks (AC4/AC5)', () => {
     const scenario = SCENARIOS.find((s) => s.id === 'spine-happy-path');
     if (scenario === undefined) throw new Error('spine scenario missing');
     const { outcome } = await runScenario(scenario);
-    // Slice 2.7-s7 — the controller holds at m5_starting_line on the 5-favourite
-    // free-text turn (count < 10, no override yet); the parent then taps
-    // override_fewer to reach summary. Deterministic — no LLM directive.
+    // Slice 13-s6 — the M5 natural threshold dropped 10→5 (§6.1 "~5 is enough"),
+    // so the 5-favourite free-text turn now completes M5 on its own and the
+    // controller advances straight to summary; the later override_fewer tap is a
+    // no-op that holds at summary. Deterministic — no LLM directive.
     expect(outcome.momentSequence).toEqual([
-      'm1_table', 'm2_safe', 'm3_taste', 'm4_bag', 'm5_starting_line', 'm5_starting_line', 'summary',
+      'm1_table', 'm2_safe', 'm3_taste', 'm4_bag', 'm5_starting_line', 'summary', 'summary',
     ]);
     expect(outcome.lastTurn?.required_set_complete).toBe(true);
     expect(outcome.finalize).toEqual(expect.objectContaining({ ok: true }));
@@ -98,11 +99,13 @@ describe('onboarding eval — behaviour spot checks (AC4/AC5)', () => {
     expect(outcome.finalSlots.children[0]?.bag_composition_pattern).toBe('main_plus_snack');
   });
 
-  it('re-anchors to m4_bag when the moment row is missing but data exists', async () => {
+  it('re-anchors to m3_taste when the moment row is missing but data exists', async () => {
     const scenario = SCENARIOS.find((s) => s.id === 'safety-net-reanchor');
     if (scenario === undefined) throw new Error('reanchor scenario missing');
     const { outcome } = await runScenario(scenario);
-    expect(outcome.momentSequence).toEqual(['m4_bag']);
+    // Slice 13-s6 — M3 is now REQUIRED, so re-anchor no longer skips it: a
+    // household with M1+M2 done but M3 unanswered lands on m3_taste, not m4_bag.
+    expect(outcome.momentSequence).toEqual(['m3_taste']);
   });
 
   it('bootstraps pre_start → m1_table on the first turn with no directive', async () => {

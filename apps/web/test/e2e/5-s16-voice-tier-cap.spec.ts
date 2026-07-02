@@ -61,7 +61,7 @@ test.describe('Story 5-S16 — cap message on 429 (AC2/AC9)', () => {
     await loginAndNavigate(page, '/app');
 
     await page.getByRole('button', { name: /open lumi/i }).click();
-    await expect(page.getByRole('complementary', { name: /lumi panel/i })).toBeVisible();
+    await expect(page.getByRole('dialog', { name: /lumi/i })).toBeVisible();
 
     await page.getByRole('button', { name: /voice mode/i }).click();
 
@@ -96,7 +96,7 @@ test.describe('Story 5-S16 — text turns unaffected by voice cap (AC6)', () => 
     await loginAndNavigate(page, '/app');
 
     await page.getByRole('button', { name: /open lumi/i }).click();
-    await expect(page.getByRole('complementary', { name: /lumi panel/i })).toBeVisible();
+    await expect(page.getByRole('dialog', { name: /lumi/i })).toBeVisible();
 
     // Hit the voice cap
     await page.getByRole('button', { name: /voice mode/i }).click();
@@ -151,7 +151,7 @@ test.describe('Story 5-S16 — cap message on WS voice_cap_reached frame (AC9)',
     await loginAndNavigate(page, '/app');
 
     await page.getByRole('button', { name: /open lumi/i }).click();
-    await expect(page.getByRole('complementary', { name: /lumi panel/i })).toBeVisible();
+    await expect(page.getByRole('dialog', { name: /lumi/i })).toBeVisible();
 
     await page.getByRole('button', { name: /voice mode/i }).click();
 

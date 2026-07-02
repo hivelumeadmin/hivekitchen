@@ -36,3 +36,18 @@
   0%, 100% { opacity: 0.6; }
   50%      { opacity: 1; }
 }
+
+/* Epic 13-s6 — the recognition beat: a gentle honey glow that blooms once and
+   settles as onboarding ends (AC6). Honey is recognition-only (DESIGN.md Honey
+   rule), never a hover. One-shot ease with `forwards` so it rests in the soft
+   end-state; motion-reduce:animate-none at the call site collapses it to static. */
+@keyframes hk-glow {
+  from {
+    box-shadow: 0 0 0 0 transparent;
+    background-color: transparent;
+  }
+  to {
+    box-shadow: 0 0 28px 2px color-mix(in srgb, var(--honey-amber-500) 22%, transparent);
+    background-color: color-mix(in srgb, var(--honey-amber-500) 7%, transparent);
+  }
+}

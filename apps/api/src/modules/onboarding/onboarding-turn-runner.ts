@@ -487,16 +487,20 @@ required_set:
   m1_household_name: false
   m1_child_declared: false
   m2_allergen_response: false
+  m3_answered: false
   m5_favorite_count: 0
   m5_complete: false
 required_set_complete: false
 cold_start_triggered: false`;
   }
   const rss = state.required_set_status;
+  // Slice 13-s6 — M3 (cuisine + dietary) is part of the required set; keep this
+  // prompt-facing view consistent with the server-authoritative gate.
   const complete =
     rss.m1_household_name &&
     rss.m1_child_declared &&
     rss.m2_allergen_response &&
+    rss.m3_answered &&
     rss.m5_complete;
   const coldStartReasonLine = state.cold_start_triggered
     ? `\ncold_start_trigger_reason: ${state.cold_start_trigger_reason ?? 'unknown'}`
@@ -507,6 +511,7 @@ required_set:
   m1_household_name: ${rss.m1_household_name}
   m1_child_declared: ${rss.m1_child_declared}
   m2_allergen_response: ${rss.m2_allergen_response}
+  m3_answered: ${rss.m3_answered}
   m5_favorite_count: ${rss.m5_favorite_count}
   m5_complete: ${rss.m5_complete}
 required_set_complete: ${complete}

@@ -12,7 +12,12 @@ import { loginAndNavigate, userProfile } from './_helpers.js';
  *     surfaces (FR — voice failure must always be recoverable via text)
  */
 
-test.describe('Story 2-6: voice-first onboarding entry point + fallback', () => {
+// Epic 13-s6 (Q2a) — the actionable "Start with voice" entry is deferred: the
+// select step is now text-first and voice is presented as "coming soon" only.
+// These voice-entry specs exercise a path that no longer mounts from the entry.
+// Skipped (not deleted) — restore alongside the future voice slice, which will
+// re-route the entry into the still-present OnboardingVoice component.
+test.describe.skip('Story 2-6: voice-first onboarding entry point + fallback', () => {
   test('first-login user lands on the onboarding mode-select screen', async ({ page }) => {
     await page.route('**/v1/users/me', (route) =>
       route.fulfill({
