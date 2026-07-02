@@ -61,8 +61,12 @@ async function landOnSummary(
   await expect(page.getByText(/here's everything/i)).toBeVisible();
 }
 
-test.describe('Slice 2.5-s10: Summary + Finalize Gate', () => {
-  // AC8a — header subtitle switches to summary-specific copy.
+// Epic 13-s6 — the finalize gate is now the recognition ending: Lumi's prose
+// playback + a quiet honey glow + a "Show me my first week" CTA (never-auto).
+// The underlying required-set / finalize wiring is unchanged; only the surface
+// moved. These tests were migrated from the 2.5-s10 finalize-gate assertions.
+test.describe('Slice 2.5-s10 → 13-s6: Summary + Recognition Ending', () => {
+  // AC8a — header subtitle switches to summary-specific copy (unchanged).
   test('header subtitle shows "Summary · Lock in your kitchen" in summary moment', async ({
     page,
   }) => {
@@ -70,116 +74,85 @@ test.describe('Slice 2.5-s10: Summary + Finalize Gate', () => {
     await expect(page.getByText(/summary · lock in your kitchen/i)).toBeVisible();
   });
 
-  // AC8c — finalize gate replaces the input bar when in summary.
-  test('finalize gate renders and input bar is hidden when moment is summary', async ({
-    page,
-  }) => {
+  // The recognition ending renders when the moment is summary.
+  test('recognition ending renders when moment is summary', async ({ page }) => {
     await landOnSummary(page);
-    await expect(page.getByTestId('finalize-gate')).toBeVisible();
-    await expect(page.getByLabel(/your message to lumi/i)).not.toBeVisible();
+    await expect(page.getByTestId('recognition-ending')).toBeVisible();
+    await expect(page.getByText(/here's the kitchen i've come to know/i)).toBeVisible();
   });
 
-  // AC8c + P4 — Finalize button is enabled only when server confirms required_set_complete.
-  test('Finalize button is enabled when required-set is complete', async ({ page }) => {
+  // The "Show me my first week" CTA appears and is enabled when required-set complete.
+  test('CTA is shown and enabled when required-set is complete', async ({ page }) => {
     await landOnSummary(page, { required_set_complete: true, missing_required_set: [] });
-    const btn = page.getByTestId('finalize-button');
+    const btn = page.getByTestId('show-first-week-button');
     await expect(btn).toBeVisible();
     await expect(btn).not.toBeDisabled();
-    await expect(btn).toContainText(/finalize/i);
+    await expect(btn).toContainText(/show me my first week/i);
   });
 
-  // AC8c + P4 — Finalize button stays disabled when required_set_complete is false.
-  test('Finalize button is disabled when required-set is incomplete', async ({ page }) => {
-    await landOnSummary(page, {
-      required_set_complete: false,
-      missing_required_set: ['m5_starting_line'],
-    });
-    await expect(page.getByTestId('finalize-button')).toBeDisabled();
-  });
-
-  // AC8b — gap callout for m5_starting_line shows correct label + back button.
-  test('gap callout for m5_starting_line shows label and "Back to Moment 5"', async ({
+  // No raw disabled CTA when incomplete — a calm jump-back affordance stands in.
+  test('CTA is absent and a jump-back affordance shows when required-set is incomplete', async ({
     page,
   }) => {
     await landOnSummary(page, {
       required_set_complete: false,
       missing_required_set: ['m5_starting_line'],
     });
-    const callout = page.getByTestId('gap-callout-m5_starting_line');
-    await expect(callout).toBeVisible();
-    await expect(callout).toContainText(/a starting line for lumi/i);
-    await expect(callout).toContainText(/back to moment 5/i);
+    await expect(page.getByTestId('show-first-week-button')).toHaveCount(0);
+    await expect(page.getByText(/one more thing before your first week/i)).toBeVisible();
   });
 
-  // AC8b — gap callout for m1_table shows correct label + back button.
-  test('gap callout for m1_table shows label and "Back to Moment 1"', async ({ page }) => {
+  // Jump-back for m5_starting_line shows label + "Back to Moment 5".
+  test('jump-back for m5_starting_line shows label and "Back to Moment 5"', async ({ page }) => {
     await landOnSummary(page, {
       required_set_complete: false,
-      missing_required_set: ['m1_table'],
+      missing_required_set: ['m5_starting_line'],
     });
-    const callout = page.getByTestId('gap-callout-m1_table');
-    await expect(callout).toBeVisible();
-    await expect(callout).toContainText(/who's at the table/i);
-    await expect(callout).toContainText(/back to moment 1/i);
+    const jump = page.getByTestId('gap-jump-m5_starting_line');
+    await expect(jump).toBeVisible();
+    await expect(jump).toContainText(/a starting line for lumi/i);
+    await expect(jump).toContainText(/back to moment 5/i);
   });
 
-  // AC8b — gap callout for m2_safe shows correct label + back button.
-  test('gap callout for m2_safe shows label and "Back to Moment 2"', async ({ page }) => {
+  // Jump-back for m3_taste (13-s6 — M3 joined the required set).
+  test('jump-back for m3_taste shows label and "Back to Moment 3"', async ({ page }) => {
+    await landOnSummary(page, {
+      required_set_complete: false,
+      missing_required_set: ['m3_taste'],
+    });
+    const jump = page.getByTestId('gap-jump-m3_taste');
+    await expect(jump).toBeVisible();
+    await expect(jump).toContainText(/how your family likes to eat/i);
+    await expect(jump).toContainText(/back to moment 3/i);
+  });
+
+  // Jump-back for m2_safe shows correct label + back button.
+  test('jump-back for m2_safe shows label and "Back to Moment 2"', async ({ page }) => {
     await landOnSummary(page, {
       required_set_complete: false,
       missing_required_set: ['m2_safe'],
     });
-    const callout = page.getByTestId('gap-callout-m2_safe');
-    await expect(callout).toBeVisible();
-    await expect(callout).toContainText(/what i need to keep safe/i);
-    await expect(callout).toContainText(/back to moment 2/i);
+    const jump = page.getByTestId('gap-jump-m2_safe');
+    await expect(jump).toBeVisible();
+    await expect(jump).toContainText(/what i need to keep safe/i);
+    await expect(jump).toContainText(/back to moment 2/i);
   });
 
-  // AC8b — "Back to Moment N" click restores the input bar (client-side navigation).
+  // "Back to Moment N" tap restores the input bar (client-side navigation).
   test('"Back to Moment N" tap restores the input bar', async ({ page }) => {
     await landOnSummary(page, {
       required_set_complete: false,
       missing_required_set: ['m5_starting_line'],
     });
     await page.getByRole('button', { name: /back to moment 5/i }).click();
-    // Input bar must reappear — no longer in summary mode client-side.
     await expect(page.getByLabel(/your message to lumi/i)).toBeVisible();
-    await expect(page.getByTestId('finalize-gate')).not.toBeVisible();
+    await expect(page.getByTestId('recognition-ending')).not.toBeVisible();
   });
 
-  // AC8c — status text shows "Ready when you are." when required-set complete.
-  test('status text shows "Ready when you are." when required-set is complete', async ({
+  // AC4 + AC5 — tapping the CTA POSTs to /v1/onboarding/text/finalize.
+  test('tapping "Show me my first week" calls POST /v1/onboarding/text/finalize', async ({
     page,
   }) => {
-    await landOnSummary(page, { required_set_complete: true, missing_required_set: [] });
-    await expect(page.getByText(/ready when you are/i)).toBeVisible();
-  });
-
-  // AC8c — status text shows amber copy when required-set incomplete.
-  test('status text shows incomplete copy when required-set is incomplete', async ({
-    page,
-  }) => {
-    await landOnSummary(page, {
-      required_set_complete: false,
-      missing_required_set: ['m2_safe'],
-    });
-    await expect(
-      page.getByText(/a few things still need to be answered above/i),
-    ).toBeVisible();
-  });
-
-  // AC5 (gate line) — "Finalize seals your kitchen" renders below the gate when complete.
-  test('gate line shows "Finalize seals your kitchen" when required-set complete', async ({
-    page,
-  }) => {
-    await landOnSummary(page, { required_set_complete: true, missing_required_set: [] });
-    await expect(
-      page.getByText(/finalize seals your kitchen and starts your first plan/i),
-    ).toBeVisible();
-  });
-
-  // AC4 + AC5 — tapping Finalize POSTs to /v1/onboarding/text/finalize.
-  test('tapping Finalize calls POST /v1/onboarding/text/finalize', async ({ page }) => {
     let finalizeCalled = false;
     await page.route(FINALIZE_URL, (route) => {
       finalizeCalled = true;
@@ -199,7 +172,7 @@ test.describe('Slice 2.5-s10: Summary + Finalize Gate', () => {
     });
 
     await landOnSummary(page, { required_set_complete: true, missing_required_set: [] });
-    await page.getByTestId('finalize-button').click();
+    await page.getByTestId('show-first-week-button').click();
 
     await expect.poll(() => finalizeCalled).toBe(true);
   });

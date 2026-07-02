@@ -1,3 +1,5 @@
+import { COMMON_ALLERGENS, ALLERGEN_LABELS } from '@hivekitchen/contracts';
+import type { AllergenKey } from '@hivekitchen/types';
 import { ShieldIcon } from '../../../components/icons.js';
 import type { Allergen, ChildProfile } from '../data/mockData.js';
 import {
@@ -13,6 +15,27 @@ interface Readonly_ChildProfileCardProps {
   readonly onEdit?: () => void;
   readonly onSendComposite?: (composite: string, nextValue: ChildEditValue) => void;
   readonly onDone?: () => void;
+  /**
+   * Story 7-S14 — deterministic allergen editing. When both handlers are
+   * provided, the Allergens block renders structured add/remove controls
+   * (parent is editor of record, no LLM). Omitting them keeps the block
+   * read-only — the dev mock route relies on this.
+   */
+  readonly onAddAllergen?: (allergen: AllergenKey) => void;
+  readonly onRemoveAllergen?: (allergenName: string) => void;
+  readonly allergenBusy?: boolean;
+  readonly allergenError?: string | null;
+  /**
+   * Story 3-S42 — deterministic per-child Snack & Extra preferences (pins/bans).
+   * `extraRules` is the kitchen-map projection ({ pinned, banned }). When
+   * `onSetExtraRules` is provided (primary parent), the editor renders 3-state
+   * toggles; when absent it renders read-only chips. The handler receives the
+   * full replacement set in PATCH-body shape ({ pins, bans }).
+   */
+  readonly extraRules?: { readonly pinned: readonly string[]; readonly banned: readonly string[] };
+  readonly onSetExtraRules?: (next: { pins: string[]; bans: string[] }) => void;
+  readonly extraRulesBusy?: boolean;
+  readonly extraRulesError?: string | null;
 }
 
 export type ChildProfileCardProps = Readonly<Readonly_ChildProfileCardProps>;
@@ -24,6 +47,14 @@ export function ChildProfileCard({
   onEdit,
   onSendComposite,
   onDone,
+  onAddAllergen,
+  onRemoveAllergen,
+  allergenBusy = false,
+  allergenError = null,
+  extraRules,
+  onSetExtraRules,
+  extraRulesBusy = false,
+  extraRulesError = null,
 }: ChildProfileCardProps) {
   if (isEditing) {
     return (
@@ -71,6 +102,14 @@ export function ChildProfileCard({
               allergens={child.allergens}
               bagComposition={child.bagComposition}
               childName={child.name}
+              onAddAllergen={onAddAllergen}
+              onRemoveAllergen={onRemoveAllergen}
+              allergenBusy={allergenBusy}
+              allergenError={allergenError}
+              extraRules={extraRules}
+              onSetExtraRules={onSetExtraRules}
+              extraRulesBusy={extraRulesBusy}
+              extraRulesError={extraRulesError}
             />
             <LumiLearningColumn
               loves={child.loves}
@@ -98,11 +137,32 @@ function SafetyAndBagColumn({
   allergens,
   bagComposition,
   childName,
+  onAddAllergen,
+  onRemoveAllergen,
+  allergenBusy = false,
+  allergenError = null,
+  extraRules,
+  onSetExtraRules,
+  extraRulesBusy = false,
+  extraRulesError = null,
 }: Readonly<{
   readonly allergens: readonly Allergen[];
   readonly bagComposition: string | null;
   readonly childName: string;
+  readonly onAddAllergen?: (allergen: AllergenKey) => void;
+  readonly onRemoveAllergen?: (allergenName: string) => void;
+  readonly allergenBusy?: boolean;
+  readonly allergenError?: string | null;
+  readonly extraRules?: { readonly pinned: readonly string[]; readonly banned: readonly string[] };
+  readonly onSetExtraRules?: (next: { pins: string[]; bans: string[] }) => void;
+  readonly extraRulesBusy?: boolean;
+  readonly extraRulesError?: string | null;
 }>) {
+  const editable = onAddAllergen !== undefined && onRemoveAllergen !== undefined;
+  const present = new Set(allergens.map((a) => a.name.trim().toLowerCase()));
+  const addable = COMMON_ALLERGENS.filter(
+    (key) => !present.has(ALLERGEN_LABELS[key].toLowerCase()),
+  );
   return (
     <div className="flex flex-col gap-6">
       <div>
@@ -114,8 +174,35 @@ function SafetyAndBagColumn({
         ) : (
           <div className="space-y-2">
             {allergens.map((a) => (
-              <AllergenRow key={a.name} allergen={a} />
+              <AllergenRow
+                key={a.name}
+                allergen={a}
+                onRemove={editable ? () => onRemoveAllergen!(a.name) : undefined}
+                disabled={allergenBusy}
+              />
             ))}
+          </div>
+        )}
+        {editable && (
+          <div className="mt-3">
+            <div className="flex flex-wrap gap-1.5">
+              {addable.map((key) => (
+                <button
+                  key={key}
+                  type="button"
+                  disabled={allergenBusy}
+                  onClick={() => onAddAllergen!(key)}
+                  className="rounded-md border border-foliage/40 bg-foliage-soft/40 px-2.5 py-1 font-sans text-xs text-fg transition-colors hover:border-foliage hover:bg-foliage-soft disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  + {capitalize(ALLERGEN_LABELS[key])}
+                </button>
+              ))}
+            </div>
+            {allergenError !== null && (
+              <p role="alert" className="mt-2 text-[12px] text-safety-red">
+                {allergenError}
+              </p>
+            )}
           </div>
         )}
       </div>
@@ -134,7 +221,156 @@ function SafetyAndBagColumn({
           />
         )}
       </div>
+      {extraRules !== undefined && (
+        <ExtraRulesEditor
+          pinned={extraRules.pinned}
+          banned={extraRules.banned}
+          onSetExtraRules={onSetExtraRules}
+          busy={extraRulesBusy}
+          error={extraRulesError}
+        />
+      )}
     </div>
+  );
+}
+
+// Story 3-S42 — component-type vocabulary shared with the Extra slot
+// (ExtraRulesForm writes the same tokens). A ban/pin here governs both the
+// child's snack rotation and their Extra slot — do not fork a snack-only set.
+const EXTRA_RULE_COMPONENT_TYPES = [
+  'fruit',
+  'veggie',
+  'grain',
+  'protein',
+  'dairy',
+  'sweet treat',
+] as const;
+
+type ExtraRuleState = 'neutral' | 'pin' | 'ban';
+
+/**
+ * Deterministic per-child Snack & Extra preferences. Fully controlled by the
+ * `pinned`/`banned` props (the kitchen-map projection) — every toggle sends the
+ * complete replacement set to `onSetExtraRules`, mirroring the optimistic
+ * handleAddAllergen idiom. Read-only when `onSetExtraRules` is absent.
+ */
+function ExtraRulesEditor({
+  pinned,
+  banned,
+  onSetExtraRules,
+  busy = false,
+  error = null,
+}: Readonly<{
+  readonly pinned: readonly string[];
+  readonly banned: readonly string[];
+  readonly onSetExtraRules?: (next: { pins: string[]; bans: string[] }) => void;
+  readonly busy?: boolean;
+  readonly error?: string | null;
+}>) {
+  const editable = onSetExtraRules !== undefined;
+  const pinnedSet = new Set(pinned);
+  const bannedSet = new Set(banned);
+
+  function stateOf(token: string): ExtraRuleState {
+    if (pinnedSet.has(token)) return 'pin';
+    if (bannedSet.has(token)) return 'ban';
+    return 'neutral';
+  }
+
+  // Full-replacement: build the complete {pins, bans} after mutating one token,
+  // then hand it to the optimistic handler. Selecting pin clears ban (and vice
+  // versa), mirroring the server-side ExtraRulesSchema mutual-exclusion refine.
+  function setToken(token: string, next: ExtraRuleState) {
+    const pins = new Set(pinnedSet);
+    const bans = new Set(bannedSet);
+    pins.delete(token);
+    bans.delete(token);
+    if (next === 'pin') pins.add(token);
+    if (next === 'ban') bans.add(token);
+    onSetExtraRules?.({ pins: [...pins], bans: [...bans] });
+  }
+
+  return (
+    <div>
+      <p className="mb-3 text-xs font-bold uppercase tracking-wider text-amber-warm/80">
+        Snack &amp; Extra preferences
+      </p>
+      <div className="space-y-1.5">
+        {EXTRA_RULE_COMPONENT_TYPES.map((token) => {
+          const state = stateOf(token);
+          return (
+            <div key={token} className="flex items-center justify-between gap-2">
+              <span className="text-[13px] capitalize text-fg">{token}</span>
+              {editable ? (
+                <div className="flex gap-1">
+                  <ToggleChip
+                    label="Pin"
+                    active={state === 'pin'}
+                    disabled={busy}
+                    ariaLabel={`Pin ${token}`}
+                    onClick={() => setToken(token, state === 'pin' ? 'neutral' : 'pin')}
+                  />
+                  <ToggleChip
+                    label="Ban"
+                    active={state === 'ban'}
+                    disabled={busy}
+                    ariaLabel={`Ban ${token}`}
+                    onClick={() => setToken(token, state === 'ban' ? 'neutral' : 'ban')}
+                  />
+                </div>
+              ) : (
+                state !== 'neutral' && (
+                  <span className="text-[11px] uppercase tracking-wide text-fg-muted">
+                    {state === 'pin' ? 'Pinned' : 'Banned'}
+                  </span>
+                )
+              )}
+            </div>
+          );
+        })}
+      </div>
+      {editable && (
+        <p className="mt-3 text-[12px] italic text-fg-muted">
+          Lumi will use these for next week.
+        </p>
+      )}
+      {error !== null && (
+        <p role="alert" className="mt-2 text-[12px] text-safety-red">
+          {error}
+        </p>
+      )}
+    </div>
+  );
+}
+
+function ToggleChip({
+  label,
+  active,
+  disabled,
+  ariaLabel,
+  onClick,
+}: Readonly<{
+  readonly label: string;
+  readonly active: boolean;
+  readonly disabled: boolean;
+  readonly ariaLabel: string;
+  readonly onClick: () => void;
+}>) {
+  return (
+    <button
+      type="button"
+      aria-pressed={active}
+      aria-label={ariaLabel}
+      disabled={disabled}
+      onClick={onClick}
+      className={
+        active
+          ? 'rounded-md border border-foliage bg-foliage-soft px-2 py-0.5 font-sans text-[11px] font-medium text-fg transition-colors disabled:cursor-not-allowed disabled:opacity-50'
+          : 'rounded-md border border-border/30 bg-surface-2 px-2 py-0.5 font-sans text-[11px] text-fg-muted transition-colors hover:border-foliage/40 disabled:cursor-not-allowed disabled:opacity-50'
+      }
+    >
+      {label}
+    </button>
   );
 }
 
@@ -143,7 +379,15 @@ function SafetyAndBagColumn({
  * Medical allergens get a small "medical" tag; non-medical (religious /
  * lifestyle) render the same shield + label without the tag.
  */
-function AllergenRow({ allergen }: Readonly<{ readonly allergen: Allergen }>) {
+function AllergenRow({
+  allergen,
+  onRemove,
+  disabled = false,
+}: Readonly<{
+  readonly allergen: Allergen;
+  readonly onRemove?: () => void;
+  readonly disabled?: boolean;
+}>) {
   return (
     <div className="flex items-center gap-2 text-safety-cleared">
       <ShieldIcon className="h-[18px] w-[18px] flex-shrink-0" />
@@ -151,8 +395,23 @@ function AllergenRow({ allergen }: Readonly<{ readonly allergen: Allergen }>) {
       {allergen.medical && (
         <span className="text-[11px] uppercase tracking-wide text-fg-muted">· medical</span>
       )}
+      {onRemove !== undefined && (
+        <button
+          type="button"
+          disabled={disabled}
+          onClick={onRemove}
+          aria-label={`Remove ${allergen.name}`}
+          className="ml-1 text-fg-muted/60 transition-colors hover:text-safety-red disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          ✕
+        </button>
+      )}
     </div>
   );
+}
+
+function capitalize(s: string): string {
+  return s.length === 0 ? s : s[0]!.toUpperCase() + s.slice(1);
 }
 
 function LumiLearningColumn({

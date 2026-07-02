@@ -126,7 +126,11 @@
   --surface-2: #dccfb5;
   --surface-3: #c8b791;
   --fg: #141210;
-  --fg-muted: #56524a;
+  /* Darkened from #56524a (Epic 13 contrast-debt fix): #56524a on the deepest
+     elevated warm surface (--surface-3 #c8b791) was 3.94:1, under the 4.5:1 AA
+     floor for small text (the LumiSheet muted labels). #474339 clears 4.5:1 on
+     all three light surfaces (7.66 / 6.40 / 4.99) while staying muted. */
+  --fg-muted: #474339;
   --border: #b5a784;
 
   /* Single-value channel tokens (v2.0) */

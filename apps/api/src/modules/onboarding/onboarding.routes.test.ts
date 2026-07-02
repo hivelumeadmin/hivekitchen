@@ -83,6 +83,7 @@ interface SupabaseMockOpts {
       m1_household_name: boolean;
       m1_child_declared: boolean;
       m2_allergen_response: boolean;
+      m3_answered: boolean;
       m5_favorite_count: number;
       m5_complete: boolean;
     };
@@ -645,6 +646,7 @@ describe('POST /v1/onboarding/text/finalize', () => {
             m1_household_name: true,
             m1_child_declared: true,
             m2_allergen_response: true,
+            m3_answered: true,
             m5_favorite_count: 10,
             m5_complete: true,
           },
@@ -761,6 +763,7 @@ describe('POST /v1/onboarding/text/finalize', () => {
             m1_household_name: true,
             m1_child_declared: true,
             m2_allergen_response: true,
+            m3_answered: true,
             m5_favorite_count: 10,
             m5_complete: true,
           },

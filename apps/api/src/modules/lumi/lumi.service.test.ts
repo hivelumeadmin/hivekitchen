@@ -29,6 +29,9 @@ function buildDeps(overrides: {
     recordUsage: ReturnType<typeof vi.fn>;
     getTerms: ReturnType<typeof vi.fn>;
   };
+  // 7-S15 — pass a mock foodPreferencesRepository to exercise the kitchen-profile
+  // shared-tastes tool wiring. Omit it to mirror the nudge-job path (no tools).
+  foodPreferencesRepository?: { declare: ReturnType<typeof vi.fn> };
 } = {}) {
   const repository = {
     getHouseholdDisplayName: vi.fn().mockResolvedValue(overrides.displayName ?? null),
@@ -68,6 +71,7 @@ function buildDeps(overrides: {
     voiceTranscriptRepository,
     memoryService: overrides.memoryService,
     familyLanguageRepository: overrides.familyLanguageRepository,
+    foodPreferencesRepository: overrides.foodPreferencesRepository,
   } as unknown as LumiServiceDeps;
 
   const service = new LumiService(deps);
@@ -82,6 +86,7 @@ function buildDeps(overrides: {
     openai,
     memoryService: overrides.memoryService,
     familyLanguageRepository: overrides.familyLanguageRepository,
+    foodPreferencesRepository: overrides.foodPreferencesRepository,
   };
 }
 
@@ -222,6 +227,86 @@ describe('LumiService.submitTextTurn — agent dispatch', () => {
     expect(result.lumi_turn.body).toEqual({ type: 'message', content: 'Here is Tuesday.' });
     // user turn inserted before lumi turn
     expect(repository.insertTurn).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('LumiService.submitTextTurn — kitchen-profile shared-tastes tool (7-S15)', () => {
+  it('passes tools + a working executor on the kitchen-profile surface', async () => {
+    const declare = vi.fn().mockResolvedValue({ food_preference_id: 'fp1', was_existing: false });
+    const { service } = buildDeps({
+      activeThread: null,
+      foodPreferencesRepository: { declare },
+    });
+
+    await service.submitTextTurn({
+      householdId: 'hh1',
+      message: '[Message]\nwe keep heat mild',
+      contextSignal: { surface: 'kitchen-profile' },
+    });
+
+    expect(respondMock).toHaveBeenCalledTimes(1);
+    const arg = respondMock.mock.calls[0][0] as {
+      tools?: unknown[];
+      toolExecutor?: (name: string, args: Record<string, unknown>) => Promise<string>;
+    };
+    expect(Array.isArray(arg.tools)).toBe(true);
+    expect(typeof arg.toolExecutor).toBe('function');
+
+    // Driving the executor mirrors what LumiAgent does when the model emits a
+    // food_preference__declare tool call.
+    const result = await arg.toolExecutor!('food_preference__declare', {
+      item: 'chili',
+      valence: 'dislikes',
+      enforcement: 'strong',
+    });
+    expect(JSON.parse(result)).toEqual({ declared: true });
+    expect(declare).toHaveBeenCalledWith('hh1', null, 'chili', 'dislikes', 'strong', 'parent_edited');
+  });
+
+  it('the executor rejects invalid tool arguments without calling declare', async () => {
+    const declare = vi.fn();
+    const { service } = buildDeps({
+      activeThread: null,
+      foodPreferencesRepository: { declare },
+    });
+    await service.submitTextTurn({
+      householdId: 'hh1',
+      message: 'hello',
+      contextSignal: { surface: 'kitchen-profile' },
+    });
+    const arg = respondMock.mock.calls[0][0] as {
+      toolExecutor: (name: string, args: Record<string, unknown>) => Promise<string>;
+    };
+    const result = await arg.toolExecutor('food_preference__declare', { item: 'x', valence: 'nope' });
+    expect(JSON.parse(result).error).toBeDefined();
+    expect(declare).not.toHaveBeenCalled();
+  });
+
+  it('does NOT pass tools on a non-kitchen-profile surface', async () => {
+    const { service } = buildDeps({
+      activeThread: null,
+      foodPreferencesRepository: { declare: vi.fn() },
+    });
+    await service.submitTextTurn({
+      householdId: 'hh1',
+      message: 'hi',
+      contextSignal: { surface: 'general' },
+    });
+    const arg = respondMock.mock.calls[0][0] as { tools?: unknown; toolExecutor?: unknown };
+    expect(arg.tools).toBeUndefined();
+    expect(arg.toolExecutor).toBeUndefined();
+  });
+
+  it('does NOT pass tools when the food-preferences repo is absent (nudge-job path)', async () => {
+    const { service } = buildDeps({ activeThread: null });
+    await service.submitTextTurn({
+      householdId: 'hh1',
+      message: 'hi',
+      contextSignal: { surface: 'kitchen-profile' },
+    });
+    const arg = respondMock.mock.calls[0][0] as { tools?: unknown; toolExecutor?: unknown };
+    expect(arg.tools).toBeUndefined();
+    expect(arg.toolExecutor).toBeUndefined();
   });
 });
 

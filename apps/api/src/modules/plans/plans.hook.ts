@@ -9,12 +9,15 @@ import { BriefStateComposer } from './brief-state.composer.js';
 import { ChildAllergensRepository } from '../children/child-allergens.repository.js';
 import { ChildrenRepository } from '../children/children.repository.js';
 import { REGEN_QUEUE } from '../../jobs/plan-regeneration.job.js';
+import { GENERATE_QUEUE } from '../../jobs/plan-generation.job.js';
+import { HouseholdsRepository } from '../households/households.repository.js';
 import { PlanDayContextRepository } from './plan-day-context.repository.js';
 import { PlanDayContextService } from './plan-day-context.service.js';
 import { ExtraRulesRepository } from '../children/extra-rules.repository.js';
 import { ExtraRemovalSignalService } from './extra-removal-signal.service.js';
 import { RecipeService } from '../recipe/recipe.service.js';
 import { RecipesRepository } from '../recipe/recipes.repository.js';
+import { SnackSkuRepository } from '../recipe/snack-sku.repository.js';
 import { LunchLinkSessionRepository } from './lunch-link-session.repository.js';
 import { MemoryRepository } from '../memory/memory.repository.js';
 import { VariantProposalRepository } from './variant-proposal.repository.js';
@@ -80,6 +83,12 @@ const plansHookPlugin: FastifyPluginAsync = async (fastify) => {
   // Slice 5-S8 — composer reads turn-sourced memory nodes for the "I noticed"
   // learning-moment threshold.
   const memoryRepository = new MemoryRepository(fastify.supabase);
+  // Story 3-S40 (AC6) — composer resolves snack_sku_id → snack_skus.name for tiles.
+  const snackSkuRepository = new SnackSkuRepository(fastify.supabase);
+  // Composer also resolves main/extra recipe_id → recipes.canonical_name so the
+  // tile dish line shows the recipe name (not just snacks). Reuses the same
+  // repository instance the service uses for commit-time ingredient lookups.
+  const recipesRepositoryForComposer = new RecipesRepository(fastify.supabase);
 
   const briefStateComposer = new BriefStateComposer({
     plansRepository: repository,
@@ -89,6 +98,8 @@ const plansHookPlugin: FastifyPluginAsync = async (fastify) => {
     auditService: fastify.auditService,
     logger: fastify.log,
     memoryRepository,
+    snackSkuRepository,
+    recipesRepository: recipesRepositoryForComposer,
   });
   // Story 3.22 — passive Extra-removal bias service. Lives next to PlansService
   // because the swap path is the only signal source today; co-locating avoids
@@ -121,6 +132,10 @@ const plansHookPlugin: FastifyPluginAsync = async (fastify) => {
     logger: fastify.log,
   });
 
+  // Story 3-S34 — on-demand composition needs the single-household timezone
+  // (composition window) and the plan-generation queue (immediate enqueue).
+  const householdsRepository = new HouseholdsRepository(fastify.supabase, kek);
+
   const plansService = new PlansService({
     repository,
     briefStateRepository,
@@ -134,6 +149,9 @@ const plansHookPlugin: FastifyPluginAsync = async (fastify) => {
     recipeService,                                     // post-Phase-9: recordUse() only
     recipesRepository,                                 // 3-DM-C1 9b/4 step 2: swap recipe-ingredient lookup
     variantProposalService,                            // Story 3.27
+    generateQueue: fastify.bullmq.getQueue(GENERATE_QUEUE), // Story 3-S34
+    householdsRepository,                              // Story 3-S34
+    snackSkuRepository,                                // Story 3-s43 (Phase-2 allergen fail-safe)
   });
   if (fastify.hasDecorator('planAdjustmentService')) {
     throw new Error(

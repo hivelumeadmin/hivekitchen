@@ -67,7 +67,10 @@ export default function ConsentHistoryRoute() {
         setLoadState('error');
       }
     })();
-    return () => controller.abort();
+    return () => {
+      controller.abort();
+      didLoad.current = false;
+    };
   }, [accessToken, householdId, navigate]);
 
   return (

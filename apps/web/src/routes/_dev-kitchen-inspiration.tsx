@@ -1,6 +1,5 @@
 import { AppFooter } from '../components/AppFooter.js';
 import { AppHeader } from '../components/AppHeader.js';
-import { LumiFAB } from '../components/LumiFAB.js';
 import { InspirationActions } from '../features/kitchen-inspiration/components/InspirationActions.js';
 import { InspirationHeader } from '../features/kitchen-inspiration/components/InspirationHeader.js';
 import { RecipeCard } from '../features/kitchen-inspiration/components/RecipeCard.js';
@@ -30,7 +29,6 @@ export function DevKitchenInspirationPage() {
           talkToLumiLabel={m.actions.talkToLumiLabel}
         />
       </main>
-      <LumiFAB />
       <AppFooter />
     </div>
   );

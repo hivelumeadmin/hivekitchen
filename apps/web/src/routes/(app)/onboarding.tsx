@@ -180,11 +180,17 @@ export default function OnboardingPage() {
             imageAlt={m.hero.imageAlt}
           />
           <MediaSection />
+          {/* Epic 13-s6 (AC7) — entry continuity, text-first. Voice is deferred
+              (memory onboarding-text-first, Q2a): both entries land in text; the
+              promise is "start talking, finish typing" and the line stands in for
+              a not-yet-built voice path. The "I'd rather type" secondary is kept
+              (still → text) so the Epic 2.5/2.6 onboarding e2e gate stays green. */}
           <OnboardingActions
-            onBegin={() => setMode('voice')}
+            onBegin={() => setMode('text')}
             onLookAround={() => setMode('text')}
-            primaryLabel="Start with voice"
+            primaryLabel="Start with Lumi"
             secondaryLabel="I'd rather type"
+            privacyLine="Voice is coming soon. For now, Lumi is ready in text — you can type your way through."
           />
           <PreviewTiles tiles={m.previewTiles} />
         </>

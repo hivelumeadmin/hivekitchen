@@ -11,7 +11,12 @@ import { deriveWeekId } from '../../jobs/plan-generation.job.js';
 import type { PlansRepository } from './plans.repository.js';
 import type { BriefStateRepository } from './brief-state.repository.js';
 import type { BriefStateComposer } from './brief-state.composer.js';
-import type { AllergyGuardrailService } from '../allergy-guardrail/allergy-guardrail.service.js';
+import { AllergyGuardrailService } from '../allergy-guardrail/allergy-guardrail.service.js';
+import type { AllergyGuardrailRepository } from '../allergy-guardrail/allergy-guardrail.repository.js';
+import type { AllergyRule } from '../allergy-guardrail/allergy-rules.engine.js';
+import type { RecipesRepository } from '../recipe/recipes.repository.js';
+import type { SnackSkuRepository } from '../recipe/snack-sku.repository.js';
+import type { HouseholdsRepository } from '../households/households.repository.js';
 import type { AuditService } from '../../audit/audit.service.js';
 import type {
   CommitPlanTreeInput,
@@ -20,6 +25,7 @@ import type {
 import {
   GuardrailRejectionError,
   NotFoundError,
+  PlanAlreadyExistsError,
   SwapGuardrailBlockedError,
   TooManyRequestsError,
   ValidationError,
@@ -34,6 +40,7 @@ const HOUSEHOLD_ID = '22222222-2222-4222-8222-222222222222';
 const CHILD_ID = '44444444-4444-4444-8444-444444444444';
 const REQUEST_ID = '55555555-5555-4555-8555-555555555555';
 const RECIPE_M1 = '66666666-6666-4666-8666-666666666666';
+const SNACK_SKU_ID = '77777777-7777-4777-8777-777777777777';
 
 function buildLogger(): FastifyBaseLogger {
   const noop = vi.fn();
@@ -136,17 +143,20 @@ function buildRepo(opts: {
   };
 }
 
+// Story 3.S39 — commit() now calls clearOrRejectCommit (effective-set walk +
+// unverifiable handling) instead of clearOrReject. The verdict sequence feeds
+// in identically; tests assert on the `{ items, unverifiable }` arg shape.
 function buildGuardrail(verdicts: GuardrailResult[]): AllergyGuardrailService & {
-  clearOrReject: ReturnType<typeof vi.fn>;
+  clearOrRejectCommit: ReturnType<typeof vi.fn>;
 } {
   let i = 0;
-  const clearOrReject = vi.fn(async () => {
+  const clearOrRejectCommit = vi.fn(async () => {
     const v = verdicts[Math.min(i, verdicts.length - 1)];
     i += 1;
     return v;
   });
-  return { clearOrReject } as unknown as AllergyGuardrailService & {
-    clearOrReject: ReturnType<typeof vi.fn>;
+  return { clearOrRejectCommit } as unknown as AllergyGuardrailService & {
+    clearOrRejectCommit: ReturnType<typeof vi.fn>;
   };
 }
 
@@ -154,6 +164,21 @@ function buildAudit() {
   return {
     write: vi.fn().mockResolvedValue(undefined),
   } as unknown as AuditService & { write: ReturnType<typeof vi.fn> };
+}
+
+// Story 3-s43 (Phase-2) — buildCommitGuardrailInputs batch-loads allergen_tags
+// for every snack-SKU slot via findAllergenTagsByIds(ids) → Map<id, tags>.
+function buildSnackSkuRepo(tagsById: Record<string, string[]>): SnackSkuRepository & {
+  findAllergenTagsByIds: ReturnType<typeof vi.fn>;
+} {
+  const findAllergenTagsByIds = vi.fn(async (ids: string[]) => {
+    const map = new Map<string, string[]>();
+    for (const id of ids) if (id in tagsById) map.set(id, tagsById[id]);
+    return map;
+  });
+  return { findAllergenTagsByIds } as unknown as SnackSkuRepository & {
+    findAllergenTagsByIds: ReturnType<typeof vi.fn>;
+  };
 }
 
 function buildBriefStateRepo(): BriefStateRepository {
@@ -191,7 +216,7 @@ describe('PlansService.commit', () => {
     const result = await service.commit(makeInput(), REQUEST_ID, regenerate);
 
     expect(result).toBe(PLAN_ID);
-    expect(guardrail.clearOrReject).toHaveBeenCalledTimes(1);
+    expect(guardrail.clearOrRejectCommit).toHaveBeenCalledTimes(1);
     expect(repo.commitTree).toHaveBeenCalledTimes(1);
     expect(repo.commitTree.mock.calls[0][2]).toBe(GUARDRAIL_VERSION);
     expect(regenerate).not.toHaveBeenCalled();
@@ -267,7 +292,7 @@ describe('PlansService.commit', () => {
     const result = await service.commit(makeInput(), REQUEST_ID, regenerate);
 
     expect(result).toBe(PLAN_ID);
-    expect(guardrail.clearOrReject).toHaveBeenCalledTimes(3);
+    expect(guardrail.clearOrRejectCommit).toHaveBeenCalledTimes(3);
     expect(regenerate).toHaveBeenCalledTimes(2);
     expect(repo.commitTree).toHaveBeenCalledTimes(1);
 
@@ -305,7 +330,7 @@ describe('PlansService.commit', () => {
       GuardrailRejectionError,
     );
 
-    expect(guardrail.clearOrReject).toHaveBeenCalledTimes(3);
+    expect(guardrail.clearOrRejectCommit).toHaveBeenCalledTimes(3);
     // regenerate is invoked between attempts (after attempt 1 and 2), not after attempt 3
     expect(regenerate).toHaveBeenCalledTimes(2);
   });
@@ -341,9 +366,116 @@ describe('PlansService.commit', () => {
     });
     await service.commit(input, REQUEST_ID, vi.fn());
 
-    const passedItems = guardrail.clearOrReject.mock.calls[0]?.[0];
+    const passedItems = guardrail.clearOrRejectCommit.mock.calls[0]?.[0].items;
     expect(passedItems).toEqual([
       { child_id: CHILD_ID, day: 'monday', slot: 'main', ingredients: ['rice'] },
+    ]);
+  });
+
+  // Story 3-s43 (Phase-2) — snack-SKU allergen fail-safe. Tagged SKUs become
+  // verifiable guardrail items evaluated by set-membership against allergen_tags.
+  // Untagged SKUs are parent-attested shelf items (allergen_tags is authoritative;
+  // empty = no allergens), so they route to the unverifiable path WITH attested:true
+  // and are exempted — otherwise the curated shelf's whole-food snacks (apple,
+  // carrots) would fail-close for any child with a declared allergen.
+  const snackSkuInput = () =>
+    makeInput({
+      main_assignments: [],
+      days: [
+        {
+          day: 'monday',
+          slots: [
+            {
+              slot_kind: 'snack',
+              snack_sku_id: SNACK_SKU_ID,
+              variations: [{ child_id: CHILD_ID }],
+            },
+          ],
+        },
+      ],
+    });
+
+  it('emits a tagged snack-SKU slot as a verifiable guardrail item (allergen_tags as ingredients)', async () => {
+    const repo = buildRepo();
+    const guardrail = buildGuardrail([{ verdict: 'cleared', conflicts: [] }]);
+    const service = new PlansService({
+      repository: repo,
+      briefStateRepository: buildBriefStateRepo(),
+      briefStateComposer: buildBriefStateComposer(),
+      allergyGuardrail: guardrail,
+      auditService: buildAudit(),
+      logger: buildLogger(),
+      redis: buildRedis(),
+      regenQueue: buildRegenQueue(),
+      snackSkuRepository: buildSnackSkuRepo({ [SNACK_SKU_ID]: ['dairy'] }),
+    });
+
+    await service.commit(snackSkuInput(), REQUEST_ID, vi.fn());
+
+    const arg = guardrail.clearOrRejectCommit.mock.calls[0]?.[0];
+    expect(arg.items).toEqual([
+      { child_id: CHILD_ID, day: 'monday', slot: 'snack', ingredients: ['dairy'] },
+    ]);
+    expect(arg.unverifiable).toEqual([]);
+  });
+
+  it('routes an untagged snack-SKU slot to the unverifiable path WITH attested:true', async () => {
+    const repo = buildRepo();
+    const guardrail = buildGuardrail([{ verdict: 'cleared', conflicts: [] }]);
+    const service = new PlansService({
+      repository: repo,
+      briefStateRepository: buildBriefStateRepo(),
+      briefStateComposer: buildBriefStateComposer(),
+      allergyGuardrail: guardrail,
+      auditService: buildAudit(),
+      logger: buildLogger(),
+      redis: buildRedis(),
+      regenQueue: buildRegenQueue(),
+      snackSkuRepository: buildSnackSkuRepo({ [SNACK_SKU_ID]: [] }),
+    });
+
+    await service.commit(snackSkuInput(), REQUEST_ID, vi.fn());
+
+    const arg = guardrail.clearOrRejectCommit.mock.calls[0]?.[0];
+    expect(arg.items).toEqual([]);
+    expect(arg.unverifiable).toEqual([
+      {
+        child_id: CHILD_ID,
+        day: 'monday',
+        slot: 'snack',
+        recipe_label: 'snack-sku (parent-attested, no allergen tags)',
+        attested: true,
+      },
+    ]);
+  });
+
+  it('treats an untagged snack-SKU slot as parent-attested when no snackSkuRepository is wired', async () => {
+    const repo = buildRepo();
+    const guardrail = buildGuardrail([{ verdict: 'cleared', conflicts: [] }]);
+    const service = new PlansService({
+      repository: repo,
+      briefStateRepository: buildBriefStateRepo(),
+      briefStateComposer: buildBriefStateComposer(),
+      allergyGuardrail: guardrail,
+      auditService: buildAudit(),
+      logger: buildLogger(),
+      redis: buildRedis(),
+      regenQueue: buildRegenQueue(),
+      // snackSkuRepository intentionally omitted — repo defaults to null.
+    });
+
+    await service.commit(snackSkuInput(), REQUEST_ID, vi.fn());
+
+    const arg = guardrail.clearOrRejectCommit.mock.calls[0]?.[0];
+    expect(arg.items).toEqual([]);
+    expect(arg.unverifiable).toEqual([
+      {
+        child_id: CHILD_ID,
+        day: 'monday',
+        slot: 'snack',
+        recipe_label: 'snack-sku (parent-attested, no allergen tags)',
+        attested: true,
+      },
     ]);
   });
 
@@ -411,7 +543,7 @@ describe('PlansService.commit', () => {
     await expect(service.commit(makeInput(), REQUEST_ID, regenerate)).rejects.toBeInstanceOf(
       GuardrailRejectionError,
     );
-    expect(guardrail.clearOrReject).toHaveBeenCalledTimes(1);
+    expect(guardrail.clearOrRejectCommit).toHaveBeenCalledTimes(1);
     expect(regenerate).not.toHaveBeenCalled();
     expect(repo.commitTree).not.toHaveBeenCalled();
     expect(audit.write).not.toHaveBeenCalledWith(expect.objectContaining({ event_type: 'plan.hard_fail' }));
@@ -1248,5 +1380,461 @@ describe('PlansService.handleDegradedPlan (Story 3.29 / 3-DM-D1)', () => {
     await service.clearDegradedPlanState(HOUSEHOLD_ID);
 
     expect(repo.clearDegradedPlanState).toHaveBeenCalledWith(HOUSEHOLD_ID);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Story 3.S39 — commit-time recipe-ingredient guardrail (effective set)
+// ---------------------------------------------------------------------------
+
+const RECIPE_M2 = '77777777-7777-4777-8777-777777777777';
+
+const falcpaRule = (allergen: string): AllergyRule => ({
+  id: allergen,
+  household_id: null,
+  child_id: null,
+  allergen,
+  rule_type: 'falcpa',
+});
+
+const declaredRule = (childId: string | null, allergen: string): AllergyRule => ({
+  id: `declared-${allergen}`,
+  household_id: HOUSEHOLD_ID,
+  child_id: childId,
+  allergen,
+  rule_type: 'parent_declared',
+});
+
+// Real AllergyGuardrailService wired to a fake rules repo so the full chain
+// (tree walk → batch fetch → effective set → engine → verdict) is exercised.
+function buildRealGuardrail(rules: AllergyRule[]): AllergyGuardrailService & {
+  writeDecision: ReturnType<typeof vi.fn>;
+} {
+  const writeDecision = vi.fn().mockResolvedValue(undefined);
+  const repo = {
+    getRulesForHousehold: vi.fn().mockResolvedValue(rules),
+    writeDecision,
+  } as unknown as AllergyGuardrailRepository;
+  const service = new AllergyGuardrailService({
+    repository: repo,
+    auditService: buildAudit(),
+    logger: buildLogger(),
+  });
+  return Object.assign(service, { writeDecision }) as AllergyGuardrailService & {
+    writeDecision: ReturnType<typeof vi.fn>;
+  };
+}
+
+function buildRecipesRepo(ingredientsById: Record<string, string[]>): RecipesRepository & {
+  findIngredientsByIds: ReturnType<typeof vi.fn>;
+} {
+  const findIngredientsByIds = vi.fn(async (ids: readonly string[]) => {
+    const m = new Map<string, string[]>();
+    for (const id of ids) {
+      if (Object.prototype.hasOwnProperty.call(ingredientsById, id)) {
+        m.set(id, ingredientsById[id]!);
+      }
+    }
+    return m;
+  });
+  return { findIngredientsByIds } as unknown as RecipesRepository & {
+    findIngredientsByIds: ReturnType<typeof vi.fn>;
+  };
+}
+
+function buildCommitService(opts: {
+  rules: AllergyRule[];
+  ingredientsById: Record<string, string[]>;
+  repo?: ReturnType<typeof buildRepo>;
+}) {
+  const repo = opts.repo ?? buildRepo();
+  const recipesRepo = buildRecipesRepo(opts.ingredientsById);
+  const service = new PlansService({
+    repository: repo,
+    briefStateRepository: buildBriefStateRepo(),
+    briefStateComposer: buildBriefStateComposer(),
+    allergyGuardrail: buildRealGuardrail(opts.rules),
+    auditService: buildAudit(),
+    logger: buildLogger(),
+    redis: buildRedis(),
+    regenQueue: buildRegenQueue(),
+    recipesRepository: recipesRepo,
+  });
+  return { service, repo, recipesRepo };
+}
+
+// Single main slot, one child, configurable recipe + variation overrides.
+function mainOnlyInput(
+  recipeId: string,
+  variation: { child_id: string; add_ons?: string[]; removals?: string[] },
+): CommitPlanTreeInput {
+  return makeInput({
+    main_assignments: [{ sequence: 1, recipe_id: recipeId }],
+    days: [
+      {
+        day: 'monday',
+        slots: [
+          { slot_kind: 'main', main_assignment_sequence: 1, variations: [variation] },
+        ],
+      },
+    ],
+  });
+}
+
+describe('PlansService.commit — base-ingredient guardrail (Story 3.S39)', () => {
+  it('blocks a Main whose base ingredients contain a declared allergen (no add-ons) and regenerates to a clean plan', async () => {
+    const { service, repo, recipesRepo } = buildCommitService({
+      rules: [falcpaRule('peanut'), declaredRule(CHILD_ID, 'peanut')],
+      ingredientsById: {
+        [RECIPE_M1]: ['chicken', 'peanuts', 'rice'],
+        [RECIPE_M2]: ['chicken', 'rice', 'broccoli'],
+      },
+    });
+
+    // First attempt: peanut Main. Regenerate swaps to the clean RECIPE_M2.
+    const cleanInput = mainOnlyInput(RECIPE_M2, { child_id: CHILD_ID });
+    const regenerate = vi.fn().mockResolvedValue(cleanInput);
+
+    const result = await service.commit(
+      mainOnlyInput(RECIPE_M1, { child_id: CHILD_ID }),
+      REQUEST_ID,
+      regenerate,
+    );
+
+    expect(result).toBe(PLAN_ID);
+    expect(regenerate).toHaveBeenCalledTimes(1);
+    expect(repo.commitTree).toHaveBeenCalledTimes(1);
+    // The blocked first attempt evaluated the recipe's OWN ingredients.
+    expect(recipesRepo.findIngredientsByIds).toHaveBeenCalled();
+    const firstRejection = (regenerate.mock.calls[0][0] as GuardrailResult[])[0];
+    expect(firstRejection.verdict).toBe('blocked');
+  });
+
+  it('clears when a removal drops the allergen-bearing base ingredient (allergen-fork)', async () => {
+    const { service, repo } = buildCommitService({
+      rules: [falcpaRule('peanut'), declaredRule(CHILD_ID, 'peanut')],
+      ingredientsById: { [RECIPE_M1]: ['chicken', 'peanuts', 'rice'] },
+    });
+
+    const regenerate = vi.fn();
+    const result = await service.commit(
+      mainOnlyInput(RECIPE_M1, { child_id: CHILD_ID, removals: ['peanuts'] }),
+      REQUEST_ID,
+      regenerate,
+    );
+
+    expect(result).toBe(PLAN_ID);
+    expect(repo.commitTree).toHaveBeenCalledTimes(1);
+    expect(regenerate).not.toHaveBeenCalled();
+  });
+
+  it('still catches an allergenic add_on on a clean base recipe (no regression)', async () => {
+    const { service, repo } = buildCommitService({
+      rules: [falcpaRule('peanut'), declaredRule(CHILD_ID, 'peanut')],
+      ingredientsById: {
+        [RECIPE_M1]: ['chicken', 'rice'],
+        [RECIPE_M2]: ['chicken', 'rice'],
+      },
+    });
+
+    const cleanInput = mainOnlyInput(RECIPE_M2, { child_id: CHILD_ID });
+    const regenerate = vi.fn().mockResolvedValue(cleanInput);
+
+    const result = await service.commit(
+      mainOnlyInput(RECIPE_M1, { child_id: CHILD_ID, add_ons: ['peanut butter'] }),
+      REQUEST_ID,
+      regenerate,
+    );
+
+    expect(result).toBe(PLAN_ID);
+    expect(regenerate).toHaveBeenCalledTimes(1);
+    const firstRejection = (regenerate.mock.calls[0][0] as GuardrailResult[])[0];
+    expect(firstRejection.verdict).toBe('blocked');
+    expect(repo.commitTree).toHaveBeenCalledTimes(1);
+  });
+
+  it('does NOT commit an unverifiable recipe for a child WITH a declared allergen (routes through retry)', async () => {
+    const { service, repo } = buildCommitService({
+      // RECIPE_M1 absent from the ingredient map → unverifiable.
+      rules: [falcpaRule('peanut'), declaredRule(CHILD_ID, 'peanut')],
+      ingredientsById: {},
+    });
+
+    // Regenerate keeps returning the same unverifiable plan → exhausts retries.
+    const regenerate = vi.fn().mockResolvedValue(
+      mainOnlyInput(RECIPE_M1, { child_id: CHILD_ID }),
+    );
+
+    await expect(
+      service.commit(mainOnlyInput(RECIPE_M1, { child_id: CHILD_ID }), REQUEST_ID, regenerate),
+    ).rejects.toBeInstanceOf(GuardrailRejectionError);
+
+    expect(repo.commitTree).not.toHaveBeenCalled();
+    const firstRejection = (regenerate.mock.calls[0][0] as GuardrailResult[])[0];
+    expect(firstRejection.verdict).toBe('uncertain');
+    if (firstRejection.verdict === 'uncertain') {
+      expect(firstRejection.reason).toBe('compound_ingredient_unverified');
+      expect(firstRejection.flagged_items?.length).toBeGreaterThan(0);
+    }
+  });
+
+  it('commits an unverifiable recipe for a child with NO declared allergen (nothing to protect)', async () => {
+    const { service, repo } = buildCommitService({
+      // FALCPA baseline only — no parent_declared rule for this child.
+      rules: [falcpaRule('peanut')],
+      ingredientsById: {},
+    });
+
+    const regenerate = vi.fn();
+    const result = await service.commit(
+      mainOnlyInput(RECIPE_M1, { child_id: CHILD_ID }),
+      REQUEST_ID,
+      regenerate,
+    );
+
+    expect(result).toBe(PLAN_ID);
+    expect(repo.commitTree).toHaveBeenCalledTimes(1);
+    expect(regenerate).not.toHaveBeenCalled();
+  });
+
+  it('batch-fetches ingredients in a single query per attempt (no N+1 across slots)', async () => {
+    const { service, recipesRepo } = buildCommitService({
+      rules: [falcpaRule('peanut')],
+      ingredientsById: {
+        [RECIPE_M1]: ['chicken', 'rice'],
+        [RECIPE_M2]: ['apple', 'oats'],
+      },
+    });
+
+    // Two days, three slots referencing two distinct recipes — one fetch call.
+    const input = makeInput({
+      main_assignments: [{ sequence: 1, recipe_id: RECIPE_M1 }],
+      days: [
+        {
+          day: 'monday',
+          slots: [
+            { slot_kind: 'main', main_assignment_sequence: 1, variations: [{ child_id: CHILD_ID }] },
+            { slot_kind: 'snack', recipe_id: RECIPE_M2, variations: [{ child_id: CHILD_ID }] },
+          ],
+        },
+        {
+          day: 'tuesday',
+          slots: [
+            { slot_kind: 'main', main_assignment_sequence: 1, variations: [{ child_id: CHILD_ID }] },
+          ],
+        },
+      ],
+    });
+
+    await service.commit(input, REQUEST_ID, vi.fn());
+
+    expect(recipesRepo.findIngredientsByIds).toHaveBeenCalledTimes(1);
+    const passedIds = recipesRepo.findIngredientsByIds.mock.calls[0][0] as string[];
+    expect(passedIds).toEqual(expect.arrayContaining([RECIPE_M1, RECIPE_M2]));
+    expect(passedIds).toHaveLength(2);
+  });
+
+  it('does not false-positive block a clean plan whose base ingredients are allergen-free', async () => {
+    const { service, repo } = buildCommitService({
+      rules: [falcpaRule('peanut'), declaredRule(CHILD_ID, 'peanut')],
+      ingredientsById: { [RECIPE_M1]: ['chicken', 'rice', 'broccoli'] },
+    });
+
+    const regenerate = vi.fn();
+    const result = await service.commit(
+      mainOnlyInput(RECIPE_M1, { child_id: CHILD_ID }),
+      REQUEST_ID,
+      regenerate,
+    );
+
+    expect(result).toBe(PLAN_ID);
+    expect(repo.commitTree).toHaveBeenCalledTimes(1);
+    expect(regenerate).not.toHaveBeenCalled();
+  });
+});
+
+// Story 3-S34 — on-demand ("compose now") composition.
+describe('PlansService.requestOnDemandGeneration', () => {
+  // Wednesday, UTC midday → current_week_remaining, weekOf 2026-06-15,
+  // plannedDays [thursday, friday].
+  const NOW_WED = new Date('2026-06-17T12:00:00Z');
+
+  function buildOnDemandService(opts: {
+    existingPlan?: { id: string } | null;
+    timezone?: string;
+    incrCount?: number;
+    ttl?: number;
+  } = {}) {
+    const existsForHouseholdAndWeek = vi
+      .fn()
+      .mockResolvedValue(opts.existingPlan != null);
+    const repo = { existsForHouseholdAndWeek } as unknown as PlansRepository & {
+      existsForHouseholdAndWeek: ReturnType<typeof vi.fn>;
+    };
+    const getTimezone = vi.fn().mockResolvedValue(opts.timezone ?? 'UTC');
+    const householdsRepository = { getTimezone } as unknown as HouseholdsRepository;
+    const generateQueue = {
+      add: vi.fn().mockResolvedValue({ id: 'gen-job-id' }),
+    } as unknown as Queue & { add: ReturnType<typeof vi.fn> };
+    const redis = buildRedis({ incrCount: opts.incrCount, ttl: opts.ttl });
+    const audit = buildAudit();
+
+    const service = new PlansService({
+      repository: repo,
+      briefStateRepository: buildBriefStateRepo(),
+      briefStateComposer: buildBriefStateComposer(),
+      allergyGuardrail: buildGuardrail([{ verdict: 'cleared', conflicts: [] }]),
+      auditService: audit,
+      logger: buildLogger(),
+      redis,
+      regenQueue: buildRegenQueue(),
+      generateQueue,
+      householdsRepository,
+    });
+
+    return { service, repo, getTimezone, generateQueue, redis, audit };
+  }
+
+  it('derives the window from the household timezone and enqueues with no delay', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(NOW_WED);
+    try {
+      const { service, getTimezone, generateQueue } = buildOnDemandService({
+        timezone: 'UTC',
+      });
+
+      const result = await service.requestOnDemandGeneration({
+        householdId: HOUSEHOLD_ID,
+        requestId: REQUEST_ID,
+      });
+
+      expect(getTimezone).toHaveBeenCalledWith(HOUSEHOLD_ID);
+      expect(result).toEqual({
+        jobId: 'gen-job-id',
+        weekOf: '2026-06-15',
+        plannedDays: ['thursday', 'friday'],
+        basis: 'current_week_remaining',
+      });
+
+      expect(generateQueue.add).toHaveBeenCalledTimes(1);
+      const [name, jobData, jobOpts] = generateQueue.add.mock.calls[0];
+      expect(name).toBe('generate-plan');
+      expect(jobData).toMatchObject({
+        household_id: HOUSEHOLD_ID,
+        week_of: '2026-06-15',
+        request_id: REQUEST_ID,
+        planned_days: ['thursday', 'friday'],
+      });
+      // Immediate enqueue — the on-demand path never sets a delay.
+      expect(jobOpts).not.toHaveProperty('delay');
+      expect(jobOpts.jobId).toContain('plan-gen-ondemand');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('writes a plan.on_demand_requested audit event', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(NOW_WED);
+    try {
+      const { service, audit } = buildOnDemandService({ timezone: 'UTC' });
+
+      await service.requestOnDemandGeneration({
+        householdId: HOUSEHOLD_ID,
+        requestId: REQUEST_ID,
+      });
+
+      const auditCall = audit.write.mock.calls[0]?.[0];
+      expect(auditCall).toMatchObject({
+        event_type: 'plan.on_demand_requested',
+        household_id: HOUSEHOLD_ID,
+        request_id: REQUEST_ID,
+        metadata: expect.objectContaining({
+          week_of: '2026-06-15',
+          planned_days: ['thursday', 'friday'],
+          basis: 'current_week_remaining',
+        }),
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('throws PlanAlreadyExistsError (409) when a plan already covers the target week', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(NOW_WED);
+    try {
+      const { service, generateQueue } = buildOnDemandService({
+        existingPlan: { id: PLAN_ID },
+      });
+
+      await expect(
+        service.requestOnDemandGeneration({
+          householdId: HOUSEHOLD_ID,
+          requestId: REQUEST_ID,
+        }),
+      ).rejects.toBeInstanceOf(PlanAlreadyExistsError);
+      expect(generateQueue.add).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('throws TooManyRequestsError (429) when over the weekly cap', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(NOW_WED);
+    try {
+      // GEN_RATE_LIMIT is 3; an incr returning 4 is over the cap.
+      const { service, generateQueue } = buildOnDemandService({ incrCount: 4, ttl: 120 });
+
+      await expect(
+        service.requestOnDemandGeneration({
+          householdId: HOUSEHOLD_ID,
+          requestId: REQUEST_ID,
+        }),
+      ).rejects.toBeInstanceOf(TooManyRequestsError);
+      expect(generateQueue.add).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('composes next-week-full when invoked on a Friday', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-06-19T12:00:00Z')); // Friday
+    try {
+      const { service } = buildOnDemandService({ timezone: 'UTC' });
+
+      const result = await service.requestOnDemandGeneration({
+        householdId: HOUSEHOLD_ID,
+        requestId: REQUEST_ID,
+      });
+
+      expect(result).toEqual({
+        jobId: 'gen-job-id',
+        weekOf: '2026-06-22',
+        plannedDays: ['monday', 'tuesday', 'wednesday', 'thursday', 'friday'],
+        basis: 'next_week_full',
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('throws when householdsRepository / generateQueue are not configured', async () => {
+    const service = new PlansService({
+      repository: buildRepo(),
+      briefStateRepository: buildBriefStateRepo(),
+      briefStateComposer: buildBriefStateComposer(),
+      allergyGuardrail: buildGuardrail([{ verdict: 'cleared', conflicts: [] }]),
+      auditService: buildAudit(),
+      logger: buildLogger(),
+      redis: buildRedis(),
+      regenQueue: buildRegenQueue(),
+    });
+
+    await expect(
+      service.requestOnDemandGeneration({ householdId: HOUSEHOLD_ID, requestId: REQUEST_ID }),
+    ).rejects.toBeInstanceOf(ValidationError);
   });
 });

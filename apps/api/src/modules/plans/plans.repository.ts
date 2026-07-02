@@ -29,7 +29,7 @@ const PLAN_DAY_COLUMNS =
   'id, plan_id, day, paused_at, paused_reason, paused_note, created_at, updated_at';
 
 const PLAN_SLOT_COLUMNS =
-  'id, plan_day_id, slot_kind, main_assignment_id, recipe_id, extra_kind, paused_at, created_at, updated_at';
+  'id, plan_day_id, slot_kind, main_assignment_id, recipe_id, extra_kind, snack_sku_id, paused_at, created_at, updated_at';
 
 const PLAN_SLOT_VARIATION_COLUMNS =
   'id, plan_slot_id, child_id, portion_size, texture, spice_level, cutting_style, container, add_ons, removals, notes, paused_at, created_at, updated_at';
@@ -80,11 +80,73 @@ export class PlansRepository extends BaseRepository {
     return (data as PlanRow | null) ?? null;
   }
 
+  // Story 3-S34 (patch CR1) — create-only guard for POST /v1/plans/generate must
+  // block even draft/in-flight plan rows (guardrail_cleared_at IS NULL) to prevent
+  // double-enqueue during the generation window. Distinct from findByHouseholdAndWeek
+  // which intentionally filters to cleared plans for the presentation path.
+  async existsForHouseholdAndWeek(opts: {
+    householdId: string;
+    weekOf: string;
+  }): Promise<boolean> {
+    const { count, error } = await this.client
+      .from('plans')
+      .select('id', { count: 'exact', head: true })
+      .eq('household_id', opts.householdId)
+      .eq('week_of', opts.weekOf);
+    if (error) throw error;
+    return (count ?? 0) > 0;
+  }
+
   // Story 4-S11 — resolve the committed plan_id for a (household, week_of) pair
   // by the calendar Monday date rather than the derived week_id. The Layer-2
   // signal write only has the rating's session date in hand, so it looks the
   // plan up by week_of directly. Highest revision among cleared rows wins; null
   // when the week hasn't been generated yet (a normal state — the caller skips).
+  // Story 3-S35 — "has the household ever composed a plan?" gate for the
+  // auto-compose cron. Only cleared plans count (a hard-failed-only household
+  // hasn't successfully composed). Used to skip brand-new households that
+  // haven't opted in by composing once.
+  async hasAnyPlan(householdId: string): Promise<boolean> {
+    const { count, error } = await this.client
+      .from('plans')
+      .select('id', { count: 'exact', head: true })
+      .eq('household_id', householdId)
+      .not('guardrail_cleared_at', 'is', null);
+    if (error) throw error;
+    return (count ?? 0) > 0;
+  }
+
+  // Story 3-S35 — batched existence check for the auto-compose cron fan-out.
+  // Returns the subset of householdIds that have at least one cleared plan
+  // (weekOf omitted) or a cleared plan for the given target week (weekOf set,
+  // the idempotent-skip check). Chunked to stay under PostgREST URL limits on
+  // large IN clauses. O(pages) round-trips, not O(households).
+  async findHouseholdIdsWithPlan(
+    householdIds: readonly string[],
+    weekOf?: string,
+  ): Promise<Set<string>> {
+    const result = new Set<string>();
+    const CHUNK = 200;
+    for (let i = 0; i < householdIds.length; i += CHUNK) {
+      const chunk = householdIds.slice(i, i + CHUNK) as string[];
+      if (chunk.length === 0) continue;
+      let query = this.client
+        .from('plans')
+        .select('household_id')
+        .in('household_id', chunk)
+        .not('guardrail_cleared_at', 'is', null);
+      if (weekOf !== undefined) {
+        query = query.eq('week_of', weekOf);
+      }
+      const { data, error } = await query;
+      if (error) throw error;
+      for (const row of (data ?? []) as Array<{ household_id: string }>) {
+        result.add(row.household_id);
+      }
+    }
+    return result;
+  }
+
   async findCommittedPlanIdByWeekOf(opts: {
     householdId: string;
     weekOf: string;

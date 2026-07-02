@@ -17,6 +17,9 @@ dist/
 .claude/*.lock
 apps/web/test-results/
 
+# Per-run planner agentic traces (opt-in via PLAN_TRACE_DIR). Local debug output.
+apps/api/logs/
+
 # Scratch artifacts from bmad review sessions — review diffs and tmp captures
 # are intermediate, per-session outputs; never commit them.
 _bmad-output/.review-*.diff

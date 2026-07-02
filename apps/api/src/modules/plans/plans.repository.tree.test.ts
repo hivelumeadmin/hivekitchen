@@ -110,6 +110,72 @@ describe('sortPlanDaysByWeekday', () => {
   });
 });
 
+describe('PlansRepository.hasAnyPlan (3-S35)', () => {
+  it('counts cleared plans for the household and returns true when > 0', async () => {
+    const { client, steps } = buildTreeClient({ data: null, error: null, count: 2 } as Result);
+    const repo = new PlansRepository(client);
+
+    const result = await repo.hasAnyPlan(PLAN_ID);
+
+    expect(result).toBe(true);
+    expect(steps).toEqual(
+      expect.arrayContaining([
+        { op: 'from', args: ['plans'] },
+        { op: 'eq', args: ['household_id', PLAN_ID] },
+        { op: 'not', args: ['guardrail_cleared_at', 'is', null] },
+      ]),
+    );
+  });
+
+  it('returns false when no cleared plans exist', async () => {
+    const { client } = buildTreeClient({ data: null, error: null, count: 0 } as Result);
+    const repo = new PlansRepository(client);
+
+    expect(await repo.hasAnyPlan(PLAN_ID)).toBe(false);
+  });
+});
+
+describe('PlansRepository.findHouseholdIdsWithPlan (3-S35)', () => {
+  it('returns the subset of households that have a cleared plan', async () => {
+    const { client, steps } = buildTreeClient({
+      data: [{ household_id: DAY_A_ID }],
+      error: null,
+    });
+    const repo = new PlansRepository(client);
+
+    const set = await repo.findHouseholdIdsWithPlan([DAY_A_ID, DAY_B_ID]);
+
+    expect(set.has(DAY_A_ID)).toBe(true);
+    expect(set.has(DAY_B_ID)).toBe(false);
+    expect(steps).toEqual(
+      expect.arrayContaining([
+        { op: 'from', args: ['plans'] },
+        { op: 'in', args: ['household_id', [DAY_A_ID, DAY_B_ID]] },
+        { op: 'not', args: ['guardrail_cleared_at', 'is', null] },
+      ]),
+    );
+  });
+
+  it('adds a week_of filter when targeting a specific week', async () => {
+    const { client, steps } = buildTreeClient({ data: [], error: null });
+    const repo = new PlansRepository(client);
+
+    await repo.findHouseholdIdsWithPlan([DAY_A_ID], '2026-06-22');
+
+    expect(steps).toEqual(
+      expect.arrayContaining([{ op: 'eq', args: ['week_of', '2026-06-22'] }]),
+    );
+  });
+
+  it('returns an empty set for an empty input', async () => {
+    const { client } = buildTreeClient({ data: [], error: null });
+    const repo = new PlansRepository(client);
+
+    const set = await repo.findHouseholdIdsWithPlan([]);
+    expect(set.size).toBe(0);
+  });
+});
+
 describe('PlansRepository.findMainAssignmentsByPlanId', () => {
   it('queries plan_main_assignments filtered by plan_id and ordered by sequence', async () => {
     const { client, steps } = buildTreeClient({ data: [], error: null });

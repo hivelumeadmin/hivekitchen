@@ -221,6 +221,15 @@ export const DietaryDeclareInputSchema = z.object({
   /** Validated against dietary_tags vocabulary at handler boundary. */
   tag: z.string().trim().min(1).max(64),
   enforcement: EnforcementLevelSchema,
+  /** Slice 2.7-s5 — replaces the `[CHIP_PROMPT:elevation:…]` prose sentinel.
+   *  When the model judges the parent's enforcement language strong but
+   *  ambiguous ("strictly Halal — is that a hard rule?"), it records its
+   *  best-guess `enforcement` AND sets this true; the service then renders the
+   *  three-option ratification chip from the structured tool RESULT (never from
+   *  a regex over the prose), so it cannot half-leak into the visible message.
+   *  Strict-null-safe (s2): optional fields serialize as anyOf:[…,null] and the
+   *  agent null-strips before this schema parses. */
+  request_ratification: z.boolean().nullish(),
   source: z
     .enum(['onboarding_declared', 'parent_edited'])
     .default('onboarding_declared'),
@@ -229,6 +238,10 @@ export const DietaryDeclareInputSchema = z.object({
 export const DietaryDeclareOutputSchema = z.object({
   dietary_id: z.string().uuid(),
   was_existing: z.boolean(),
+  /** Slice 2.7-s5 — echoes the input `request_ratification`. The service reads
+   *  this off the tool-call result to decide whether to render the M3
+   *  ratification chip. Present only when the model asked for ratification. */
+  ratification_requested: z.boolean().optional(),
 });
 
 // ---- cuisine.declare -----------------------------------------------------
@@ -245,11 +258,17 @@ export const CuisineDeclareInputSchema = z.object({
   confidence: z.number().int().min(0).max(100),
   presence: z.number().int().min(0).max(100),
   enforcement: EnforcementLevelSchema.default('just_for_context'),
+  /** Slice 2.7-s5 — same ratification channel as dietary.declare. See that
+   *  schema's note. Strict-null-safe (s2). */
+  request_ratification: z.boolean().nullish(),
 });
 
 export const CuisineDeclareOutputSchema = z.object({
   prior_id: z.string().uuid(),
   was_existing: z.boolean(),
+  /** Slice 2.7-s5 — echoes the input `request_ratification` so the service can
+   *  render the M3 ratification chip from the structured result. */
+  ratification_requested: z.boolean().optional(),
 });
 
 // ---- food_preference.declare ---------------------------------------------

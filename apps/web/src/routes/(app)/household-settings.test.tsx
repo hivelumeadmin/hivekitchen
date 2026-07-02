@@ -239,6 +239,96 @@ describe('HouseholdSettingsRoute (5-S2)', () => {
     expect(patchCall).toBeUndefined();
   });
 
+  it('renders the auto-compose toggle for a primary_parent once a plan exists', async () => {
+    setAuth('primary_parent');
+    hkFetchMock.mockImplementation((path: string) => {
+      if (path.endsWith('/members')) return Promise.resolve({ household_display_name: null, members });
+      if (path.endsWith('/geolocation-consent'))
+        return Promise.resolve({
+          geolocation_enabled: false,
+          geolocation_consented_at: null,
+          geolocation_purpose: null,
+        });
+      if (path.endsWith('/auto-compose'))
+        return Promise.resolve({ auto_compose_enabled: true, has_plan: true });
+      throw new Error(`unexpected path ${path}`);
+    });
+    renderRoute();
+
+    expect(await screen.findByText("Auto-compose next week's plan — Friday evening")).toBeDefined();
+    expect(screen.getByRole('switch', { name: /auto-compose/i })).toBeDefined();
+  });
+
+  it('hides the auto-compose toggle before the first plan exists', async () => {
+    setAuth('primary_parent');
+    hkFetchMock.mockImplementation((path: string) => {
+      if (path.endsWith('/members')) return Promise.resolve({ household_display_name: null, members });
+      if (path.endsWith('/geolocation-consent'))
+        return Promise.resolve({
+          geolocation_enabled: false,
+          geolocation_consented_at: null,
+          geolocation_purpose: null,
+        });
+      if (path.endsWith('/auto-compose'))
+        return Promise.resolve({ auto_compose_enabled: true, has_plan: false });
+      throw new Error(`unexpected path ${path}`);
+    });
+    renderRoute();
+
+    await screen.findByText('Alex');
+    expect(screen.queryByText("Auto-compose next week's plan — Friday evening")).toBeNull();
+  });
+
+  it('PATCHes auto-compose off optimistically when toggled', async () => {
+    setAuth('primary_parent');
+    hkFetchMock.mockImplementation((path: string, init?: { method?: string }) => {
+      if (path.endsWith('/members')) return Promise.resolve({ household_display_name: null, members });
+      if (path.endsWith('/geolocation-consent'))
+        return Promise.resolve({
+          geolocation_enabled: false,
+          geolocation_consented_at: null,
+          geolocation_purpose: null,
+        });
+      if (path.endsWith('/auto-compose') && (!init || init.method === 'GET'))
+        return Promise.resolve({ auto_compose_enabled: true, has_plan: true });
+      if (path.endsWith('/auto-compose') && init?.method === 'PATCH')
+        return Promise.resolve({ auto_compose_enabled: false, has_plan: true });
+      throw new Error(`unexpected path ${path}`);
+    });
+    renderRoute();
+
+    const toggle = await screen.findByRole('switch', { name: /auto-compose/i });
+    fireEvent.click(toggle);
+
+    await waitFor(() => {
+      const patchCall = hkFetchMock.mock.calls.find(
+        (c) =>
+          String(c[0]).endsWith('/auto-compose') &&
+          (c[1] as { method?: string })?.method === 'PATCH',
+      );
+      expect(patchCall).toBeDefined();
+      expect((patchCall![1] as { body: unknown }).body).toEqual({ auto_compose_enabled: false });
+    });
+  });
+
+  it('does not render the auto-compose toggle for a secondary_caregiver', async () => {
+    setAuth('secondary_caregiver');
+    hkFetchMock.mockImplementation((path: string) => {
+      if (path.endsWith('/members')) return Promise.resolve({ household_display_name: null, members });
+      if (path.endsWith('/geolocation-consent'))
+        return Promise.resolve({
+          geolocation_enabled: false,
+          geolocation_consented_at: null,
+          geolocation_purpose: null,
+        });
+      throw new Error(`unexpected path ${path}`);
+    });
+    renderRoute();
+
+    await screen.findByText('Alex');
+    expect(screen.queryByText("Auto-compose next week's plan — Friday evening")).toBeNull();
+  });
+
   it('copies the invite URL to the clipboard', async () => {
     const writeText = vi.fn().mockResolvedValue(undefined);
     Object.defineProperty(navigator, 'clipboard', {

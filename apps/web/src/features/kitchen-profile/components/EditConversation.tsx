@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { HistoryView } from '../../onboarding-mockups/components/HistoryView.js';
-import type { ChatTurn } from '../../onboarding-mockups/data/conversation-history.js';
+import { HistoryView, type ChatTurn } from './HistoryView.js';
 
 interface Readonly_EditConversationProps {
   /**

@@ -38,10 +38,17 @@ export function useLumiNudgeSSE(accessToken: string | null): void {
 
       const store = useLumiStore.getState();
       store.setNudge(parsed.data.turn);
-      // Append directly if the panel is already open on the matching surface —
+      // Append directly if the sheet is already summoned on the matching surface —
       // avoids a close/reopen for a live update.
-      if (store.isPanelOpen && store.surface === parsed.data.surface) {
+      if (store.presenceState === 'summoned' && store.surface === parsed.data.surface) {
         store.appendTurn(parsed.data.turn);
+      }
+      // Surface as a whisper (valet rule 3 — one quiet dismissible line) when
+      // proactive nudges are enabled and the sheet is not already open. If the
+      // sheet is open, the turn was just appended above; if nudges are paused,
+      // the dot breath (atRest + pendingNudge) is the only signal.
+      if (store.proactiveNudges && store.presenceState === 'atRest') {
+        store.whisper();
       }
     }
 

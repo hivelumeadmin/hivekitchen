@@ -55,6 +55,7 @@ function buildClient(plan: Op[]): {
     };
     builder.select = (_cols?: unknown) => builder;
     builder.eq = (..._args: unknown[]) => builder;
+    builder.in = (..._args: unknown[]) => builder;
     builder.ilike = (..._args: unknown[]) => builder;
     builder.limit = (..._args: unknown[]) => builder;
     builder.order = (..._args: unknown[]) => builder;
@@ -354,5 +355,61 @@ describe('RecipesRepository.findStepsByRecipeId — Story 3-DM-A1', () => {
 
     const result = await repo.findStepsByRecipeId(RECIPE_ID);
     expect(result).toEqual([]);
+  });
+});
+
+describe('RecipesRepository.findIngredientsByIds — Story 3.S39 batch fetch', () => {
+  const RECIPE_A = '33333333-3333-4333-8333-333333333333';
+  const RECIPE_B = '44444444-4444-4444-8444-444444444444';
+
+  it('returns an empty map without querying when ids is empty', async () => {
+    const { client, recorded } = buildClient([]);
+    const repo = new RecipesRepository(client);
+
+    const result = await repo.findIngredientsByIds([]);
+
+    expect(result.size).toBe(0);
+    expect(recorded).toEqual([]);
+  });
+
+  it('projects object-form and string-form ingredients to display names in one query', async () => {
+    const rows = [
+      {
+        id: RECIPE_A,
+        ingredients: [
+          { key: 'chicken', display: 'chicken thigh' },
+          { key: 'peanut', display: 'peanuts' },
+        ],
+      },
+      { id: RECIPE_B, ingredients: ['rice', 'broccoli'] },
+    ];
+    const plan: Op[] = [
+      { table: 'recipes', op: 'select', result: { data: rows, error: null } },
+    ];
+    const { client, recorded } = buildClient(plan);
+    const repo = new RecipesRepository(client);
+
+    const result = await repo.findIngredientsByIds([RECIPE_A, RECIPE_B]);
+
+    expect(result.get(RECIPE_A)).toEqual(['chicken thigh', 'peanuts']);
+    expect(result.get(RECIPE_B)).toEqual(['rice', 'broccoli']);
+    expect(recorded.map((r) => `${r.table}:${r.op}`)).toEqual(['recipes:select']);
+  });
+
+  it('maps a recipe with no usable ingredients to an empty array (unverifiable)', async () => {
+    const rows = [
+      { id: RECIPE_A, ingredients: [] },
+      { id: RECIPE_B, ingredients: [{ key: 'x', modifier: null }] }, // no display
+    ];
+    const plan: Op[] = [
+      { table: 'recipes', op: 'select', result: { data: rows, error: null } },
+    ];
+    const { client } = buildClient(plan);
+    const repo = new RecipesRepository(client);
+
+    const result = await repo.findIngredientsByIds([RECIPE_A, RECIPE_B]);
+
+    expect(result.get(RECIPE_A)).toEqual([]);
+    expect(result.get(RECIPE_B)).toEqual([]);
   });
 });

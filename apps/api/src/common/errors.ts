@@ -139,6 +139,15 @@ export class ParentalNoticeRequiredError extends DomainError {
   }
 }
 
+// Thrown when a DB row is missing a field that must be present for the operation
+// to proceed (e.g. null timezone on a households row). Indicates a server-side
+// data integrity gap, not a client mistake — surfaces as 500.
+export class DataIntegrityError extends DomainError {
+  readonly type = '/errors/data-integrity';
+  readonly status = 500;
+  readonly title = 'Data integrity error';
+}
+
 // Thrown by HouseholdsRepository when an encrypted household column cannot be
 // decrypted — indicates DEK mismatch or data corruption. Callers must surface
 // this as a 500 rather than silently treating the field as empty, because an
@@ -164,6 +173,18 @@ export class GuestAuthorCapReachedError extends DomainError {
   readonly title = 'Monthly note cap reached';
   constructor() {
     super('Monthly note cap reached. Schedule for next month to continue.');
+  }
+}
+
+// Story 3-S34 — on-demand composition is create-only. A plan already covering
+// the target week must be edited via swap, not regenerated, so the endpoint
+// returns 409 rather than enqueueing a second generation.
+export class PlanAlreadyExistsError extends DomainError {
+  readonly type = '/errors/plan-already-exists';
+  readonly status = 409;
+  readonly title = 'Plan already exists';
+  constructor(weekOf: string) {
+    super(`A plan already exists for the week of ${weekOf}. Edit it via swap instead of regenerating.`);
   }
 }
 

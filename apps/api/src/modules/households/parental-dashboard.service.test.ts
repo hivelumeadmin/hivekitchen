@@ -76,6 +76,7 @@ function makePrior(overrides: Partial<CulturalPriorRow> = {}): CulturalPriorRow 
     label: 'Bengali',
     tier: 'L2',
     state: 'active',
+    enforcement: 'default',
     presence: 1,
     confidence: 0.9,
     opted_in_at: null,

@@ -6,6 +6,7 @@ import {
   cleanup,
   fireEvent,
   act,
+  within,
 } from '@testing-library/react';
 import type { ReactNode } from 'react';
 import { MemoryRouter } from 'react-router-dom';
@@ -94,6 +95,7 @@ function singleMainTreeResponse(weekOf: string, opts: { is_draft?: boolean } = {
         main_assignment_id: MAIN_ASSIGNMENT_ID,
         recipe_id: null,
         extra_kind: null,
+        snack_sku_id: null,
         paused_at: null,
         created_at: TS,
         updated_at: TS,
@@ -323,5 +325,17 @@ describe('PlanPage — content states (Story 3.14, tree shape)', () => {
         screen.getByText('This is a draft — Lumi may refine it before Monday.'),
       ).toBeDefined();
     });
+  });
+});
+
+describe('PlanPage — action surface (Story 13-s7)', () => {
+  it('renders the StickyBottomBar "Plan actions" region with the Confirm-week button', async () => {
+    const { hkFetch } = await import('@/lib/fetch.js');
+    vi.mocked(hkFetch).mockResolvedValue(emptyTreeResponse('2026-05-04'));
+
+    renderWithClient(<PlanPage />);
+
+    const region = screen.getByRole('region', { name: 'Plan actions' });
+    expect(within(region).getByRole('button', { name: /confirm the week/i })).toBeDefined();
   });
 });

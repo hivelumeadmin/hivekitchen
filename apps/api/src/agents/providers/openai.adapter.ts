@@ -94,15 +94,113 @@ function toJsonSchemaParameters(toolSpec: ToolSpec): Record<string, unknown> {
   return schema;
 }
 
-function toOpenAITools(tools: ToolSpec[]): ChatCompletionTool[] {
-  return tools.map((spec) => ({
-    type: 'function',
-    function: {
-      name: toExternalName(spec.name),
-      description: spec.description,
-      parameters: toJsonSchemaParameters(spec),
-    },
-  }));
+// Slice 3.5-s2 — recursively apply OpenAI strict-tool schema constraints:
+// every object node gets `additionalProperties: false` and ALL of its
+// properties moved into `required` (OpenAI strict requires `required` to list
+// every property). Non-object nodes (string/number/boolean) are returned
+// unchanged; arrays recurse into `items`; `anyOf` recurses into each branch.
+//
+// CRITICAL — optional fields must be made NULLABLE, not merely required.
+// `z.toJSONSchema` renders `.optional()` as a non-nullable type that is simply
+// absent from `required`; forcing it into `required` without allowing null
+// would compel the model to emit a real value (e.g. a string recipe_id on a
+// `main` slot), which the downstream Zod .superRefine() then rejects. We
+// instead express each originally-optional field as `anyOf: [<schema>, null]`
+// so the model can signal "absent" with null. plan.tools.ts strips null-valued
+// keys before re-validating, so Zod sees the field as genuinely undefined.
+function addStrictConstraints(schema: Record<string, unknown>): Record<string, unknown> {
+  if (schema.type === 'object') {
+    const props = (schema.properties as Record<string, unknown> | undefined) ?? {};
+    const originallyRequired = new Set(
+      Array.isArray(schema.required) ? (schema.required as string[]) : [],
+    );
+    return {
+      ...schema,
+      additionalProperties: false,
+      required: Object.keys(props),
+      properties: Object.fromEntries(
+        Object.entries(props).map(([k, v]) => {
+          const strict = addStrictConstraints(v as Record<string, unknown>);
+          return [k, originallyRequired.has(k) ? strict : makeNullable(strict)];
+        }),
+      ),
+    };
+  }
+  if (schema.type === 'array' && schema.items !== undefined && schema.items !== null) {
+    return { ...schema, items: addStrictConstraints(schema.items as Record<string, unknown>) };
+  }
+  if (Array.isArray(schema.anyOf)) {
+    return {
+      ...schema,
+      anyOf: (schema.anyOf as Record<string, unknown>[]).map(addStrictConstraints),
+    };
+  }
+  return schema;
+}
+
+// Wrap a schema node as a union with null so OpenAI strict mode accepts an
+// explicit null in place of "field omitted". `anyOf` is strict-compatible and
+// works uniformly for string/number/enum/$ref/array/object nodes. Idempotent:
+// never double-adds a null branch to a schema that already has one.
+function makeNullable(schema: Record<string, unknown>): Record<string, unknown> {
+  if (Array.isArray(schema.anyOf)) {
+    const branches = schema.anyOf as Record<string, unknown>[];
+    const hasNull = branches.some((b) => b.type === 'null');
+    return hasNull ? schema : { ...schema, anyOf: [...branches, { type: 'null' }] };
+  }
+  return { anyOf: [schema, { type: 'null' }] };
+}
+
+// Slice 3.5-s2 — strict variant of toJsonSchemaParameters: the base JSON Schema
+// (with `$schema` already stripped) recursively hardened for OpenAI's
+// `strict: true` function-tool mode.
+export function toStrictJsonSchemaParameters(toolSpec: ToolSpec): Record<string, unknown> {
+  return addStrictConstraints(toJsonSchemaParameters(toolSpec));
+}
+
+// `strictForToolName` is the INTERNAL dotted name (e.g. 'plan.compose'). When
+// it matches a tool, that tool's parameters are hardened and `strict: true` is
+// set; all other tools keep the default (non-strict) projection. Slice 2.7-s4 —
+// `strictAll` hardens EVERY tool (the onboarding multi-tool auto path); it is
+// independent of `strictForToolName` and a tool is hardened if either applies.
+function toOpenAITools(
+  tools: ToolSpec[],
+  strictForToolName?: string,
+  strictAll?: boolean,
+): ChatCompletionTool[] {
+  return tools.map((spec) => {
+    const isStrict =
+      strictAll === true || (strictForToolName !== undefined && spec.name === strictForToolName);
+    return {
+      type: 'function',
+      function: {
+        name: toExternalName(spec.name),
+        description: spec.description,
+        parameters: isStrict ? toStrictJsonSchemaParameters(spec) : toJsonSchemaParameters(spec),
+        ...(isStrict ? { strict: true } : {}),
+      },
+    };
+  });
+}
+
+// Slice 3.5-s2 — builds the `tools` + `tool_choice` params. When
+// `forcedToolName` is set the named tool is forced and made strict; otherwise
+// the prior `tool_choice: 'auto'` behaviour is preserved exactly. Slice 2.7-s4 —
+// `strictAll` hardens every tool while keeping `tool_choice: 'auto'` (forced
+// mode takes precedence, so strictAll is ignored when a tool is forced).
+function buildToolParams(
+  tools: ToolSpec[],
+  forcedToolName: string | undefined,
+  strictAll?: boolean,
+): Pick<ChatCompletionCreateParams, 'tools' | 'tool_choice'> | Record<string, never> {
+  if (tools.length === 0) return {};
+  return {
+    tools: toOpenAITools(tools, forcedToolName, forcedToolName === undefined && strictAll === true),
+    tool_choice:
+      forcedToolName !== undefined
+        ? { type: 'function', function: { name: toExternalName(forcedToolName) } }
+        : 'auto',
+  };
 }
 
 function buildMessages(prompt: string, systemPrompt: string | undefined): ChatCompletionMessageParam[] {
@@ -255,7 +353,10 @@ export class OpenAIAdapter implements LLMProvider {
       messages: buildMessages(prompt, options.systemPrompt),
       ...(options.temperature !== undefined ? { temperature: options.temperature } : {}),
       ...(options.maxTokens !== undefined ? { max_tokens: options.maxTokens } : {}),
-      ...(tools.length > 0 ? { tools: toOpenAITools(tools), tool_choice: 'auto' } : {}),
+      ...(options.responseFormat !== undefined
+        ? { response_format: { type: options.responseFormat } }
+        : {}),
+      ...buildToolParams(tools, options.forcedToolName, options.strictAllTools),
       ...(this.storeCompletions ? { store: true } : {}),
       ...(this.storeCompletions && options.metadata !== undefined
         ? { metadata: options.metadata }
@@ -286,7 +387,10 @@ export class OpenAIAdapter implements LLMProvider {
       messages: buildMessagesFromLLM(messages),
       ...(options.temperature !== undefined ? { temperature: options.temperature } : {}),
       ...(options.maxTokens !== undefined ? { max_tokens: options.maxTokens } : {}),
-      ...(tools.length > 0 ? { tools: toOpenAITools(tools), tool_choice: 'auto' } : {}),
+      ...(options.responseFormat !== undefined
+        ? { response_format: { type: options.responseFormat } }
+        : {}),
+      ...buildToolParams(tools, options.forcedToolName, options.strictAllTools),
       ...(this.storeCompletions ? { store: true } : {}),
       ...(this.storeCompletions && options.metadata !== undefined
         ? { metadata: options.metadata }
@@ -373,5 +477,12 @@ export class OpenAIAdapter implements LLMProvider {
     } catch {
       return false;
     }
+  }
+
+  // Slice 3.5-s2 — OpenAI enforces forced `tool_choice` + `strict: true` schema
+  // validation at the decode layer, so the orchestrator can rely on
+  // `forcedToolName` to guarantee a schema-valid plan.compose call.
+  supportsStrictTools(): boolean {
+    return true;
   }
 }

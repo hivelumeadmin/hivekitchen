@@ -72,25 +72,25 @@ async function mockProfileGet(
 // ---------------------------------------------------------------------------
 
 test.describe('Story 12-S12 — orb breathing (AC#4)', () => {
-  test('orb has animate-pulse when pendingNudge is set and panel is closed', async ({ page }) => {
+  test('dot has animate-pulse when pendingNudge is set and at rest', async ({ page }) => {
     await page.goto('/app');
-    await seedLumiStore(page, { pendingNudge: NUDGE_TURN, isPanelOpen: false });
+    await seedLumiStore(page, { pendingNudge: NUDGE_TURN });
     await expect(page.getByRole('button', { name: /open lumi/i })).toHaveClass(/animate-pulse/);
   });
 
-  test('orb does NOT have animate-pulse when no nudge is pending', async ({ page }) => {
+  test('dot does NOT have animate-pulse when no nudge is pending', async ({ page }) => {
     await page.goto('/app');
-    await seedLumiStore(page, { pendingNudge: null, isPanelOpen: false });
+    await seedLumiStore(page, { pendingNudge: null });
     await expect(page.getByRole('button', { name: /open lumi/i })).not.toHaveClass(/animate-pulse/);
   });
 
-  test('orb does NOT have animate-pulse when panel is open (even with pending nudge)', async ({
+  test('dot does NOT have animate-pulse when summoned (even with pending nudge)', async ({
     page,
   }) => {
     await page.goto('/app');
-    // Seed panel open + pending nudge — breathing is suppressed while panel is showing.
-    await seedLumiStore(page, { pendingNudge: NUDGE_TURN, isPanelOpen: true });
-    // When panel is open the button aria-label becomes "Lumi is open".
+    // Seed summoned + pending nudge — breathing is suppressed while the sheet is showing.
+    await seedLumiStore(page, { pendingNudge: NUDGE_TURN, presenceState: 'summoned' });
+    // When summoned the dot aria-label becomes "Lumi is open".
     await expect(page.getByRole('button', { name: /lumi is open/i })).not.toHaveClass(
       /animate-pulse/,
     );
@@ -101,8 +101,8 @@ test.describe('Story 12-S12 — orb breathing (AC#4)', () => {
 // Opening the panel clears pendingNudge (AC#10)
 // ---------------------------------------------------------------------------
 
-test.describe('Story 12-S12 — openPanel clears pendingNudge (AC#10)', () => {
-  test('clicking the orb clears pendingNudge and stops the animation', async ({ page }) => {
+test.describe('Story 12-S12 — summon clears pendingNudge (AC#10)', () => {
+  test('tapping the dot clears pendingNudge and stops the animation', async ({ page }) => {
     await page.goto('/app');
     await seedLumiStore(page, { pendingNudge: NUDGE_TURN });
 
@@ -110,9 +110,9 @@ test.describe('Story 12-S12 — openPanel clears pendingNudge (AC#10)', () => {
     await expect(orb).toHaveClass(/animate-pulse/);
 
     await orb.click();
-    await expect(page.getByRole('complementary', { name: /lumi panel/i })).toBeVisible();
+    await expect(page.getByRole('dialog', { name: /lumi/i })).toBeVisible();
 
-    // After open: button label flips and animate-pulse is gone.
+    // After summon: dot label flips and animate-pulse is gone.
     const openOrb = page.getByRole('button', { name: /lumi is open/i });
     await expect(openOrb).not.toHaveClass(/animate-pulse/);
 

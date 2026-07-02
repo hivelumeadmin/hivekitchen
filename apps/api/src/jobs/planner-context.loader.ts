@@ -1,3 +1,4 @@
+import type { ChildSignalOutput } from '@hivekitchen/types';
 import type { ChildrenRepository } from '../modules/children/children.repository.js';
 import type { ChildPreferencesRepository } from '../modules/child-preferences/child-preferences.repository.js';
 import type { CulturalPriorRepository } from '../modules/cultural-priors/cultural-prior.repository.js';
@@ -7,14 +8,23 @@ import type { ExtraRulesRepository } from '../modules/children/extra-rules.repos
 import type { ExtraLibraryRepository } from '../modules/households/extra-library.repository.js';
 import type { PlanDayContextRepository } from '../modules/plans/plan-day-context.repository.js';
 import type {
+  CandidateSlateRow,
+  RecipesRepository,
+} from '../modules/recipe/recipes.repository.js';
+import type { PantryService } from '../modules/pantry/pantry.service.js';
+import type {
   PlannerBagComposition,
   PlannerCulturalContext,
   PlannerExtraLibraryItem,
   PlannerExtraProposal,
   PlannerExtraRules,
+  PlannerPantrySnapshot,
+  PlannerRecipeCandidate,
+  PlannerRecipeCandidateSlate,
   PlannerVariantEligibleChild,
-} from '../agents/orchestrator.js';
+} from '../agents/planner/context/assemble.js';
 import type { CulturalTemplateKey } from '../services/cultural-calendar.service.js';
+import { NotImplementedError } from '../common/errors.js';
 
 // Story 3.27 / 4-S11 — variant-eligible children, now derived from REAL rating
 // engagement rather than the manually-flipped children.variant_eligible MVP
@@ -138,6 +148,109 @@ export async function loadExtraLibraryForHousehold(
     component_type: i.component_type,
     is_allergen_free: i.is_allergen_free,
   }));
+}
+
+// Story 3-S36 — pre-load the pantry snapshot for the <pantry> planner block.
+// PantryService.read() throws NotImplementedError until Epic 6, so this returns
+// an empty snapshot today (the planner treats absent pantry as "no data"). The
+// wiring is forward-compatible: once pantry lands, the block populates with no
+// job change. Any read failure is swallowed — pantry is a soft hint, never a
+// reason to fail plan generation.
+export async function loadPantrySnapshotForHousehold(
+  householdId: string,
+  pantryService: PantryService,
+): Promise<PlannerPantrySnapshot> {
+  try {
+    const result = await pantryService.read({ household_id: householdId });
+    return { on_hand: result.items.map((i) => i.name).filter((n) => n.length > 0) };
+  } catch (err) {
+    if (err instanceof NotImplementedError) return { on_hand: [] };
+    throw err; // caller's .catch() logs and falls back to undefined → no pantry block
+  }
+}
+
+// Story 3-S36 — caps for the candidate slate. Per-slot cap bounds the
+// <recipe_candidates> block size; key-ingredient cap keeps each candidate line
+// short (allergen-relevant head nouns are what matter for judging fit).
+const CANDIDATE_SLATE_PER_SLOT_CAP = 12;
+const CANDIDATE_KEY_INGREDIENTS_CAP = 6;
+const SLOT_KINDS = ['main', 'snack', 'extra'] as const;
+type SlotKind = (typeof SLOT_KINDS)[number];
+
+// Story 3-S36 — pre-load + assemble the candidate recipe slate for the
+// <recipe_candidates> planner block. Reads every visible (non-banned) catalog
+// row, ranks by favourite → liked-signal → confidence → use_count → name, then
+// groups each row into every slot kind in its applicable_slots (defaulting to
+// 'main' when unset). childSignals (optional) folds the per-child "liked" bias
+// into ranking so liked recipes surface near the top of their group.
+export async function loadRecipeCandidatesForHousehold(
+  householdId: string,
+  recipesRepository: RecipesRepository,
+  childSignals?: ChildSignalOutput,
+): Promise<PlannerRecipeCandidateSlate> {
+  const rows = await recipesRepository.findCandidateSlateForHousehold(householdId);
+  return assembleRecipeCandidateSlate(rows, buildLikedNameSet(childSignals));
+}
+
+// Pure assembly — exported for unit testing the rank + group + cap logic
+// independent of the repository.
+export function assembleRecipeCandidateSlate(
+  rows: readonly CandidateSlateRow[],
+  likedNames: ReadonlySet<string>,
+): PlannerRecipeCandidateSlate {
+  const ranked = [...rows].sort((a, b) => compareCandidates(a, b, likedNames));
+  const groups: Record<SlotKind, PlannerRecipeCandidate[]> = { main: [], snack: [], extra: [] };
+  for (const row of ranked) {
+    const candidate = toCandidate(row);
+    const slots = row.applicable_slots.length > 0 ? row.applicable_slots : ['main'];
+    for (const slot of SLOT_KINDS) {
+      if (!slots.includes(slot)) continue;
+      if (groups[slot].length >= CANDIDATE_SLATE_PER_SLOT_CAP) continue;
+      groups[slot].push(candidate);
+    }
+  }
+  return groups;
+}
+
+function toCandidate(row: CandidateSlateRow): PlannerRecipeCandidate {
+  return {
+    // Story 3.5-s3 — carry the catalog UUID so the handle index can map a
+    // model-emitted handle (m1, e1, …) straight back to it without a DB lookup.
+    id: row.id,
+    name: row.canonical_name,
+    cuisine_tags: row.cuisine_tags,
+    allergen_flags: row.allergen_flags,
+    key_ingredients: row.ingredient_keys.slice(0, CANDIDATE_KEY_INGREDIENTS_CAP),
+    confidence: row.confidence_score,
+  };
+}
+
+function compareCandidates(
+  a: CandidateSlateRow,
+  b: CandidateSlateRow,
+  likedNames: ReadonlySet<string>,
+): number {
+  const aFav = a.is_household_favorite ? 1 : 0;
+  const bFav = b.is_household_favorite ? 1 : 0;
+  if (aFav !== bFav) return bFav - aFav;
+
+  const aLiked = likedNames.has(a.canonical_name.toLowerCase()) ? 1 : 0;
+  const bLiked = likedNames.has(b.canonical_name.toLowerCase()) ? 1 : 0;
+  if (aLiked !== bLiked) return bLiked - aLiked;
+
+  if (a.confidence_score !== b.confidence_score) return b.confidence_score - a.confidence_score;
+  if (a.use_count !== b.use_count) return b.use_count - a.use_count;
+  return a.canonical_name.localeCompare(b.canonical_name);
+}
+
+function buildLikedNameSet(signals?: ChildSignalOutput): Set<string> {
+  const set = new Set<string>();
+  if (signals === undefined) return set;
+  for (const child of signals.per_child) {
+    for (const item of child.liked) set.add(item.recipe_name.toLowerCase());
+  }
+  for (const fam of signals.family_liked) set.add(fam.recipe_name.toLowerCase());
+  return set;
 }
 
 export async function loadCulturalContextForHousehold(

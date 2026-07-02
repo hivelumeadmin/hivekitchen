@@ -1,4 +1,4 @@
-import type { TemplateState, Tier } from '@hivekitchen/types';
+import type { EnforcementLevel, TemplateState, Tier } from '@hivekitchen/types';
 import { BaseRepository } from '../../repository/base.repository.js';
 
 export interface CulturalPriorRow {
@@ -11,6 +11,8 @@ export interface CulturalPriorRow {
   label: string;
   tier: Tier;
   state: TemplateState;
+  // Slice 2.5-s7 — 5-rung enforcement gradient (migration 20260903000700).
+  enforcement: EnforcementLevel;
   presence: number;
   confidence: number;
   opted_in_at: string | null;
@@ -33,7 +35,7 @@ export interface TransitionTimestamps {
 }
 
 const PRIOR_COLUMNS =
-  'id, household_id, key, label, tier, state, presence, confidence, opted_in_at, opted_out_at, last_signal_at, created_at, updated_at';
+  'id, household_id, key, label, tier, state, enforcement, presence, confidence, opted_in_at, opted_out_at, last_signal_at, created_at, updated_at';
 
 export class CulturalPriorRepository extends BaseRepository {
   // ON CONFLICT (household_id, key) DO NOTHING — never overwrite a prior that
@@ -175,6 +177,27 @@ export class CulturalPriorRepository extends BaseRepository {
     return rows.map((r) => r.key);
   }
 
+  /**
+   * Story 7-S15 (Arc B) — household-scoped lookup by `key`. The kitchen-profile
+   * identity chips track priors by `key` (UNIQUE per household), not by UUID,
+   * so the key-addressed state endpoint resolves the id here before delegating
+   * to the ratify state machine. A cross-household key matches 0 rows → null →
+   * route surfaces 404 (no existence leak).
+   */
+  async findByKeyForHousehold(
+    householdId: string,
+    key: string,
+  ): Promise<CulturalPriorRow | null> {
+    const { data, error } = await this.client
+      .from('cultural_priors')
+      .select(PRIOR_COLUMNS)
+      .eq('household_id', householdId)
+      .eq('key', key)
+      .maybeSingle();
+    if (error) throw error;
+    return (data as CulturalPriorRow | null) ?? null;
+  }
+
   async findByIdForHousehold(
     householdId: string,
     priorId: string,
@@ -184,6 +207,31 @@ export class CulturalPriorRepository extends BaseRepository {
       .select(PRIOR_COLUMNS)
       .eq('household_id', householdId)
       .eq('id', priorId)
+      .maybeSingle();
+    if (error) throw error;
+    return (data as CulturalPriorRow | null) ?? null;
+  }
+
+  /**
+   * Story 7-S14 — parent-deterministic enforcement edit, keyed by the prior's
+   * `key` (the KitchenMap projection exposes key but not id; UNIQUE
+   * (household_id, key) makes it a stable identifier). household_id scope is
+   * defense-in-depth: a cross-household key matches 0 rows → returns null →
+   * route surfaces 404 (no existence leak). The DB trigger on cultural_priors
+   * bumps kitchen_map_version so the Redis kitchen-map cache invalidates. No
+   * state-machine transition — enforcement is orthogonal to `state`.
+   */
+  async updateEnforcementByKey(
+    householdId: string,
+    key: string,
+    enforcement: EnforcementLevel,
+  ): Promise<CulturalPriorRow | null> {
+    const { data, error } = await this.client
+      .from('cultural_priors')
+      .update({ enforcement, updated_at: new Date().toISOString() })
+      .eq('household_id', householdId)
+      .eq('key', key)
+      .select(PRIOR_COLUMNS)
       .maybeSingle();
     if (error) throw error;
     return (data as CulturalPriorRow | null) ?? null;

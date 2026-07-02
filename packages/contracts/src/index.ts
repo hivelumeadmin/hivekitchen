@@ -1,5 +1,7 @@
 export * from './auth.js';
 export * from './plan.js';
+export * from './plan-generate.js';
+export * from './auto-compose.js';
 export * from './lists.js';
 export * from './thread.js';
 export * from './voice.js';
@@ -37,6 +39,9 @@ export * from './recipe-vocabulary.js';
 export * from './child-signal.js';
 export * from './enforcement.js';
 export * from './kitchen-map.js';
+export * from './kitchen-profile-edit.js';
+export * from './kitchen-profile-soft-edit.js';
+export * from './snack-shelf.js';
 export * from './onboarding-tools.js';
 export * from './pantry.js';
 export * from './state-compliance.js';

@@ -10,6 +10,7 @@ import type { RatifyCulturalPriorBody } from '@hivekitchen/types';
 import { authorize } from '../../middleware/authorize.hook.js';
 import { ForbiddenError } from '../../common/errors.js';
 import { OnboardingAgent } from '../../agents/onboarding.agent.js';
+import { OpenAIAdapter } from '../../agents/providers/openai.adapter.js';
 import { ThreadRepository } from '../threads/thread.repository.js';
 import { CulturalPriorRepository } from './cultural-prior.repository.js';
 import { CulturalPriorService } from './cultural-prior.service.js';
@@ -17,7 +18,7 @@ import { CulturalPriorService } from './cultural-prior.service.js';
 const culturalPriorRoutesPlugin: FastifyPluginAsync = async (fastify) => {
   const repository = new CulturalPriorRepository(fastify.supabase);
   const threads = new ThreadRepository(fastify.supabase);
-  const agent = new OnboardingAgent(fastify.openai);
+  const agent = new OnboardingAgent(new OpenAIAdapter(fastify.openai));
   const service = new CulturalPriorService({
     repository,
     threads,

@@ -255,8 +255,12 @@ describe('AllergyGuardrailRepository.getRulesForHousehold', () => {
     expect(evaluate(otherChild, rules as AllergyRule[]).verdict).toBe('cleared');
   });
 
+  // Guardrail 1.4.0 — synonym expansion blocks via the DECLARED allergen, not
+  // the (removed) FALCPA floor. The household declares peanut/dairy household-
+  // wide; the canonical key still expands to its synonyms ("peanut butter",
+  // "skim milk").
   it('peanut-key synonym expansion blocks "peanut butter"', async () => {
-    const repo = makeRepo({ householdAllergens: null, childAllergens: [] });
+    const repo = makeRepo({ householdAllergens: ['peanut'], childAllergens: [] });
     const rules = await repo.getRulesForHousehold(HOUSEHOLD_ID);
     const items: PlanItemForGuardrail[] = [
       { child_id: CHILD_ID, day: 'monday', slot: 'main', ingredients: ['peanut butter'] },
@@ -266,7 +270,7 @@ describe('AllergyGuardrailRepository.getRulesForHousehold', () => {
   });
 
   it('dairy-key synonym expansion blocks "skim milk"', async () => {
-    const repo = makeRepo({ householdAllergens: null, childAllergens: [] });
+    const repo = makeRepo({ householdAllergens: ['dairy'], childAllergens: [] });
     const rules = await repo.getRulesForHousehold(HOUSEHOLD_ID);
     const items: PlanItemForGuardrail[] = [
       { child_id: CHILD_ID, day: 'tuesday', slot: 'main', ingredients: ['skim milk'] },

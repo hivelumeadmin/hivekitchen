@@ -7,12 +7,29 @@ interface DialogProps {
   titleId: string;
   descriptionId?: string;
   children: ReactNode;
+  // Optional chrome overrides (Epic 13-s2) so the warm corner Lumi sheet can
+  // reuse this dialog's focus-trap/escape/scrim/restore machinery while supplying
+  // its own look + placement. Omitted everywhere else → unchanged centered modal.
+  id?: string;
+  panelClassName?: string;
+  scrimClassName?: string;
+  placement?: 'center' | 'bottom-right';
 }
 
 const FOCUSABLE_SELECTOR =
   'a[href], button:not([disabled]), textarea:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])';
 
-export function Dialog({ open, onClose, titleId, descriptionId, children }: DialogProps) {
+export function Dialog({
+  open,
+  onClose,
+  titleId,
+  descriptionId,
+  children,
+  id,
+  panelClassName,
+  scrimClassName,
+  placement = 'center',
+}: DialogProps) {
   const dialogRef = useRef<HTMLDivElement | null>(null);
   const previouslyFocused = useRef<HTMLElement | null>(null);
   // Stable ref so the keydown closure never captures a stale onClose identity.
@@ -79,22 +96,31 @@ export function Dialog({ open, onClose, titleId, descriptionId, children }: Dial
 
   if (!open) return null;
 
+  const scrimClass = scrimClassName ?? 'bg-stone-900/60';
+  const wrapperPlacement =
+    placement === 'bottom-right'
+      ? 'items-end justify-end p-4 sm:p-6'
+      : 'items-center justify-center px-4';
+  const panelClass =
+    panelClassName ?? 'bg-white rounded-2xl max-w-2xl w-full max-h-[80vh] flex flex-col p-6';
+
   return createPortal(
     <>
       <div
-        className="fixed inset-0 bg-stone-900/60 z-40 motion-reduce:transition-none"
+        className={`fixed inset-0 z-40 motion-reduce:transition-none ${scrimClass}`}
         aria-hidden="true"
         onClick={onClose}
       />
-      <div className="fixed inset-0 z-50 flex items-center justify-center px-4 pointer-events-none">
+      <div className={`fixed inset-0 z-50 flex ${wrapperPlacement} pointer-events-none`}>
         <div
           ref={dialogRef}
+          id={id}
           role="dialog"
           aria-modal="true"
           aria-labelledby={titleId}
           aria-describedby={descriptionId}
           tabIndex={-1}
-          className="bg-white rounded-2xl max-w-2xl w-full max-h-[80vh] flex flex-col p-6 pointer-events-auto outline-none"
+          className={`${panelClass} pointer-events-auto outline-none`}
         >
           {children}
         </div>

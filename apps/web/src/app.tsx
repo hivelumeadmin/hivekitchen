@@ -13,15 +13,7 @@ import { DevKitchenProfilePage } from './routes/_dev-kitchen-profile.js';
 import { DevLoginPage } from './routes/_dev-login.js';
 import { DevLunchLinkPage } from './routes/_dev-lunch-link.js';
 import { DevOnboardingPage } from './routes/_dev-onboarding.js';
-import { DevOnboardingMockupsPage } from './routes/_dev-onboarding-mockups.js';
-import { DevOnboardingMoment1Page } from './routes/_dev-onboarding-moment-1.js';
-import { DevOnboardingMoment2Page } from './routes/_dev-onboarding-moment-2.js';
-import { DevOnboardingMoment3Page } from './routes/_dev-onboarding-moment-3.js';
-import { DevOnboardingMoment4Page } from './routes/_dev-onboarding-moment-4.js';
-import { DevOnboardingMoment5Page } from './routes/_dev-onboarding-moment-5.js';
-import { DevOnboardingMoment6Page } from './routes/_dev-onboarding-moment-6.js';
 import { DevTokensPage } from './routes/_dev-tokens.js';
-import { DevWeeklyPlanPage } from './routes/_dev-weekly-plan.js';
 import LoginPage from './routes/auth/login.js';
 import AuthCallbackPage from './routes/auth/callback.js';
 import ResetPasswordPage from './routes/auth/reset-password.js';
@@ -44,6 +36,7 @@ import EveningCheckinRoute from './routes/(app)/evening-checkin.js';
 import GroceryListRoute from './routes/(app)/grocery-list.js';
 import KitchenInspirationRoute from './routes/(app)/kitchen-inspiration.js';
 import KitchenProfileRoute from './routes/(app)/kitchen-profile.js';
+import SnackShelfRoute from './routes/(app)/snack-shelf.js';
 import MemoryRoute from './routes/(app)/memory.js';
 import HouseholdSettingsRoute from './routes/(app)/household-settings.js';
 import MemoryDashboardRoute from './routes/(app)/memory-dashboard.js';
@@ -100,6 +93,7 @@ const router = createBrowserRouter([
       { path: '/app/grocery-list', element: <GroceryListRoute /> },
       { path: '/app/inspiration', element: <KitchenInspirationRoute /> },
       { path: '/app/kitchen-profile', element: <KitchenProfileRoute /> },
+      { path: '/app/kitchen/snacks', element: <SnackShelfRoute /> },
       { path: '/app/memory', element: <MemoryRoute /> },
       { path: '/app/household/settings', element: <HouseholdSettingsRoute /> },
       { path: '/app/memory/dashboard', element: <MemoryDashboardRoute /> },
@@ -116,6 +110,7 @@ const router = createBrowserRouter([
 import { useLumiStore } from './stores/lumi.store.js';
 import { useAuthStore } from './stores/auth.store.js';
 import { tryRefreshSession } from './lib/fetch.js';
+import { DevTools } from './components/DevTools.js';
 
 if (import.meta.env.VITE_E2E && typeof window !== 'undefined') {
   (window as unknown as Record<string, unknown>).__lumiStore = useLumiStore;
@@ -123,11 +118,17 @@ if (import.meta.env.VITE_E2E && typeof window !== 'undefined') {
 }
 
 export function App() {
+  const isRestoring = useAuthStore((s) => s.isRestoring);
+
   // Restore session from the httpOnly refresh cookie on every page load.
-  // Silent — no loading gate. Routes handle their own unauthenticated states.
+  // isRestoring gates the router until tryRefreshSession settles — prevents
+  // route guards from seeing accessToken:null and redirecting to login before
+  // the refresh completes.
   useEffect(() => {
     void tryRefreshSession();
   }, []);
+
+  if (isRestoring) return null;
 
   if (
     import.meta.env.DEV &&
@@ -135,13 +136,6 @@ export function App() {
     window.location.pathname === '/_dev-tokens'
   ) {
     return <DevTokensPage />;
-  }
-  if (
-    import.meta.env.DEV &&
-    typeof window !== 'undefined' &&
-    window.location.pathname === '/_dev-weekly-plan'
-  ) {
-    return <DevWeeklyPlanPage />;
   }
   if (
     import.meta.env.DEV &&
@@ -177,55 +171,6 @@ export function App() {
     window.location.pathname === '/_dev-onboarding'
   ) {
     return <DevOnboardingPage />;
-  }
-  if (
-    import.meta.env.DEV &&
-    typeof window !== 'undefined' &&
-    window.location.pathname === '/_dev-onboarding-mockups'
-  ) {
-    return <DevOnboardingMockupsPage />;
-  }
-  if (
-    import.meta.env.DEV &&
-    typeof window !== 'undefined' &&
-    window.location.pathname === '/_dev-onboarding-moment-1'
-  ) {
-    return <DevOnboardingMoment1Page />;
-  }
-  if (
-    import.meta.env.DEV &&
-    typeof window !== 'undefined' &&
-    window.location.pathname === '/_dev-onboarding-moment-2'
-  ) {
-    return <DevOnboardingMoment2Page />;
-  }
-  if (
-    import.meta.env.DEV &&
-    typeof window !== 'undefined' &&
-    window.location.pathname === '/_dev-onboarding-moment-3'
-  ) {
-    return <DevOnboardingMoment3Page />;
-  }
-  if (
-    import.meta.env.DEV &&
-    typeof window !== 'undefined' &&
-    window.location.pathname === '/_dev-onboarding-moment-4'
-  ) {
-    return <DevOnboardingMoment4Page />;
-  }
-  if (
-    import.meta.env.DEV &&
-    typeof window !== 'undefined' &&
-    window.location.pathname === '/_dev-onboarding-moment-5'
-  ) {
-    return <DevOnboardingMoment5Page />;
-  }
-  if (
-    import.meta.env.DEV &&
-    typeof window !== 'undefined' &&
-    window.location.pathname === '/_dev-onboarding-moment-6'
-  ) {
-    return <DevOnboardingMoment6Page />;
   }
   if (
     import.meta.env.DEV &&
@@ -272,6 +217,7 @@ export function App() {
   return (
     <QueryProvider>
       <RouterProvider router={router} />
+      {import.meta.env.DEV && <DevTools />}
     </QueryProvider>
   );
 }

@@ -1,10 +1,11 @@
-import { describe, it, expect } from 'vitest';
-import type { PlanComposeTreeOutput } from '@hivekitchen/types';
+import { describe, it, expect, vi } from 'vitest';
+import type { PlanComposeTreeOutput, KitchenMap } from '@hivekitchen/types';
 import {
   buildCommitInputTree,
   deriveWeekId,
   getLocalSixPmUtcMs,
   getNextMondayFrom,
+  selectAutoComposeEligible,
 } from './plan-generation.job.js';
 
 const HOUSEHOLD_ID = '11111111-1111-4111-8111-111111111111';
@@ -14,8 +15,53 @@ const RECIPE_M1 = '44444444-4444-4444-8444-444444444444';
 const RECIPE_M2 = '55555555-5555-4555-8555-555555555555';
 const RECIPE_SNACK = '66666666-6666-4666-8666-666666666666';
 const RECIPE_CANDIDATE = '77777777-7777-4777-8777-777777777777';
+const SNACK_SKU_ID = '66666666-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
 const CHILD_A = '88888888-8888-4888-8888-888888888888';
 const CHILD_B = '99999999-9999-4999-8999-999999999990';
+
+describe('selectAutoComposeEligible (3-S35 cron gate)', () => {
+  const HH_A = 'aaaaaaaa-0000-4000-8000-000000000001';
+  const HH_B = 'bbbbbbbb-0000-4000-8000-000000000002';
+  const HH_C = 'cccccccc-0000-4000-8000-000000000003';
+
+  it('enqueues a household that is enabled, has a plan, and has no plan for the target week', () => {
+    const households = [{ id: HH_A, auto_compose_enabled: true }];
+    const result = selectAutoComposeEligible(households, new Set([HH_A]), new Set());
+    expect(result.map((h) => h.id)).toEqual([HH_A]);
+  });
+
+  it('skips a household with auto-compose disabled', () => {
+    const households = [{ id: HH_A, auto_compose_enabled: false }];
+    const result = selectAutoComposeEligible(households, new Set([HH_A]), new Set());
+    expect(result).toEqual([]);
+  });
+
+  it('skips a household with zero plans (not opted in by composing once)', () => {
+    const households = [{ id: HH_A, auto_compose_enabled: true }];
+    const result = selectAutoComposeEligible(households, new Set(), new Set());
+    expect(result).toEqual([]);
+  });
+
+  it('skips a household that already has a plan for the target week (idempotent)', () => {
+    const households = [{ id: HH_A, auto_compose_enabled: true }];
+    const result = selectAutoComposeEligible(households, new Set([HH_A]), new Set([HH_A]));
+    expect(result).toEqual([]);
+  });
+
+  it('filters a mixed set to only the eligible households', () => {
+    const households = [
+      { id: HH_A, auto_compose_enabled: true }, // enabled + has plan + week empty → enqueue
+      { id: HH_B, auto_compose_enabled: false }, // disabled → skip
+      { id: HH_C, auto_compose_enabled: true }, // has plan but week already composed → skip
+    ];
+    const result = selectAutoComposeEligible(
+      households,
+      new Set([HH_A, HH_C]),
+      new Set([HH_C]),
+    );
+    expect(result.map((h) => h.id)).toEqual([HH_A]);
+  });
+});
 
 describe('deriveWeekId', () => {
   it('returns a deterministic UUID-shaped string for the same weekOf', () => {
@@ -148,13 +194,18 @@ describe('buildCommitInputTree', () => {
     expect(input.main_assignments).toEqual(out.main_assignments);
   });
 
-  it('passes days[] through 1:1 (no flattening)', () => {
+  it('passes non-snack slots through 1:1 and strips model-emitted snack slots', () => {
+    // buildOutput() puts a model-emitted snack on monday. With no server snack
+    // assignment passed, that snack is stripped (snacks are server-assigned,
+    // Story 3-S40) while the main slot and wednesday pass through untouched.
     const out = buildOutput();
     const input = buildCommitInputTree(out, REQUEST_ID);
-    expect(input.days).toEqual(out.days);
     expect(input.days).toHaveLength(2);
-    expect(input.days[0]?.slots).toHaveLength(2);
+    expect(input.days[0]?.slots).toHaveLength(1);
+    expect(input.days[0]?.slots[0]?.slot_kind).toBe('main');
     expect(input.days[1]?.slots).toHaveLength(1);
+    expect(input.days[1]?.slots[0]?.slot_kind).toBe('main');
+    expect(input.days.flatMap((d) => d.slots).some((s) => s.slot_kind === 'snack')).toBe(false);
   });
 
   it('preserves variation attributes (portion_size, texture, removals, add_ons)', () => {
@@ -172,7 +223,9 @@ describe('buildCommitInputTree', () => {
     });
   });
 
-  it('preserves a snack slot with recipe_candidate_id (discover path)', () => {
+  it('strips a model-emitted snack slot when no server snack is assigned (Story 3-S40)', () => {
+    // Snacks are server-assigned; a model-emitted snack slot (even one carrying
+    // a discover recipe_candidate_id) is dropped rather than committed.
     const out = buildOutput({
       days: [
         {
@@ -188,9 +241,24 @@ describe('buildCommitInputTree', () => {
       ],
     });
     const input = buildCommitInputTree(out, REQUEST_ID);
-    expect(input.days[0]?.slots[0]).toEqual(
-      expect.objectContaining({ recipe_candidate_id: RECIPE_CANDIDATE }),
+    expect(input.days[0]?.slots).toHaveLength(0);
+  });
+
+  it('injects the deterministic snack slot from snackSlots, replacing any model snack', () => {
+    // buildOutput() monday carries a model snack (recipe_id) + a main. The
+    // server assignment must replace the model snack with exactly one snack_sku
+    // slot; wednesday (no assignment) keeps only its main.
+    const out = buildOutput();
+    const input = buildCommitInputTree(out, REQUEST_ID, [
+      { day: 'monday', snack_sku_id: SNACK_SKU_ID, child_ids: [CHILD_A, CHILD_B] },
+    ]);
+    const mondaySnacks = (input.days[0]?.slots ?? []).filter((s) => s.slot_kind === 'snack');
+    expect(mondaySnacks).toHaveLength(1);
+    expect(mondaySnacks[0]).toEqual(
+      expect.objectContaining({ slot_kind: 'snack', snack_sku_id: SNACK_SKU_ID }),
     );
+    expect((mondaySnacks[0] as { recipe_id?: string }).recipe_id).toBeUndefined();
+    expect((input.days[1]?.slots ?? []).some((s) => s.slot_kind === 'snack')).toBe(false);
   });
 
   it('does not surface a week_id field (canonical model drops plans.week_id)', () => {
@@ -201,5 +269,164 @@ describe('buildCommitInputTree', () => {
   it('does not surface a flat items field (legacy CommitPlanInput shape)', () => {
     const input = buildCommitInputTree(buildOutput(), REQUEST_ID);
     expect(input).not.toHaveProperty('items');
+  });
+});
+
+// Story 3-S32: kitchenMap loading behavior in the plan-generation worker.
+// The worker calls kitchenMapService.get() with a .catch fallback so a
+// KitchenMap load failure never blocks plan generation.
+// These tests verify the fallback contract using the same inline pattern
+// as the worker (AC 12).
+describe('kitchenMap loading fallback (AC 12 — Story 3-S32)', () => {
+  function buildMinimalKitchenMap(): KitchenMap {
+    return {
+      household: {
+        id: HOUSEHOLD_ID,
+        tier: 'standard',
+        tier_variant: 'control',
+        timezone: 'UTC',
+        display_name: 'Test Family',
+        cultural_identifiers: [],
+        dietary_preferences: [],
+        declared_allergens: [],
+      },
+      caregivers: [],
+      children: [
+        {
+          id: CHILD_A,
+          name: 'Asha',
+          age_band: 'child',
+          declared_allergens: [],
+          cultural_identifiers: [],
+          dietary_preferences: [],
+          bag_composition: { main: true, snack: true, extra: false },
+          bag_composition_pattern: null,
+          school_policies: [],
+          extra_rules: { pinned: [], banned: [] },
+        },
+      ],
+      cultural: { active: [], suggested: [] },
+      memory: { nodes: [] },
+      household_extras: { library: [] },
+      recipes: { favourites: [], banned: [] },
+      allergens: [],
+      dietary: [],
+      food_preferences: [],
+      favorite_lunches: [],
+      rules: [],
+      meta: {
+        composed_at: '2026-06-17T00:00:00.000Z',
+        map_version: 1,
+        schema_version: '1.1.0',
+        is_complete: true,
+        required_set_complete: true,
+      },
+    };
+  }
+
+  it('resolves with the KitchenMap when kitchenMapService.get succeeds', async () => {
+    const fixture = buildMinimalKitchenMap();
+    const kitchenMapService = { get: vi.fn().mockResolvedValue(fixture) };
+    const logger = { warn: vi.fn() };
+
+    const result = await kitchenMapService.get(HOUSEHOLD_ID).catch((err: unknown) => {
+      logger.warn({ err, householdId: HOUSEHOLD_ID }, 'kitchenMap load failed — proceeding without pre-loaded context');
+      return undefined;
+    });
+
+    expect(kitchenMapService.get).toHaveBeenCalledWith(HOUSEHOLD_ID);
+    expect(result).toBe(fixture);
+  });
+
+  it('resolves with undefined and logs warn when kitchenMapService.get rejects', async () => {
+    const error = new Error('Redis connection timeout');
+    const kitchenMapService = { get: vi.fn().mockRejectedValue(error) };
+    const logger = { warn: vi.fn() };
+
+    const result = await kitchenMapService.get(HOUSEHOLD_ID).catch((err: unknown) => {
+      logger.warn({ err, householdId: HOUSEHOLD_ID }, 'kitchenMap load failed — proceeding without pre-loaded context');
+      return undefined;
+    });
+
+    expect(kitchenMapService.get).toHaveBeenCalledWith(HOUSEHOLD_ID);
+    expect(result).toBeUndefined();
+    expect(logger.warn).toHaveBeenCalledOnce();
+    expect(logger.warn).toHaveBeenCalledWith(
+      { err: error, householdId: HOUSEHOLD_ID },
+      'kitchenMap load failed — proceeding without pre-loaded context',
+    );
+  });
+
+  it('kitchenMap from successful load is passed through to planWeek opts', async () => {
+    const fixture = buildMinimalKitchenMap();
+    const kitchenMapService = { get: vi.fn().mockResolvedValue(fixture) };
+    const planWeek = vi.fn().mockResolvedValue({
+      plan_id: PLAN_ID,
+      household_id: HOUSEHOLD_ID,
+      week_of: '2026-11-09',
+      prompt_version: 'v2.5.0',
+      main_assignments: [],
+      days: [],
+    });
+
+    const kitchenMap = await kitchenMapService.get(HOUSEHOLD_ID).catch(() => undefined);
+
+    await planWeek({ householdId: HOUSEHOLD_ID, weekOf: '2026-11-09', requestId: REQUEST_ID, kitchenMap });
+
+    expect(planWeek).toHaveBeenCalledWith(
+      expect.objectContaining({ kitchenMap: fixture }),
+    );
+  });
+});
+
+// Story 3-S34 (AC 8) — the worker threads job.data.planned_days into BOTH the
+// initial and the guardrail-retry planWeek() calls. Mirrors the worker's inline
+// destructure + pass-through using the same convention as the kitchenMap tests
+// above (the worker body itself runs only under BullMQ).
+describe('planned_days threading (AC 8 — Story 3-S34)', () => {
+  it('passes job.data.planned_days to planWeek as plannedDays', async () => {
+    const job = {
+      data: {
+        household_id: HOUSEHOLD_ID,
+        week_of: '2026-06-22',
+        request_id: REQUEST_ID,
+        planned_days: ['monday', 'tuesday', 'wednesday', 'thursday', 'friday'] as const,
+      },
+    };
+    const planWeek = vi.fn().mockResolvedValue(buildOutput());
+
+    const { household_id, week_of, request_id, planned_days } = job.data;
+    await planWeek({
+      householdId: household_id,
+      weekOf: week_of,
+      requestId: request_id,
+      plannedDays: planned_days,
+    });
+
+    expect(planWeek).toHaveBeenCalledWith(
+      expect.objectContaining({ plannedDays: job.data.planned_days }),
+    );
+  });
+
+  it('threads undefined planned_days (cron path) — planWeek receives plannedDays: undefined', async () => {
+    const job = {
+      data: {
+        household_id: HOUSEHOLD_ID,
+        week_of: '2026-06-22',
+        request_id: REQUEST_ID,
+        // cron fan-out leaves planned_days absent
+      } as { household_id: string; week_of: string; request_id: string; planned_days?: readonly string[] },
+    };
+    const planWeek = vi.fn().mockResolvedValue(buildOutput());
+
+    const { household_id, week_of, request_id, planned_days } = job.data;
+    await planWeek({
+      householdId: household_id,
+      weekOf: week_of,
+      requestId: request_id,
+      plannedDays: planned_days,
+    });
+
+    expect(planWeek.mock.calls[0]?.[0]).toHaveProperty('plannedDays', undefined);
   });
 });

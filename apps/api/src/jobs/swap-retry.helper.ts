@@ -234,10 +234,10 @@ export async function trySurgicalSwap(opts: {
 }
 
 // Pulls each blocked tuple's variation out of the previousCommit tree so the
-// agent sees what to minimally edit. The 9a guardrail walks per-variation
-// `add_ons` as the ingredient set; we surface that here as
-// original_ingredients so the swap prompt's "minimal-edit" framing stays
-// honest. Removals are included only for context — the agent uses the same
+// agent sees what to minimally edit. original_ingredients is the union of the
+// variation's add_ons and the specific ingredients that triggered the block —
+// the latter covers Story 3.S39 base-ingredient blocks where add_ons is empty.
+// Removals are included only for context — the agent uses the same
 // (add_ons, removals) pair to describe its replacement.
 function buildBlockedItemsFromTree(
   previousCommit: CommitPlanTreeInput,
@@ -286,7 +286,9 @@ function buildBlockedItemsFromTree(
       child_id: entry.child_id,
       day: entry.day,
       slot: entry.slot,
-      original_ingredients: variation.add_ons ?? [],
+      original_ingredients: [
+        ...new Set([...(variation.add_ons ?? []), ...entry.blocked_by.map((b) => b.ingredient)]),
+      ],
       blocked_by: entry.blocked_by,
     });
   }

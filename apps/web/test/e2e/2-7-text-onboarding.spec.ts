@@ -155,4 +155,61 @@ test.describe('Story 2-7: text-equivalent onboarding path', () => {
     await page.getByRole('button', { name: /finish onboarding/i }).click();
     await expect(page.getByRole('heading', { name: /one final step/i })).toBeVisible();
   });
+
+  // Epic 13-s6 (AC5/AC8) — recognition ending → "Show me my first week" → consent.
+  // The recognition CTA replaces the old finalize gate; this covers the new surface.
+  test('"Show me my first week" on the recognition ending advances to the consent step', async ({
+    page,
+  }) => {
+    const THREAD_ID = '88888888-8888-4888-8888-888888888888';
+    await page.route('**/v1/onboarding/text/turn', (route) =>
+      route.fulfill({
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          thread_id: THREAD_ID,
+          turn_id: '99999999-9999-4999-8999-999999999999',
+          lumi_turn_id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+          lumi_response: "Your kitchen is ready.",
+          moment_key: 'summary',
+          required_set_complete: true,
+          missing_required_set: [],
+          is_complete: false,
+        }),
+      }),
+    );
+    await page.route('**/v1/onboarding/text/finalize', (route) =>
+      route.fulfill({
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          thread_id: THREAD_ID,
+          summary: { cultural_templates: [], palate_notes: [], allergens_mentioned: [] },
+        }),
+      }),
+    );
+    await page.route('**/v1/compliance/consent-declaration', (route) =>
+      route.fulfill({
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ document_version: 'v1', content: '# Consent\nA short doc.' }),
+      }),
+    );
+    await page.route('**/v1/kitchen/map**', (route) =>
+      route.fulfill({
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({}),
+      }),
+    );
+
+    await loginAndNavigate(page, '/onboarding', { isFirstLogin: true });
+    await page.getByRole('button', { name: /i'd rather type/i }).click();
+    await page.getByLabel(/your message to lumi/i).fill('All done.');
+    await page.getByRole('button', { name: /^send$/i }).click();
+
+    await expect(page.getByTestId('recognition-ending')).toBeVisible();
+    await page.getByTestId('show-first-week-button').click();
+    await expect(page.getByRole('heading', { name: /one final step/i })).toBeVisible();
+  });
 });

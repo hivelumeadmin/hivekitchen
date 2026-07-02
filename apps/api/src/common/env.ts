@@ -62,6 +62,13 @@ const EnvSchema = z
         z.boolean(),
       )
       .default(true),
+    // Slice 2.7-s3 — when set to a directory path, the OnboardingService
+    // writes one per-turn agentic trace artifact (assembled prompt + dynamic
+    // blocks + tool calls + usage + moment-state before/after) into it,
+    // mirroring the planner's PLAN_TRACE_DIR. Off by default — leave unset in
+    // prod. The tracer reads process.env.ONBOARDING_TRACE_DIR directly (same
+    // pattern as createPlanTracer); this entry documents + validates the var.
+    ONBOARDING_TRACE_DIR: optionalEmptyAsUndefined(z.string().min(1)),
 
     ELEVENLABS_API_KEY: z.string().min(1),
     ELEVENLABS_VOICE_ID: z.string().min(1),
@@ -94,10 +101,11 @@ const EnvSchema = z
     OTEL_EXPORTER_OTLP_HEADERS: optionalEmptyAsUndefined(z.string()),
 
     // Comma-separated list of origins allowed to hit the API (used by @fastify/cors).
-    // Default in development covers the Vite dev server; production deploys must set explicitly.
+    // Default in development covers both Vite port 5173 and its fallback 5174;
+    // production deploys must set this explicitly.
     CORS_ALLOWED_ORIGINS: z
       .string()
-      .default('http://localhost:5173')
+      .default('http://localhost:5173,http://localhost:5174')
       .transform((s) =>
         s
           .split(',')

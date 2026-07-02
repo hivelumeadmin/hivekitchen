@@ -12,7 +12,7 @@ import { useAuthStore } from '@/stores/auth.store.js';
 import { FreshnessState } from './FreshnessState.js';
 import { PlanTile, type ChildDotColor, type ChildInfo } from './PlanTile.js';
 import { BriefWhyPanel } from './BriefWhyPanel.js';
-import { PlanActionSection } from './PlanActionSection.js';
+import { PlanActionBar } from './PlanActionBar.js';
 import { PlanPageFooter } from './PlanPageFooter.js';
 import { usePlanQuery } from './queries.js';
 import { useBriefStateQuery } from './useBriefStateQuery.js';
@@ -215,7 +215,7 @@ export function PlanPage() {
     weekDateRange !== null ? `${eyebrowBase} · ${weekDateRange}` : eyebrowBase;
 
   return (
-    <main className="mx-auto w-full max-w-7xl flex-grow px-8 pb-0">
+    <main className="mx-auto w-full max-w-7xl flex-grow px-8 pb-28">
       {/* Hero section */}
       <section className="py-16 mb-0">
         <p className="font-sans text-xs font-medium uppercase tracking-[0.15em] text-fg-muted mb-4">
@@ -300,8 +300,9 @@ export function PlanPage() {
         <BriefWhyPanel brief={brief} />
       </div>
 
-      {/* Actions */}
-      <PlanActionSection />
+      {/* Actions — fixed StickyBottomBar (out of flow); pb-28 on <main> clears it.
+          Placed before the footer in DOM so keyboard tab order matches visual order. */}
+      <PlanActionBar />
 
       {/* Footer */}
       <PlanPageFooter />

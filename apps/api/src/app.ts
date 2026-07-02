@@ -33,6 +33,7 @@ import { sseDispatcherPlugin } from './plugins/sse-dispatcher.plugin.js';
 import { vocabularyPlugin } from './modules/vocabulary/vocabulary.plugin.js';
 import { kitchenMapPlugin } from './modules/kitchen-map/kitchen-map.plugin.js';
 import { kitchenMapRoutes } from './modules/kitchen-map/kitchen-map.routes.js';
+import { kitchenProfileEditRoutes } from './modules/households/kitchen-profile-edit.routes.js';
 import { auditPartitionRotationPlugin } from './jobs/audit-partition-rotation.job.js';
 import { planGenerationJobPlugin } from './jobs/plan-generation.job.js';
 import { planRegenerationJobPlugin } from './jobs/plan-regeneration.job.js';
@@ -272,6 +273,7 @@ export async function buildApp(opts: BuildAppOptions) {
   await app.register(childRequestRoutes);
   await app.register(presenceRoutes);
   await app.register(kitchenMapRoutes);
+  await app.register(kitchenProfileEditRoutes);
 
   return app;
 }

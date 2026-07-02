@@ -54,7 +54,7 @@ const orchestratorHookPlugin: FastifyPluginAsync = async (fastify) => {
   // in cultural-prior.routes.ts), so construct it inline using shared decorators.
   const culturalPriorRepository = new CulturalPriorRepository(fastify.supabase);
   const threads = new ThreadRepository(fastify.supabase);
-  const onboardingAgent = new OnboardingAgent(fastify.openai);
+  const onboardingAgent = new OnboardingAgent(new OpenAIAdapter(fastify.openai));
   const culturalPriorService = new CulturalPriorService({
     repository: culturalPriorRepository,
     threads,

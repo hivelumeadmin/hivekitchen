@@ -19,7 +19,7 @@ import { BriefWhyPanel } from './BriefWhyPanel.js';
 import { LumiCallout } from './LumiCallout.js';
 import { DisambiguationPicker } from './DisambiguationPicker.js';
 import { FreshnessState } from './FreshnessState.js';
-import { PlanActionSection } from './PlanActionSection.js';
+import { PlanActionBar } from './PlanActionBar.js';
 import { PlanTile, type PlanTileState, type ChildDotColor, type ChildInfo } from './PlanTile.js';
 import { PackerChip } from './PackerChip.js';
 import { PresenceIndicator } from '@/features/thread/PresenceIndicator.js';
@@ -29,9 +29,12 @@ import { usePlanQuery } from './queries.js';
 import { QueryKeys } from '@/lib/realtime/query-keys.js';
 import { useBriefStateQuery } from './useBriefStateQuery.js';
 import {
+  useGenerateOnDemandMutation,
   useRequestRegenerationMutation,
   useUpdateSovereigntyModeMutation,
 } from './mutations.js';
+import { PrimaryButton } from '@/components/PrimaryButton.js';
+import { SparkleIcon } from '@/components/icons.js';
 import { adaptPlansResponse, type DayTreeView } from './tree-adapter.js';
 
 const CHILD_COLORS: readonly ChildDotColor[] = ['foliage', 'lumi-terracotta'];
@@ -60,6 +63,78 @@ function DevTriggerButton() {
       {status === 'error' && 'Failed — check API logs'}
       {status === 'idle' && '[dev] Generate plan now'}
     </button>
+  );
+}
+
+// Story 3-S34 — on-demand ("compose now") trigger. Shown in the empty state so
+// a parent with no plan yet can compose immediately instead of waiting for the
+// Friday auto-generation. The server derives the window (rest-of-this-week vs
+// next-week-full) from the household timezone; on success we poll the brief
+// until the plan lands (this branch unmounts when brief !== null).
+function ComposeMyPlanButton() {
+  const queryClient = useQueryClient();
+  const generate = useGenerateOnDemandMutation();
+  const [isComposing, setIsComposing] = useState(false);
+  const [hasError, setHasError] = useState(false);
+
+  useEffect(() => {
+    if (!isComposing) return;
+    let attempts = 0;
+    const id = setInterval(() => {
+      attempts += 1;
+      // After ~2 min (24 × 5 s) the background job has likely failed.
+      // Surface an error and restore the button so the parent can retry.
+      if (attempts >= 24) {
+        clearInterval(id);
+        setIsComposing(false);
+        setHasError(true);
+        return;
+      }
+      void queryClient.invalidateQueries({ queryKey: ['brief'] });
+      void queryClient.invalidateQueries({ queryKey: ['plan'] });
+    }, 5000);
+    return () => clearInterval(id);
+  }, [isComposing, queryClient]);
+
+  if (isComposing) {
+    return (
+      <p className="text-sm text-fg-muted text-center" role="status">
+        Lumi is composing your plan… this can take a minute.
+      </p>
+    );
+  }
+
+  function handleClick() {
+    setHasError(false);
+    // Capture the key once so React Query retries reuse it — a fresh UUID per
+    // retry would defeat deduplication and consume extra rate-limit slots.
+    const idempotencyKey = crypto.randomUUID();
+    generate.mutate(idempotencyKey, {
+      onSuccess: () => {
+        setIsComposing(true);
+        void queryClient.invalidateQueries({ queryKey: ['brief'] });
+        void queryClient.invalidateQueries({ queryKey: ['plan'] });
+      },
+      onError: () => setHasError(true),
+    });
+  }
+
+  return (
+    <div className="flex flex-col items-center gap-2">
+      <PrimaryButton
+        onClick={handleClick}
+        disabled={generate.isPending}
+        icon={<SparkleIcon />}
+        ariaLabel="Compose my plan now"
+      >
+        {generate.isPending ? 'Starting…' : 'Compose my plan'}
+      </PrimaryButton>
+      {hasError && (
+        <p className="text-xs text-clay-600" role="alert">
+          Couldn&rsquo;t start composing. Please try again.
+        </p>
+      )}
+    </div>
   );
 }
 
@@ -331,8 +406,19 @@ export function BriefCanvas() {
   if (isLoading && brief === null) {
     return (
       <main className="mx-auto w-full max-w-7xl flex-grow px-6 pt-12 pb-24">
+        {/* Story 13-s4 — thread-less draft state. No Lumi thread is hydrated;
+            this is the calm "finished answer, still being laid out" surface the
+            valet shows before the brief lands. The dot pulse falls back to
+            static under prefers-reduced-motion. */}
+        <p
+          className="mb-8 flex items-center gap-2 text-sm text-fg-muted"
+          role="status"
+        >
+          <span className="h-2 w-2 rounded-full bg-lumi-terracotta animate-pulse motion-reduce:animate-none" />
+          Lumi is drafting&hellip;
+        </p>
         <div
-          className="animate-pulse flex flex-col gap-6"
+          className="animate-pulse motion-reduce:animate-none flex flex-col gap-6"
           aria-busy="true"
           aria-label="Loading plan"
         >
@@ -371,6 +457,7 @@ export function BriefCanvas() {
           <p className="max-w-sm text-base text-fg-muted text-center">
             Lumi is preparing your first plan. Check back Sunday evening.
           </p>
+          <ComposeMyPlanButton />
           {import.meta.env.DEV && <DevTriggerButton />}
         </div>
       </main>
@@ -378,7 +465,7 @@ export function BriefCanvas() {
   }
 
   return (
-    <main className="mx-auto w-full max-w-7xl flex-grow px-6 pt-12 pb-24">
+    <main className="mx-auto w-full max-w-7xl flex-grow px-6 pt-12 pb-28">
       {/* Story 5-S1 — multi-tab presence; self-hides when no partner is on Brief. */}
       <div className="mb-2 flex justify-end">
         <PresenceIndicator surface={{ kind: 'brief', id: householdId ?? '' }} />
@@ -449,11 +536,21 @@ export function BriefCanvas() {
           <PageHeader
             eyebrow="This week's brief"
             headlineSize="lg"
-            description={brief.lumi_note !== '' ? brief.lumi_note : undefined}
-            className="mb-12"
+            className="mb-6"
           >
             {brief.moment_headline !== '' ? brief.moment_headline : 'Your week, ready'}
           </PageHeader>
+
+          {/* Story 13-s4 — the lumi_note is the answer-in-Lumi's-voice with a
+              woven-in visible-memory phrase. Terracotta "Lumi —" tag marks the
+              voice channel (DESIGN.md LumiNote pattern); composer-templated, no
+              chat turn. Renders nothing when the note is empty. */}
+          {brief.lumi_note !== '' && (
+            <p className="mb-12 max-w-2xl text-base leading-relaxed text-fg-muted">
+              <span className="font-semibold text-lumi-terracotta">Lumi&nbsp;— </span>
+              {brief.lumi_note}
+            </p>
+          )}
 
           {/* Slice 4-S15 — pending child "request a lunch" suggestions. Renders
               nothing when there are none. */}
@@ -604,13 +701,13 @@ export function BriefCanvas() {
             <LumiCallout
               callout={learningMomentCallout}
               householdId={brief.household_id}
-              onTellMore={() => useLumiStore.getState().openPanel()}
+              onTellMore={() => useLumiStore.getState().summon()}
             />
           )}
 
           <BriefWhyPanel brief={brief} />
 
-          <PlanActionSection
+          <PlanActionBar
             onSwapDay={
               canSwap && tileSummaries.length > 0
                 ? () => {

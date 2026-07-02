@@ -36,7 +36,11 @@ async function mockSessionCreate(
   );
 }
 
-test.describe('Story 2-6b: HK-owned WebSocket voice pipeline — SPA behaviour', () => {
+// Epic 13-s6 (Q2a) — the actionable "Start with voice" entry is deferred: the
+// select step is now text-first and voice is presented as "coming soon" only.
+// These specs enter the voice surface via that removed button. Skipped (not
+// deleted) — restore alongside the future voice slice that re-routes the entry.
+test.describe.skip('Story 2-6b: HK-owned WebSocket voice pipeline — SPA behaviour', () => {
   test('session.ready WS frame transitions UI to "Listening…"', async ({ page }) => {
     await mockSessionCreate(page);
 

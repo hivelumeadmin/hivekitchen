@@ -102,7 +102,10 @@ export default function MemoryDashboardRoute() {
         setLoadState('error');
       }
     })();
-    return () => controller.abort();
+    return () => {
+      controller.abort();
+      didLoad.current = false;
+    };
   }, [accessToken, householdId, navigate]);
 
   return (

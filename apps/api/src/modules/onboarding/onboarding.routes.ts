@@ -10,6 +10,7 @@ import {
 } from '@hivekitchen/contracts';
 import { ThreadRepository } from '../threads/thread.repository.js';
 import { OnboardingAgent } from '../../agents/onboarding.agent.js';
+import { OpenAIAdapter } from '../../agents/providers/openai.adapter.js';
 import { authorize } from '../../middleware/authorize.hook.js';
 import { ChildAllergensRepository } from '../children/child-allergens.repository.js';
 import { ChildrenRepository } from '../children/children.repository.js';
@@ -37,7 +38,7 @@ import { OnboardingService } from './onboarding.service.js';
 
 const onboardingRoutesPlugin: FastifyPluginAsync = async (fastify) => {
   const threads = new ThreadRepository(fastify.supabase);
-  const agent = new OnboardingAgent(fastify.openai);
+  const agent = new OnboardingAgent(new OpenAIAdapter(fastify.openai));
   const culturalPriorRepository = new CulturalPriorRepository(fastify.supabase);
   const culturalPriorService = new CulturalPriorService({
     repository: culturalPriorRepository,

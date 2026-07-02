@@ -4,7 +4,9 @@ import type { AuthUser } from '@hivekitchen/types';
 interface AuthState {
   accessToken: string | null;
   user: AuthUser | null;
+  isRestoring: boolean;
   setSession: (accessToken: string, user: AuthUser) => void;
+  setRestored: () => void;
   updateUser: (partial: Partial<AuthUser>) => void;
   clearSession: () => void;
   logout: () => Promise<void>;
@@ -13,7 +15,9 @@ interface AuthState {
 export const useAuthStore = create<AuthState>()((set) => ({
   accessToken: null,
   user: null,
+  isRestoring: true,
   setSession: (accessToken, user) => set({ accessToken, user }),
+  setRestored: () => set({ isRestoring: false }),
   updateUser: (partial) =>
     set((state) => ({
       user: state.user ? { ...state.user, ...partial } : null,

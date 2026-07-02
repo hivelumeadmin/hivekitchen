@@ -102,6 +102,7 @@ function makeMainSlot(planDayId: string, slotId: string = SLOT_MAIN): PlanSlotRo
     main_assignment_id: MAIN_ASSIGNMENT_ID,
     recipe_id: null,
     extra_kind: null,
+    snack_sku_id: null,
     paused_at: null,
     created_at: TS,
     updated_at: TS,

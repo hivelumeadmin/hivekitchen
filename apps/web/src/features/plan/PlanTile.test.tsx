@@ -416,6 +416,52 @@ describe('PlanTile — paused state (Story 3.12)', () => {
   });
 });
 
+// Story 13-s7 — progressive slot disclosure on focus.
+describe('PlanTile — slot disclosure (Story 13-s7)', () => {
+  const multiSlot = makeSummary({
+    day: 'monday',
+    items: [
+      { plan_item_id: null, child_id: CHILD_ID, slot: 'main', ingredients: ['rice', 'beans'] },
+      { plan_item_id: null, child_id: CHILD_ID, slot: 'snack', ingredients: ['apple'] },
+    ],
+  });
+
+  it('hides the slot groups at rest', () => {
+    render(<PlanTile summary={multiSlot} />);
+    expect(screen.queryByText('Main')).toBeNull();
+    expect(screen.queryByText('Snack')).toBeNull();
+  });
+
+  it('reveals Main and Snack slot groups when the tile is focused', () => {
+    render(<PlanTile summary={multiSlot} />);
+    fireEvent.focus(screen.getByLabelText('Monday'));
+    expect(screen.getByText('Main')).toBeDefined();
+    expect(screen.getByText('Snack')).toBeDefined();
+  });
+
+  it('collapses the slot groups again on blur', () => {
+    render(<PlanTile summary={multiSlot} />);
+    const article = screen.getByLabelText('Monday');
+    fireEvent.focus(article);
+    expect(screen.getByText('Main')).toBeDefined();
+    fireEvent.blur(article);
+    expect(screen.queryByText('Main')).toBeNull();
+  });
+
+  it('does not disclose slot groups for a single-slot day', () => {
+    render(<PlanTile summary={makeSummary({ day: 'monday' })} />);
+    fireEvent.focus(screen.getByLabelText('Monday'));
+    expect(screen.queryByText('Main')).toBeNull();
+  });
+
+  it('does not expand on a past (non-interactive) tile', () => {
+    vi.setSystemTime(WEDNESDAY_NOON);
+    render(<PlanTile summary={multiSlot} />);
+    fireEvent.focus(screen.getByLabelText('Monday'));
+    expect(screen.queryByText('Main')).toBeNull();
+  });
+});
+
 // Slice 5-S9 — "Why this?" ghost button.
 describe('PlanTile — Why this? (5-S9)', () => {
   it('renders the "Why this?" button when onWhyThis is provided', () => {

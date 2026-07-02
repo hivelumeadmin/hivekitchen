@@ -46,6 +46,8 @@ export interface DaySlotView {
   readonly slot_kind: SlotKind;
   readonly plan_slot_id: string;
   readonly recipe_id: string | null;
+  // Story 3-S40 — snack slots carry snack_sku_id instead of recipe_id.
+  readonly snack_sku_id: string | null;
   readonly main_assignment_id: string | null;
   readonly extra_kind: ExtraKind | null;
   readonly variations: readonly PlanSlotVariationRow[];
@@ -116,6 +118,7 @@ export function buildDayViews(
       slot_kind: s.slot_kind,
       plan_slot_id: s.id,
       recipe_id: s.recipe_id,
+      snack_sku_id: (s as { snack_sku_id?: string | null }).snack_sku_id ?? null,
       main_assignment_id: s.main_assignment_id,
       extra_kind: s.extra_kind,
       variations: variationsBySlotId.get(s.id) ?? [],
@@ -161,6 +164,9 @@ export function dayViewToPlanTileSummary(view: DayTreeView): PlanTileSummary {
         // level ingredient projection exists yet. Empty array → "Plan pending".
         ingredients: v.add_ons,
         ...(slot.recipe_id !== null ? { recipe_id: slot.recipe_id } : {}),
+        // Story 3-S40 — carry snack_sku_id; name resolution on the raw-tree
+        // PlanPage surface lands with the recipe-name projection follow-up.
+        ...(slot.snack_sku_id !== null ? { snack_sku_id: slot.snack_sku_id } : {}),
       });
     }
   }

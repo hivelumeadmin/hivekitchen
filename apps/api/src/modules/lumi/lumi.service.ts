@@ -1,12 +1,15 @@
 import type { FastifyBaseLogger } from 'fastify';
 import type Redis from 'ioredis';
 import type OpenAI from 'openai';
+import type { ChatCompletionTool } from 'openai/resources/chat/completions';
 import { z } from 'zod';
+import { ENFORCEMENT_LEVEL_VALUES, EnforcementLevelSchema } from '@hivekitchen/contracts';
 import type { LumiSurface, LumiContextSignal, NudgeTrigger, Turn } from '@hivekitchen/types';
 import { ForbiddenError, ValidationError } from '../../common/errors.js';
 import { getTimeOfDayBand } from '../../common/time-of-day.js';
 import { LumiAgent } from '../../agents/lumi.agent.js';
 import type { ChildrenRepository } from '../children/children.repository.js';
+import type { FoodPreferencesRepository } from '../food-preferences/food-preferences.repository.js';
 import type { HouseholdAllergensRepository } from '../households/household-allergens.repository.js';
 import type { MemoryService } from '../memory/memory.service.js';
 import type { VoiceTranscriptRepository } from '../voice/voice-transcript.repository.js';
@@ -27,6 +30,10 @@ export interface LumiServiceDeps {
   voiceTranscriptRepository: VoiceTranscriptRepository;
   memoryService?: MemoryService;
   familyLanguageRepository?: FamilyLanguageRepository;
+  // 7-S15 — present only on the request-scoped LumiService (lumi.routes); the
+  // nudge-job site omits it. When absent, the kitchen-profile tool path is
+  // skipped and the turn behaves as a plain conversational reply.
+  foodPreferencesRepository?: FoodPreferencesRepository;
 }
 
 export interface CreateTalkSessionInput {
@@ -74,6 +81,46 @@ Rules:
 - Ignore greetings, questions, logistics, and Lumi's own reply content.
 - Max 3 signals per turn. Signal facets must be distinct.`.trim();
 
+// 7-S15 — Kitchen Profile shared-tastes tool. OpenAI function names cannot
+// contain dots, so the internal `food_preference.declare` is exposed on the
+// wire as `food_preference__declare` (the convention OnboardingAgent uses).
+const KITCHEN_PROFILE_SURFACE = 'kitchen-profile';
+const KITCHEN_PROFILE_DECLARE_TOOL = 'food_preference__declare';
+const FOOD_VALENCES = ['loves', 'likes', 'neutral', 'dislikes', 'refuses'] as const;
+
+const KITCHEN_PROFILE_TOOLS: ChatCompletionTool[] = [
+  {
+    type: 'function',
+    function: {
+      name: KITCHEN_PROFILE_DECLARE_TOOL,
+      description:
+        "Record a HOUSEHOLD-WIDE food preference from the parent's shared-tastes note (applies to the whole family, not one child). Call once per distinct food or taste the parent mentions liking or avoiding.",
+      parameters: {
+        type: 'object',
+        properties: {
+          item: {
+            type: 'string',
+            description:
+              'Food item or taste in plain text (encrypted at rest). e.g. "broccoli", "spicy food".',
+          },
+          valence: { type: 'string', enum: [...FOOD_VALENCES] },
+          enforcement: { type: 'string', enum: [...ENFORCEMENT_LEVEL_VALUES] },
+        },
+        required: ['item', 'valence', 'enforcement'],
+        additionalProperties: false,
+      },
+    },
+  },
+];
+
+// Validates the LLM-supplied tool arguments before the DB write — untrusted
+// boundary (project-context: every inbound boundary is Zod-parsed).
+const FoodPreferenceDeclareArgsSchema = z.object({
+  item: z.string().min(1).max(120),
+  valence: z.enum(FOOD_VALENCES),
+  enforcement: EnforcementLevelSchema,
+});
+
 // 'onboarding' is a valid LumiSurface (see lumi.ts contract comment) but the
 // onboarding voice flow has its own dedicated route at POST /v1/voice/sessions
 // (Story 2.6/2.6b). Ambient tap-to-talk is for non-onboarding surfaces only.
@@ -96,6 +143,7 @@ export class LumiService {
   private readonly voiceTranscriptRepository: VoiceTranscriptRepository;
   private readonly memoryService?: MemoryService;
   private readonly familyLanguageRepository?: FamilyLanguageRepository;
+  private readonly foodPreferencesRepository?: FoodPreferencesRepository;
 
   constructor(deps: LumiServiceDeps) {
     this.repository = deps.repository;
@@ -107,6 +155,7 @@ export class LumiService {
     this.voiceTranscriptRepository = deps.voiceTranscriptRepository;
     this.memoryService = deps.memoryService;
     this.familyLanguageRepository = deps.familyLanguageRepository;
+    this.foodPreferencesRepository = deps.foodPreferencesRepository;
   }
 
   async createTalkSession(input: CreateTalkSessionInput): Promise<CreateTalkSessionResult> {
@@ -198,6 +247,12 @@ export class LumiService {
       modality,
     });
 
+    // 7-S15 — only the kitchen-profile surface (and only when the food-pref
+    // repo is wired) exposes the shared-tastes tool; every other turn keeps the
+    // single-shot path.
+    const useKitchenProfileTools =
+      surface === KITCHEN_PROFILE_SURFACE && this.foodPreferencesRepository !== undefined;
+
     const agent = new LumiAgent(this.openai);
     const lumiText = await agent.respond({
       message: input.message,
@@ -207,6 +262,12 @@ export class LumiService {
       householdSnapshot,
       modality,
       conversationalContext: { timeOfDayBand: getTimeOfDayBand(new Date()) },
+      ...(useKitchenProfileTools
+        ? {
+            tools: KITCHEN_PROFILE_TOOLS,
+            toolExecutor: this.buildKitchenProfileToolExecutor(input.householdId),
+          }
+        : {}),
     });
 
     const lumiTurn = await this.repository.insertTurn({
@@ -344,6 +405,59 @@ export class LumiService {
         'passive enrichment extraction failed — non-fatal',
       );
     }
+  }
+
+  // 7-S15 — executor for the kitchen-profile shared-tastes tool. Closes over
+  // the household id; the LumiAgent stays DB-unaware (ADR-002). Errors are
+  // returned to the model as JSON so it can recover in prose, never thrown.
+  private buildKitchenProfileToolExecutor(
+    householdId: string,
+  ): (name: string, args: Record<string, unknown>) => Promise<string> {
+    return async (name, args) => {
+      if (name !== KITCHEN_PROFILE_DECLARE_TOOL) {
+        return JSON.stringify({ error: `Unknown tool: ${name}` });
+      }
+      const repo = this.foodPreferencesRepository;
+      if (repo === undefined) {
+        return JSON.stringify({ error: 'food preferences are unavailable' });
+      }
+      const parsed = FoodPreferenceDeclareArgsSchema.safeParse(args);
+      if (!parsed.success) {
+        return JSON.stringify({ error: 'invalid food_preference.declare arguments' });
+      }
+      try {
+        // child_id: null = household-scoped (shared tastes). PII guard: the
+        // `item` value is encrypted at rest and is NEVER logged.
+        await repo.declare(
+          householdId,
+          null,
+          parsed.data.item,
+          parsed.data.valence,
+          parsed.data.enforcement,
+          'parent_edited',
+        );
+        this.logger.info(
+          {
+            module: 'lumi',
+            action: 'lumi.kitchen_profile.food_preference_declared',
+            household_id: householdId,
+          },
+          'household food preference declared via kitchen-profile shared-tastes tool',
+        );
+        return JSON.stringify({ declared: true });
+      } catch (err) {
+        this.logger.warn(
+          {
+            err,
+            module: 'lumi',
+            action: 'lumi.kitchen_profile.food_preference_declare_failed',
+            household_id: householdId,
+          },
+          'food_preference.declare failed — returning error to model',
+        );
+        return JSON.stringify({ error: 'declare failed' });
+      }
+    };
   }
 
   async persistNudge(input: {

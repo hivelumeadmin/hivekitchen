@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { z } from 'zod';
 import type OpenAI from 'openai';
-import { OpenAIAdapter } from './openai.adapter.js';
+import { OpenAIAdapter, toStrictJsonSchemaParameters } from './openai.adapter.js';
 import type { LLMCallOptions } from './llm-provider.interface.js';
 import type { ToolSpec } from '../tools.manifest.js';
 
@@ -350,6 +350,121 @@ describe('OpenAIAdapter', () => {
         { headers?: Record<string, string> } | undefined,
       ];
       expect(requestOptions?.headers?.['OpenAI-Data-Privacy']).toBeUndefined();
+    });
+  });
+
+  describe('slice 3.5-s2 — strict structured output (forcedToolName)', () => {
+    const STRICT_SCHEMA = z.object({
+      household_id: z.string(),
+      nested: z.object({ a: z.number(), b: z.string() }),
+      list: z.array(z.object({ c: z.boolean() })),
+      optionalField: z.string().optional(),
+    });
+
+    function strictTool(name = 'plan.compose'): ToolSpec {
+      return {
+        name,
+        description: 'compose the plan',
+        inputSchema: STRICT_SCHEMA,
+        outputSchema: STRICT_SCHEMA,
+        maxLatencyMs: 4000,
+        fn: vi.fn(),
+      };
+    }
+
+    describe('toStrictJsonSchemaParameters', () => {
+      it('adds additionalProperties:false on the root and every nested object', () => {
+        const params = toStrictJsonSchemaParameters(strictTool());
+        const props = params.properties as Record<string, Record<string, unknown>>;
+        expect(params.additionalProperties).toBe(false);
+        expect(props.nested.additionalProperties).toBe(false);
+        expect((props.list.items as Record<string, unknown>).additionalProperties).toBe(false);
+      });
+
+      it('moves every property — including optionals — into required at each object level', () => {
+        const params = toStrictJsonSchemaParameters(strictTool());
+        const props = params.properties as Record<string, Record<string, unknown>>;
+        expect(params.required).toEqual(
+          expect.arrayContaining(['household_id', 'nested', 'list', 'optionalField']),
+        );
+        expect(params.required).toHaveLength(4);
+        expect(props.nested.required).toEqual(expect.arrayContaining(['a', 'b']));
+      });
+
+      it('makes originally-optional fields nullable (anyOf with null) while keeping required ones plain', () => {
+        const params = toStrictJsonSchemaParameters(strictTool());
+        const props = params.properties as Record<string, Record<string, unknown>>;
+        // optionalField was `.optional()` → wrapped as a union with null so the
+        // model can emit null for "absent" (stripped before Zod re-validation).
+        expect(props.optionalField.anyOf).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({ type: 'string' }),
+            { type: 'null' },
+          ]),
+        );
+        // required fields stay plain (not null-wrapped).
+        expect(props.household_id.type).toBe('string');
+        expect(props.household_id.anyOf).toBeUndefined();
+      });
+
+      it('leaves non-object nodes (string, number, array shell) unmodified', () => {
+        const params = toStrictJsonSchemaParameters(strictTool());
+        const props = params.properties as Record<string, Record<string, unknown>>;
+        expect(props.household_id.type).toBe('string');
+        expect(props.household_id.additionalProperties).toBeUndefined();
+        expect(props.list.type).toBe('array');
+        expect(props.list.additionalProperties).toBeUndefined();
+      });
+
+      it('strips the $schema draft marker', () => {
+        const params = toStrictJsonSchemaParameters(strictTool());
+        expect('$schema' in params).toBe(false);
+      });
+    });
+
+    it('forces tool_choice to the named tool and marks only it strict', async () => {
+      const create = vi.fn().mockResolvedValue(buildResponse({ content: 'ok' }));
+      const adapter = new OpenAIAdapter(buildClient(create));
+
+      await adapter.completeWithMessages(
+        [{ role: 'user', content: 'go' }],
+        [strictTool('plan.compose'), strictTool('recipe.search')],
+        { ...BASE_OPTIONS, forcedToolName: 'plan.compose' },
+      );
+
+      const [params] = create.mock.calls[0] as [
+        {
+          tool_choice: { type: string; function: { name: string } };
+          tools: Array<{ function: { name: string; strict?: boolean } }>;
+        },
+      ];
+      expect(params.tool_choice).toEqual({ type: 'function', function: { name: 'plan__compose' } });
+      const composeTool = params.tools.find((t) => t.function.name === 'plan__compose');
+      const searchTool = params.tools.find((t) => t.function.name === 'recipe__search');
+      expect(composeTool?.function.strict).toBe(true);
+      expect(searchTool?.function.strict).toBeUndefined();
+    });
+
+    it('keeps tool_choice "auto" and omits strict when forcedToolName is absent', async () => {
+      const create = vi.fn().mockResolvedValue(buildResponse({ content: 'ok' }));
+      const adapter = new OpenAIAdapter(buildClient(create));
+
+      await adapter.completeWithMessages(
+        [{ role: 'user', content: 'go' }],
+        [strictTool('plan.compose')],
+        BASE_OPTIONS,
+      );
+
+      const [params] = create.mock.calls[0] as [
+        { tool_choice: unknown; tools: Array<{ function: { strict?: boolean } }> },
+      ];
+      expect(params.tool_choice).toBe('auto');
+      expect(params.tools[0]?.function.strict).toBeUndefined();
+    });
+
+    it('reports supportsStrictTools() === true', () => {
+      const adapter = new OpenAIAdapter(buildClient(vi.fn()));
+      expect(adapter.supportsStrictTools()).toBe(true);
     });
   });
 

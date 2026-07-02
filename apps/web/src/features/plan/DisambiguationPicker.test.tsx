@@ -37,6 +37,7 @@ function makeSlot(overrides: Partial<DaySlotView> = {}): DaySlotView {
     slot_kind: 'main',
     plan_slot_id: SLOT_MAIN,
     recipe_id: null,
+    snack_sku_id: null,
     main_assignment_id: MAIN_ASSIGNMENT_ID,
     extra_kind: null,
     variations: [
@@ -99,6 +100,7 @@ function multiSlotDayView(): DayTreeView {
     slot_kind: 'snack',
     plan_slot_id: SLOT_SNACK,
     recipe_id: '00000000-0000-4000-8000-000000000040',
+    snack_sku_id: null,
     main_assignment_id: null,
     extra_kind: null,
     variations: [
@@ -369,6 +371,7 @@ describe('DisambiguationPicker — Swap Main / L3 proposal flow', () => {
           slot_kind: 'snack',
           plan_slot_id: SLOT_SNACK,
           recipe_id: '00000000-0000-4000-8000-000000000040',
+          snack_sku_id: null,
           main_assignment_id: null,
           extra_kind: null,
           variations: [],

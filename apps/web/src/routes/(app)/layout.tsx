@@ -1,9 +1,10 @@
+import { useState } from 'react';
 import { Outlet, useMatch } from 'react-router-dom';
 import { useScope } from '@hivekitchen/ui';
 import { AppFooter } from '@/components/AppFooter.js';
 import { AppHeader } from '@/components/AppHeader.js';
-import { LumiOrb } from '@/components/LumiOrb.js';
-import { LumiPanel } from '@/components/LumiPanel.js';
+import { AppSidebar } from '@/components/AppSidebar.js';
+import { LumiPresence } from '@/components/LumiPresence.js';
 import { VoiceSessionProvider } from '@/contexts/VoiceSessionContext.js';
 import { useLumiVoiceSession } from '@/hooks/useLumiVoiceSession.js';
 import { useLumiNudgeSSE } from '@/hooks/useLumiNudgeSSE.js';
@@ -13,6 +14,7 @@ import { useAuthStore } from '@/stores/auth.store.js';
 export default function AppScopeLayout() {
   useScope('app-scope');
   const onLunchRoute = useMatch('/lunch/*');
+  const [mobileOpen, setMobileOpen] = useState(false);
 
   // Story 12-S12 — subscribe to proactive Lumi nudges so the orb breathes the
   // moment a nudge lands. Keyed on accessToken: the EventSource reopens on login
@@ -21,7 +23,7 @@ export default function AppScopeLayout() {
   useLumiNudgeSSE(accessToken);
 
   // Mount the ambient voice session hook at layout level so it survives route
-  // changes and both LumiOrb and LumiPanel can access startSession/endSession
+  // changes and the LumiPresence dot + sheet can access startSession/endSession
   // via VoiceSessionContext without prop-drilling.
   const { startSession, endSession } = useLumiVoiceSession({
     // Turns are appended to the thread inside the hook via the store; here we
@@ -34,14 +36,25 @@ export default function AppScopeLayout() {
 
   return (
     <VoiceSessionProvider startSession={startSession} endSession={endSession}>
-      <div className="flex min-h-screen flex-col bg-bg text-fg">
-        <AppHeader />
-        <div className="flex-grow">
-          <Outlet />
+      <div className="flex min-h-screen bg-bg text-fg">
+        {/* Sidebar suppressed on the child-scope lunch-link surface */}
+        {!onLunchRoute && (
+          <AppSidebar
+            mobileOpen={mobileOpen}
+            onMobileClose={() => setMobileOpen(false)}
+          />
+        )}
+
+        {/* Main column: header + scrollable content + footer */}
+        <div className="flex flex-1 flex-col min-w-0">
+          <AppHeader onMenuToggle={onLunchRoute ? undefined : () => setMobileOpen((v) => !v)} />
+          <div className="flex-grow">
+            <Outlet />
+          </div>
+          <AppFooter />
         </div>
-        <AppFooter />
-        {!onLunchRoute && <LumiOrb />}
-        {!onLunchRoute && <LumiPanel />}
+
+        {!onLunchRoute && <LumiPresence />}
       </div>
     </VoiceSessionProvider>
   );

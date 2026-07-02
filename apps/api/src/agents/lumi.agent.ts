@@ -1,4 +1,8 @@
 import type OpenAI from 'openai';
+import type {
+  ChatCompletionMessageParam,
+  ChatCompletionTool,
+} from 'openai/resources/chat/completions';
 import type { LumiSurface, LumiContextSignal, NudgeTrigger, Turn } from '@hivekitchen/types';
 import type { TimeOfDayBand } from '../common/time-of-day.js';
 import { LUMI_BASE_PERSONA } from './prompts/lumi-base.prompt.js';
@@ -17,6 +21,14 @@ export interface LumiAgentRespondInput {
   conversationalContext?: {
     timeOfDayBand: TimeOfDayBand;
   };
+  // 7-S15 — when BOTH are present (kitchen-profile shared-tastes edits), respond
+  // runs a tool-call loop instead of a single shot: the model may call a tool,
+  // the executor (supplied by LumiService — the only DB-aware layer, keeping
+  // this agent stateless per ADR-002) runs it, and the JSON result feeds back
+  // until the model emits prose. Absent for every other turn, which keeps the
+  // single-shot path byte-for-byte unchanged.
+  tools?: ChatCompletionTool[];
+  toolExecutor?: (name: string, args: Record<string, unknown>) => Promise<string>;
 }
 
 // Story 12-S11 — input for a one-shot proactive nudge (no conversation history;
@@ -37,6 +49,10 @@ const LUMI_TEMPERATURE = 0.7;
 
 const LUMI_FALLBACK_REPLY = 'Let me think that through.';
 
+// 7-S15 — hard cap on tool-call round-trips, guarding against a model that
+// loops on malformed output. Kitchen-profile turns use 0–few tool calls.
+const LUMI_MAX_TOOL_ITERATIONS = 5;
+
 type ChatMessage = { role: 'system' | 'user' | 'assistant'; content: string };
 
 // Real LLM dispatch (Story 12-S9). Assembles the system prompt in the
@@ -49,16 +65,80 @@ export class LumiAgent {
 
   async respond(input: LumiAgentRespondInput): Promise<string> {
     const systemPrompt = this.buildSystemPrompt(input);
-    const messages = this.buildMessages(systemPrompt, input.conversationHistory, input.message);
+    const baseMessages = this.buildMessages(systemPrompt, input.conversationHistory, input.message);
+
+    if (input.tools !== undefined && input.tools.length > 0 && input.toolExecutor !== undefined) {
+      return this.respondWithTools(baseMessages, input.tools, input.toolExecutor);
+    }
 
     const completion = await this.openai.chat.completions.create({
       model: LUMI_MODEL,
-      messages,
+      messages: baseMessages,
       temperature: LUMI_TEMPERATURE,
       max_tokens: LUMI_MAX_TOKENS,
     });
 
     return completion.choices[0]?.message?.content ?? LUMI_FALLBACK_REPLY;
+  }
+
+  // 7-S15 — tool-call loop. Mirrors OnboardingAgent.respondWithTools but stays
+  // minimal: LumiService owns the wire tool names, so the executor receives the
+  // function name verbatim and maps it. Tool errors are returned to the model
+  // as JSON (so it can recover in prose), never thrown out of the loop.
+  private async respondWithTools(
+    baseMessages: ChatMessage[],
+    tools: ChatCompletionTool[],
+    toolExecutor: (name: string, args: Record<string, unknown>) => Promise<string>,
+  ): Promise<string> {
+    const messages: ChatCompletionMessageParam[] = baseMessages.map(
+      (m): ChatCompletionMessageParam => ({ role: m.role, content: m.content }),
+    );
+
+    for (let iter = 0; iter < LUMI_MAX_TOOL_ITERATIONS; iter++) {
+      const completion = await this.openai.chat.completions.create({
+        model: LUMI_MODEL,
+        messages,
+        tools,
+        tool_choice: 'auto',
+        temperature: LUMI_TEMPERATURE,
+        max_tokens: LUMI_MAX_TOKENS,
+      });
+      const choice = completion.choices[0];
+      if (!choice) return LUMI_FALLBACK_REPLY;
+
+      const msg = choice.message;
+      const toolCalls = msg.tool_calls ?? [];
+      if (toolCalls.length === 0 || choice.finish_reason === 'stop') {
+        return msg.content ?? LUMI_FALLBACK_REPLY;
+      }
+
+      messages.push({ role: 'assistant', content: msg.content, tool_calls: toolCalls });
+
+      for (const tc of toolCalls) {
+        if (tc.type !== 'function') continue;
+        let args: Record<string, unknown> = {};
+        try {
+          const parsed: unknown = JSON.parse(tc.function.arguments);
+          if (parsed !== null && typeof parsed === 'object') {
+            args = parsed as Record<string, unknown>;
+          }
+        } catch {
+          args = {};
+        }
+        const result = await toolExecutor(tc.function.name, args);
+        messages.push({ role: 'tool', tool_call_id: tc.id, content: result });
+      }
+    }
+
+    // Cap exhausted — one final tool-free call so the user gets prose rather
+    // than a dangling tool turn.
+    const final = await this.openai.chat.completions.create({
+      model: LUMI_MODEL,
+      messages,
+      temperature: LUMI_TEMPERATURE,
+      max_tokens: LUMI_MAX_TOKENS,
+    });
+    return final.choices[0]?.message?.content ?? LUMI_FALLBACK_REPLY;
   }
 
   // Story 12-S11 — one-shot proactive message. Unlike respond(), there is no
@@ -142,7 +222,7 @@ export class LumiAgent {
       const instruction =
         timeOfDayBand === 'morning' || timeOfDayBand === 'afternoon'
           ? 'The parent is likely in a hurry. Keep your reply to one or two sentences — direct and warm, not terse.'
-          : 'The parent has time to reflect. A warm 2–4 sentence reply is welcome — be specific to this family, not generic.';
+          : 'The parent has time. A warm 2–3 sentences, specific to this family. Even with time, do not pad or invite more chat — say the useful thing and stop.';
       parts.push(`\n# Conversational Context\nTime of day: ${timeOfDayBand}\n${instruction}`);
     }
 

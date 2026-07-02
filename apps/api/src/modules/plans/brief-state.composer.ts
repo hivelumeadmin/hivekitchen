@@ -11,6 +11,8 @@ import type {
 import type { AuditService } from '../../audit/audit.service.js';
 import type { LunchLinkSessionRepository } from './lunch-link-session.repository.js';
 import type { MemoryRepository } from '../memory/memory.repository.js';
+import type { SnackSkuRepository } from '../recipe/snack-sku.repository.js';
+import type { RecipesRepository } from '../recipe/recipes.repository.js';
 import type {
   ClearedAllergyEntry,
   PlanDayRow,
@@ -34,6 +36,13 @@ export interface BriefStateComposerDeps {
   // Slice 5-S8: optional so existing tests that construct the composer without a
   // memory repo remain valid. When absent, buildLearningMomentCallout returns null.
   memoryRepository?: MemoryRepository;
+  // Story 3-S40 (AC6): optional so existing tests remain valid. When absent,
+  // snack-SKU tiles carry snack_sku_id but no resolved display name.
+  snackSkuRepository?: SnackSkuRepository;
+  // Resolves main/extra slot recipe_ids → canonical_name for the tile dish line.
+  // Optional so existing tests remain valid; when absent, main/extra tiles carry
+  // recipe_id but no name (the dish line falls back to "Plan pending").
+  recipesRepository?: RecipesRepository;
 }
 
 const SCHOOL_DAYS = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'] as const;
@@ -57,6 +66,8 @@ export class BriefStateComposer {
   private readonly auditService: AuditService;
   private readonly logger: FastifyBaseLogger;
   private readonly memoryRepository: MemoryRepository | undefined;
+  private readonly snackSkuRepository: SnackSkuRepository | undefined;
+  private readonly recipesRepository: RecipesRepository | undefined;
 
   constructor(deps: BriefStateComposerDeps) {
     this.plansRepo = deps.plansRepository;
@@ -66,6 +77,8 @@ export class BriefStateComposer {
     this.auditService = deps.auditService;
     this.logger = deps.logger;
     this.memoryRepository = deps.memoryRepository;
+    this.snackSkuRepository = deps.snackSkuRepository;
+    this.recipesRepository = deps.recipesRepository;
   }
 
   // Slice 5-S8 — evaluate the "I noticed" threshold. Returns a callout when ≥3
@@ -302,6 +315,40 @@ export class BriefStateComposer {
       const tree = composePlanTree({ days, mainAssignments, slots, variations });
       const previousTileSummaries = previousBrief?.payload?.tile_summaries ?? null;
 
+      // Story 3-S40 (AC6) — resolve snack-SKU display names for the tile dish
+      // line. Snack-SKU slots have no recipe_id, so they never get a name from
+      // the recipe-name projection; batch-read snack_skus.name here. No-op when
+      // the repository isn't wired (existing tests) or no snack slots exist.
+      const snackSkuIds = [
+        ...new Set(
+          slots
+            .map((s) => (s as { snack_sku_id?: string | null }).snack_sku_id)
+            .filter((id): id is string => id != null),
+        ),
+      ];
+      const snackSkuNames =
+        this.snackSkuRepository && snackSkuIds.length > 0
+          ? await this.snackSkuRepository.findNamesByIds(snackSkuIds)
+          : new Map<string, string>();
+
+      // Resolve main/extra recipe display names for the tile dish line. Main
+      // slots dereference recipe_id via their main_assignment; extra slots carry
+      // recipe_id directly. Without this, main/extra tiles had only a recipe_id
+      // (no name) so the dish line rendered "Plan pending". No-op when the repo
+      // isn't wired (existing tests) or no recipe slots exist.
+      const recipeIds = [
+        ...new Set([
+          ...mainAssignments.map((m) => m.recipe_id),
+          ...slots
+            .map((s) => s.recipe_id)
+            .filter((id): id is string => id != null),
+        ]),
+      ];
+      const recipeNames =
+        this.recipesRepository && recipeIds.length > 0
+          ? await this.recipesRepository.findNamesByIds(recipeIds)
+          : new Map<string, string>();
+
       // Slice 5-S8 — "I noticed" learning-moment callout. Read the suppress
       // window from the previous payload, then evaluate the turn-sourced
       // threshold. Sequential (after the parallel block) because it needs
@@ -313,19 +360,31 @@ export class BriefStateComposer {
         suppressedUntil,
       );
 
+      // Story 13-s4 — compose the tile + cleared-allergy projections first so the
+      // deterministic editorial prose (answer-as-a-sentence headline + visible-
+      // memory lumi_note) can be templated from them. No LLM, no memory pipeline.
+      const tileSummaries = this.buildTileSummariesTree(
+        tree,
+        suppressionByDay,
+        ratingsMap,
+        snackSkuNames,
+        recipeNames,
+      );
+      const clearedAllergies = this.buildClearedAllergiesTree(tree, children);
+      const { moment_headline, lumi_note } = composeEditorialProse({
+        tileSummaries,
+        clearedAllergies,
+      });
+
       const upsertInput: BriefStateUpsertInput = {
         household_id: householdId,
         plan_id: plan.id,
-        moment_headline: '',
-        lumi_note: '',
+        moment_headline,
+        lumi_note,
         memory_prose: '',
         payload: {
-          tile_summaries: this.buildTileSummariesTree(
-            tree,
-            suppressionByDay,
-            ratingsMap,
-          ),
-          cleared_allergies: this.buildClearedAllergiesTree(tree, children),
+          tile_summaries: tileSummaries,
+          cleared_allergies: clearedAllergies,
           scaffolding_diff: this.buildScaffoldingDiffTree(
             previousTileSummaries,
             tree,
@@ -393,6 +452,8 @@ export class BriefStateComposer {
     tree: PlanTree,
     suppressionByDay: Map<string, string[]>,
     ratingsMap: Map<string, Map<string, 'loved' | 'ok' | 'not-really'>>,
+    snackSkuNames: ReadonlyMap<string, string> = new Map(),
+    recipeNames: ReadonlyMap<string, string> = new Map(),
   ): PlanTileSummary[] {
     const out: PlanTileSummary[] = [];
     for (const dayNode of tree.days) {
@@ -416,6 +477,18 @@ export class BriefStateComposer {
           // composition produces at least one variation per slot.
           continue;
         }
+        // Story 3-S40 — snack-SKU slots carry snack_sku_id instead of recipe_id.
+        const tileSnackSkuId = (slotNode.slot as { snack_sku_id?: string | null }).snack_sku_id ?? null;
+        // AC6 — resolve the SKU's display name for the tile dish line.
+        const tileSnackName =
+          tileSnackSkuId != null ? snackSkuNames.get(tileSnackSkuId) ?? null : null;
+        // Resolve main/extra recipe name for the dish line (snacks use the SKU
+        // name above). Without this the main/extra tiles render "Plan pending".
+        const tileRecipeName =
+          tileSnackSkuId == null && tileRecipeId != null
+            ? recipeNames.get(tileRecipeId) ?? null
+            : null;
+
         for (const variation of slotNode.variations) {
           const item: TileItem = {
             plan_item_id: variation.id,
@@ -423,6 +496,9 @@ export class BriefStateComposer {
             slot: slotNode.slot.slot_kind,
             ingredients: [],
             ...(tileRecipeId != null ? { recipe_id: tileRecipeId } : {}),
+            ...(tileSnackSkuId != null ? { snack_sku_id: tileSnackSkuId } : {}),
+            ...(tileSnackName != null ? { name: tileSnackName } : {}),
+            ...(tileRecipeName != null ? { name: tileRecipeName } : {}),
           };
           tileItems.push(item);
           totalCount++;
@@ -571,6 +647,115 @@ export class BriefStateComposer {
 }
 
 // ===========================================================================
+// Story 13-s4 — deterministic editorial prose for the finished Brief surface.
+// Pure + exported for testing. NO LLM: the answer-as-a-sentence headline and
+// the visible-memory lumi_note are templated from facts already computed for
+// the plan (cook/leftover counts, cleared allergens, paused days). Always
+// returns non-empty strings so the Brief never falls back to generic copy.
+const DAY_LABELS: Record<SchoolDay, string> = {
+  monday: 'Monday',
+  tuesday: 'Tuesday',
+  wednesday: 'Wednesday',
+  thursday: 'Thursday',
+  friday: 'Friday',
+  saturday: 'Saturday',
+};
+
+function joinWithAnd(parts: readonly string[]): string {
+  if (parts.length <= 1) return parts[0] ?? '';
+  if (parts.length === 2) return `${parts[0]} and ${parts[1]}`;
+  return `${parts.slice(0, -1).join(', ')}, and ${parts[parts.length - 1]}`;
+}
+
+function dedupeInOrder(values: readonly string[]): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const v of values) {
+    if (!seen.has(v)) {
+      seen.add(v);
+      out.push(v);
+    }
+  }
+  return out;
+}
+
+export function composeEditorialProse(input: {
+  tileSummaries: PlanTileSummary[];
+  clearedAllergies: ClearedAllergyEntry[];
+}): { moment_headline: string; lumi_note: string } {
+  const activeTiles = input.tileSummaries.filter((t) => !t.paused);
+  const pausedTiles = input.tileSummaries.filter((t) => t.paused);
+  const activeDays = activeTiles.length;
+
+  // Distinct main dishes across active days → cook count; repeats run on
+  // leftovers. main `name` is only resolved when the recipes repo is wired —
+  // when it isn't, mainNames is empty and we fall back to the day-count line.
+  const mainNames: string[] = [];
+  for (const tile of activeTiles) {
+    const main = tile.items.find(
+      (i) => i.slot === 'main' && typeof i.name === 'string' && i.name !== '',
+    );
+    const mainName = main?.name;
+    if (mainName !== undefined) mainNames.push(mainName);
+  }
+  const distinctMains = new Set(mainNames).size;
+  // P1: only claim leftover days when ALL active tiles have resolved names;
+  // a partial-catalog case (some named, some not) would produce wrong counts.
+  const allTilesNamed = mainNames.length === activeDays;
+  const leftoverDays = allTilesNamed ? mainNames.length - distinctMains : 0;
+
+  // P3: build per-child allergen map for accurate attribution.
+  const allergensByChild = new Map<string, string[]>();
+  for (const entry of input.clearedAllergies) {
+    const list = allergensByChild.get(entry.child_name) ?? [];
+    if (!list.includes(entry.allergen)) list.push(entry.allergen);
+    allergensByChild.set(entry.child_name, list);
+  }
+
+  // --- Headline: a confident, completed-state sentence. ---
+  let moment_headline: string;
+  if (activeDays === 0) {
+    moment_headline = "Your week's ready.";
+  } else if (leftoverDays >= 1) {
+    moment_headline = 'An easy week.';
+  } else {
+    moment_headline = 'Your week, ready.';
+  }
+
+  // --- lumi_note: Lumi's voice, weaving in at least one concrete fact. ---
+  const sentences: string[] = [];
+
+  // P2: skip the "planned and ready" sentence when the whole week is paused —
+  // it would directly contradict the paused-days sentence that follows.
+  const allPaused = pausedTiles.length === input.tileSummaries.length && input.tileSummaries.length > 0;
+
+  if (allTilesNamed && leftoverDays >= 1) {
+    sentences.push(
+      `You cook ${distinctMains} time${distinctMains === 1 ? '' : 's'}, not ${activeDays} — ${leftoverDays} day${leftoverDays === 1 ? '' : 's'} ${leftoverDays === 1 ? 'runs' : 'run'} on leftovers.`,
+    );
+  } else if (activeDays > 0) {
+    sentences.push(`${activeDays} lunch day${activeDays === 1 ? '' : 's'}, planned and ready.`);
+  } else if (!allPaused) {
+    sentences.push('Your week is planned and ready.');
+  }
+
+  // P3: one sentence per child, each with their own allergen list.
+  for (const [childName, allergens] of allergensByChild) {
+    sentences.push(
+      `${childName}'s meals are ${joinWithAnd(allergens)}-free — I kept that in mind.`,
+    );
+  }
+
+  if (pausedTiles.length > 0) {
+    const pausedLabels = pausedTiles.map((t) => DAY_LABELS[t.day as SchoolDay] ?? t.day);
+    sentences.push(
+      `${joinWithAnd(pausedLabels)} ${pausedTiles.length === 1 ? 'is' : 'are'} paused, just as you asked.`,
+    );
+  }
+
+  return { moment_headline, lumi_note: sentences.join(' ') };
+}
+
 // Story 3-DM-C1 Phase 4 — pure tree-composition helper. Exported for testing.
 //
 // Given the four parallel reads from §9.1, build an in-memory tree:

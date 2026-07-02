@@ -1,6 +1,7 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { hkFetch } from '@/lib/fetch.js';
 import type {
+  GeneratePlanResponse,
   PlanMainAssignmentRow,
   PlanSlotRow,
   PlanSlotVariationRow,
@@ -284,6 +285,24 @@ export function useRequestRegenerationMutation() {
         headers: { 'Idempotency-Key': safeRandomUuid() },
       });
     },
+  });
+}
+
+// POST /v1/plans/generate with Idempotency-Key — Story 3-S34.
+// On-demand ("compose now") plan composition. Returns 202 with the derived
+// window { job_id, week_of, planned_days, basis }. The caller polls
+// GET /v1/plans for the committed result; the request has no body (the window
+// is server-derived from the household timezone).
+// The caller must supply the idempotency key so the same value is reused
+// across React Query retries (a fresh UUID per retry would defeat deduplication
+// and burn extra rate-limit slots).
+export function useGenerateOnDemandMutation() {
+  return useMutation<GeneratePlanResponse, Error, string>({
+    mutationFn: (idempotencyKey) =>
+      hkFetch<GeneratePlanResponse>('/v1/plans/generate', {
+        method: 'POST',
+        headers: { 'Idempotency-Key': idempotencyKey },
+      }),
   });
 }
 

@@ -11,7 +11,9 @@ import { authenticateHook } from '../../middleware/authenticate.hook.js';
 import {
   isDomainError,
   NotFoundError,
+  PlanAlreadyExistsError,
   SwapGuardrailBlockedError,
+  TooManyRequestsError,
   ValidationError,
 } from '../../common/errors.js';
 import { plansRoutes } from './plans.routes.js';
@@ -124,6 +126,7 @@ interface PlansServiceMocks {
   pauseDayTree?: ReturnType<typeof vi.fn>;
   pauseChildOnDayTree?: ReturnType<typeof vi.fn>;
   requestRegeneration?: ReturnType<typeof vi.fn>;
+  requestOnDemandGeneration?: ReturnType<typeof vi.fn>;
   findById?: ReturnType<typeof vi.fn>;
 }
 
@@ -167,6 +170,14 @@ function buildPlansService(overrides: PlansServiceMocks = {}) {
     requestRegeneration:
       overrides.requestRegeneration ??
       vi.fn().mockResolvedValue({ jobId: 'noop', rateLimitRemaining: 5 }),
+    requestOnDemandGeneration:
+      overrides.requestOnDemandGeneration ??
+      vi.fn().mockResolvedValue({
+        jobId: 'gen-job',
+        weekOf: '2026-06-15',
+        plannedDays: ['thursday', 'friday'],
+        basis: 'current_week_remaining',
+      }),
     findById:
       overrides.findById ?? vi.fn().mockResolvedValue(MOCK_PLAN_ROW_CANONICAL),
   };
@@ -312,6 +323,14 @@ function signOps(app: FastifyInstance): string {
     sub: SAMPLE_USER_ID,
     hh: SAMPLE_HOUSEHOLD_ID,
     role: 'ops',
+  });
+}
+
+function signGuest(app: FastifyInstance): string {
+  return app.jwt.sign({
+    sub: SAMPLE_USER_ID,
+    hh: SAMPLE_HOUSEHOLD_ID,
+    role: 'guest_author',
   });
 }
 
@@ -547,6 +566,129 @@ describe('GET /v1/plans', () => {
       flagged_items?: typeof flaggedItems;
     };
     expect(body.flagged_items).toEqual(flaggedItems);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// POST /v1/plans/generate (Story 3-S34 — on-demand composition)
+// ---------------------------------------------------------------------------
+
+describe('POST /v1/plans/generate', () => {
+  let app: FastifyInstance;
+  afterEach(async () => {
+    if (app) await app.close();
+  });
+
+  it('returns 401 when no Authorization header is provided', async () => {
+    app = await buildTestApp();
+    const res = await app.inject({ method: 'POST', url: '/v1/plans/generate' });
+    expect(res.statusCode).toBe(401);
+  });
+
+  it('returns 403 when role is ops', async () => {
+    app = await buildTestApp();
+    const token = signOps(app);
+    const res = await app.inject({
+      method: 'POST',
+      url: '/v1/plans/generate',
+      headers: { authorization: `Bearer ${token}`, 'idempotency-key': IDEMPOTENCY_KEY },
+    });
+    expect(res.statusCode).toBe(403);
+  });
+
+  it('returns 403 when role is guest_author', async () => {
+    app = await buildTestApp();
+    const token = signGuest(app);
+    const res = await app.inject({
+      method: 'POST',
+      url: '/v1/plans/generate',
+      headers: { authorization: `Bearer ${token}`, 'idempotency-key': IDEMPOTENCY_KEY },
+    });
+    expect(res.statusCode).toBe(403);
+  });
+
+  it('returns 400 when the Idempotency-Key header is missing', async () => {
+    app = await buildTestApp();
+    const token = signPrimary(app);
+    const res = await app.inject({
+      method: 'POST',
+      url: '/v1/plans/generate',
+      headers: { authorization: `Bearer ${token}` },
+    });
+    expect(res.statusCode).toBe(400);
+  });
+
+  it('returns 202 with the composition window and calls the service', async () => {
+    const requestOnDemandGeneration = vi.fn().mockResolvedValue({
+      jobId: 'gen-job-7',
+      weekOf: '2026-06-15',
+      plannedDays: ['thursday', 'friday'],
+      basis: 'current_week_remaining',
+    });
+    const plansService = buildPlansService({ requestOnDemandGeneration });
+    app = await buildTestApp({ plansService });
+    const token = signPrimary(app);
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/v1/plans/generate',
+      headers: { authorization: `Bearer ${token}`, 'idempotency-key': IDEMPOTENCY_KEY },
+    });
+
+    expect(res.statusCode).toBe(202);
+    expect(res.json()).toEqual({
+      job_id: 'gen-job-7',
+      week_of: '2026-06-15',
+      planned_days: ['thursday', 'friday'],
+      basis: 'current_week_remaining',
+    });
+    expect(requestOnDemandGeneration).toHaveBeenCalledWith({
+      householdId: SAMPLE_HOUSEHOLD_ID,
+      requestId: IDEMPOTENCY_KEY,
+    });
+  });
+
+  it('allows secondary_caregiver', async () => {
+    app = await buildTestApp();
+    const token = signSecondary(app);
+    const res = await app.inject({
+      method: 'POST',
+      url: '/v1/plans/generate',
+      headers: { authorization: `Bearer ${token}`, 'idempotency-key': IDEMPOTENCY_KEY },
+    });
+    expect(res.statusCode).toBe(202);
+  });
+
+  it('maps PlanAlreadyExistsError to 409', async () => {
+    const requestOnDemandGeneration = vi
+      .fn()
+      .mockRejectedValue(new PlanAlreadyExistsError('2026-06-15'));
+    const plansService = buildPlansService({ requestOnDemandGeneration });
+    app = await buildTestApp({ plansService });
+    const token = signPrimary(app);
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/v1/plans/generate',
+      headers: { authorization: `Bearer ${token}`, 'idempotency-key': IDEMPOTENCY_KEY },
+    });
+    expect(res.statusCode).toBe(409);
+  });
+
+  it('maps TooManyRequestsError to 429', async () => {
+    const requestOnDemandGeneration = vi
+      .fn()
+      .mockRejectedValue(new TooManyRequestsError(3600));
+    const plansService = buildPlansService({ requestOnDemandGeneration });
+    app = await buildTestApp({ plansService });
+    const token = signPrimary(app);
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/v1/plans/generate',
+      headers: { authorization: `Bearer ${token}`, 'idempotency-key': IDEMPOTENCY_KEY },
+    });
+    expect(res.statusCode).toBe(429);
   });
 });
 

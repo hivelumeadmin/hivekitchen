@@ -47,8 +47,8 @@ function buildPlansServiceStub(): PlansService & {
 }
 
 describe('PLANNER_PROMPT', () => {
-  it('declares v2.4.0 and includes plan.compose in toolsAllowed', () => {
-    expect(PLANNER_PROMPT.version).toBe('v2.4.0');
+  it('declares v2.10.0 and includes plan.compose in toolsAllowed', () => {
+    expect(PLANNER_PROMPT.version).toBe('v2.10.0');
     expect(PLANNER_PROMPT.toolsAllowed).toContain('plan.compose');
   });
 
@@ -221,5 +221,82 @@ describe('createPlanComposeSpec — synthetic plan_compose tree round-trips', ()
     };
     const parse = spec.inputSchema.safeParse(bad);
     expect(parse.success).toBe(false);
+  });
+});
+
+// Story 3.5-s3 — handle-index resolution. The model emits a stable handle
+// (m1, e1, …); plan.compose resolves it to a catalog UUID from the per-run
+// slate index with no DB call, and throws a hard non-retried error for a
+// handle that isn't in the slate. Non-handle names still fall through to the
+// retained findIdByName cold-acquisition path.
+describe('handle-index resolution (s3)', () => {
+  const MAPPED_UUID = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+
+  function inputWithMainRecipeId(recipeId: string): Record<string, unknown> {
+    return {
+      household_id: HOUSEHOLD,
+      week_of: '2026-06-01',
+      prompt_version: PROMPT_VERSION,
+      main_assignments: [{ sequence: 1, recipe_id: recipeId }],
+      days: [
+        {
+          day: 'monday',
+          slots: [
+            { slot_kind: 'main', main_assignment_sequence: 1, variations: [{ child_id: AARAV }] },
+          ],
+        },
+      ],
+    };
+  }
+
+  it('resolves an in-index handle to the UUID without calling findIdByName', async () => {
+    const findIdByName = vi.fn().mockResolvedValue(null);
+    const recipe = { findIdByName } as unknown as RecipeService;
+    const service = buildPlansServiceStub();
+    const handleIndex = new Map([['m1', MAPPED_UUID]]);
+    const spec = createPlanComposeSpec(service, buildRedisStub(), recipe, handleIndex);
+
+    await spec.fn(inputWithMainRecipeId('m1'));
+
+    expect(service.composeTree).toHaveBeenCalledTimes(1);
+    const passed = service.composeTree.mock.calls[0][0] as {
+      main_assignments: Array<{ recipe_id: string }>;
+    };
+    expect(passed.main_assignments[0].recipe_id).toBe(MAPPED_UUID);
+    expect(findIdByName).not.toHaveBeenCalled();
+  });
+
+  it('throws a hard error for a handle-shaped value when no index is supplied', async () => {
+    const findIdByName = vi.fn().mockResolvedValue(null);
+    const recipe = { findIdByName } as unknown as RecipeService;
+    const spec = createPlanComposeSpec(buildPlansServiceStub(), buildRedisStub(), recipe);
+
+    await expect(spec.fn(inputWithMainRecipeId('m1'))).rejects.toThrow(
+      'not found in the candidate slate',
+    );
+    expect(findIdByName).not.toHaveBeenCalled();
+  });
+
+  it('throws a hard error for a handle that is not in a present index', async () => {
+    const findIdByName = vi.fn().mockResolvedValue(null);
+    const recipe = { findIdByName } as unknown as RecipeService;
+    const handleIndex = new Map([['m1', MAPPED_UUID]]);
+    const spec = createPlanComposeSpec(buildPlansServiceStub(), buildRedisStub(), recipe, handleIndex);
+
+    await expect(spec.fn(inputWithMainRecipeId('m99'))).rejects.toThrow(
+      'not found in the candidate slate',
+    );
+    expect(findIdByName).not.toHaveBeenCalled();
+  });
+
+  it('falls through to findIdByName for a non-handle, non-UUID name', async () => {
+    const findIdByName = vi.fn().mockResolvedValue(null);
+    const recipe = { findIdByName } as unknown as RecipeService;
+    const spec = createPlanComposeSpec(buildPlansServiceStub(), buildRedisStub(), recipe);
+
+    await expect(spec.fn(inputWithMainRecipeId('Turkey Wrap'))).rejects.toThrow(
+      /Recipe not found in catalog/,
+    );
+    expect(findIdByName).toHaveBeenCalledWith('Turkey Wrap', HOUSEHOLD);
   });
 });

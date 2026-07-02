@@ -128,9 +128,11 @@ describe('AllergenDeclareInputSchema', () => {
     expect(r.success).toBe(true);
   });
 
-  it('rejects when both child_id and child_name are absent', () => {
+  it('accepts when both child_id and child_name are absent (household-wide scope)', () => {
+    // Omitting both declares a HOUSEHOLD-WIDE allergen (no child attribution) —
+    // the path the M2 pure-chip zero-call turn uses (Slice 2.7-s5).
     const r = AllergenDeclareInputSchema.safeParse({ allergen: 'peanut' });
-    expect(r.success).toBe(false);
+    expect(r.success).toBe(true);
   });
 
   it('rejects when both child_id and child_name are provided', () => {
@@ -167,6 +169,20 @@ describe('DietaryDeclareInputSchema', () => {
     });
     expect(r.success).toBe(false);
   });
+
+  it('accepts request_ratification (Slice 2.7-s5 elevation channel)', () => {
+    const r = DietaryDeclareInputSchema.safeParse({
+      tag: 'halal',
+      enforcement: 'non_negotiable',
+      request_ratification: true,
+    });
+    expect(r.success).toBe(true);
+  });
+
+  it('omits request_ratification by default (optional)', () => {
+    const r = DietaryDeclareInputSchema.parse({ tag: 'halal', enforcement: 'default' });
+    expect(r.request_ratification).toBeUndefined();
+  });
 });
 
 describe('CuisineDeclareInputSchema', () => {
@@ -178,6 +194,17 @@ describe('CuisineDeclareInputSchema', () => {
       presence: 70,
     });
     expect(r.enforcement).toBe('just_for_context');
+  });
+
+  it('accepts request_ratification (Slice 2.7-s5 elevation channel)', () => {
+    const r = CuisineDeclareInputSchema.safeParse({
+      key: 'south_indian',
+      label: 'South Indian',
+      confidence: 80,
+      presence: 70,
+      request_ratification: true,
+    });
+    expect(r.success).toBe(true);
   });
 });
 

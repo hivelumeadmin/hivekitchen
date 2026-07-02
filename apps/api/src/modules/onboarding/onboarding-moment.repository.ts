@@ -37,6 +37,10 @@ export interface RequiredSetStatus {
   m1_household_name: boolean;
   m1_child_declared: boolean;
   m2_allergen_response: boolean;
+  // Slice 13-s6 — M3 (cuisine + dietary taste) promoted into the required set
+  // (§6.1 defer-line: M1+M2 alone don't yield a good first-week plan). Sourced
+  // from the existing per-turn `m3Answered` signal; sticky once true.
+  m3_answered: boolean;
   m5_favorite_count: number;
   m5_complete: boolean;
 }
@@ -63,6 +67,7 @@ const EMPTY_REQUIRED_SET: RequiredSetStatus = {
   m1_household_name: false,
   m1_child_declared: false,
   m2_allergen_response: false,
+  m3_answered: false,
   m5_favorite_count: 0,
   m5_complete: false,
 };
@@ -73,6 +78,7 @@ function normalizeRequiredSet(raw: Partial<RequiredSetStatus> | null | undefined
     m1_household_name: raw.m1_household_name === true,
     m1_child_declared: raw.m1_child_declared === true,
     m2_allergen_response: raw.m2_allergen_response === true,
+    m3_answered: raw.m3_answered === true,
     m5_favorite_count:
       typeof raw.m5_favorite_count === 'number'
         ? raw.m5_favorite_count

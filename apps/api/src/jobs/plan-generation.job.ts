@@ -6,9 +6,11 @@ import type {
   CommitPlanTreeInput,
   GuardrailResult,
   PlanComposeTreeOutput,
+  Weekday,
 } from '@hivekitchen/types';
 import { GuardrailRejectionError } from '../common/errors.js';
 import { HouseholdsRepository } from '../modules/households/households.repository.js';
+import { PlansRepository } from '../modules/plans/plans.repository.js';
 import { ChildAllergensRepository } from '../modules/children/child-allergens.repository.js';
 import { ChildrenRepository } from '../modules/children/children.repository.js';
 import { ChildPreferencesRepository } from '../modules/child-preferences/child-preferences.repository.js';
@@ -18,6 +20,11 @@ import { MemoryContextService } from '../services/memory-context.service.js';
 import { ExtraRulesRepository } from '../modules/children/extra-rules.repository.js';
 import { ExtraLibraryRepository } from '../modules/households/extra-library.repository.js';
 import { PlanDayContextRepository } from '../modules/plans/plan-day-context.repository.js';
+import { RecipesRepository } from '../modules/recipe/recipes.repository.js';
+import { SnackSkuRepository } from '../modules/recipe/snack-sku.repository.js';
+import { PantryService } from '../modules/pantry/pantry.service.js';
+import { assignSnackRotation, type SnackSlotAssignment } from '../services/snack-rotation.service.js';
+import { loadChildSignal } from '../modules/child-preferences/child-signal.assembler.js';
 import { deriveWeekId } from '../lib/derive-week-id.js';
 import {
   loadBagCompositionsForHousehold,
@@ -25,6 +32,8 @@ import {
   loadExtraLibraryForHousehold,
   loadExtraRulesForChildren,
   loadHighActivityExtraProposalsForHousehold,
+  loadPantrySnapshotForHousehold,
+  loadRecipeCandidatesForHousehold,
   loadVariantEligibleChildrenForHousehold,
 } from './planner-context.loader.js';
 import { trySurgicalSwap } from './swap-retry.helper.js';
@@ -54,6 +63,10 @@ export interface PlanGenerationJobData {
   household_id: string;
   week_of: string;
   request_id: string;
+  // Story 3-S34 — on-demand ("compose now") narrows the plan to a subset of
+  // weekdays (mid-week / next-week-full window). The Friday cron leaves this
+  // undefined → full default week (no behavior change).
+  planned_days?: Weekday[];
 }
 
 // Given a Friday date at fan-out time, returns the ISO date of the following
@@ -93,10 +106,38 @@ export function getLocalSixPmUtcMs(timezone: string, referenceDate: Date): numbe
 // days[].slots[].variations pass through 1:1; the RPC resolves
 // slot.main_assignment_sequence against just-inserted plan_main_assignments
 // rows DB-side.
+// Story 3-S40 — snack slots are server-assigned (not emitted by the LLM).
+// Inject them into each day's slots before passing to commit_plan() RPC.
 export function buildCommitInputTree(
   output: PlanComposeTreeOutput,
   requestId: string,
+  snackSlots: readonly SnackSlotAssignment[] = [],
 ): CommitPlanTreeInput {
+  const snackByDay = new Map<string, SnackSlotAssignment>(
+    snackSlots.map((s) => [s.day, s]),
+  );
+  const days = output.days.map((d) => {
+    // Snacks are strictly server-assigned (Story 3-S40). The planner prompt
+    // (v2.8.0) tells the model NOT to emit snack slots, but it occasionally
+    // does anyway — those slots carry no snack_sku_id and would either render
+    // as empty snacks or collide with the deterministic snack on the same day
+    // (one-slot-per-kind). Strip any model-emitted snack slot first, then add
+    // the deterministic rotation snack so every eligible day has exactly one.
+    const nonSnackSlots = d.slots.filter((s) => s.slot_kind !== 'snack');
+    const snack = snackByDay.get(d.day);
+    if (!snack) return { ...d, slots: nonSnackSlots };
+    return {
+      ...d,
+      slots: [
+        ...nonSnackSlots,
+        {
+          slot_kind: 'snack' as const,
+          snack_sku_id: snack.snack_sku_id,
+          variations: snack.child_ids.map((child_id) => ({ child_id })),
+        },
+      ],
+    };
+  });
   return {
     plan_id: output.plan_id,
     household_id: output.household_id,
@@ -106,11 +147,11 @@ export function buildCommitInputTree(
     prompt_version: output.prompt_version,
     // Story 3-31 carry-through: requestId IS the plan_build_id used by
     // recipe.discover's Redis cache. In the tree path, recipe_candidate_id
-    // only appears on snack/extra slot rows (mains use main_assignment.recipe_id
+    // only appears on extra slot rows (mains use main_assignment.recipe_id
     // which is always a real catalog id).
     plan_build_id: requestId,
     main_assignments: output.main_assignments,
-    days: output.days,
+    days,
   };
 }
 
@@ -127,6 +168,23 @@ export function buildPlanNudgeContext(output: PlanComposeTreeOutput, weekOf: str
   return (mains.length > 0 ? `Week of ${weekOf}. Mains: ${mains}` : `Week of ${weekOf}.`).slice(
     0,
     200,
+  );
+}
+
+// Story 3-S35 — pure gate for the auto-compose fan-out. Exported for unit
+// testing the skip/enqueue decision without BullMQ. A household is eligible
+// when it has auto-compose enabled AND has composed at least one plan
+// (opt-in by composing once) AND has no plan yet for the target week
+// (idempotent skip so the cron never clobbers an on-demand compose).
+export function selectAutoComposeEligible<
+  T extends { id: string; auto_compose_enabled: boolean },
+>(
+  households: readonly T[],
+  withAnyPlan: ReadonlySet<string>,
+  withTargetWeekPlan: ReadonlySet<string>,
+): T[] {
+  return households.filter(
+    (hh) => hh.auto_compose_enabled && withAnyPlan.has(hh.id) && !withTargetWeekPlan.has(hh.id),
   );
 }
 
@@ -149,6 +207,11 @@ const planGenerationPlugin: FastifyPluginAsync = async (fastify) => {
   if (!fastify.supabase) {
     throw new Error(
       'planGenerationPlugin requires supabase decorator — register supabasePlugin first',
+    );
+  }
+  if (!fastify.kitchenMapService) {
+    throw new Error(
+      'planGenerationPlugin requires kitchenMapService decorator — register kitchenMapPlugin first',
     );
   }
 
@@ -184,6 +247,12 @@ const planGenerationPlugin: FastifyPluginAsync = async (fastify) => {
   // plan_day_context rows and pair them with bag-composition data to surface
   // sport_practice/field_trip days for children whose Extra slot is OFF.
   const planDayContextRepository = new PlanDayContextRepository(fastify.supabase);
+  // Story 3-S36 — pre-load the candidate recipe slate + pantry snapshot so the
+  // planner composes from context instead of spending a recipe.search/pantry.read
+  // turn. PantryService.read() is unimplemented until Epic 6 (returns empty).
+  const recipesRepository = new RecipesRepository(fastify.supabase);
+  const snackSkuRepository = new SnackSkuRepository(fastify.supabase);
+  const pantryService = new PantryService();
 
   // Fan-out scheduler — Friday 10:00 UTC (= 06:00 ET / 03:00 PT). For each
   // active household, enqueues a delayed per-household job that fires at
@@ -215,8 +284,9 @@ const planGenerationPlugin: FastifyPluginAsync = async (fastify) => {
     const now = new Date();
     const weekOf = getNextMondayFrom(now);
     const householdsRepo = new HouseholdsRepository(fastify.supabase, null);
+    const plansRepo = new PlansRepository(fastify.supabase);
     const PAGE_SIZE = 500;
-    const households: Array<{ id: string; timezone: string }> = [];
+    const households: Array<{ id: string; timezone: string; auto_compose_enabled: boolean }> = [];
     let offset = 0;
     while (true) {
       const page = await householdsRepo.findAllActive(offset, PAGE_SIZE);
@@ -225,13 +295,35 @@ const planGenerationPlugin: FastifyPluginAsync = async (fastify) => {
       offset += PAGE_SIZE;
     }
 
+    // Story 3-S35 — gate the fan-out. Enqueue a per-household job ONLY when the
+    // household has auto-compose enabled AND has composed at least one plan
+    // (opt-in by composing once) AND does not already have a plan for the target
+    // week (idempotent skip so the Friday cron never clobbers an on-demand
+    // compose for the same week). Skip reasons are logged in aggregate.
+    const enabled = households.filter((hh) => hh.auto_compose_enabled);
+    const enabledIds = enabled.map((hh) => hh.id);
+    const [withAnyPlan, withTargetWeekPlan] = await Promise.all([
+      plansRepo.findHouseholdIdsWithPlan(enabledIds),
+      plansRepo.findHouseholdIdsWithPlan(enabledIds, weekOf),
+    ]);
+    const toEnqueue = selectAutoComposeEligible(enabled, withAnyPlan, withTargetWeekPlan);
+
     fastify.log.info(
-      { module: 'plan-generation', action: 'fanout.start', count: households.length, weekOf },
+      {
+        module: 'plan-generation',
+        action: 'fanout.start',
+        weekOf,
+        total: households.length,
+        eligible: toEnqueue.length,
+        skipped_disabled: households.length - enabled.length,
+        skipped_no_plan: enabled.length - withAnyPlan.size,
+        skipped_already_composed: withTargetWeekPlan.size,
+      },
       'plan-generation fan-out: enqueuing per-household jobs',
     );
 
     const enqueueResults = await Promise.allSettled(
-      households.map(async (hh) => {
+      toEnqueue.map(async (hh) => {
         const fireAtMs = getLocalSixPmUtcMs(hh.timezone, now);
         const delay = Math.max(0, fireAtMs - Date.now());
         const jobData: PlanGenerationJobData = {
@@ -258,13 +350,13 @@ const planGenerationPlugin: FastifyPluginAsync = async (fastify) => {
           module: 'plan-generation',
           action: 'fanout.partial',
           failed: failures.length,
-          total: households.length,
+          total: toEnqueue.length,
         },
         'plan-generation fan-out: some enqueues failed',
       );
     } else {
       fastify.log.info(
-        { module: 'plan-generation', action: 'fanout.complete', count: households.length, weekOf },
+        { module: 'plan-generation', action: 'fanout.complete', count: toEnqueue.length, weekOf },
         'plan-generation fan-out: all household jobs enqueued',
       );
     }
@@ -276,7 +368,7 @@ const planGenerationPlugin: FastifyPluginAsync = async (fastify) => {
   const generationWorker = fastify.bullmq.getWorker(
     GENERATE_QUEUE,
     async (job: Job<PlanGenerationJobData>) => {
-      const { household_id, week_of, request_id } = job.data;
+      const { household_id, week_of, request_id, planned_days } = job.data;
       const weekId = deriveWeekId(week_of);
 
       fastify.log.info(
@@ -292,7 +384,7 @@ const planGenerationPlugin: FastifyPluginAsync = async (fastify) => {
       );
 
       const householdsRepoForRun = new HouseholdsRepository(fastify.supabase, null);
-      const [culturalContext, bagCompositions, extraLibraryItems, variantEligibleChildren, sovereigntyMode] = await Promise.all([
+      const [culturalContext, bagCompositions, extraLibraryItems, variantEligibleChildren, sovereigntyMode, childSignals, pantrySnapshot] = await Promise.all([
         loadCulturalContextForHousehold(household_id, week_of, culturalPriorRepository, culturalCalendarService, memoryContextService),
         loadBagCompositionsForHousehold(household_id, childrenRepository),
         loadExtraLibraryForHousehold(household_id, extraLibraryRepository),
@@ -304,6 +396,21 @@ const planGenerationPlugin: FastifyPluginAsync = async (fastify) => {
           );
           return 'unified' as const;
         }),
+        // Story 3-S36 — child rating signals pre-load (replaces the child_signal
+        // tool turn). Failure → undefined → no <child_signals> block (no data).
+        loadChildSignal({
+          childPrefsRepo: childPreferencesRepository,
+          childrenRepo: childrenRepository,
+          householdId: household_id,
+          lookbackDays: 30,
+        }).catch((err: unknown) => {
+          fastify.log.warn(
+            { err, household_id },
+            'child-signal pre-load failed — proceeding without <child_signals> block',
+          );
+          return undefined;
+        }),
+        loadPantrySnapshotForHousehold(household_id, pantryService),
       ]);
       // extra_rules read fans out per-child; depends on bagCompositions for
       // {child_id, child_name} pairs, so it's sequenced after the parallel batch.
@@ -318,6 +425,69 @@ const planGenerationPlugin: FastifyPluginAsync = async (fastify) => {
           planDayContextRepository,
         ),
       ]);
+
+      // Story 3-S40 — deterministic snack slot assignment. Pre-computed once per
+      // job so both the initial commit and any guardrail-retry regen share the
+      // same snack assignments (snacks are static for the week, never regenerated).
+      const activeSnackSkus = await snackSkuRepository
+        .findActiveForHousehold(household_id)
+        .catch((err: unknown) => {
+          fastify.log.warn(
+            { err, household_id },
+            'snack-sku load failed — snack slots will be omitted this week',
+          );
+          return [];
+        });
+
+      // Story 3-S40 — kitchenMap pre-loaded once and reused by both the snack
+      // rotation (Phase-2 allergen pre-filter) and the planner call below.
+      const kitchenMap = await fastify.kitchenMapService.get(household_id).catch((err: unknown) => {
+        fastify.log.warn(
+          { err, householdId: household_id },
+          'kitchenMap load failed — proceeding without pre-loaded context',
+        );
+        return undefined;
+      });
+
+      // Story 3-s43 (Phase-2, AC6) — per-child declared allergens for the snack
+      // rotation pre-filter. Each child's effective set = household-wide rules
+      // (apply to everyone) ∪ that child's own medical allergens. Absent
+      // kitchenMap → empty map → the filter is a no-op (the commit-time
+      // guardrail remains the safety backstop).
+      const declaredAllergensByChildId = new Map<string, string[]>();
+      if (kitchenMap) {
+        const householdAllergens = kitchenMap.household.declared_allergens;
+        for (const child of kitchenMap.children) {
+          declaredAllergensByChildId.set(child.id, [
+            ...householdAllergens,
+            ...child.declared_allergens,
+          ]);
+        }
+      }
+
+      const snackSlots = assignSnackRotation({
+        bagCompositions,
+        extraRules,
+        activeSkus: activeSnackSkus,
+        weekOf: week_of,
+        plannedDays: planned_days,
+        declaredAllergensByChildId,
+      });
+
+      // Story 3-S36 — candidate recipe slate. Sequenced after childSignals so the
+      // per-child "liked" bias folds into ranking. Failure → undefined → no
+      // <recipe_candidates> block → the planner falls back to recipe.search.
+      const recipeCandidates = await loadRecipeCandidatesForHousehold(
+        household_id,
+        recipesRepository,
+        childSignals,
+      ).catch((err: unknown) => {
+        fastify.log.warn(
+          { err, household_id },
+          'recipe-candidate pre-load failed — proceeding without <recipe_candidates> block',
+        );
+        return undefined;
+      });
 
       // Story 3.22 — write a single audit row per planning batch summarising
       // the proposals injected. Ops can correlate with plan.generated to see
@@ -357,8 +527,13 @@ const planGenerationPlugin: FastifyPluginAsync = async (fastify) => {
         extraProposals,
         variantEligibleChildren,
         sovereigntyMode,
+        kitchenMap,
+        plannedDays: planned_days,
+        childSignals,
+        pantrySnapshot,
+        recipeCandidates,
       });
-      const commitInput = buildCommitInputTree(composeOutput, request_id);
+      const commitInput = buildCommitInputTree(composeOutput, request_id, snackSlots);
 
       // Allergy guardrail + brief_state refresh are wired inside
       // PlansService.commit(). The regenerate callback first tries the
@@ -431,8 +606,13 @@ const planGenerationPlugin: FastifyPluginAsync = async (fastify) => {
             uncertainContext,
             variantEligibleChildren,
             sovereigntyMode,
+            kitchenMap,
+            plannedDays: planned_days,
+            childSignals,
+            pantrySnapshot,
+            recipeCandidates,
           });
-          const retryCommit = buildCommitInputTree(retryOutput, request_id);
+          const retryCommit = buildCommitInputTree(retryOutput, request_id, snackSlots);
           lastAttemptCommit = retryCommit;
           lastAttemptComposeOutput = retryOutput;
           return retryCommit;

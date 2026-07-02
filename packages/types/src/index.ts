@@ -144,6 +144,7 @@ import {
   LumiSurfaceSchema,
   LumiContextSignalSchema,
   LumiTurnRequestSchema,
+  LumiTurnResponseSchema,
   LumiThreadTurnsResponseSchema,
   VoiceTalkSessionCreateSchema,
   VoiceTalkSessionResponseSchema,
@@ -224,6 +225,7 @@ import {
   RespondToLearningMomentRequestSchema,
   RegeneratePlanQuerySchema,
   RegeneratePlanResponseSchema,
+  GeneratePlanResponseSchema,
   GetPlansQuerySchema,
   GetPlansResponseSchema,
   HardFailStatusSchema,
@@ -326,6 +328,27 @@ import {
   DayAssignmentsResponseSchema,
   AssignPackerRequestSchema,
   AssignPackerResponseSchema,
+  // Story 7-S14 — Kitchen Profile parent-deterministic safety edits
+  AllergenKeySchema,
+  AddChildAllergenRequestSchema,
+  RemoveChildAllergenRequestSchema,
+  ChildAllergenMutationResponseSchema,
+  SetCulturalEnforcementRequestSchema,
+  SetCulturalEnforcementResponseSchema,
+  // Story 7-S15 — Kitchen Profile Lumi-conversational soft edits (Phase 2)
+  SetCulturalStateRequestSchema,
+  SetCulturalStateResponseSchema,
+  SetFavoriteLunchesRequestSchema,
+  SetFavoriteLunchesResponseSchema,
+  // Story 3-S41 — Family Snack Shelf add/remove
+  SnackCategorySchema,
+  SnackPackageTypeSchema,
+  SnackAllergenTagSchema,
+  SnackSkuSchema,
+  CreateSnackSkuInputSchema,
+  UpdateSnackSkuInputSchema,
+  ListSnackSkusResponseSchema,
+  SnackShelfHouseholdIdParamSchema,
 } from '@hivekitchen/contracts';
 
 // Auth
@@ -550,6 +573,7 @@ export type FamilyLanguageTermsResponse = z.infer<typeof FamilyLanguageTermsResp
 export type LumiSurface = z.infer<typeof LumiSurfaceSchema>;
 export type LumiContextSignal = z.infer<typeof LumiContextSignalSchema>;
 export type LumiTurnRequest = z.infer<typeof LumiTurnRequestSchema>;
+export type LumiTurnResponse = z.infer<typeof LumiTurnResponseSchema>;
 export type LumiThreadTurnsResponse = z.infer<typeof LumiThreadTurnsResponseSchema>;
 export type VoiceTalkSessionCreate = z.infer<typeof VoiceTalkSessionCreateSchema>;
 export type VoiceTalkSessionResponse = z.infer<typeof VoiceTalkSessionResponseSchema>;
@@ -661,6 +685,15 @@ export type ScaffoldingDiff = z.infer<typeof ScaffoldingDiffSchema>;
 // Story 3.13 — plan regeneration types
 export type RegeneratePlanQuery = z.infer<typeof RegeneratePlanQuerySchema>;
 export type RegeneratePlanResponse = z.infer<typeof RegeneratePlanResponseSchema>;
+
+// Story 3-S34 — on-demand plan composition response
+export type GeneratePlanResponse = z.infer<typeof GeneratePlanResponseSchema>;
+
+// Story 3-S35 — weekly auto-compose enrollment toggle
+export type {
+  AutoComposeState,
+  UpdateAutoComposeRequest,
+} from '@hivekitchen/contracts';
 
 // Story 3.14 — following-week draft view types (canonical tree shape)
 export type GetPlansQuery = z.infer<typeof GetPlansQuerySchema>;
@@ -797,3 +830,28 @@ export type DayAssignment = z.infer<typeof DayAssignmentSchema>;
 export type DayAssignmentsResponse = z.infer<typeof DayAssignmentsResponseSchema>;
 export type AssignPackerRequest = z.infer<typeof AssignPackerRequestSchema>;
 export type AssignPackerResponse = z.infer<typeof AssignPackerResponseSchema>;
+
+// Story 7-S14 — Kitchen Profile parent-deterministic safety edits (Phase 1)
+export type AllergenKey = z.infer<typeof AllergenKeySchema>;
+export type AddChildAllergenRequest = z.infer<typeof AddChildAllergenRequestSchema>;
+export type RemoveChildAllergenRequest = z.infer<typeof RemoveChildAllergenRequestSchema>;
+export type ChildAllergenMutationResponse = z.infer<typeof ChildAllergenMutationResponseSchema>;
+export type SetCulturalEnforcementRequest = z.infer<typeof SetCulturalEnforcementRequestSchema>;
+export type SetCulturalEnforcementResponse = z.infer<typeof SetCulturalEnforcementResponseSchema>;
+
+// Story 7-S15 — Kitchen Profile Lumi-conversational soft edits (Phase 2)
+export type SetCulturalStateRequest = z.infer<typeof SetCulturalStateRequestSchema>;
+export type SetCulturalStateResponse = z.infer<typeof SetCulturalStateResponseSchema>;
+export type SetFavoriteLunchesRequest = z.infer<typeof SetFavoriteLunchesRequestSchema>;
+export type SetFavoriteLunchesResponse = z.infer<typeof SetFavoriteLunchesResponseSchema>;
+
+// Story 3-S41 — Family Snack Shelf add/remove
+export type SnackCategory = z.infer<typeof SnackCategorySchema>;
+export type SnackPackageType = z.infer<typeof SnackPackageTypeSchema>;
+// Story 3-S43 — FALCPA-9 allergen tag on snack SKUs
+export type SnackAllergenTag = z.infer<typeof SnackAllergenTagSchema>;
+export type SnackSku = z.infer<typeof SnackSkuSchema>;
+export type CreateSnackSkuInput = z.infer<typeof CreateSnackSkuInputSchema>;
+export type UpdateSnackSkuInput = z.infer<typeof UpdateSnackSkuInputSchema>;
+export type ListSnackSkusResponse = z.infer<typeof ListSnackSkusResponseSchema>;
+export type SnackShelfHouseholdIdParam = z.infer<typeof SnackShelfHouseholdIdParamSchema>;

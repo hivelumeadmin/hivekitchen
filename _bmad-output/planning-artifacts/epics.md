@@ -701,6 +701,15 @@ Scope: **MVP-cut-aligned for closed beta (April 2026)** with Growth/Vision items
 **FRs covered:** FR56, FR57, FR58, FR59, FR60, FR61, FR62, FR63, FR64 (voice + text enrichment; ambient delivery of what was previously scoped to Epic 5 evening check-in voice path). Architecture-derived requirements from ADR-002 (2026-04-29).
 **Dependencies:** Requires Epic 1 (Foundation Gate, SSE bridge, thread contract) + Epic 2 (auth, household data, onboarding complete). Epic 3 strongly recommended first so Lumi has plan data to discuss on the `planning` surface. Epic 5 household thread and coordination stories are parallel but independent. **Epic 5's voice infrastructure is now owned by Epic 12** — Epic 5 stories reference Epic 12 for the voice layer.
 
+### Epic 13 — Lumi-Led UX Rebuild (Valet Model)
+
+**User outcome:** The app never feels like a chat app. I open it to a finished, calm week — Lumi has already done the thinking. Lumi waits quietly in the corner; it speaks only when I summon it or when it did something worth a one-line heads-up, then it gets out of the way. When I want to change something I just say it and the plan updates live — no forms, no menus to hunt through.
+
+**Scope:** An **interaction-topology rebuild on the frozen Editorial Hearth design system — NOT a visual redesign.** Replaces the scattered `LumiOrb`/`LumiPanel`/`LumiFAB` with one valet presence primitive (ambient at rest → one-line dismissible whisper → summoned focused sheet that recedes); finishes deferred SSE push ("Story 5.2") so background changes appear without polling; rebuilds the Brief and planner as finished, full-width surfaces with conversational editing on the cost-safe routing layer (`routePlanIntent` → `dispatchPlanIntent` → `CatalogRepo.pickRecipe`, T0/T1/T2 tiers); rebuilds onboarding as one calm mode with the Kitchen Map as hero on the shipped Epic 2.7 backend; collapses ~20 routes to 4 anchors. Per `epic-13-lumi-ux-rebuild-brief.md` (12 slices / 6 phases), companion `lumi-conversational-ux-rebuild-vision.md`, `plan-conversational-edit-routing-spec.md`, `sse-remediation-spec.md`.
+
+**FRs covered:** No new FRs — re-expresses the delivery of existing system-led/invisible-intelligence requirements (cf. FR62–FR64 ambient Lumi, the "ready answer" plan thesis) as a finished-surface valet UX. Memory doctrine: `lumi-valet-not-chat-app`.
+**Dependencies:** Requires Epic 12 (ambient Lumi store / SSE bridge / surface-context plumbing — **reused, not rebuilt**) + the shipped Epic 2.7 onboarding backend (controller / turn-runner / chips as the template) + Epic 3.5 planner seams (provider tiers, strict schemas, trace). The planner conversational-edit **backend (s8/s9) is already built — PR #52.** Phase 0 (regression gate, 13.1) precedes every surface-touching slice; the valet presence foundation (13.2–13.4) precedes the surface rebuilds.
+
 ---
 
 ## Epic dependency + sequencing graph
@@ -727,6 +736,8 @@ Epic 1 (Foundation) ━━━ blocks all others
 Epic 11 (Marketing) ━━━ standalone runtime; deferred to ~September 2026 (near public launch)
 
 Epic 12 (Ambient Lumi) ━━━ requires E1 + E2; E3 strongly recommended; Phase 1+2 ships before E5 voice
+
+Epic 13 (Lumi UX Rebuild) ━━━ requires E12 + Epic 2.7 backend + E3.5 seams; gate-first (13.1), then presence + SSE foundation, then surfaces, route-collapse last
 ```
 
 **Suggested shipping order:** E1 → E2 → **E12 Phase 1+2** → E3 → (E4 + E5 + E6 in parallel, E5 voice provided by E12) → E7 → E9 (build-along) → **E8 (Billing) just-in-time before E10** → E10 (month 5/6 transition) → **E12 Phase 3+4** → E11 (near public launch).
@@ -2848,3 +2859,236 @@ So that I can control when Lumi speaks up (ADR-002 OQ-5, FR105).
 **Then** notification preferences includes a `proactive_lumi_nudges: boolean` field (default `true`).
 **And** when `false`, the SSE nudge event is suppressed and `LumiAgent.generateNudge()` is skipped; turns are still persisted to the thread.
 **And** toggle is accessible from both the Lumi panel settings and the main notification preferences screen.
+
+---
+
+## Epic 13: Lumi-Led UX Rebuild (Valet Model)
+
+> Appended 2026-06-28 from `epic-13-lumi-ux-rebuild-brief.md` (12 slices / 6 phases). **Interaction-topology rebuild, not a visual redesign — Editorial Hearth / DESIGN.md is frozen.** Story ids map to the brief's slices: 13.1=s1, 13.2=s2, 13.3=s2.5, 13.4=s3, 13.5=s4, 13.6=s5, 13.7=s6, 13.8=s7, 13.9=s8, 13.10=s9, 13.11=s10, 13.12=s11.
+
+### Phase 0 — Lock the contract
+
+### Story 13.1: UX regression baseline (the gate, built first)
+
+As an engineer rebuilding shipped UI,
+I want a captured E2E + accessibility + locked-component baseline before any surface changes,
+So that every later slice has a regression gate under it and safety/contrast can't silently break.
+
+**Acceptance Criteria:**
+
+**Given** the current frontend on the 2.7 branch,
+**When** Story 13.1 is complete,
+**Then** Playwright E2E flows cover the rebuilt surfaces (onboarding spine, Brief render, plan review, a Lumi turn).
+**And** axe a11y checks assert AA on `.app-scope` and AAA on `.child-scope`, including the safety-display states (allergy-cleared badges, blocked states) and `prefers-reduced-motion` rendering.
+**And** visual snapshots capture the 17 locked DESIGN.md components + the key surfaces.
+**And** the baseline runs green against the branch today (captured baseline) and is wired into CI.
+
+🧱 **WALL: baseline** — must pass against current behavior before any surface-touching slice proceeds.
+
+---
+
+### Phase 1 — Valet presence foundation
+
+### Story 13.2: Lumi presence primitive (ambient → summoned-and-recedes)
+
+As a parent,
+I want Lumi to be a quiet presence I summon when needed rather than an open chat panel,
+So that the app feels like a finished product, not a chat app (memory `lumi-valet-not-chat-app`).
+
+**Acceptance Criteria:**
+
+**Given** Story 13.1 is green,
+**When** Story 13.2 is complete,
+**Then** `LumiOrb`/`LumiPanel`/`LumiFAB` are replaced by one presence component with three states: at rest (a quiet breathing dot, no open panel/thread); summoned (tap → focused temporary sheet hydrated via `useLumiContext`, runs a turn, then recedes to the surface).
+**And** the turn/SSE plumbing in `stores/lumi.store.ts` is reused; a `presenceState` is added.
+**And** no persistent chat column exists on any resting surface.
+**And** the sheet has focus-trap + escape + keyboard open/close and honors `prefers-reduced-motion`; the active voice-session state is preserved; child Lunch Link still suppresses presence.
+
+🧱 **WALL: presence** — the three states work on one surface, a11y-clean, before any surface adopts them.
+
+---
+
+### Story 13.3: SSE push completion ("finish Story 5.2")
+
+As a parent,
+I want background changes to appear in the UI without me refreshing,
+So that the app feels live and Lumi's background work is visible (per `sse-remediation-spec.md`).
+
+**Acceptance Criteria:**
+
+**Given** the SSE infrastructure (Redis pub/sub, heartbeat) exists and 9/13 event types have client handlers but no server emitter,
+**When** Story 13.3 is complete,
+**Then** `plan.updated` is emitted at plan-generation completion + the failure path, and the two `setInterval` polls in `BriefCanvas` are deleted.
+**And** the two `EventSource`s per tab are collapsed into one (the `lumi.nudge` listener folds into the bridge).
+**And** data-mutation invalidations are emitted (allergen / memory / pantry / child-request).
+**And** `plan.progress` stage events drive the draft state, and Last-Event-ID replay (Redis Stream) resumes a dropped connection without losing events.
+
+🧱 **WALL: push** — a second tab updates without navigation; the `BriefCanvas` polls are gone and the plan still lands; one `EventSource` per tab. Dependency of 13.4 + 13.11.
+
+---
+
+### Story 13.4: Whisper channel (proactive = one quiet line)
+
+As a parent,
+I want Lumi's proactive heads-up to be a single dismissible line, not a stream,
+So that it informs without nagging (valet rule 3).
+
+**Acceptance Criteria:**
+
+**Given** Stories 13.2 + 13.3 are complete,
+**When** a `lumi.nudge` SSE event arrives for a completed background action worth interrupting for,
+**Then** it renders as one dismissible line near the presence dot (Undo / See why / Dismiss), then disappears — never a stream, never a badge.
+**And** the surfacing gate is conservative and respects the existing pause-nudges control; whisper frequency is instrumented.
+**And** multiple nudges queue to one line; a safety-relevant whisper uses the safety channel but stays dismissible.
+
+---
+
+### Phase 2 — Brief pilot
+
+### Story 13.5: Brief as a finished surface (the pilot)
+
+As a parent,
+I want the Brief to be a calm, finished answer I can change by talking,
+So that the whole valet pattern is proven on one surface before scaling.
+
+**Acceptance Criteria:**
+
+**Given** Stories 13.2–13.4 are complete,
+**When** Story 13.5 is complete,
+**Then** the Brief is a full-width finished answer — answer-as-a-sentence headline, visible-memory phrases woven in (extends `lumi_note`), allergy-cleared badges intact, no chat layout.
+**And** a summoned-sheet edit updates the artifact and recedes; the QuietDiff rear-view for silent mutations stays.
+**And** draft/loading state renders without a thread.
+
+🧱 **WALL: pilot** — the valet model (finished surface + whisper + summoned-recede) is proven, a11y/perf-clean, before scaling to onboarding/planner.
+
+---
+
+### Phase 3 — Onboarding rebuild (on the 2.7 backend)
+
+### Story 13.6: One conversation mode + Kitchen-Map-as-hero
+
+As a parent setting up,
+I want one calm interview where I watch my kitchen build itself,
+So that onboarding feels understood, not like filling a form.
+
+**Acceptance Criteria:**
+
+**Given** the shipped Epic 2.7 backend (`OnboardingController` / `OnboardingTurnRunner` / `onboarding-chips.ts`) and Story 13.5,
+**When** Story 13.6 is complete,
+**Then** `OnboardingText.tsx` is rebuilt to one calm thread (focused/history toggle + chip-bracket encoding removed); the Kitchen Map is the hero column, populated live from the turn-runner's `kitchenMap` block.
+**And** chips render from `onboarding-chips.ts` (hint/action/choice taxonomy, memory `chip-taxonomy-three-types`).
+**And** the duplicate `onboarding-mockups` path is deleted or folded — no third parallel impl.
+**And** the M2 safety gate and resume/reset-from-slot-state behavior are preserved; the 2.7 golden eval + Epic 2.5/2.6 E2E stay green. (Onboarding is the deliberate conversational exception to the valet model.)
+
+---
+
+### Story 13.7: Recognition ending + entry continuity
+
+As a parent finishing setup,
+I want Lumi to play back the kitchen it understood and take me straight to my first week,
+So that setup ends on a moment of being known, not a Finalize button.
+
+**Acceptance Criteria:**
+
+**Given** Story 13.6 is complete,
+**When** Story 13.7 is complete,
+**Then** the summary plays back the understood kitchen in prose + honey-glow (reduced-motion-safe) with a "Show me my first week" CTA; finalize stays never-auto (the 2.7 slot predicate gates eligibility).
+**And** the entry promises voice/text continuity ("start talking, finish typing") with voice deferred (text-first doctrine).
+**And** the front-load-safety / defer-the-rest line is resolved per the §6.1 decision before this ships.
+
+🧱 **WALL: onboarding parity** — 2.7 golden eval + Epic 2.5/2.6 E2E + the 13.1 baseline green.
+
+---
+
+### Phase 4 — Planner conversational editing
+
+### Story 13.8: Planner finished surface + StickyBottomBar
+
+As a parent,
+I want the planner to be a calm finished week with the primary action in the locked sticky bar,
+So that it reads as a ready answer, not a spreadsheet to maintain.
+
+**Acceptance Criteria:**
+
+**Given** Story 13.5,
+**When** Story 13.8 is complete,
+**Then** the planner shows an answer-as-a-sentence hero + a 5-day finished surface with progressive slot disclosure (flat dish line at rest, Main/Snack/Extra on tile-focus).
+**And** `PlanActionSection` is replaced by the locked `StickyBottomBar` (PrimaryButton + "Talk to Lumi" right slot); `features/plan` and `features/weekly-plan` are converged.
+**And** all PlanTile states (decided/pending/swap/locked/paused) + per-child chips + TrustChips are preserved.
+
+---
+
+### Story 13.9: CatalogRepo.pick — deterministic catalog selector  ✅ DONE (PR #52)
+
+As the dispatch layer,
+I want a deterministic, fail-closed recipe selector over the cached slate,
+So that a swap resolves T0 (zero LLM) and only a true miss escalates.
+
+**Acceptance Criteria:**
+
+**Given** the cached recipe slate + KitchenMap projection,
+**When** a recipe slot pick is requested,
+**Then** `pickCatalogCandidate` filters by slot applicability + fail-closed allergen pre-filter (tag-set on `allergen_flags` vs the shared-recipe declared union) + `exclude:<ingredient>` constraint + week dedup, ranks deterministically (favorite > confidence > least-used > stable id), and returns null on a catalog miss.
+**And** `CatalogRepo.pickRecipe` loads the slate + computes the union and delegates to the pure selector.
+**And** snack slots route to the existing `assignSnackRotation` (not reinvented).
+
+**Status:** Implemented + tested (21 tests) in PR #52. Routing-spec §9 decisions #1 (snack tag-set fail-closed) + #2 (`use_count` variety proxy) resolved.
+
+---
+
+### Story 13.10: routeIntent + dispatchIntent — decision layer  ✅ DONE (PR #52); execution wiring pending
+
+As the conversational-edit pipeline,
+I want one cheap classifier + a deterministic dispatcher with an escalation gate,
+So that edits resolve cheaply and the expensive path never auto-spends.
+
+**Acceptance Criteria:**
+
+**Given** the catalog selector (13.9),
+**When** an utterance is classified,
+**Then** `routePlanIntent` makes one `'mini'`-tier forced-tool call → `{intent, slots}` (strict schema + `stripNulls`), with a defensive fallback.
+**And** `dispatchPlanIntent` maps intent → cost tier + typed action, resolving swaps via the catalog and returning `escalate` (confirm-gated) for catalog miss / add_dish / recompose / compose_next — never auto-spending.
+**And** snack swaps emit `swap_snack` (T0), not a false catalog miss.
+
+**Status:** Decision layer implemented + tested (21 tests) in PR #52. **Remaining:** the HTTP edit endpoint + execution of T0 decisions through the real services (`plans.service.swapSlotRecipe` / variation update, `declareIfNew`, `assignSnackRotation`) incl. slot-id resolution + routing-spec decision #3 (`plan_slots` recipe_id vs snack_sku_id) + routing trace tags.
+
+🧱 **WALL: catalog-pick** — selector hit-rate validated (the cost lever) before the conversational layer rides on it. *(Selector built; hit-rate validation belongs to the execution-wiring completion.)*
+
+---
+
+### Story 13.11: "Talk to your plan" UI (the MVP win)
+
+As a parent,
+I want to tap a day, say what's off, and watch the tile change,
+So that editing the plan feels like a conversation, not configuration.
+
+**Acceptance Criteria:**
+
+**Given** Stories 13.2 (sheet), 13.3 (push), 13.8 (surface) and 13.10 (routing, fully wired),
+**When** Story 13.11 is complete,
+**Then** tapping a day opens the summoned sheet hydrated with that day's context; the parent speaks; the tile re-renders live from the dispatch delta (optimistic + `plan.updated` reconcile).
+**And** proactive next-week is offered via the whisper channel.
+**And** the routing trace shows the expensive path firing once/week + confirmed escalations only (cost-instrumented).
+
+🧱 **WALL: MVP** — talk-to-your-plan works end-to-end on a finished surface, cost-verified.
+
+---
+
+### Phase 5 — Topology collapse
+
+### Story 13.12: Route collapse to 4 anchors
+
+As a parent,
+I want a small, calm set of places instead of ~20 routes,
+So that the app is low-fatigue to navigate.
+
+**Acceptance Criteria:**
+
+**Given** the surfaces are rebuilt (13.5–13.11),
+**When** Story 13.12 is complete,
+**Then** navigable routes collapse to Brief · Kitchen · People · Lumi; non-anchor screens (day-detail, grocery, swap, history, evening check-in) become summoned artifacts/sheets.
+**And** a deep-link audit precedes the change; old routes redirect (not 404); the `(child)`/`(grandparent)`/`(ops)` scopes are out of the 4-anchor collapse and preserved.
+
+🧱 **WALL: topology** — deep-link audit clean; no orphaned routes; a11y + E2E baseline green.
+
+---

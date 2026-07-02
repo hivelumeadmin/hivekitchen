@@ -18,9 +18,9 @@ function buildRouter(initialPath: string) {
   );
 }
 
-// AppLayout mounts the LumiPanel, which reads family-language terms via TanStack
-// Query (5-S10 review patch) — the real app wraps everything in QueryProvider, so
-// these router-integration renders need a QueryClientProvider too.
+// AppLayout mounts LumiPresence (the dot + summoned sheet), which reads
+// family-language terms via TanStack Query (5-S10) — the real app wraps everything
+// in QueryProvider, so these router-integration renders need a QueryClientProvider too.
 function renderWithProviders(router: ReturnType<typeof buildRouter>) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } });
   return render(
@@ -37,14 +37,14 @@ describe('AppLayout (router integration)', () => {
 
   afterEach(() => cleanup());
 
-  it('mounts LumiOrb on routes wrapped by AppLayout (/app)', () => {
+  it('mounts the LumiPresence dot on routes wrapped by AppLayout (/app)', () => {
     renderWithProviders(buildRouter('/app'));
 
     expect(screen.getByText(/app home stub/i)).toBeDefined();
     expect(screen.getByRole('button', { name: /open lumi/i })).toBeDefined();
   });
 
-  it('does NOT mount LumiOrb on flat routes outside AppLayout (/onboarding)', () => {
+  it('does NOT mount the LumiPresence dot on flat routes outside AppLayout (/onboarding)', () => {
     renderWithProviders(buildRouter('/onboarding'));
 
     expect(screen.getByText(/onboarding stub/i)).toBeDefined();

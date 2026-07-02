@@ -28,6 +28,13 @@ import {
   RespondToLearningMomentRequestSchema,
   HouseholdGeolocationConsentSchema,
   UpdateGeolocationConsentRequestSchema,
+  AutoComposeStateSchema,
+  UpdateAutoComposeRequestSchema,
+  SnackSkuSchema,
+  CreateSnackSkuInputSchema,
+  UpdateSnackSkuInputSchema,
+  ListSnackSkusResponseSchema,
+  SnackShelfHouseholdIdParamSchema,
 } from '@hivekitchen/contracts';
 import type {
   TileRetryRequest,
@@ -38,6 +45,10 @@ import type {
 import type {
   CreateExtraLibraryItemInput,
   UpdateGeolocationConsentRequest,
+  UpdateAutoComposeRequest,
+  CreateSnackSkuInput,
+  UpdateSnackSkuInput,
+  SnackSku,
 } from '@hivekitchen/types';
 import { AuditRepository } from '../../audit/audit.repository.js';
 import { AuditService } from '../../audit/audit.service.js';
@@ -46,6 +57,10 @@ import { authorize } from '../../middleware/authorize.hook.js';
 import { HouseholdsRepository } from './households.repository.js';
 import { HouseholdsService } from './households.service.js';
 import { ExtraLibraryRepository } from './extra-library.repository.js';
+import {
+  SnackSkuRepository,
+  type SnackSkuRow,
+} from '../recipe/snack-sku.repository.js';
 import { DayAssignmentsRepository } from './day-assignments.repository.js';
 import { ThreadRepository } from '../threads/thread.repository.js';
 import { ChildAllergensRepository } from '../children/child-allergens.repository.js';
@@ -80,6 +95,8 @@ const householdsRoutesPlugin: FastifyPluginAsync = async (fastify) => {
   const auditService = new AuditService(new AuditRepository(fastify.supabase));
   // Story 3.21 — household-scoped Extra library.
   const extraLibraryRepository = new ExtraLibraryRepository(fastify.supabase);
+  // Story 3-S41 — household-scoped snack shelf (add / remove).
+  const snackSkuRepository = new SnackSkuRepository(fastify.supabase);
   // Slice 5-S2 — household member roster read.
   const userRepository = new UserRepository(fastify.supabase);
   // Slice 5-S3 — PackerOfTheDay assignments + lazy coordination thread.
@@ -739,6 +756,150 @@ const householdsRoutesPlugin: FastifyPluginAsync = async (fastify) => {
       return reply.code(204).send();
     },
   );
+
+  // Story 3-S41 — "My Snacks" shelf. The snack rotation (3-s40) draws from the
+  // 10 global seed SKUs plus any rows a household adds here. Allergen doctrine
+  // is Phase-1 parent-sovereign: no enforcement at add-time; contains_* flags
+  // default to false (3-s43 adds the ticks + deterministic checking).
+  function toSnackSku(row: SnackSkuRow): SnackSku {
+    return {
+      id: row.id,
+      name: row.name,
+      brand: row.brand,
+      category: row.category as SnackSku['category'],
+      created_by_household_id: row.created_by_household_id,
+      created_at: row.created_at,
+      // Story 3-S43 — FALCPA-9 allergen tags (always an array; DB NOT NULL).
+      allergen_tags: row.allergen_tags as SnackSku['allergen_tags'],
+      // Story 3-S44 — optional product metadata (NULL when not specified).
+      upc_code: row.upc_code,
+      package_type: row.package_type as SnackSku['package_type'],
+      in_stock: row.in_stock,
+    };
+  }
+
+  // GET /v1/households/:id/snacks — global seeds + this household's own rows.
+  // Either caregiver may read.
+  fastify.get(
+    '/v1/households/:id/snacks',
+    {
+      preHandler: authorize(['primary_parent', 'secondary_caregiver']),
+      schema: {
+        params: SnackShelfHouseholdIdParamSchema,
+        response: { 200: ListSnackSkusResponseSchema },
+      },
+    },
+    async (request, reply) => {
+      const { id: householdId } = request.params as { id: string };
+      if (householdId !== request.user.household_id) {
+        throw new ForbiddenError("Cannot access another household's snack shelf");
+      }
+      const rows = await snackSkuRepository.findActiveForHousehold(householdId);
+      return reply.status(200).send({ items: rows.map(toSnackSku) });
+    },
+  );
+
+  // POST /v1/households/:id/snacks — add a family snack. Primary Parent only —
+  // the snack shelf is a household-wide planning decision.
+  fastify.post(
+    '/v1/households/:id/snacks',
+    {
+      preHandler: authorize(['primary_parent']),
+      schema: {
+        params: SnackShelfHouseholdIdParamSchema,
+        body: CreateSnackSkuInputSchema,
+        response: { 201: SnackSkuSchema },
+      },
+    },
+    async (request, reply) => {
+      const { id: householdId } = request.params as { id: string };
+      if (householdId !== request.user.household_id) {
+        throw new ForbiddenError("Cannot add to another household's snack shelf");
+      }
+      const body = request.body as CreateSnackSkuInput;
+      const row = await snackSkuRepository.create({
+        householdId,
+        name: body.name,
+        brand: body.brand ?? null,
+        category: body.category,
+        allergen_tags: body.allergen_tags,
+        upc_code: body.upc_code?.trim() || null,
+        package_type: body.package_type ?? null,
+      });
+
+      // PII-free audit metadata: ids + category + the parent-authored name
+      // (low-PII risk for a snack label). The brand is omitted.
+      request.auditContext = {
+        event_type: 'household.snack_sku_added',
+        user_id: request.user.id,
+        household_id: householdId,
+        correlation_id: request.id,
+        request_id: request.id,
+        metadata: { sku_id: row.id, name: row.name, category: row.category },
+      };
+      return reply.status(201).send(toSnackSku(row));
+    },
+  );
+
+  // DELETE /v1/households/:id/snacks/:skuId — soft-delete a family snack.
+  // Primary Parent only. Scoped to household-owned rows: a global seed or
+  // another household's row resolves to 404 (cannot be removed).
+  fastify.delete(
+    '/v1/households/:id/snacks/:skuId',
+    {
+      preHandler: authorize(['primary_parent']),
+      schema: {
+        params: SnackShelfHouseholdIdParamSchema.extend({ skuId: z.string().uuid() }),
+      },
+    },
+    async (request, reply) => {
+      const { id: householdId, skuId } = request.params as { id: string; skuId: string };
+      if (householdId !== request.user.household_id) {
+        throw new ForbiddenError("Cannot remove another household's snack");
+      }
+      const archived = await snackSkuRepository.archive(skuId, householdId);
+      if (!archived) {
+        throw new NotFoundError(`snack not found: ${skuId}`);
+      }
+
+      request.auditContext = {
+        event_type: 'household.snack_sku_archived',
+        user_id: request.user.id,
+        household_id: householdId,
+        correlation_id: request.id,
+        request_id: request.id,
+        metadata: { sku_id: skuId },
+      };
+      return reply.code(204).send();
+    },
+  );
+
+  // PATCH /v1/households/:id/snacks/:skuId — toggle the in-stock / pause flag.
+  // Primary Parent only. Scoped to household-owned rows like DELETE: a global
+  // seed or another household's row resolves to 404. Reversible, unlike removal.
+  fastify.patch(
+    '/v1/households/:id/snacks/:skuId',
+    {
+      preHandler: authorize(['primary_parent']),
+      schema: {
+        params: SnackShelfHouseholdIdParamSchema.extend({ skuId: z.string().uuid() }),
+        body: UpdateSnackSkuInputSchema,
+        response: { 200: SnackSkuSchema },
+      },
+    },
+    async (request, reply) => {
+      const { id: householdId, skuId } = request.params as { id: string; skuId: string };
+      if (householdId !== request.user.household_id) {
+        throw new ForbiddenError("Cannot update another household's snack");
+      }
+      const { in_stock } = request.body as UpdateSnackSkuInput;
+      const row = await snackSkuRepository.setInStock(skuId, householdId, in_stock);
+      if (row === null) {
+        throw new NotFoundError(`snack not found: ${skuId}`);
+      }
+      return reply.status(200).send(toSnackSku(row));
+    },
+  );
   // Slice 2-s27 — household-level food-identity profile. Cultural identifiers,
   // dietary preferences, and household-wide declared allergens live on the
   // household now (moved up from per-child). PATCH semantics: omit → preserve;
@@ -920,6 +1081,73 @@ const householdsRoutesPlugin: FastifyPluginAsync = async (fastify) => {
         metadata: { geolocation_enabled: body.geolocation_enabled },
       };
       return consent;
+    },
+  );
+
+  // Story 3-S35 — GET /v1/households/:id/auto-compose
+  // Current weekly auto-compose enrollment + whether the household has composed
+  // a plan yet (so the web surfaces the toggle only after the first plan, AC6).
+  // Either caregiver may read; the read is non-sensitive. 403 on cross-household.
+  fastify.get(
+    '/v1/households/:id/auto-compose',
+    {
+      preHandler: requireParentOrCaregiver,
+      schema: {
+        params: HouseholdIdParamSchema,
+        response: { 200: AutoComposeStateSchema },
+      },
+    },
+    async (request) => {
+      const { id: householdId } = request.params as { id: string };
+      if (householdId !== request.user.household_id) {
+        throw new ForbiddenError('Cannot access another household auto-compose setting');
+      }
+      const [autoComposeEnabled, hasPlan] = await Promise.all([
+        householdsService.getAutoComposeEnabled(householdId),
+        fastify.plansService.hasAnyPlan(householdId),
+      ]);
+      return { auto_compose_enabled: autoComposeEnabled, has_plan: hasPlan };
+    },
+  );
+
+  // Story 3-S35 — PATCH /v1/households/:id/auto-compose
+  // Toggle weekly auto-compose. Primary Parent only (mirrors sovereignty-mode);
+  // guest_author + secondary_caregiver → 403. Writes an audit event.
+  fastify.patch(
+    '/v1/households/:id/auto-compose',
+    {
+      preHandler: authorize(['primary_parent']),
+      schema: {
+        params: HouseholdIdParamSchema,
+        body: UpdateAutoComposeRequestSchema,
+        response: { 200: AutoComposeStateSchema },
+      },
+    },
+    async (request) => {
+      const { id: householdId } = request.params as { id: string };
+      if (householdId !== request.user.household_id) {
+        throw new ForbiddenError('Cannot update another household auto-compose setting');
+      }
+      const body = request.body as UpdateAutoComposeRequest;
+      await householdsService.setAutoComposeEnabled(householdId, body.auto_compose_enabled);
+
+      try {
+        await auditService.write({
+          event_type: 'household.auto_compose_changed',
+          user_id: request.user.id,
+          household_id: householdId,
+          request_id: request.id,
+          metadata: { auto_compose_enabled: body.auto_compose_enabled },
+        });
+      } catch (err) {
+        request.log.error(
+          { err, household_id: householdId },
+          'audit write failed for household.auto_compose_changed',
+        );
+      }
+
+      const hasPlan = await fastify.plansService.hasAnyPlan(householdId);
+      return { auto_compose_enabled: body.auto_compose_enabled, has_plan: hasPlan };
     },
   );
 };

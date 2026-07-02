@@ -97,12 +97,58 @@ function deriveVariant(day: PlanTileSummary['day']): PlanTileVariant {
 }
 
 function deriveDishLine(summary: PlanTileSummary): string {
-  // Recipe name lives in a future contract field; until then the dish line
-  // is the unique ingredient list (capped at 3 + overflow).
-  const all = [...new Set(summary.items.flatMap((item) => item.ingredients))];
+  // Recipe name lives in a future contract field; until then the dish line is
+  // resolved item names (Story 3-S40 — snack-SKU names) followed by the unique
+  // ingredient list (capped at 3 + overflow).
+  const names = summary.items.flatMap((item) => (item.name != null ? [item.name] : []));
+  const all = [...new Set([...names, ...summary.items.flatMap((item) => item.ingredients)])];
   if (all.length === 0) return '';
   const preview = all.slice(0, 3).join(', ');
   return all.length > 3 ? `${preview} +${all.length - 3} more` : preview;
+}
+
+// Story 13-s7 — progressive slot disclosure. On focus the flat dish line
+// expands into per-slot rows so a parent can see (and later tweak) the Snack
+// without touching the Main. Reuses deriveDishLine's dedup + cap-3 logic per
+// slot. Slot order is fixed Main → Snack → Extra; slots with no name or
+// ingredient are omitted.
+type SlotKind = 'main' | 'snack' | 'extra';
+const SLOT_ORDER: readonly SlotKind[] = ['main', 'snack', 'extra'];
+const SLOT_LABELS: Record<SlotKind, string> = {
+  main: 'Main',
+  snack: 'Snack',
+  extra: 'Extra',
+};
+
+interface SlotGroup {
+  readonly slot: SlotKind;
+  readonly label: string;
+  readonly line: string;
+}
+
+function deriveSlotGroups(items: PlanTileSummary['items']): SlotGroup[] {
+  const groups: SlotGroup[] = [];
+  for (const slot of SLOT_ORDER) {
+    const slotItems = items.filter((item) => item.slot === slot);
+    if (slotItems.length === 0) continue;
+    const tokens = [
+      ...slotItems.flatMap((item) => (item.name !== undefined ? [item.name] : [])),
+      ...slotItems.flatMap((item) => item.ingredients),
+    ];
+    const seen = new Set<string>();
+    const all: string[] = [];
+    for (const token of tokens) {
+      if (!seen.has(token.toLowerCase())) {
+        seen.add(token.toLowerCase());
+        all.push(token);
+      }
+    }
+    if (all.length === 0) continue;
+    const preview = all.slice(0, 3).join(', ');
+    const line = all.length > 3 ? `${preview} +${all.length - 3} more` : preview;
+    groups.push({ slot, label: SLOT_LABELS[slot], line });
+  }
+  return groups;
 }
 
 export function PlanTile({
@@ -121,7 +167,12 @@ export function PlanTile({
 }: PlanTileProps) {
   const variant = forceVariant ?? deriveVariant(summary.day);
   const tileRef = useRef<HTMLElement>(null);
+  const isPointerFocusRef = useRef(false);
   const [explainOpen, setExplainOpen] = useState(false);
+  // Story 13-s7 — slot breakdown is a focus-only disclosure. Conditional
+  // rendering (not CSS-only) so keyboard focus reliably reveals it and tests
+  // can assert presence/absence.
+  const [expanded, setExpanded] = useState(false);
 
   const isPast = variant === 'past';
   const isFrozen = state === 'mutability-frozen';
@@ -134,6 +185,7 @@ export function PlanTile({
   const hasMorningTint = variant === 'today' && new Date().getHours() < 13;
 
   const dishLine = deriveDishLine(summary);
+  const slotGroups = deriveSlotGroups(summary.items);
 
   function handleKeyDown(e: ReactKeyboardEvent<HTMLElement>) {
     if (e.key === 'Escape') {
@@ -185,6 +237,15 @@ export function PlanTile({
       tabIndex={isPast || isFrozen || isPaused ? -1 : 0}
       onClick={isInteractive ? () => onSwapIntent?.() : undefined}
       onKeyDown={handleKeyDown}
+      onPointerDown={() => { isPointerFocusRef.current = true; }}
+      onFocus={isInteractive ? () => {
+        if (!isPointerFocusRef.current) setExpanded(true);
+        isPointerFocusRef.current = false;
+      } : undefined}
+      onBlur={(e) => {
+        isPointerFocusRef.current = false;
+        if (!tileRef.current?.contains(e.relatedTarget as Node)) setExpanded(false);
+      }}
       className={articleClasses}
     >
       {/* Story 5-S1 — live presence is brief-only; plan_tile presence is deferred
@@ -216,6 +277,21 @@ export function PlanTile({
         <p className="text-[15px] leading-[1.4] text-fg-muted/60 mb-6 flex-grow">
           Plan pending
         </p>
+      )}
+
+      {/* Story 13-s7 — focus-only slot breakdown. Only when there is more than
+          one slot to show (a lone Main needs no redundant disclosure). */}
+      {expanded && isInteractive && slotGroups.length > 1 && (
+        <div className="-mt-4 mb-6 flex flex-col gap-1">
+          {slotGroups.map(({ slot, label, line }) => (
+            <div key={slot} className="flex items-baseline gap-2">
+              <span className="w-10 flex-shrink-0 text-[10px] font-medium uppercase tracking-wider text-fg-muted/70">
+                {label}
+              </span>
+              <span className="font-sans text-[13px] text-fg">{line}</span>
+            </div>
+          ))}
+        </div>
       )}
 
       {/* Slice 5-S9 — "Why this?" ghost button. stopPropagation so it does not

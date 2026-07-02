@@ -73,6 +73,32 @@ export interface HouseholdUsageScore {
   is_household_favorite: boolean;
 }
 
+// Story 3-S36 — one row of the candidate slate (household_recipe_usage joined to
+// its recipe). The loader ranks + groups these into the planner's slot-grouped
+// <recipe_candidates> block.
+export interface CandidateSlateRow {
+  id: string;
+  canonical_name: string;
+  cuisine_tags: string[];
+  allergen_flags: string[];
+  applicable_slots: string[];
+  ingredient_keys: string[];
+  confidence_score: number;
+  is_household_favorite: boolean;
+  use_count: number;
+}
+
+// Shape of the joined `recipes` projection inside findCandidateSlateForHousehold.
+interface CandidateSlateJoinedRecipe {
+  id: string;
+  canonical_name: string;
+  cuisine_tags: string[] | null;
+  allergen_flags: string[] | null;
+  applicable_slots: string[] | null;
+  ingredient_keys: string[] | null;
+  is_active: boolean;
+}
+
 export interface InsertRecipeInput {
   canonical_name: string;
   ingredients: Array<{
@@ -264,10 +290,7 @@ export class RecipesRepository extends BaseRepository {
     householdId: string,
     label: string,
   ): Promise<DeclareForHouseholdResult> {
-    // Mirrors the SQL unique index: regexp_replace(lower(name), '[\s\-'']+', '', 'g').
-    // Stripping hyphens and apostrophes here means the stored canonical_name and the
-    // ilike conflict-recovery lookup both use the same normalized form.
-    const canonicalName = label.trim().normalize('NFC').replace(/[-']+/g, '');
+    const canonicalName = canonicalizeFavoriteName(label);
     if (canonicalName.length === 0) {
       throw new Error('declareForHousehold: label is empty after normalization');
     }
@@ -359,6 +382,76 @@ export class RecipesRepository extends BaseRepository {
     if (update.error) throw update.error;
 
     return { recipeId, usageWasExisting: true, recipeWasInserted };
+  }
+
+  /**
+   * Story 7-S15 (Arc A) — the household's current starting-line favorites as
+   * canonical_name strings. Mirrors the KitchenMap favorite_lunches projection
+   * qualification (see composeKitchenMap): a usage row qualifies when it is
+   * not banned AND (is_household_favorite OR catalog_provenance is parent-
+   * stated). Ordered is_household_favorite DESC, then last_used_at DESC so the
+   * returned list matches the order the parent sees on the Kitchen Profile.
+   */
+  async findHouseholdFavorites(householdId: string): Promise<string[]> {
+    const { data, error } = await this.client
+      .from('household_recipe_usage')
+      .select(
+        'is_household_favorite, catalog_provenance, last_used_at, recipes!inner(canonical_name, is_active)',
+      )
+      .eq('household_id', householdId)
+      .eq('is_household_banned', false)
+      .order('is_household_favorite', { ascending: false })
+      .order('last_used_at', { ascending: false, nullsFirst: false });
+    if (error) throw error;
+
+    const out: string[] = [];
+    for (const raw of (data ?? []) as Array<{
+      is_household_favorite: boolean;
+      catalog_provenance: string;
+      recipes:
+        | Array<{ canonical_name: string; is_active: boolean }>
+        | { canonical_name: string; is_active: boolean }
+        | null;
+    }>) {
+      const joined = Array.isArray(raw.recipes) ? raw.recipes[0] : (raw.recipes ?? undefined);
+      if (joined === undefined || joined.is_active === false) continue;
+      if (raw.is_household_favorite || FAVORITE_LUNCH_PROVENANCES.has(raw.catalog_provenance)) {
+        out.push(joined.canonical_name);
+      }
+    }
+    return out;
+  }
+
+  /**
+   * Story 7-S15 (Arc A) — remove a recipe from the household's starting line by
+   * canonical name. Deletes ONLY the household_recipe_usage association (the
+   * recipes row may be referenced by plans, so it is left intact). No-op when
+   * no association exists — the replace-semantics caller owns idempotency. The
+   * household_recipe_usage trigger bumps kitchen_map_version, so the Redis
+   * kitchen-map cache invalidates for free.
+   */
+  async revokeHouseholdFavorite(householdId: string, canonicalName: string): Promise<void> {
+    const normalized = canonicalizeFavoriteName(canonicalName);
+    if (normalized.length === 0) return;
+
+    // Resolve the household-owned recipe id(s) matching the normalized name
+    // (case-insensitive). Escape ILIKE metacharacters so a name containing
+    // `%`/`_` matches literally and cannot widen into other recipes' rows.
+    const { data, error } = await this.client
+      .from('recipes')
+      .select('id')
+      .eq('created_by_household_id', householdId)
+      .ilike('canonical_name', escapeIlikeWildcards(normalized));
+    if (error) throw error;
+    const ids = ((data ?? []) as Array<{ id: string }>).map((r) => r.id);
+    if (ids.length === 0) return;
+
+    const del = await this.client
+      .from('household_recipe_usage')
+      .delete()
+      .eq('household_id', householdId)
+      .in('recipe_id', ids);
+    if (del.error) throw del.error;
   }
 
   /**
@@ -529,6 +622,64 @@ export class RecipesRepository extends BaseRepository {
   }
 
   /**
+   * Story 3.S39 — batch ingredient fetch for the commit-time allergy
+   * guardrail. Given many recipe ids, returns a Map<id, string[]> of
+   * display-name ingredient strings in a single query (no N+1 per slot).
+   *
+   * `recipes.ingredients` is JSONB: the canonical shape is the object form
+   * (key/modifier/display/…), but catalog-seeded / legacy rows MAY hold plain
+   * strings. Both are accepted — strings pass through, objects project to
+   * their `display`. A recipe with no resolvable ingredients is simply absent
+   * from (or empty in) the map; the caller treats that as "unverifiable" per
+   * the guardrail fail-safe. Mirrors PlansService.fetchRecipeDisplayIngredients
+   * (the swap path) so commit + swap derive the same ingredient vocabulary.
+   */
+  // Batch-read canonical display names by id. Used by BriefStateComposer to
+  // resolve main/extra slot recipe_ids → dish-line names for the plan tiles
+  // (mirrors SnackSkuRepository.findNamesByIds for snack slots). Empty ids → no
+  // query; ids with no row are simply absent from the returned map.
+  async findNamesByIds(ids: readonly string[]): Promise<Map<string, string>> {
+    if (ids.length === 0) return new Map();
+    const { data, error } = await this.client
+      .from('recipes')
+      .select('id, canonical_name')
+      .in('id', [...ids]);
+    if (error) throw error;
+    return new Map(
+      ((data ?? []) as Array<{ id: string; canonical_name: string }>).map((r) => [
+        r.id,
+        r.canonical_name,
+      ]),
+    );
+  }
+
+  async findIngredientsByIds(ids: readonly string[]): Promise<Map<string, string[]>> {
+    const out = new Map<string, string[]>();
+    if (ids.length === 0) return out;
+
+    const { data, error } = await this.client
+      .from('recipes')
+      .select('id, ingredients')
+      .in('id', [...ids]);
+    if (error) throw error;
+
+    for (const raw of (data ?? []) as Array<{ id: string; ingredients: unknown }>) {
+      const list = Array.isArray(raw.ingredients) ? raw.ingredients : [];
+      const display: string[] = [];
+      for (const entry of list) {
+        if (typeof entry === 'string') {
+          if (entry.length > 0) display.push(entry);
+        } else if (entry !== null && typeof entry === 'object' && 'display' in entry) {
+          const d = (entry as { display?: unknown }).display;
+          if (typeof d === 'string' && d.length > 0) display.push(d);
+        }
+      }
+      out.set(raw.id, display);
+    }
+    return out;
+  }
+
+  /**
    * Slice 2.6-s3 — Layer 2 in-place ingredient population. Used after
    * RecipeAgent.discover() succeeds for a catalog_seeded row that started
    * empty. Updates ingredients + ingredient_keys atomically so the planner's
@@ -666,6 +817,60 @@ export class RecipesRepository extends BaseRepository {
         catalog_provenance: raw.catalog_provenance,
         confidence_score: raw.confidence_score,
         is_household_favorite: raw.is_household_favorite,
+      });
+    }
+    return out;
+  }
+
+  /**
+   * Story 3-S36 — candidate-slate read for the pre-loaded planner context.
+   *
+   * Returns every catalog row visible to the household (banned rows excluded at
+   * the SQL layer), carrying the fields the planner needs to judge slot fit
+   * WITHOUT a recipe.fetch turn: applicable_slots (for grouping), allergen_flags,
+   * ingredient_keys (key ingredients), cuisine_tags, plus the usage/confidence
+   * signals the loader ranks by. A superset of {@link findCatalogProjectionForHousehold}
+   * (adds applicable_slots + ingredient_keys); ranking/grouping is the loader's job.
+   *
+   * Mirrors the household_recipe_usage → recipes join shape (many-to-one, so
+   * PostgREST may return `recipes` as an array or object; we normalize).
+   */
+  async findCandidateSlateForHousehold(
+    householdId: string,
+  ): Promise<CandidateSlateRow[]> {
+    const { data, error } = await this.client
+      .from('household_recipe_usage')
+      .select(
+        'confidence_score, is_household_favorite, use_count, recipes!inner(id, canonical_name, cuisine_tags, allergen_flags, applicable_slots, ingredient_keys, is_active)',
+      )
+      .eq('household_id', householdId)
+      .eq('is_household_banned', false)
+      .filter('recipes.is_active', 'eq', 'true');
+    if (error) throw error;
+
+    const out: CandidateSlateRow[] = [];
+    for (const raw of (data ?? []) as Array<{
+      confidence_score: number;
+      is_household_favorite: boolean;
+      use_count: number;
+      recipes:
+        | Array<CandidateSlateJoinedRecipe>
+        | CandidateSlateJoinedRecipe
+        | null;
+    }>) {
+      const joined = Array.isArray(raw.recipes) ? raw.recipes[0] : (raw.recipes ?? undefined);
+      if (joined === undefined) continue;
+      if (!joined.is_active) continue; // safety net if embedded filter is not applied
+      out.push({
+        id: joined.id,
+        canonical_name: joined.canonical_name,
+        cuisine_tags: joined.cuisine_tags ?? [],
+        allergen_flags: joined.allergen_flags ?? [],
+        applicable_slots: joined.applicable_slots ?? [],
+        ingredient_keys: joined.ingredient_keys ?? [],
+        confidence_score: raw.confidence_score,
+        is_household_favorite: raw.is_household_favorite,
+        use_count: raw.use_count,
       });
     }
     return out;
@@ -909,9 +1114,26 @@ export class RecipesRepository extends BaseRepository {
   }
 }
 
+// Story 7-S15 (Arc A) — provenance values that mark a usage row as a parent-
+// stated favorite. Kept in sync with FAVORITE_LUNCH_PROVENANCES in
+// kitchen-map.composer.ts so findHouseholdFavorites and the KitchenMap
+// projection qualify the same rows.
+const FAVORITE_LUNCH_PROVENANCES = new Set<string>(['declared', 'parent_added']);
+
 // ---------------------------------------------------------------------------
 // Helpers — kept module-private so the search vocabulary is single-sourced.
 // ---------------------------------------------------------------------------
+
+/**
+ * Normalize a favorite-lunch label to the canonical_name form declareForHousehold
+ * stores: trim, NFC, strip hyphens/apostrophes. Exported so the PUT
+ * /favorite-lunches route diffs request items against stored names with the
+ * same normalization (case is preserved; comparisons that must be
+ * case-insensitive lowercase the result themselves).
+ */
+export function canonicalizeFavoriteName(label: string): string {
+  return label.trim().normalize('NFC').replace(/[-']+/g, '');
+}
 
 /**
  * Escape PostgreSQL ILIKE wildcards in user-supplied query text so a query

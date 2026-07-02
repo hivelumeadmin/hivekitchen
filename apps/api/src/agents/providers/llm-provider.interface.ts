@@ -34,6 +34,24 @@ export interface LLMCallOptions {
    *  by agent_type and prompt_version when running evals. Ignored when
    *  storeCompletions is false. Values must be strings (OpenAI requirement). */
   metadata?: Record<string, string>;
+  /** Slice 3.5-s2 — internal dotted tool name (e.g. 'plan.compose') to FORCE.
+   *  When set on a provider that supportsStrictTools(), the adapter pins
+   *  `tool_choice` to that tool and marks its function definition `strict: true`
+   *  so the model cannot stop without calling it and cannot emit schema-invalid
+   *  arguments. Ignored by providers that do not support strict tools. */
+  forcedToolName?: string;
+  /** Slice 2.7-s4 — harden EVERY tool with OpenAI strict-mode constraints
+   *  (additionalProperties:false, all props required, originally-optional fields
+   *  expressed as `anyOf:[<schema>, null]`) and emit each with `strict: true`,
+   *  while leaving `tool_choice: 'auto'`. This is the multi-tool strict path the
+   *  onboarding agent relies on; the planner's single forced tool uses
+   *  `forcedToolName` instead. Ignored when `forcedToolName` is set (forced mode
+   *  hardens its own tool) or the provider does not support strict tools. */
+  strictAllTools?: boolean;
+  /** Slice 2.7-s4 — OpenAI `response_format` passthrough. 'json_object' forces a
+   *  JSON-object response (used by the onboarding extractor/classifier calls).
+   *  The prompt must still instruct the model to return JSON. */
+  responseFormat?: 'json_object';
 }
 
 export interface LLMToolCall {
@@ -84,4 +102,9 @@ export interface LLMProvider {
   ): Promise<LLMResponse>;
   stream(prompt: string, tools: ToolSpec[], options: LLMCallOptions): AsyncIterable<LLMStreamEvent>;
   probe(): Promise<boolean>;
+  /** Slice 3.5-s2 — whether this provider enforces OpenAI-style strict tool
+   *  calling (forced `tool_choice` + `strict: true` schema validation at the
+   *  decode layer). When true, the orchestrator can rely on `forcedToolName`
+   *  to guarantee a schema-valid tool call. Default expectation: false. */
+  supportsStrictTools(): boolean;
 }

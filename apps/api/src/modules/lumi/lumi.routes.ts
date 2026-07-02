@@ -11,6 +11,7 @@ import {
 import type { LumiTurnRequest } from '@hivekitchen/types';
 import { ChildAllergensRepository } from '../children/child-allergens.repository.js';
 import { ChildrenRepository } from '../children/children.repository.js';
+import { FoodPreferencesRepository } from '../food-preferences/food-preferences.repository.js';
 import { HouseholdAllergensRepository } from '../households/household-allergens.repository.js';
 import { VoiceTranscriptRepository } from '../voice/voice-transcript.repository.js';
 import { VoiceUsageRepository } from '../voice/voice-usage.repository.js';
@@ -57,6 +58,7 @@ export const lumiRoutes: FastifyPluginAsync = async (fastify) => {
   const voiceTranscriptRepository = new VoiceTranscriptRepository(fastify.supabase);
   const voiceUsageRepository = new VoiceUsageRepository(fastify.supabase);
   const familyLanguageRepository = new FamilyLanguageRepository(fastify.supabase);
+  const foodPreferencesRepository = new FoodPreferencesRepository(fastify.supabase, kek);
 
   const service = new LumiService({
     repository,
@@ -68,6 +70,7 @@ export const lumiRoutes: FastifyPluginAsync = async (fastify) => {
     voiceTranscriptRepository,
     memoryService: fastify.memoryService,
     familyLanguageRepository,
+    foodPreferencesRepository,
   });
 
   fastify.get(

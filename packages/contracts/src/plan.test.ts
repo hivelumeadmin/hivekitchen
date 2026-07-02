@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   BriefStatePayloadSchema,
   LearningMomentCalloutSchema,
+  PlanComposeTreeInputSchema,
   PlanComposeTreeOutputSchema,
   ProposeSwapInputSchema,
   ProposeSwapResponseSchema,
@@ -119,6 +120,37 @@ describe('PlanComposeTreeOutputSchema — 5-S9 reasoning', () => {
   it('rejects reasoning longer than 600 chars', () => {
     const result = PlanComposeTreeOutputSchema.safeParse({
       ...minimalValidPlanOutput,
+      reasoning: 'x'.repeat(601),
+    });
+    expect(result.success).toBe(false);
+  });
+});
+
+describe('PlanComposeTreeInputSchema — 3.5-s2 reasoning', () => {
+  const minimalValidPlanInput = {
+    household_id: '55555555-5555-4555-8555-555555555555',
+    week_of: '2026-06-09',
+    main_assignments: [{ sequence: 1, recipe_id: 'Turkey & Cheese Pinwheel' }],
+    days: [{ day: 'monday' as const, slots: [{ slot_kind: 'main' as const, main_assignment_sequence: 1 }] }],
+    prompt_version: 'v2.8.0',
+  };
+
+  it('accepts optional reasoning within 600 chars', () => {
+    const parsed = PlanComposeTreeInputSchema.parse({
+      ...minimalValidPlanInput,
+      reasoning: 'Pinwheels Mon for batch-prep continuity.',
+    });
+    expect(parsed.reasoning).toBe('Pinwheels Mon for batch-prep continuity.');
+  });
+
+  it('parses without reasoning (optional)', () => {
+    const parsed = PlanComposeTreeInputSchema.parse(minimalValidPlanInput);
+    expect(parsed.reasoning).toBeUndefined();
+  });
+
+  it('rejects reasoning longer than 600 chars', () => {
+    const result = PlanComposeTreeInputSchema.safeParse({
+      ...minimalValidPlanInput,
       reasoning: 'x'.repeat(601),
     });
     expect(result.success).toBe(false);
