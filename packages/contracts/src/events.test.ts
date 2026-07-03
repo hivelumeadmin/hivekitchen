@@ -31,6 +31,28 @@ describe('InvalidationEvent plan.updated (unified with PlanUpdatedEvent)', () =>
   });
 });
 
+describe('InvalidationEvent plan.progress (Story 13-s2.5)', () => {
+  it('parses every stage enum value', () => {
+    for (const stage of ['queued', 'composing', 'guardrail', 'persisting', 'ready', 'failed'] as const) {
+      const r = InvalidationEvent.safeParse({ type: 'plan.progress', week_id: UUID1, stage });
+      expect(r.success).toBe(true);
+    }
+  });
+
+  it('rejects an unknown stage', () => {
+    expect(
+      InvalidationEvent.safeParse({ type: 'plan.progress', week_id: UUID1, stage: 'done' }).success,
+    ).toBe(false);
+  });
+
+  it('rejects a non-uuid week_id', () => {
+    expect(
+      InvalidationEvent.safeParse({ type: 'plan.progress', week_id: 'not-a-uuid', stage: 'ready' })
+        .success,
+    ).toBe(false);
+  });
+});
+
 describe('InvalidationEvent presence.partner-active (unified with PresenceEvent)', () => {
   it('requires surface and expires_at', () => {
     expect(

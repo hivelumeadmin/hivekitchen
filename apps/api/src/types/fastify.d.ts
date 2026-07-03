@@ -16,6 +16,7 @@ import type { PlansService } from '../modules/plans/plans.service.js';
 import type { BriefStateComposer } from '../modules/plans/brief-state.composer.js';
 import type { PlanAdjustmentService } from '../modules/plans/plan-adjustment.service.js';
 import type { PlanDayContextService } from '../modules/plans/plan-day-context.service.js';
+import type { PlanEditTurnService } from '../modules/plans/plan-edit.service.js';
 import type { LunchLinkSessionRepository } from '../modules/plans/lunch-link-session.repository.js';
 import type { VariantProposalService } from '../modules/plans/variant-proposal.service.js';
 import type { ThreadRepository } from '../modules/threads/thread.repository.js';
@@ -45,6 +46,7 @@ declare module 'fastify' {
     briefStateComposer: BriefStateComposer;
     planAdjustmentService: PlanAdjustmentService;
     planDayContextService: PlanDayContextService;
+    planEditService: PlanEditTurnService;
     lunchLinkSessionRepository: LunchLinkSessionRepository;
     variantProposalService: VariantProposalService;
     threadRepository: ThreadRepository;

@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import Fastify, { type FastifyInstance } from 'fastify';
 import type { ServerResponse } from 'node:http';
 import Redis from 'ioredis';
-import { sseDispatcherPlugin } from './sse-dispatcher.plugin.js';
+import { sseDispatcherPlugin, streamEntryToFrame } from './sse-dispatcher.plugin.js';
 
 // The dispatcher creates a DEDICATED subscriber connection via `new Redis(...)`.
 // Mock ioredis so registration doesn't open a real socket and so the test can
@@ -52,15 +52,20 @@ function fakeRes(): ServerResponse & { written: string[] } {
 async function buildDispatcher(): Promise<{
   app: FastifyInstance;
   publish: ReturnType<typeof vi.fn>;
+  xadd: ReturnType<typeof vi.fn>;
+  expire: ReturnType<typeof vi.fn>;
   subscriber: FakeSubscriber;
 }> {
   const app = Fastify({ logger: false });
   app.decorate('env', { REDIS_URL: 'redis://localhost:6379' } as unknown as FastifyInstance['env']);
   const publish = vi.fn().mockResolvedValue(1);
-  app.decorate('redis', { publish } as unknown as FastifyInstance['redis']);
+  // Story 13-s2.5 — emit now XADDs to the replay stream before publishing.
+  const xadd = vi.fn().mockResolvedValue('1700000000000-0');
+  const expire = vi.fn().mockResolvedValue(1);
+  app.decorate('redis', { publish, xadd, expire } as unknown as FastifyInstance['redis']);
   await app.register(sseDispatcherPlugin);
   const subscriber = FakeRedis.instances[FakeRedis.instances.length - 1]!;
-  return { app, publish, subscriber };
+  return { app, publish, xadd, expire, subscriber };
 }
 
 beforeEach(() => {
@@ -68,14 +73,29 @@ beforeEach(() => {
 });
 
 describe('sseDispatcher (Redis pub/sub)', () => {
-  it('emit publishes a framed SSE payload on the household channel', async () => {
-    const { app, publish } = await buildDispatcher();
+  it('emit XADDs to the replay stream then publishes an id-stamped SSE frame', async () => {
+    const { app, publish, xadd, expire } = await buildDispatcher();
 
     app.sseDispatcher.emit('hh-1', 'lumi.nudge', '{"hello":"world"}');
 
+    // emit is sync/fire-and-forget; the xadd→publish happens on a microtask.
+    await vi.waitFor(() => expect(publish).toHaveBeenCalled());
+
+    expect(xadd).toHaveBeenCalledWith(
+      'sse:stream:household:hh-1',
+      'MAXLEN',
+      '~',
+      '200',
+      '*',
+      'event',
+      'lumi.nudge',
+      'data',
+      '{"hello":"world"}',
+    );
+    expect(expire).toHaveBeenCalledWith('sse:stream:household:hh-1', 3600);
     expect(publish).toHaveBeenCalledWith(
       'sse:household:hh-1',
-      'event: lumi.nudge\ndata: {"hello":"world"}\n\n',
+      'id: 1700000000000-0\nevent: lumi.nudge\ndata: {"hello":"world"}\n\n',
     );
     await app.close();
   });
@@ -138,5 +158,26 @@ describe('sseDispatcher (Redis pub/sub)', () => {
       subscriber.messageHandler?.('sse:household:nobody', 'event: x\ndata: y\n\n'),
     ).not.toThrow();
     await app.close();
+  });
+});
+
+describe('streamEntryToFrame (Last-Event-ID replay, 13-s2.5)', () => {
+  it('reconstructs an id-stamped SSE frame from a stream entry', () => {
+    const frame = streamEntryToFrame('1700000000000-0', [
+      'event',
+      'message',
+      'data',
+      '{"type":"plan.updated"}',
+    ]);
+    expect(frame).toBe('id: 1700000000000-0\nevent: message\ndata: {"type":"plan.updated"}\n\n');
+  });
+
+  it('preserves a named event type', () => {
+    const frame = streamEntryToFrame('7-0', ['event', 'lumi.nudge', 'data', '{}']);
+    expect(frame).toBe('id: 7-0\nevent: lumi.nudge\ndata: {}\n\n');
+  });
+
+  it('defaults to the message event and empty data when fields are absent', () => {
+    expect(streamEntryToFrame('1-0', [])).toBe('id: 1-0\nevent: message\ndata: \n\n');
   });
 });

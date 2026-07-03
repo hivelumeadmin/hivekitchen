@@ -10,9 +10,36 @@ type PanelMode = 'text' | 'voice';
 // this slice defines the value but drives only atRest ↔ summoned.
 export type PresenceState = 'atRest' | 'whisper' | 'summoned';
 
+// Epic 13-s10 — the plan-edit scope. Frontend-only routing state (NOT part of
+// the LumiContextSignal wire shape POSTed to /v1/lumi/turns): when it is set,
+// the sheet routes a typed utterance to POST /v1/plans/:planId/edit instead of
+// the general turn endpoint, and renders the tapped day's context. `day` is the
+// short weekday the plan-intent classifier uses; dayLabel + dishes are the
+// display context the summoning surface (a PlanTile, or the week-level
+// TalkToLumi button) captured. Week-level scope omits day/dayLabel/dishes.
+export type PlanEditDay = 'mon' | 'tue' | 'wed' | 'thu' | 'fri';
+
+export interface PlanEditScope {
+  planId: string;
+  weekOf: string;
+  day?: PlanEditDay;
+  dayLabel?: string;
+  dishes?: string[];
+  // Rosters the zero-LLM clarify chips draw from (captured by the summoning
+  // surface so the sheet stays self-contained — no extra queries). `days` is the
+  // week's non-paused days; `children` is the plan's child roster (id + name).
+  days?: PlanEditDay[];
+  children?: { id: string; name: string }[];
+  // 13-s10 (AC9) — a proactive offer that opens the sheet directly on a
+  // confirm-then-fire gate (e.g. the Friday next-week nudge → compose_next). No
+  // classifier call; nothing fires without the explicit confirm tap.
+  offer?: 'compose_next';
+}
+
 interface LumiState {
   surface: LumiSurface;
   contextSignal: LumiContextSignal | null;
+  planEditScope: PlanEditScope | null;
 
   threadIds: Partial<Record<LumiSurface, string>>;
   turns: Turn[];
@@ -55,6 +82,8 @@ interface LumiState {
 interface LumiActions {
   setContext: (signal: LumiContextSignal) => void;
   appendAction: (description: string) => void;
+  // 13-s10 — arm the plan-edit scope, then summon(). Pass null to clear.
+  setPlanEditScope: (scope: PlanEditScope | null) => void;
   summon: (mode?: PanelMode) => void;
   recede: () => void;
   // 13-s3 — drives the whisper channel (one quiet dismissible line).
@@ -81,6 +110,7 @@ interface LumiActions {
 const INITIAL_STATE: LumiState = {
   surface: 'general',
   contextSignal: null,
+  planEditScope: null,
 
   threadIds: {},
   turns: [],
@@ -111,9 +141,13 @@ export const useLumiStore = create<LumiState & LumiActions>()((set) => ({
     set({
       surface: signal.surface,
       contextSignal: signal,
+      // A new surface registration clears any stale plan-edit scope.
+      planEditScope: null,
       turns: [],
       isHydrating: false,
     }),
+
+  setPlanEditScope: (scope) => set({ planEditScope: scope }),
 
   // Cap recent_actions at 5 with FIFO eviction. No-op if no contextSignal yet.
   appendAction: (description) =>
@@ -135,7 +169,7 @@ export const useLumiStore = create<LumiState & LumiActions>()((set) => ({
 
   // Recede back into the finished product (valet rule 5). Works from both
   // 'summoned' and 'whisper' states — returns to the calm at-rest dot.
-  recede: () => set({ presenceState: 'atRest' }),
+  recede: () => set({ presenceState: 'atRest', planEditScope: null }),
 
   // Surface a pending nudge as one quiet dismissible line (valet rule 3).
   // Called by useLumiNudgeSSE when proactiveNudges is true and the sheet is
@@ -144,7 +178,7 @@ export const useLumiStore = create<LumiState & LumiActions>()((set) => ({
 
   // Atomic dismiss: clears the nudge and recedes in one set() call so no
   // subscriber ever sees presenceState='whisper' with pendingNudge=null.
-  dismissNudge: () => set({ pendingNudge: null, presenceState: 'atRest' }),
+  dismissNudge: () => set({ pendingNudge: null, presenceState: 'atRest', planEditScope: null }),
 
   // surface arg guards against TOCTOU: caller passes the surface it fetched for,
   // so a mid-flight setContext() cannot write the thread ID under the wrong key.

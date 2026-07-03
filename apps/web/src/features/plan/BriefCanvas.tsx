@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import type {
   ClearedAllergyEntry,
+  GetPlansResponse,
   PlanTileSummary,
   ProposeSwapResponse,
   Weekday,
@@ -23,7 +24,8 @@ import { PlanActionBar } from './PlanActionBar.js';
 import { PlanTile, type PlanTileState, type ChildDotColor, type ChildInfo } from './PlanTile.js';
 import { PackerChip } from './PackerChip.js';
 import { PresenceIndicator } from '@/features/thread/PresenceIndicator.js';
-import { useLumiStore } from '@/stores/lumi.store.js';
+import { useLumiStore, type PlanEditDay } from '@/stores/lumi.store.js';
+import { usePlanProgressStore, planProgressLabel } from '@/stores/plan-progress.store.js';
 import { QuietDiff } from './QuietDiff.js';
 import { usePlanQuery } from './queries.js';
 import { QueryKeys } from '@/lib/realtime/query-keys.js';
@@ -32,12 +34,29 @@ import {
   useGenerateOnDemandMutation,
   useRequestRegenerationMutation,
   useUpdateSovereigntyModeMutation,
+  usePlanEditMutation,
 } from './mutations.js';
 import { PrimaryButton } from '@/components/PrimaryButton.js';
 import { SparkleIcon } from '@/components/icons.js';
 import { adaptPlansResponse, type DayTreeView } from './tree-adapter.js';
 
 const CHILD_COLORS: readonly ChildDotColor[] = ['foliage', 'lumi-terracotta'];
+
+// 13-s10 (D1 review fix) — BriefCanvas tile taps summon Lumi, same as PlanPage.
+const FULL_TO_SHORT: Record<string, PlanEditDay> = {
+  monday: 'mon',
+  tuesday: 'tue',
+  wednesday: 'wed',
+  thursday: 'thu',
+  friday: 'fri',
+};
+const SHORT_DAY_LABEL: Record<PlanEditDay, string> = {
+  mon: 'Monday',
+  tue: 'Tuesday',
+  wed: 'Wednesday',
+  thu: 'Thursday',
+  fri: 'Friday',
+};
 
 function DevTriggerButton() {
   const [status, setStatus] = useState<'idle' | 'loading' | 'done' | 'error'>('idle');
@@ -72,49 +91,44 @@ function DevTriggerButton() {
 // next-week-full) from the household timezone; on success we poll the brief
 // until the plan lands (this branch unmounts when brief !== null).
 function ComposeMyPlanButton() {
-  const queryClient = useQueryClient();
   const generate = useGenerateOnDemandMutation();
   const [isComposing, setIsComposing] = useState(false);
   const [hasError, setHasError] = useState(false);
+  // Story 13-s2.5 — the composing lifecycle is now push-driven. On success the
+  // background job emits `plan.progress` stages then `plan.updated`; the latter
+  // invalidates ['brief']+['plan'], the parent refetches, brief becomes non-null
+  // and this empty-state branch unmounts. A permanent failure pushes
+  // `plan.progress: failed`, which restores the button with an error. (Replaces
+  // the old 5s setInterval poll + 2-min give-up timer.)
+  const progressStage = usePlanProgressStore((s) => s.stage);
 
   useEffect(() => {
     if (!isComposing) return;
-    let attempts = 0;
-    const id = setInterval(() => {
-      attempts += 1;
-      // After ~2 min (24 × 5 s) the background job has likely failed.
-      // Surface an error and restore the button so the parent can retry.
-      if (attempts >= 24) {
-        clearInterval(id);
-        setIsComposing(false);
-        setHasError(true);
-        return;
-      }
-      void queryClient.invalidateQueries({ queryKey: ['brief'] });
-      void queryClient.invalidateQueries({ queryKey: ['plan'] });
-    }, 5000);
-    return () => clearInterval(id);
-  }, [isComposing, queryClient]);
+    if (progressStage === 'failed') {
+      setIsComposing(false);
+      setHasError(true);
+      usePlanProgressStore.getState().reset();
+    }
+  }, [isComposing, progressStage]);
 
   if (isComposing) {
     return (
       <p className="text-sm text-fg-muted text-center" role="status">
-        Lumi is composing your plan… this can take a minute.
+        {planProgressLabel(progressStage) ?? 'Lumi is composing your plan…'} this can take a minute.
       </p>
     );
   }
 
   function handleClick() {
     setHasError(false);
+    // Clear any terminal stage from a prior compose so a stale `failed`/`ready`
+    // does not immediately trip the effect above for this new run.
+    usePlanProgressStore.getState().reset();
     // Capture the key once so React Query retries reuse it — a fresh UUID per
     // retry would defeat deduplication and consume extra rate-limit slots.
     const idempotencyKey = crypto.randomUUID();
     generate.mutate(idempotencyKey, {
-      onSuccess: () => {
-        setIsComposing(true);
-        void queryClient.invalidateQueries({ queryKey: ['brief'] });
-        void queryClient.invalidateQueries({ queryKey: ['plan'] });
-      },
+      onSuccess: () => setIsComposing(true),
       onError: () => setHasError(true),
     });
   }
@@ -300,6 +314,78 @@ export function BriefCanvas() {
   // brief.plan_id is null on pre-migration rows; swap UI requires it.
   const planId = brief?.plan_id ?? null;
   const canSwap = planId !== null;
+
+  // 13-s10 (Task 5, W1) — wire the StickyBar on the BriefCanvas render site too.
+  const commitMutation = usePlanEditMutation();
+  const weekConfirmed = (planData?.plan?.confirmed_at ?? null) !== null;
+  function handleConfirmWeek() {
+    if (planId === null) return;
+    commitMutation.mutate(
+      { planId, body: { intent: { intent: 'commit', confidence: 1 } } },
+      {
+        onSuccess: () => {
+          const confirmedAt = new Date().toISOString();
+          queryClient.setQueryData<GetPlansResponse>(
+            QueryKeys.planByWeek('current'),
+            (prev) =>
+              prev?.plan ? { ...prev, plan: { ...prev.plan, confirmed_at: confirmedAt } } : prev,
+          );
+          void queryClient.invalidateQueries({ queryKey: ['plan'] });
+        },
+      },
+    );
+  }
+  function handleTalkToLumi() {
+    if (planId !== null && planData?.week_of !== undefined) {
+      useLumiStore.getState().setPlanEditScope({ planId, weekOf: planData.week_of });
+    }
+    useLumiStore.getState().summon('text');
+  }
+
+  // 13-s10 (D1 review fix) — tile taps summon Lumi with day context, matching
+  // PlanPage. childRoster dedups clearedAllergies by child_id so chips are
+  // id+name pairs (same data shape PlanPage derives from childColorMap).
+  const childRoster = useMemo(() => {
+    const seen = new Set<string>();
+    const out: { id: string; name: string }[] = [];
+    for (const entry of clearedAllergies) {
+      if (!seen.has(entry.child_id)) {
+        seen.add(entry.child_id);
+        out.push({ id: entry.child_id, name: entry.child_name });
+      }
+    }
+    return out;
+  }, [clearedAllergies]);
+  const editableDays = useMemo(
+    () =>
+      tileSummaries
+        .filter((s) => !s.paused && FULL_TO_SHORT[s.day] !== undefined)
+        .map((s) => FULL_TO_SHORT[s.day]!),
+    [tileSummaries],
+  );
+  function summonForDay(summary: PlanTileSummary) {
+    if (planId === null || planData?.week_of === undefined) return;
+    const short = FULL_TO_SHORT[summary.day];
+    if (short === undefined) return;
+    const dishes = [
+      ...new Set(
+        summary.items
+          .map((i) => i.name)
+          .filter((n): n is string => typeof n === 'string' && n.length > 0),
+      ),
+    ];
+    useLumiStore.getState().setPlanEditScope({
+      planId,
+      weekOf: planData.week_of,
+      day: short,
+      dayLabel: SHORT_DAY_LABEL[short],
+      dishes,
+      days: editableDays,
+      children: childRoster,
+    });
+    useLumiStore.getState().summon('text');
+  }
+
   // isError covers initial load failures (no data); error !== null also catches
   // background refetch failures where TanStack keeps the cached data but sets error.
   const hasFetchError = isError || error !== null;
@@ -311,18 +397,23 @@ export function BriefCanvas() {
         ? 'stale'
         : 'fresh';
 
-  // Story 3.13 — while regenerating, poll the brief every 5s. SSE plan.updated
-  // is deferred to Story 5.2; this short-poll fills the gap.
+  // Story 13-s2.5 — regeneration is now push-driven. The server emits
+  // `plan.updated` on commit, which invalidates ['brief']; the refetch bumps
+  // plan_revision and the effect below clears the flag. A permanent failure
+  // pushes `plan.progress: failed`, which clears the flag without a bump so the
+  // spinner stops. (Replaces the old 5s setInterval poll.)
+  const planProgressStage = usePlanProgressStore((s) => s.stage);
   useEffect(() => {
     if (!isRegenerating) return;
-    const interval = setInterval(() => {
-      void queryClient.invalidateQueries({ queryKey: ['brief'] });
-    }, 5000);
-    return () => clearInterval(interval);
-  }, [isRegenerating, queryClient]);
+    if (planProgressStage === 'failed') {
+      setIsRegenerating(false);
+      usePlanProgressStore.getState().reset();
+    }
+  }, [isRegenerating, planProgressStage]);
 
-  // Story 3.13 — detect plan_revision bump to stop polling. The first time the
-  // brief loads, capture the baseline; any subsequent increase clears the flag.
+  // Story 3.13 — detect plan_revision bump to stop the regenerating state. The
+  // first time the brief loads, capture the baseline; any subsequent increase
+  // clears the flag.
   useEffect(() => {
     if (!brief) return;
     if (lastPlanRevisionRef.current === null) {
@@ -342,6 +433,7 @@ export function BriefCanvas() {
       { householdId, input: { sovereignty_mode: 'alternating' }, idempotencyKey: crypto.randomUUID() },
       {
         onSuccess: () => {
+          usePlanProgressStore.getState().reset();
           if (brief) {
             lastPlanRevisionRef.current = brief.plan_revision;
           }
@@ -361,6 +453,7 @@ export function BriefCanvas() {
       { planId, scope, day },
       {
         onSuccess: () => {
+          usePlanProgressStore.getState().reset();
           if (brief) {
             lastPlanRevisionRef.current = brief.plan_revision;
           }
@@ -582,12 +675,7 @@ export function BriefCanvas() {
                     onWhyThis={planReasoning ? () => setShowReasoning(true) : undefined}
                     onSwapIntent={
                       canSwap && !summary.paused && swappingItemId === null
-                        ? () => {
-                            if (document.activeElement instanceof HTMLElement) {
-                              swapTriggerRef.current = document.activeElement;
-                            }
-                            setActiveSwapDay(summary.day);
-                          }
+                        ? () => summonForDay(summary)
                         : undefined
                     }
                   />
@@ -708,6 +796,10 @@ export function BriefCanvas() {
           <BriefWhyPanel brief={brief} />
 
           <PlanActionBar
+            onConfirm={planId !== null ? handleConfirmWeek : undefined}
+            onTalkToLumi={handleTalkToLumi}
+            confirmed={weekConfirmed}
+            confirming={commitMutation.isPending}
             onSwapDay={
               canSwap && tileSummaries.length > 0
                 ? () => {

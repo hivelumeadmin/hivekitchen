@@ -46,6 +46,7 @@ function buildPlan(): PlanRow {
     state: null,
     state_set_at: null,
     state_message: null,
+    confirmed_at: null,
     created_at: '2026-05-30T10:00:00.000Z',
     updated_at: '2026-05-30T10:00:01.000Z',
   };

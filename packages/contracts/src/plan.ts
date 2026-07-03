@@ -49,6 +49,17 @@ export const PlanUpdatedEvent = z.object({
   guardrail_verdict: AllergyVerdict,
 });
 
+// Story 13-s2.5 — plan-generation progress. Emitted at each phase boundary of
+// the generation job so the Brief draft spinner reflects the real stage instead
+// of a fixed "~30s". `ready` coincides with the terminal PlanUpdatedEvent;
+// `failed` is emitted on the job's permanent-failure path (SSE-facing signal so
+// the UI stops waiting — distinct from the audit-only plan.generation.failed).
+export const PlanProgressEvent = z.object({
+  type: z.literal('plan.progress'),
+  week_id: z.string().uuid(),
+  stage: z.enum(['queued', 'composing', 'guardrail', 'persisting', 'ready', 'failed']),
+});
+
 // --- Story 3.1: deterministic allergy guardrail ---
 // AllergyVerdict above carries the SSE-facing summary; the schemas below are the
 // authoritative result shape returned by allergyGuardrailService.evaluate() /
@@ -520,6 +531,9 @@ export const PlanRowSchema = z.object({
   state: z.enum(['hard_failed', 'degraded']).nullable().default(null),
   state_set_at: z.string().datetime({ offset: true }).nullable().default(null),
   state_message: z.string().max(STATE_MESSAGE_MAX).nullable().default(null),
+  // Epic 13-s10 — real "Confirm the week". NULL = composed-but-unconfirmed;
+  // set once on the parent's explicit confirm (idempotent).
+  confirmed_at: z.string().datetime({ offset: true }).nullable().default(null),
   created_at: z.string().datetime({ offset: true }),
   updated_at: z.string().datetime({ offset: true }),
 });
@@ -869,6 +883,19 @@ export const SwapSlotRecipeInputSchema = z.object({
 });
 
 export const SwapSlotRecipeResponseSchema = z.object({
+  slot: PlanSlotRowSchema,
+});
+
+// --- Epic 13-s9 — snack-SKU swap (routing-spec §9 #3 resolution) ---
+//
+// A placed snack is stored as snack_sku_id; the swap writes snack_sku_id and
+// nulls recipe_id (the slot XOR permits either, writes converge on the SKU).
+// Snack slots only — recipe-backed snack swaps go through SwapSlotRecipeInput.
+export const SwapSlotSnackSkuInputSchema = z.object({
+  new_snack_sku_id: z.string().uuid(),
+});
+
+export const SwapSlotSnackSkuResponseSchema = z.object({
   slot: PlanSlotRowSchema,
 });
 

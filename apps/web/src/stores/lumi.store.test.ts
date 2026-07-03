@@ -48,6 +48,41 @@ describe('useLumiStore', () => {
     expect(useLumiStore.getState().captionOnlyMode).toBe(false);
   });
 
+  // Epic 13-s10 — the plan-edit scope (frontend-only routing state).
+  it('setPlanEditScope arms the scope; summon carries it', () => {
+    useLumiStore.getState().setPlanEditScope({
+      planId: 'plan-1',
+      weekOf: '2026-06-29',
+      day: 'tue',
+      dayLabel: 'Tuesday',
+    });
+    useLumiStore.getState().summon('text');
+    const s = useLumiStore.getState();
+    expect(s.presenceState).toBe('summoned');
+    expect(s.planEditScope?.planId).toBe('plan-1');
+    expect(s.planEditScope?.day).toBe('tue');
+  });
+
+  it('recede clears the plan-edit scope (restores the general path)', () => {
+    useLumiStore.getState().setPlanEditScope({ planId: 'plan-1', weekOf: '2026-06-29' });
+    useLumiStore.getState().summon('text');
+    useLumiStore.getState().recede();
+    expect(useLumiStore.getState().planEditScope).toBeNull();
+    expect(useLumiStore.getState().presenceState).toBe('atRest');
+  });
+
+  it('setContext clears any stale plan-edit scope on a new surface', () => {
+    useLumiStore.getState().setPlanEditScope({ planId: 'plan-1', weekOf: '2026-06-29' });
+    useLumiStore.getState().setContext(planningSignal);
+    expect(useLumiStore.getState().planEditScope).toBeNull();
+  });
+
+  it('dismissNudge clears the plan-edit scope', () => {
+    useLumiStore.getState().setPlanEditScope({ planId: 'plan-1', weekOf: '2026-06-29' });
+    useLumiStore.getState().dismissNudge();
+    expect(useLumiStore.getState().planEditScope).toBeNull();
+  });
+
   it('setContext updates surface + signal, clears turns + isHydrating; preserves talk session (AC #4)', () => {
     const { setContext, hydrateThread, setTalkSession } = useLumiStore.getState();
 

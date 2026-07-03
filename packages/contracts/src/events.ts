@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { Turn } from './thread.js';
-import { AllergyVerdict, PlanUpdatedEvent } from './plan.js';
+import { AllergyVerdict, PlanUpdatedEvent, PlanProgressEvent } from './plan.js';
 import { ForgetCompletedEvent } from './memory.js';
 import { PresenceEvent } from './presence.js';
 
@@ -22,6 +22,7 @@ const SequenceId = z.union([
 
 export const InvalidationEvent = z.discriminatedUnion('type', [
   PlanUpdatedEvent,
+  PlanProgressEvent,
   z.object({ type: z.literal('memory.updated'), node_id: z.string().uuid() }),
   ForgetCompletedEvent,
   z.object({ type: z.literal('thread.turn'), thread_id: z.string().uuid(), turn: Turn }),

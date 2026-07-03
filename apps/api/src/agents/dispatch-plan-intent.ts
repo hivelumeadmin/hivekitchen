@@ -28,7 +28,7 @@ export type DispatchResult =
   | { tier: 'T0'; action: 'swap'; intent: PlanIntent; candidate: CatalogCandidate; target: SlotTarget }
   | { tier: 'T0'; action: 'swap_snack'; intent: PlanIntent; target: SlotTarget }
   | { tier: 'T0'; action: 'vary'; intent: PlanIntent; variation: string; target: SlotTarget }
-  | { tier: 'T0'; action: 'safety_write'; intent: PlanIntent; target: SlotTarget }
+  | { tier: 'T0'; action: 'safety_write'; intent: PlanIntent; allergen: string; target: SlotTarget }
   | { tier: 'T0'; action: 'commit' }
   | { tier: 'T0'; action: 'noop' } // affirm
   | { tier: 'T0'; action: 'read'; intent: PlanIntent; target: SlotTarget } // inspect / explain
@@ -104,7 +104,16 @@ export async function dispatchPlanIntent(
       };
 
     case PLAN_INTENT.SAFETY_WRITE:
-      return { tier: 'T0', action: 'safety_write', intent: intent.intent, target: targetOf(intent) };
+      // A safety write with no allergen value can't be applied — clarify,
+      // never guess (safety data is never inferred).
+      if (!intent.allergen) return { tier: 'T1', action: 'reply', intent: intent.intent };
+      return {
+        tier: 'T0',
+        action: 'safety_write',
+        intent: intent.intent,
+        allergen: intent.allergen,
+        target: targetOf(intent),
+      };
 
     case PLAN_INTENT.SWAP_SLOT:
     case PLAN_INTENT.EXCLUDE_FILTER: {

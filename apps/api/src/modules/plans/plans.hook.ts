@@ -23,6 +23,11 @@ import { MemoryRepository } from '../memory/memory.repository.js';
 import { VariantProposalRepository } from './variant-proposal.repository.js';
 import { VariantProposalService } from './variant-proposal.service.js';
 import { ThreadRepository } from '../threads/thread.repository.js';
+import { OpenAIAdapter } from '../../agents/providers/openai.adapter.js';
+import { CatalogRepo } from '../../services/catalog-pick.repository.js';
+import { HouseholdAllergensRepository } from '../households/household-allergens.repository.js';
+import { PlanEditTurnService, buildSnackContextLoader } from './plan-edit.service.js';
+import { WeekAllergenRevalidator } from './week-allergen-revalidation.js';
 
 const plansHookPlugin: FastifyPluginAsync = async (fastify) => {
   if (!fastify.supabase) {
@@ -196,6 +201,41 @@ const plansHookPlugin: FastifyPluginAsync = async (fastify) => {
   }
   fastify.decorate('threadRepository', new ThreadRepository(fastify.supabase));
 
+  // Epic 13-s9 — conversational plan-edit turn (route → dispatch → execute).
+  // The classifier rides the same bare OpenAIAdapter seam as onboarding; the
+  // catalog pick reads the cached slate + KitchenMap; the snack re-pick inputs
+  // come from the KitchenMap projection + SKU shelf.
+  const catalogRepo = new CatalogRepo({
+    recipesRepository,
+    kitchenMapService: fastify.kitchenMapService,
+  });
+  const planEditSnackContext = buildSnackContextLoader({
+    kitchenMapService: fastify.kitchenMapService,
+    snackSkuRepository,
+  });
+  // Epic 13-s10 (AC7) — after a NEW allergen insert, re-screen the week and
+  // deterministically re-pick conflicting slots through the existing swap
+  // services (guardrail re-eval inside). Reuses the same catalog / snack-repick
+  // seams as the swap path so the pre-filter and the authority cannot drift.
+  const weekAllergenRevalidator = new WeekAllergenRevalidator({
+    catalog: catalogRepo,
+    snackContext: planEditSnackContext,
+    plansService,
+    recipeAllergenFlags: recipesRepository,
+    snackAllergenTags: snackSkuRepository,
+  });
+  const planEditService = new PlanEditTurnService({
+    provider: new OpenAIAdapter(fastify.openai),
+    catalog: catalogRepo,
+    planTree: plansService,
+    plansService,
+    householdAllergens: new HouseholdAllergensRepository(fastify.supabase, kek),
+    snackContext: planEditSnackContext,
+    kitchenMapForContext: fastify.kitchenMapService,
+    revalidator: weekAllergenRevalidator,
+  });
+
+  fastify.decorate('planEditService', planEditService);
   fastify.decorate('plansService', plansService);
   fastify.decorate('briefStateComposer', briefStateComposer);
   fastify.decorate('planAdjustmentService', planAdjustmentService);

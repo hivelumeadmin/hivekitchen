@@ -11,6 +11,11 @@ import { useVoiceSessionContext } from '@/contexts/VoiceSessionContext.js';
 import { Dialog } from './Dialog.js';
 import { CaptionRibbon } from './CaptionRibbon.js';
 import { FamilyLanguageRatificationCard } from './FamilyLanguageRatificationCard.js';
+// Epic 13-s10 — the conversational plan-edit exchange. LumiSheet is already a
+// feature-aware shared surface (it owns turns, voice, nudges, family-language),
+// so rendering the plan-edit panel here — not a pure primitive import — matches
+// its existing nature; the sheet is the single summoned surface.
+import { PlanEditPanel } from '@/features/plan/PlanEditPanel.js';
 
 const MAX_VISIBLE_TURNS = 8;
 const SHEET_TITLE_ID = 'lumi-sheet-title';
@@ -34,6 +39,7 @@ export function LumiSheet() {
   const captionLumiReply = useLumiStore((s) => s.captionLumiReply);
   const surface = useLumiStore((s) => s.surface);
   const contextSignal = useLumiStore((s) => s.contextSignal);
+  const planEditScope = useLumiStore((s) => s.planEditScope);
   const proactiveNudges = useLumiStore((s) => s.proactiveNudges);
   const householdId = useAuthStore((s) => s.user?.current_household_id) ?? '';
 
@@ -186,34 +192,37 @@ export function LumiSheet() {
           Lumi
         </h2>
         <div className="flex items-center gap-2">
-          <div className="flex items-center gap-1 rounded border border-border bg-surface-2 p-0.5">
-            <button
-              type="button"
-              onClick={() => useLumiStore.getState().summon('text')}
-              aria-label="Text mode"
-              className={[
-                'font-sans text-xs px-2 py-0.5 rounded transition-colors motion-reduce:transition-none',
-                !isVoiceMode ? 'bg-surface text-fg shadow-sm' : 'text-fg',
-              ].join(' ')}
-            >
-              Text
-            </button>
-            <button
-              type="button"
-              onClick={handleVoiceClick}
-              aria-label="Voice mode"
-              disabled={voiceStatus === 'connecting'}
-              className={[
-                'font-sans text-xs px-2 py-0.5 rounded transition-colors motion-reduce:transition-none',
-                isVoiceMode ? 'bg-surface text-fg shadow-sm' : 'text-fg',
-                voiceStatus === 'connecting' ? 'opacity-50 cursor-not-allowed' : '',
-              ]
-                .filter(Boolean)
-                .join(' ')}
-            >
-              Voice
-            </button>
-          </div>
+          {/* 13-s10 — plan-edit is text-first: no voice toggle in that mode. */}
+          {planEditScope === null && (
+            <div className="flex items-center gap-1 rounded border border-border bg-surface-2 p-0.5">
+              <button
+                type="button"
+                onClick={() => useLumiStore.getState().summon('text')}
+                aria-label="Text mode"
+                className={[
+                  'font-sans text-xs px-2 py-0.5 rounded transition-colors motion-reduce:transition-none',
+                  !isVoiceMode ? 'bg-surface text-fg shadow-sm' : 'text-fg',
+                ].join(' ')}
+              >
+                Text
+              </button>
+              <button
+                type="button"
+                onClick={handleVoiceClick}
+                aria-label="Voice mode"
+                disabled={voiceStatus === 'connecting'}
+                className={[
+                  'font-sans text-xs px-2 py-0.5 rounded transition-colors motion-reduce:transition-none',
+                  isVoiceMode ? 'bg-surface text-fg shadow-sm' : 'text-fg',
+                  voiceStatus === 'connecting' ? 'opacity-50 cursor-not-allowed' : '',
+                ]
+                  .filter(Boolean)
+                  .join(' ')}
+              >
+                Voice
+              </button>
+            </div>
+          )}
           <button
             type="button"
             onClick={handleClose}
@@ -225,6 +234,10 @@ export function LumiSheet() {
         </div>
       </header>
 
+      {planEditScope !== null ? (
+        <PlanEditPanel scope={planEditScope} />
+      ) : (
+        <>
       {voiceStatus === 'connecting' && (
         <p className="pb-1 font-sans text-xs text-fg-muted italic">Connecting to Lumi voice…</p>
       )}
@@ -303,6 +316,8 @@ export function LumiSheet() {
           {proactiveNudges ? 'Pause nudges' : 'Resume nudges'}
         </button>
       </div>
+        </>
+      )}
     </Dialog>
   );
 }

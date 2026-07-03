@@ -1,5 +1,6 @@
 export * from './auth.js';
 export * from './plan.js';
+export * from './plan-intent.js';
 export * from './plan-generate.js';
 export * from './auto-compose.js';
 export * from './lists.js';

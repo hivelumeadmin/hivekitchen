@@ -18,7 +18,7 @@ import { getCurrentWeekMonday } from '../../lib/derive-week-id.js';
 // column); state/state_set_at/state_message absorbed from brief_state so all
 // PlansRepository reads return the canonical plan-state fields.
 const PLAN_COLUMNS =
-  'id, household_id, week_of, revision, generated_at, guardrail_cleared_at, guardrail_version, prompt_version, state, state_set_at, state_message, created_at, updated_at';
+  'id, household_id, week_of, revision, generated_at, guardrail_cleared_at, guardrail_version, prompt_version, state, state_set_at, state_message, confirmed_at, created_at, updated_at';
 
 // Story 3-DM-C1 — column constants for the tree-shape tables.
 // The flat PLAN_ITEM_COLUMNS retired with the plan_items table cutover.
@@ -488,6 +488,48 @@ export class PlansRepository extends BaseRepository {
       .single();
     if (error) throw error;
     return data as PlanSlotRow;
+  }
+
+  // Epic 13-s9 (routing-spec §9 #3) — point a snack slot at a snack SKU.
+  // recipe_id is nulled in the same write so the slot XOR CHECK holds and a
+  // legacy recipe-backed snack slot converges on the SKU column.
+  async updateSlotSnackSku(opts: {
+    slotId: string;
+    newSnackSkuId: string;
+  }): Promise<PlanSlotRow> {
+    const { data, error } = await this.client
+      .from('plan_slots')
+      .update({
+        snack_sku_id: opts.newSnackSkuId,
+        recipe_id: null,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', opts.slotId)
+      .select(PLAN_SLOT_COLUMNS)
+      .single();
+    if (error) throw error;
+    return data as PlanSlotRow;
+  }
+
+  // Epic 13-s10 — real "Confirm the week". Sets confirmed_at only when it is
+  // still NULL (the `.is` guard makes concurrent confirms race-safe: exactly
+  // one wins the state change). Returns the updated row, or null when the
+  // guard matched no rows (already confirmed, or plan not owned by household).
+  async setConfirmedAt(opts: {
+    planId: string;
+    householdId: string;
+    confirmedAt: string;
+  }): Promise<PlanRow | null> {
+    const { data, error } = await this.client
+      .from('plans')
+      .update({ confirmed_at: opts.confirmedAt, updated_at: new Date().toISOString() })
+      .eq('id', opts.planId)
+      .eq('household_id', opts.householdId)
+      .is('confirmed_at', null)
+      .select(PLAN_COLUMNS)
+      .maybeSingle();
+    if (error) throw error;
+    return (data as PlanRow | null) ?? null;
   }
 
   // Tree-shape atomic commit. Maps to the new commit_plan() RPC signature

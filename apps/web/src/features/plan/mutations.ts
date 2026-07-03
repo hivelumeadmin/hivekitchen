@@ -1,7 +1,12 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { hkFetch } from '@/lib/fetch.js';
+import { PlanEditResponseSchema } from '@hivekitchen/contracts';
+import { hkFetch, HkApiError } from '@/lib/fetch.js';
+import { QueryKeys } from '@/lib/realtime/query-keys.js';
 import type {
   GeneratePlanResponse,
+  GetPlansResponse,
+  PlanEditInput,
+  PlanEditResponse,
   PlanMainAssignmentRow,
   PlanSlotRow,
   PlanSlotVariationRow,
@@ -19,6 +24,10 @@ import type {
   UpdateSovereigntyModeInput,
   UpdateSovereigntyModeResponse,
 } from '@hivekitchen/types';
+
+// Exposed so PlanEditPanel can mint an Idempotency-Key for the confirm-then-fire
+// T2 mutations (regenerate/generate) that reuse the same key across retries.
+export { safeRandomUuid };
 
 // Browser crypto.randomUUID() is available in all modern browsers in secure contexts.
 // Fallback for tests and non-secure contexts (http, iframe sandboxing): use
@@ -49,12 +58,22 @@ function safeRandomUuid(): string {
 // brief surface re-fetches its cleared-allergies + tile summaries.
 
 // PATCH /v1/plans/:planId/main-assignments/:mainAssignmentId/recipe.
+//
+// Epic 13-s10 (AC10) — the optimistic pilot (SSE-remediation §2b Tier 2b). The
+// tile moves instantly (onMutate writes the new recipe_id into the plan cache),
+// a snapshot rolls back on error, and the onSuccess refetch is DROPPED in favor
+// of the server-pushed plan.updated invalidate as the authoritative reconciler
+// (the swap-main route now emits it). Only swap-main is piloted — the other
+// mutations still refetch on success.
+type SwapMainContext = { snapshots: [readonly unknown[], GetPlansResponse | undefined][] };
+
 export function useSwapMainMutation() {
   const queryClient = useQueryClient();
   return useMutation<
     SwapMainResponse,
     Error,
-    { planId: string; mainAssignmentId: string; input: SwapMainInput }
+    { planId: string; mainAssignmentId: string; input: SwapMainInput },
+    SwapMainContext
   >({
     mutationFn: ({ planId, mainAssignmentId, input }) =>
       hkFetch<SwapMainResponse>(
@@ -65,10 +84,30 @@ export function useSwapMainMutation() {
           headers: { 'Idempotency-Key': safeRandomUuid() },
         },
       ),
-    onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ['brief'] });
-      void queryClient.invalidateQueries({ queryKey: ['plan'] });
+    onMutate: async ({ mainAssignmentId, input }) => {
+      const snapshots: SwapMainContext['snapshots'] = [];
+      for (const week of ['current', 'next'] as const) {
+        const key = QueryKeys.planByWeek(week);
+        await queryClient.cancelQueries({ queryKey: key });
+        const prev = queryClient.getQueryData<GetPlansResponse>(key);
+        if (prev?.main_assignments.some((m) => m.id === mainAssignmentId)) {
+          snapshots.push([key, prev]);
+          queryClient.setQueryData<GetPlansResponse>(key, {
+            ...prev,
+            main_assignments: prev.main_assignments.map((m) =>
+              m.id === mainAssignmentId ? { ...m, recipe_id: input.new_recipe_id } : m,
+            ),
+          });
+        }
+      }
+      return { snapshots };
     },
+    onError: (_err, _vars, context) => {
+      for (const [key, prev] of context?.snapshots ?? []) {
+        queryClient.setQueryData(key, prev);
+      }
+    },
+    // No onSuccess refetch — the plan.updated SSE invalidate reconciles.
   });
 }
 
@@ -303,6 +342,31 @@ export function useGenerateOnDemandMutation() {
         method: 'POST',
         headers: { 'Idempotency-Key': idempotencyKey },
       }),
+  });
+}
+
+// POST /v1/plans/:planId/edit — Epic 13-s10. The conversational plan-edit turn.
+// Body is either { utterance } (one cheap classifier call) or { intent } (a
+// pre-built chip/confirm bypass — zero LLM). Response is the typed
+// PlanEditResponse { intent, tier, result }. Deliberately does NOT invalidate on
+// success: PlanEditPanel writes the applied delta straight into the plan cache
+// (setQueryData, no blocking refetch), and the server-pushed plan.updated SSE
+// invalidate remains the authoritative reconciler (AC3). Each turn mints a fresh
+// UUID Idempotency-Key (the route rejects non-UUID keys).
+export function usePlanEditMutation() {
+  return useMutation<PlanEditResponse, Error, { planId: string; body: PlanEditInput }>({
+    mutationFn: async ({ planId, body }) => {
+      const raw = await hkFetch<unknown>(`/v1/plans/${planId}/edit`, {
+        method: 'POST',
+        body,
+        headers: { 'Idempotency-Key': safeRandomUuid() },
+      });
+      const parsed = PlanEditResponseSchema.safeParse(raw);
+      if (!parsed.success) {
+        throw new HkApiError(200, { title: 'Unexpected response shape from /edit', detail: parsed.error.message });
+      }
+      return parsed.data;
+    },
   });
 }
 

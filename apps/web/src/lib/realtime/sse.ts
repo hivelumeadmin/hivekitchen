@@ -1,8 +1,14 @@
 // apps/web/src/lib/realtime/sse.ts
 import type { QueryClient } from '@tanstack/react-query';
-import { InvalidationEvent, LumiThreadTurnsResponseSchema } from '@hivekitchen/contracts';
+import {
+  InvalidationEvent,
+  LumiNudgeEventSchema,
+  LumiThreadTurnsResponseSchema,
+} from '@hivekitchen/contracts';
 import type { Turn } from '@hivekitchen/types';
 import { useAuthStore } from '@/stores/auth.store.js';
+import { useLumiStore } from '@/stores/lumi.store.js';
+import { usePlanProgressStore } from '@/stores/plan-progress.store.js';
 import { hkFetch } from '@/lib/fetch.js';
 import { QueryKeys } from './query-keys.js';
 import { reportThreadIntegrityAnomaly } from './thread-integrity.js';
@@ -85,6 +91,8 @@ export function createSseBridge(queryClient: QueryClient): SseBridge {
 
   function closeEventSource(): void {
     if (es !== null) {
+      es.removeEventListener('message', handleMessage);
+      es.removeEventListener('lumi.nudge', handleNudge);
       es.close();
       es = null;
     }
@@ -164,6 +172,14 @@ export function createSseBridge(queryClient: QueryClient): SseBridge {
         // matches every ['brief', householdId] key — at most one is hot per
         // session (one current_household_id), so this is safe.
         void queryClient.invalidateQueries({ queryKey: ['brief'] });
+        break;
+
+      case 'plan.progress':
+        // Story 13-s2.5 — drive the Brief draft spinner's stage. Terminal stages
+        // (ready/failed) are consumed by the composing/regenerating UI, which
+        // then unmounts or surfaces an error; `plan.updated` (emitted alongside
+        // `ready`) does the actual query invalidation.
+        usePlanProgressStore.getState().setProgress(event.week_id, event.stage);
         break;
 
       case 'memory.updated':
@@ -272,6 +288,33 @@ export function createSseBridge(queryClient: QueryClient): SseBridge {
     }
   }
 
+  // Story 13-s2.5 — nudges fold into this single bridge (was a second
+  // EventSource in useLumiNudgeSSE). `lumi.nudge` is a NAMED event, distinct
+  // from the default `message` (InvalidationEvent) frames, so it coexists on the
+  // same connection via its own listener. Behavior is identical to the retired
+  // hook: set the pending nudge, live-append when the sheet is summoned on the
+  // matching surface, and whisper (valet rule 3) when at rest with nudges on.
+  function handleNudge(e: MessageEvent): void {
+    if (!e.data) return;
+    let raw: unknown;
+    try {
+      raw = JSON.parse(e.data as string);
+    } catch {
+      return;
+    }
+    const parsed = LumiNudgeEventSchema.safeParse(raw);
+    if (!parsed.success) return;
+
+    const store = useLumiStore.getState();
+    store.setNudge(parsed.data.turn);
+    if (store.presenceState === 'summoned' && store.surface === parsed.data.surface) {
+      store.appendTurn(parsed.data.turn);
+    }
+    if (store.proactiveNudges && store.presenceState === 'atRest') {
+      store.whisper();
+    }
+  }
+
   function openConnection(): void {
     if (disposed) return;
 
@@ -295,6 +338,7 @@ export function createSseBridge(queryClient: QueryClient): SseBridge {
     es = thisEs;
 
     thisEs.addEventListener('message', handleMessage);
+    thisEs.addEventListener('lumi.nudge', handleNudge);
 
     thisEs.addEventListener('open', () => {
       if (disposed || thisEs !== es) return;

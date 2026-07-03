@@ -20,6 +20,7 @@ import {
   CreatePlanResponse,
   AllergyVerdict,
   PlanUpdatedEvent,
+  PlanProgressEvent,
   ConflictSchema,
   FlaggedCompoundItemSchema,
   GuardrailResultSchema,
@@ -313,6 +314,16 @@ import {
   UpdateVariationResponseSchema,
   SwapSlotRecipeInputSchema,
   SwapSlotRecipeResponseSchema,
+  SwapSlotSnackSkuInputSchema,
+  SwapSlotSnackSkuResponseSchema,
+  // Epic 13-s9 — conversational plan-edit wire shapes
+  PlanIntentResultSchema,
+  PlanEditParamSchema,
+  PlanEditInputSchema,
+  PlanEditResultSchema,
+  PlanEditResponseSchema,
+  PlanEditFixedSlotSchema,
+  DispatchTierSchema,
   PausePlanDayTreeInputSchema,
   PauseChildOnDayInputSchema,
   MainAssignmentParamSchema,
@@ -384,6 +395,7 @@ export type WeeklyPlan = z.infer<typeof WeeklyPlan>;
 export type CreatePlanResponse = z.infer<typeof CreatePlanResponse>;
 export type AllergyVerdict = z.infer<typeof AllergyVerdict>;
 export type PlanUpdatedEvent = z.infer<typeof PlanUpdatedEvent>;
+export type PlanProgressEvent = z.infer<typeof PlanProgressEvent>;
 
 // Allergy guardrail (Story 3.1)
 export type Conflict = z.infer<typeof ConflictSchema>;
@@ -810,6 +822,16 @@ export type UpdateVariationInput = z.infer<typeof UpdateVariationInputSchema>;
 export type UpdateVariationResponse = z.infer<typeof UpdateVariationResponseSchema>;
 export type SwapSlotRecipeInput = z.infer<typeof SwapSlotRecipeInputSchema>;
 export type SwapSlotRecipeResponse = z.infer<typeof SwapSlotRecipeResponseSchema>;
+export type SwapSlotSnackSkuInput = z.infer<typeof SwapSlotSnackSkuInputSchema>;
+export type SwapSlotSnackSkuResponse = z.infer<typeof SwapSlotSnackSkuResponseSchema>;
+// Epic 13-s9 — conversational plan-edit wire types.
+export type PlanIntentResult = z.infer<typeof PlanIntentResultSchema>;
+export type PlanEditParam = z.infer<typeof PlanEditParamSchema>;
+export type PlanEditInput = z.infer<typeof PlanEditInputSchema>;
+export type PlanEditResult = z.infer<typeof PlanEditResultSchema>;
+export type PlanEditResponse = z.infer<typeof PlanEditResponseSchema>;
+export type PlanEditFixedSlot = z.infer<typeof PlanEditFixedSlotSchema>;
+export type DispatchTier = z.infer<typeof DispatchTierSchema>;
 export type PausePlanDayTreeInput = z.infer<typeof PausePlanDayTreeInputSchema>;
 export type PauseChildOnDayInput = z.infer<typeof PauseChildOnDayInputSchema>;
 export type MainAssignmentParam = z.infer<typeof MainAssignmentParamSchema>;

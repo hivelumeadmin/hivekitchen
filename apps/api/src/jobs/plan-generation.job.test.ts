@@ -1,7 +1,10 @@
 import { describe, it, expect, vi } from 'vitest';
 import type { PlanComposeTreeOutput, KitchenMap } from '@hivekitchen/types';
+import { InvalidationEvent } from '@hivekitchen/contracts';
 import {
   buildCommitInputTree,
+  buildPlanProgressPayload,
+  buildPlanUpdatedPayload,
   deriveWeekId,
   getLocalSixPmUtcMs,
   getNextMondayFrom,
@@ -60,6 +63,30 @@ describe('selectAutoComposeEligible (3-S35 cron gate)', () => {
       new Set([HH_C]),
     );
     expect(result.map((h) => h.id)).toEqual([HH_A]);
+  });
+});
+
+describe('SSE push payloads (Story 13-s2.5)', () => {
+  const WEEK_ID = deriveWeekId('2026-06-01');
+
+  it('buildPlanUpdatedPayload round-trips through InvalidationEvent with a cleared verdict', () => {
+    const payload = buildPlanUpdatedPayload(WEEK_ID);
+    expect(payload).toEqual({
+      type: 'plan.updated',
+      week_id: WEEK_ID,
+      guardrail_verdict: { verdict: 'cleared' },
+    });
+    const parsed = InvalidationEvent.safeParse(JSON.parse(JSON.stringify(payload)));
+    expect(parsed.success).toBe(true);
+  });
+
+  it('buildPlanProgressPayload round-trips for every stage', () => {
+    for (const stage of ['queued', 'composing', 'guardrail', 'persisting', 'ready', 'failed'] as const) {
+      const payload = buildPlanProgressPayload(WEEK_ID, stage);
+      expect(payload).toEqual({ type: 'plan.progress', week_id: WEEK_ID, stage });
+      const parsed = InvalidationEvent.safeParse(JSON.parse(JSON.stringify(payload)));
+      expect(parsed.success).toBe(true);
+    }
   });
 });
 

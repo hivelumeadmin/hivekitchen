@@ -469,12 +469,13 @@ describe('LumiNudgeEventSchema', () => {
 });
 
 describe('NudgeTriggerSchema', () => {
-  it('accepts each of the 4 known trigger values', () => {
+  it('accepts each of the 5 known trigger values', () => {
     for (const trigger of [
       'plan_completed',
       'meal_rating_received',
       'allergen_flagged',
       'evening_checkin_completed',
+      'next_week_ready',
     ] as const) {
       expect(NudgeTriggerSchema.safeParse(trigger).success).toBe(true);
     }

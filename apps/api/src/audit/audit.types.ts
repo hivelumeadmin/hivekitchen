@@ -17,7 +17,9 @@ export const AUDIT_EVENT_TYPES = [
   // retires it; the three below cover the canonical-model decomposition.
   'plan.main_swapped',
   'plan.slot_recipe_swapped',
+  'plan.slot_snack_swapped', // Epic 13-s9 — snack-SKU swap (routing-spec §9 #3)
   'plan.variation_updated',
+  'plan.week_confirmed', // Epic 13-s10 — real "Confirm the week" commit
   'plan.child_paused_on_day',
   'plan.day_paused',
   'plan.day_override_set',

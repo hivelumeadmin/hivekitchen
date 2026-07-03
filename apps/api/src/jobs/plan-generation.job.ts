@@ -6,6 +6,8 @@ import type {
   CommitPlanTreeInput,
   GuardrailResult,
   PlanComposeTreeOutput,
+  PlanProgressEvent,
+  PlanUpdatedEvent,
   Weekday,
 } from '@hivekitchen/types';
 import { GuardrailRejectionError } from '../common/errors.js';
@@ -155,6 +157,22 @@ export function buildCommitInputTree(
   };
 }
 
+// Story 13-s2.5 — SSE push payload builders. Kept as pure exported functions so
+// the round-trip against the contract union is unit-testable without BullMQ
+// (the worker body itself runs only under BullMQ). `plan.updated` on the
+// completion path always carries a `cleared` verdict: reaching completion means
+// commit() cleared the guardrail (a blocked verdict throws → the failure path).
+export function buildPlanUpdatedPayload(weekId: string): PlanUpdatedEvent {
+  return { type: 'plan.updated', week_id: weekId, guardrail_verdict: { verdict: 'cleared' } };
+}
+
+export function buildPlanProgressPayload(
+  weekId: string,
+  stage: PlanProgressEvent['stage'],
+): PlanProgressEvent {
+  return { type: 'plan.progress', week_id: weekId, stage };
+}
+
 // Story 12-S11 — short human-readable plan summary for the proactive nudge's
 // `# Proactive Nudge` prompt block. main_assignments carry only sequence +
 // recipe_id at the contract layer; canonical_name may be present on resolved
@@ -212,6 +230,11 @@ const planGenerationPlugin: FastifyPluginAsync = async (fastify) => {
   if (!fastify.kitchenMapService) {
     throw new Error(
       'planGenerationPlugin requires kitchenMapService decorator — register kitchenMapPlugin first',
+    );
+  }
+  if (!fastify.sseDispatcher) {
+    throw new Error(
+      'planGenerationPlugin requires sseDispatcher decorator — register sseDispatcherPlugin first',
     );
   }
 
@@ -516,6 +539,14 @@ const planGenerationPlugin: FastifyPluginAsync = async (fastify) => {
         }
       }
 
+      // Story 13-s2.5 — push generation progress so the Brief draft spinner
+      // shows the real stage. Fire-and-forget; no subscribers → no-op.
+      fastify.sseDispatcher.emit(
+        household_id,
+        'message',
+        JSON.stringify(buildPlanProgressPayload(weekId, 'composing')),
+      );
+
       const composeOutput = await fastify.orchestrator.planWeek({
         householdId: household_id,
         weekOf: week_of,
@@ -533,6 +564,12 @@ const planGenerationPlugin: FastifyPluginAsync = async (fastify) => {
         pantrySnapshot,
         recipeCandidates,
       });
+      // Compose done → the guardrail runs inside commit() next.
+      fastify.sseDispatcher.emit(
+        household_id,
+        'message',
+        JSON.stringify(buildPlanProgressPayload(weekId, 'guardrail')),
+      );
       const commitInput = buildCommitInputTree(composeOutput, request_id, snackSlots);
 
       // Allergy guardrail + brief_state refresh are wired inside
@@ -548,6 +585,11 @@ const planGenerationPlugin: FastifyPluginAsync = async (fastify) => {
       // than the first attempt that may have been rewritten on guardrail
       // retry.
       let lastAttemptComposeOutput: PlanComposeTreeOutput = composeOutput;
+      fastify.sseDispatcher.emit(
+        household_id,
+        'message',
+        JSON.stringify(buildPlanProgressPayload(weekId, 'persisting')),
+      );
       const committedPlanId = await fastify.plansService.commit(
         commitInput,
         request_id,
@@ -687,12 +729,20 @@ const planGenerationPlugin: FastifyPluginAsync = async (fastify) => {
         );
       }
 
-      // Story 5.2 will wire the real SSE plan.updated emission via Redis
-      // pub/sub. For now, log the intent so an integration test can assert
-      // the right hook point exists.
-      fastify.log.debug(
-        { module: 'plan-generation', action: 'sse.deferred', household_id, weekId },
-        'plan.updated SSE emission deferred to Story 5.2',
+      // Story 13-s2.5 — push plan readiness. `plan.progress: ready` flips the
+      // spinner to its terminal stage; `plan.updated` invalidates the plan +
+      // brief queries client-side (this replaces the BriefCanvas setInterval
+      // polls). Fire-and-forget: the plan is already committed, delivery is the
+      // canonical output and a dropped socket is covered by Last-Event-ID replay.
+      fastify.sseDispatcher.emit(
+        household_id,
+        'message',
+        JSON.stringify(buildPlanProgressPayload(weekId, 'ready')),
+      );
+      fastify.sseDispatcher.emit(
+        household_id,
+        'message',
+        JSON.stringify(buildPlanUpdatedPayload(weekId)),
       );
     },
     { concurrency: 2 },
@@ -717,6 +767,17 @@ const planGenerationPlugin: FastifyPluginAsync = async (fastify) => {
         err,
       },
       'plan-generation job permanently failed — all retries exhausted',
+    );
+
+    // Story 13-s2.5 — push a terminal `failed` stage so an open Brief tab stops
+    // waiting on the draft. GuardrailRejectionError carries no allergen list, so
+    // there is no `blocked` verdict to surface here (spec §4) — `plan.progress:
+    // failed` covers both guardrail-exhaustion and infra failures. This is the
+    // SSE-facing signal, distinct from the audit-only plan.generation.failed row.
+    fastify.sseDispatcher.emit(
+      household_id,
+      'message',
+      JSON.stringify(buildPlanProgressPayload(deriveWeekId(week_of), 'failed')),
     );
 
     fastify.auditService
