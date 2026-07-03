@@ -59,7 +59,7 @@ export function PlanHistoryPage() {
   }, [data]);
 
   if (shouldRedirectToCurrent) {
-    return <Navigate to="/app/plan" replace />;
+    return <Navigate to="/app" replace />;
   }
 
   const isNotFound = isError && error instanceof HkApiError && error.status === 404;
@@ -73,7 +73,7 @@ export function PlanHistoryPage() {
     <main className="mx-auto w-full max-w-7xl flex-grow px-6 pt-12 pb-24">
       <div className="mb-6">
         <Link
-          to="/app/plan"
+          to="/app"
           className="font-sans text-[13px] text-fg-muted underline underline-offset-2 hover:text-amber-warm transition-colors motion-reduce:transition-none focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-amber-warm"
         >
           Back to this week

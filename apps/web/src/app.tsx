@@ -22,10 +22,11 @@ import GrandparentScopeLayout from './routes/(grandparent)/layout.js';
 import GrandparentComposePage from './routes/(grandparent)/compose.js';
 import AppLayout from './routes/(app)/layout.js';
 import AppHomePage from './routes/(app)/index.js';
+import LumiPage from './routes/(app)/lumi.js';
 import OnboardingPage from './routes/(app)/onboarding.js';
 import AccountPage from './routes/(app)/account.js';
-import PlanRoute from './routes/(app)/plan.js';
-import PlanHistoryRoute from './routes/(app)/plan-history.js';
+import { ArtifactSheet } from './components/ArtifactSheet.js';
+import { PlanHistoryPage } from './features/plan/PlanHistoryPage.js';
 import ChildSchoolPoliciesPage from './routes/(app)/child-school-policies.js';
 import ChildBagCompositionPage from './routes/(app)/child-bag-composition.js';
 import ChildExtraRulesPage from './routes/(app)/child-extra-rules.js';
@@ -80,17 +81,67 @@ const router = createBrowserRouter([
     element: <AppLayout />,
     children: [
       { path: '/app', element: <AppHomePage /> },
-      { path: '/app/plan', element: <PlanRoute /> },
-      { path: '/app/plan/:weekId', element: <PlanHistoryRoute /> },
+      // Lumi anchor — the thread, full-screen (Epic 13-s11).
+      { path: '/app/lumi', element: <LumiPage /> },
+      // Artifacts over the Brief (Epic 13-s11) — URL kept, nav removed. Each
+      // renders the Brief anchor with the screen summoned in an ArtifactSheet;
+      // closing navigates to /app. The Brief's parental-notice gate covers them.
+      {
+        path: '/app/day/:day',
+        element: (
+          <AppHomePage
+            artifact={
+              <ArtifactSheet label="Day detail">
+                <DayDetailRoute />
+              </ArtifactSheet>
+            }
+          />
+        ),
+      },
+      {
+        path: '/app/grocery-list',
+        element: (
+          <AppHomePage
+            artifact={
+              <ArtifactSheet label="Grocery list">
+                <GroceryListRoute />
+              </ArtifactSheet>
+            }
+          />
+        ),
+      },
+      {
+        path: '/app/evening-checkin',
+        element: (
+          <AppHomePage
+            artifact={
+              <ArtifactSheet label="Evening check-in">
+                <EveningCheckinRoute />
+              </ArtifactSheet>
+            }
+          />
+        ),
+      },
+      {
+        path: '/app/plan/:weekId',
+        element: (
+          <AppHomePage
+            artifact={
+              <ArtifactSheet label="Plan history">
+                <PlanHistoryPage />
+              </ArtifactSheet>
+            }
+          />
+        ),
+      },
+      // /app/plan is a duplicate of the Brief plan surface — redirect, not 404.
+      { path: '/app/plan', element: <Navigate to="/app" replace /> },
       { path: '/app/children/:childId/school-policies', element: <ChildSchoolPoliciesPage /> },
       { path: '/app/children/:childId/bag-composition', element: <ChildBagCompositionPage /> },
       { path: '/app/children/:childId/extra-rules', element: <ChildExtraRulesPage /> },
       { path: '/app/children/:childId/flavor-passport', element: <ChildFlavorPassportPage /> },
-      { path: '/app/day/:day', element: <DayDetailRoute /> },
       { path: '/app/heart-note', element: <HeartNoteRoute /> },
       { path: '/app/heart-notes', element: <HeartNotesRoute /> },
-      { path: '/app/evening-checkin', element: <EveningCheckinRoute /> },
-      { path: '/app/grocery-list', element: <GroceryListRoute /> },
       { path: '/app/inspiration', element: <KitchenInspirationRoute /> },
       { path: '/app/kitchen-profile', element: <KitchenProfileRoute /> },
       { path: '/app/kitchen/snacks', element: <SnackShelfRoute /> },
@@ -103,6 +154,8 @@ const router = createBrowserRouter([
       { path: '/lunch/:linkId', element: <LunchLinkRoute /> },
       { path: '/lunch/:linkId/passport', element: <LunchPassportRoute /> },
       { path: '/account', element: <AccountPage /> },
+      // Unknown /app/* paths redirect to the Brief instead of 404ing.
+      { path: '/app/*', element: <Navigate to="/app" replace /> },
     ],
   },
 ]);

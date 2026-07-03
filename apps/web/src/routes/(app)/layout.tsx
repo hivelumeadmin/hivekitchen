@@ -12,6 +12,10 @@ import { useLumiStore } from '@/stores/lumi.store.js';
 export default function AppScopeLayout() {
   useScope('app-scope');
   const onLunchRoute = useMatch('/lunch/*');
+  // Epic 13-s11 — the Lumi anchor page IS the full-screen thread, so the ambient
+  // presence dot/sheet/whisper are suppressed there (same useMatch idiom as the
+  // child-scope /lunch/* suppression). Whispers elsewhere are unchanged.
+  const onLumiRoute = useMatch('/app/lumi');
   const [mobileOpen, setMobileOpen] = useState(false);
 
   // Story 13-s2.5 — proactive Lumi nudges are now delivered on the single SSE
@@ -51,7 +55,7 @@ export default function AppScopeLayout() {
           <AppFooter />
         </div>
 
-        {!onLunchRoute && <LumiPresence />}
+        {!onLunchRoute && !onLumiRoute && <LumiPresence />}
       </div>
     </VoiceSessionProvider>
   );

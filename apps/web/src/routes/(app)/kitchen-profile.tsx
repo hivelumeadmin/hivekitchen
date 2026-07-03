@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { useScope } from '@hivekitchen/ui';
 import { ALLERGEN_LABELS } from '@hivekitchen/contracts';
 import type {
@@ -432,6 +432,28 @@ export default function KitchenProfileRoute() {
             onSendComposite={(c) => logComposite('Calendar', c)}
             onDone={noop}
           />
+        </section>
+
+        {/* Epic 13-s11 — the 4-anchor nav collapse dropped Snacks/Inspiration/
+            Memory from the sidebar; these full screens stay reachable from the
+            Kitchen anchor (their home surface) instead. */}
+        <section className="scroll-mt-24">
+          <SectionEyebrow>More in your kitchen</SectionEyebrow>
+          <nav className="flex flex-wrap gap-3" aria-label="Kitchen sections">
+            {[
+              { to: '/app/kitchen/snacks', label: 'My Snacks' },
+              { to: '/app/inspiration', label: 'Kitchen Inspiration' },
+              { to: '/app/memory', label: 'Memory' },
+            ].map(({ to, label }) => (
+              <Link
+                key={to}
+                to={to}
+                className="rounded-full border border-border bg-surface px-4 py-2 font-sans text-sm text-fg transition-colors hover:bg-surface-2 motion-reduce:transition-none focus:outline-none focus:ring-2 focus:ring-foliage"
+              >
+                {label}
+              </Link>
+            ))}
+          </nav>
         </section>
     </main>
   );

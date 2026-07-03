@@ -194,7 +194,7 @@ describe('PlanHistoryPage (Story 3.15 — tree shape)', () => {
     renderWithRoute(`/app/plan/${WEEK_ID}`);
 
     const back = await screen.findByRole('link', { name: 'Back to this week' });
-    expect(back.getAttribute('href')).toBe('/app/plan');
+    expect(back.getAttribute('href')).toBe('/app');
   });
 
   it('renders the empty-state copy on 404 (no plan exists for the week)', async () => {

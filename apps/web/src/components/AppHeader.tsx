@@ -24,6 +24,13 @@ export function AppHeader({ onMenuToggle }: AppHeaderProps) {
     void navigate('/auth/login', { replace: true });
   }
 
+  // Epic 13-s11 — Settings + Account left the collapsed 4-anchor sidebar; they
+  // live here as utility chrome, the same idiom as Sign out.
+  function goTo(path: string) {
+    setMenuOpen(false);
+    void navigate(path);
+  }
+
   return (
     <header className="border-b border-neutral-400/30 bg-bg">
       <div className="flex w-full items-center justify-between px-4 py-4 md:px-6">
@@ -72,8 +79,22 @@ export function AppHeader({ onMenuToggle }: AppHeaderProps) {
                 )}
                 <button
                   type="button"
-                  onClick={() => void handleSignOut()}
+                  onClick={() => goTo('/app/household/settings')}
                   className="w-full px-4 py-2 text-left text-sm transition-colors hover:bg-neutral-400/10"
+                >
+                  Settings
+                </button>
+                <button
+                  type="button"
+                  onClick={() => goTo('/account')}
+                  className="w-full px-4 py-2 text-left text-sm transition-colors hover:bg-neutral-400/10"
+                >
+                  Account
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void handleSignOut()}
+                  className="w-full border-t border-neutral-400/20 px-4 py-2 text-left text-sm transition-colors hover:bg-neutral-400/10"
                 >
                   Sign out
                 </button>
