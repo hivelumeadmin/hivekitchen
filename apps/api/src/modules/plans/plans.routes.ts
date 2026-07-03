@@ -29,6 +29,9 @@ import {
   ConfirmVariantProposalInputSchema,
   ProposeSwapInputSchema,
   ProposeSwapResponseSchema,
+  PlanEditParamSchema,
+  PlanEditInputSchema,
+  PlanEditResponseSchema,
 } from '@hivekitchen/contracts';
 import type {
   GetPlansQuery,
@@ -44,9 +47,15 @@ import type {
   Weekday,
   VariantProposal,
   FlaggedCompoundItem,
+  PlanEditParam,
+  PlanEditInput,
 } from '@hivekitchen/types';
 import { ValidationError, NotFoundError } from '../../common/errors.js';
 import { authorize } from '../../middleware/authorize.hook.js';
+import { toWireResult, shouldEmitPlanUpdated } from './plan-edit.service.js';
+import { createPlanIntentTracer } from '../../agents/plan-intent-tracer.js';
+import { buildPlanUpdatedPayload } from '../../jobs/plan-generation.job.js';
+import { deriveWeekId } from '../../lib/derive-week-id.js';
 
 // Story 3.12 — Idempotency-Key: UUIDv4 format, max 128 chars (architecture §Idempotency).
 // Full Redis replay-cache deferred to a later story — see deferred-work.md.
@@ -314,6 +323,23 @@ const plansRoutesPlugin: FastifyPluginAsync = async (fastify) => {
         requestId,
         input: body,
       });
+
+      // Epic 13-s10 (AC10 / sse-remediation §2b Tier 2c) — the swap-main
+      // optimistic pilot drops its client onSuccess refetch, so this route must
+      // push plan.updated as the authoritative reconciler (and cross-tab
+      // convergence). Scoped to swap-main only — the other swap routes still
+      // refetch on success. Emit failure is non-fatal (the swap is committed).
+      const plan = await fastify.plansService.findById(
+        planId,
+        request.user.household_id,
+      );
+      if (plan !== null) {
+        fastify.sseDispatcher.emit(
+          request.user.household_id,
+          'message',
+          JSON.stringify(buildPlanUpdatedPayload(deriveWeekId(plan.week_of))),
+        );
+      }
 
       return reply.status(200).send({ main_assignment: updated });
     },
@@ -637,6 +663,57 @@ const plansRoutesPlugin: FastifyPluginAsync = async (fastify) => {
       });
 
       return reply.status(204).send();
+    },
+  );
+
+  // POST /v1/plans/:planId/edit
+  //
+  // Epic 13-s9 — the conversational plan-edit turn. Body is either a free-text
+  // utterance (one 'mini'-tier classifier call) or a pre-built intent (chip
+  // tap — zero LLM). Dispatch + execution are deterministic; T2 intents come
+  // back as `escalate` for the client's confirm gate (the expensive path never
+  // fires from this route). A successful T0 mutation pushes plan.updated over
+  // SSE so other tabs reconcile (13-s10).
+  fastify.post(
+    '/v1/plans/:planId/edit',
+    {
+      preHandler: requireMember,
+      schema: {
+        params: PlanEditParamSchema,
+        body: PlanEditInputSchema,
+        response: { 200: PlanEditResponseSchema },
+      },
+    },
+    async (request, reply) => {
+      const requestId = requireIdempotencyKey(
+        request.headers['idempotency-key'],
+      );
+      const { planId } = request.params as PlanEditParam;
+      const householdId = request.user.household_id;
+      const body = request.body as PlanEditInput;
+
+      const { intent, dispatch, outcome, utterance, weekOf } =
+        await fastify.planEditService.run({ planId, householdId, requestId, body });
+
+      // Epic 13-s10 (AC6/AC8) — emit plan.updated only when state actually
+      // changed: applied swaps/vary always; safety_write only on inserted:true;
+      // commit only on the first confirm. No-op re-declares / re-confirms and
+      // read/clarify/escalate suppress the emit.
+      if (shouldEmitPlanUpdated(outcome)) {
+        fastify.sseDispatcher.emit(
+          householdId,
+          'message',
+          JSON.stringify(buildPlanUpdatedPayload(deriveWeekId(weekOf))),
+        );
+      }
+
+      // Routing trace (spec §8) — fire-and-forget, no-op unless PLAN_TRACE_DIR.
+      const tracer = createPlanIntentTracer({ householdId, planId }, request.log);
+      void tracer?.write({ utterance, intent, dispatch, outcomeStatus: outcome.status });
+
+      return reply
+        .status(200)
+        .send({ intent, tier: dispatch.tier, result: toWireResult(outcome) });
     },
   );
 };

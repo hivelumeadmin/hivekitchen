@@ -217,3 +217,33 @@ export function assignSnackRotation(opts: {
 
   return assignments;
 }
+
+// Epic 13-s9 — deterministic single-day replacement pick for a snack swap.
+// Reuses assignSnackRotation (bans, pins, allergen pre-filter, deterministic
+// seed) restricted to the target day, with the slot's current SKU removed from
+// the pool so the pick moves to the next deterministic candidate. Fail-closed:
+// returns null when the exclusion (or the allergen pre-filter) empties the
+// pool — the caller escalates rather than repeating or guessing.
+export function pickReplacementSnackSku(opts: {
+  bagCompositions: readonly PlannerBagComposition[];
+  extraRules: readonly PlannerExtraRules[];
+  activeSkus: readonly SnackSkuRow[];
+  weekOf: string;
+  declaredAllergensByChildId?: ReadonlyMap<string, readonly string[]>;
+  day: string; // weekday string, e.g. 'monday'
+  currentSkuId: string | null;
+}): string | null {
+  const pool =
+    opts.currentSkuId === null
+      ? opts.activeSkus
+      : opts.activeSkus.filter((s) => s.id !== opts.currentSkuId);
+  const assignments = assignSnackRotation({
+    bagCompositions: opts.bagCompositions,
+    extraRules: opts.extraRules,
+    activeSkus: pool,
+    weekOf: opts.weekOf,
+    plannedDays: [opts.day],
+    declaredAllergensByChildId: opts.declaredAllergensByChildId,
+  });
+  return assignments.find((a) => a.day === opts.day)?.snack_sku_id ?? null;
+}

@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import type {
   ClearedAllergyEntry,
+  GetPlansResponse,
   PlanTileSummary,
   ProposeSwapResponse,
   Weekday,
@@ -23,7 +24,7 @@ import { PlanActionBar } from './PlanActionBar.js';
 import { PlanTile, type PlanTileState, type ChildDotColor, type ChildInfo } from './PlanTile.js';
 import { PackerChip } from './PackerChip.js';
 import { PresenceIndicator } from '@/features/thread/PresenceIndicator.js';
-import { useLumiStore } from '@/stores/lumi.store.js';
+import { useLumiStore, type PlanEditDay } from '@/stores/lumi.store.js';
 import { usePlanProgressStore, planProgressLabel } from '@/stores/plan-progress.store.js';
 import { QuietDiff } from './QuietDiff.js';
 import { usePlanQuery } from './queries.js';
@@ -33,12 +34,29 @@ import {
   useGenerateOnDemandMutation,
   useRequestRegenerationMutation,
   useUpdateSovereigntyModeMutation,
+  usePlanEditMutation,
 } from './mutations.js';
 import { PrimaryButton } from '@/components/PrimaryButton.js';
 import { SparkleIcon } from '@/components/icons.js';
 import { adaptPlansResponse, type DayTreeView } from './tree-adapter.js';
 
 const CHILD_COLORS: readonly ChildDotColor[] = ['foliage', 'lumi-terracotta'];
+
+// 13-s10 (D1 review fix) — BriefCanvas tile taps summon Lumi, same as PlanPage.
+const FULL_TO_SHORT: Record<string, PlanEditDay> = {
+  monday: 'mon',
+  tuesday: 'tue',
+  wednesday: 'wed',
+  thursday: 'thu',
+  friday: 'fri',
+};
+const SHORT_DAY_LABEL: Record<PlanEditDay, string> = {
+  mon: 'Monday',
+  tue: 'Tuesday',
+  wed: 'Wednesday',
+  thu: 'Thursday',
+  fri: 'Friday',
+};
 
 function DevTriggerButton() {
   const [status, setStatus] = useState<'idle' | 'loading' | 'done' | 'error'>('idle');
@@ -296,6 +314,78 @@ export function BriefCanvas() {
   // brief.plan_id is null on pre-migration rows; swap UI requires it.
   const planId = brief?.plan_id ?? null;
   const canSwap = planId !== null;
+
+  // 13-s10 (Task 5, W1) — wire the StickyBar on the BriefCanvas render site too.
+  const commitMutation = usePlanEditMutation();
+  const weekConfirmed = (planData?.plan?.confirmed_at ?? null) !== null;
+  function handleConfirmWeek() {
+    if (planId === null) return;
+    commitMutation.mutate(
+      { planId, body: { intent: { intent: 'commit', confidence: 1 } } },
+      {
+        onSuccess: () => {
+          const confirmedAt = new Date().toISOString();
+          queryClient.setQueryData<GetPlansResponse>(
+            QueryKeys.planByWeek('current'),
+            (prev) =>
+              prev?.plan ? { ...prev, plan: { ...prev.plan, confirmed_at: confirmedAt } } : prev,
+          );
+          void queryClient.invalidateQueries({ queryKey: ['plan'] });
+        },
+      },
+    );
+  }
+  function handleTalkToLumi() {
+    if (planId !== null && planData?.week_of !== undefined) {
+      useLumiStore.getState().setPlanEditScope({ planId, weekOf: planData.week_of });
+    }
+    useLumiStore.getState().summon('text');
+  }
+
+  // 13-s10 (D1 review fix) — tile taps summon Lumi with day context, matching
+  // PlanPage. childRoster dedups clearedAllergies by child_id so chips are
+  // id+name pairs (same data shape PlanPage derives from childColorMap).
+  const childRoster = useMemo(() => {
+    const seen = new Set<string>();
+    const out: { id: string; name: string }[] = [];
+    for (const entry of clearedAllergies) {
+      if (!seen.has(entry.child_id)) {
+        seen.add(entry.child_id);
+        out.push({ id: entry.child_id, name: entry.child_name });
+      }
+    }
+    return out;
+  }, [clearedAllergies]);
+  const editableDays = useMemo(
+    () =>
+      tileSummaries
+        .filter((s) => !s.paused && FULL_TO_SHORT[s.day] !== undefined)
+        .map((s) => FULL_TO_SHORT[s.day]!),
+    [tileSummaries],
+  );
+  function summonForDay(summary: PlanTileSummary) {
+    if (planId === null || planData?.week_of === undefined) return;
+    const short = FULL_TO_SHORT[summary.day];
+    if (short === undefined) return;
+    const dishes = [
+      ...new Set(
+        summary.items
+          .map((i) => i.name)
+          .filter((n): n is string => typeof n === 'string' && n.length > 0),
+      ),
+    ];
+    useLumiStore.getState().setPlanEditScope({
+      planId,
+      weekOf: planData.week_of,
+      day: short,
+      dayLabel: SHORT_DAY_LABEL[short],
+      dishes,
+      days: editableDays,
+      children: childRoster,
+    });
+    useLumiStore.getState().summon('text');
+  }
+
   // isError covers initial load failures (no data); error !== null also catches
   // background refetch failures where TanStack keeps the cached data but sets error.
   const hasFetchError = isError || error !== null;
@@ -585,12 +675,7 @@ export function BriefCanvas() {
                     onWhyThis={planReasoning ? () => setShowReasoning(true) : undefined}
                     onSwapIntent={
                       canSwap && !summary.paused && swappingItemId === null
-                        ? () => {
-                            if (document.activeElement instanceof HTMLElement) {
-                              swapTriggerRef.current = document.activeElement;
-                            }
-                            setActiveSwapDay(summary.day);
-                          }
+                        ? () => summonForDay(summary)
                         : undefined
                     }
                   />
@@ -711,6 +796,10 @@ export function BriefCanvas() {
           <BriefWhyPanel brief={brief} />
 
           <PlanActionBar
+            onConfirm={planId !== null ? handleConfirmWeek : undefined}
+            onTalkToLumi={handleTalkToLumi}
+            confirmed={weekConfirmed}
+            confirming={commitMutation.isPending}
             onSwapDay={
               canSwap && tileSummaries.length > 0
                 ? () => {

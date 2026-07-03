@@ -236,11 +236,33 @@ function buildVariantProposalService(
   };
 }
 
+// Epic 13-s9 — POST /v1/plans/:planId/edit mocks. The turn service is mocked
+// like plansService; the SSE dispatcher records emits.
+function buildPlanEditService(overrides: { run?: ReturnType<typeof vi.fn> } = {}) {
+  return {
+    run:
+      overrides.run ??
+      vi.fn().mockResolvedValue({
+        intent: { intent: 'affirm', confidence: 1 },
+        dispatch: { tier: 'T0', action: 'noop' },
+        outcome: { status: 'acknowledged', action: 'noop' },
+        utterance: null,
+        weekOf: SAMPLE_WEEK_OF,
+      }),
+  };
+}
+
+function buildSseDispatcher() {
+  return { register: vi.fn(), unregister: vi.fn(), emit: vi.fn() };
+}
+
 async function buildTestApp(opts: {
   plansService?: ReturnType<typeof buildPlansService>;
   planDayContextService?: ReturnType<typeof buildPlanDayContextService>;
   variantProposalService?: ReturnType<typeof buildVariantProposalService>;
   threadRepository?: ReturnType<typeof buildThreadRepository>;
+  planEditService?: ReturnType<typeof buildPlanEditService>;
+  sseDispatcher?: ReturnType<typeof buildSseDispatcher>;
 } = {}): Promise<FastifyInstance> {
   const app = Fastify({ logger: false, genReqId: () => randomUUID() });
   app.setValidatorCompiler(validatorCompiler);
@@ -265,6 +287,14 @@ async function buildTestApp(opts: {
   app.decorate(
     'threadRepository',
     (opts.threadRepository ?? buildThreadRepository()) as unknown as FastifyInstance['threadRepository'],
+  );
+  app.decorate(
+    'planEditService',
+    (opts.planEditService ?? buildPlanEditService()) as unknown as FastifyInstance['planEditService'],
+  );
+  app.decorate(
+    'sseDispatcher',
+    (opts.sseDispatcher ?? buildSseDispatcher()) as unknown as FastifyInstance['sseDispatcher'],
   );
 
   await app.register(jwt, { secret: JWT_SECRET, sign: { expiresIn: '15m' } });
@@ -1673,5 +1703,288 @@ describe('POST /v1/plans/:planId/swap-proposals', () => {
       'family',
       'text',
     );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// POST /v1/plans/:planId/edit (Epic 13-s9)
+// ---------------------------------------------------------------------------
+
+describe('POST /v1/plans/:planId/edit', () => {
+  let app: FastifyInstance;
+  afterEach(async () => {
+    await app.close();
+  });
+
+  const URL = `/v1/plans/${SAMPLE_PLAN_ID}/edit`;
+
+  it('401 without a token', async () => {
+    app = await buildTestApp();
+    const res = await app.inject({ method: 'POST', url: URL, payload: { utterance: 'hi' } });
+    expect(res.statusCode).toBe(401);
+  });
+
+  it('400 without an Idempotency-Key header', async () => {
+    app = await buildTestApp();
+    const res = await app.inject({
+      method: 'POST',
+      url: URL,
+      headers: { authorization: `Bearer ${signPrimary(app)}` },
+      payload: { utterance: 'swap tuesday' },
+    });
+    expect(res.statusCode).toBe(400);
+  });
+
+  it('400 when the body carries neither utterance nor intent', async () => {
+    app = await buildTestApp();
+    const res = await app.inject({
+      method: 'POST',
+      url: URL,
+      headers: {
+        authorization: `Bearer ${signPrimary(app)}`,
+        'idempotency-key': IDEMPOTENCY_KEY,
+      },
+      payload: {},
+    });
+    expect(res.statusCode).toBe(400);
+  });
+
+  it('utterance path: runs the turn and returns {intent, tier, result}', async () => {
+    const planEditService = buildPlanEditService();
+    app = await buildTestApp({ planEditService });
+    const res = await app.inject({
+      method: 'POST',
+      url: URL,
+      headers: {
+        authorization: `Bearer ${signSecondary(app)}`,
+        'idempotency-key': IDEMPOTENCY_KEY,
+      },
+      payload: { utterance: 'looks great' },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(planEditService.run).toHaveBeenCalledWith({
+      planId: SAMPLE_PLAN_ID,
+      householdId: SAMPLE_HOUSEHOLD_ID,
+      requestId: IDEMPOTENCY_KEY,
+      body: { utterance: 'looks great' },
+    });
+    expect(res.json()).toEqual({
+      intent: { intent: 'affirm', confidence: 1 },
+      tier: 'T0',
+      result: { status: 'acknowledged', action: 'noop' },
+    });
+  });
+
+  it('chip bypass: accepts a pre-built intent body', async () => {
+    const planEditService = buildPlanEditService();
+    app = await buildTestApp({ planEditService });
+    const intent = { intent: 'swap_slot', confidence: 1, day: 'tue', slotKind: 'main' };
+    const res = await app.inject({
+      method: 'POST',
+      url: URL,
+      headers: {
+        authorization: `Bearer ${signPrimary(app)}`,
+        'idempotency-key': IDEMPOTENCY_KEY,
+      },
+      payload: { intent },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(planEditService.run).toHaveBeenCalledWith(
+      expect.objectContaining({ body: { intent } }),
+    );
+  });
+
+  it('emits plan.updated over SSE on an applied mutation', async () => {
+    const planEditService = buildPlanEditService({
+      run: vi.fn().mockResolvedValue({
+        intent: { intent: 'swap_slot', confidence: 0.9, day: 'mon', slotKind: 'main' },
+        dispatch: { tier: 'T0', action: 'swap' },
+        outcome: {
+          status: 'applied',
+          action: 'swap_main',
+          mainAssignment: MOCK_MAIN_ASSIGNMENT,
+        },
+        utterance: 'swap monday',
+        weekOf: SAMPLE_WEEK_OF,
+      }),
+    });
+    const sseDispatcher = buildSseDispatcher();
+    app = await buildTestApp({ planEditService, sseDispatcher });
+    const res = await app.inject({
+      method: 'POST',
+      url: URL,
+      headers: {
+        authorization: `Bearer ${signPrimary(app)}`,
+        'idempotency-key': IDEMPOTENCY_KEY,
+      },
+      payload: { utterance: 'swap monday' },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(sseDispatcher.emit).toHaveBeenCalledTimes(1);
+    const [household, event, data] = sseDispatcher.emit.mock.calls[0]!;
+    expect(household).toBe(SAMPLE_HOUSEHOLD_ID);
+    expect(event).toBe('message');
+    expect(JSON.parse(data as string)).toMatchObject({ type: 'plan.updated' });
+    expect(res.json().result).toMatchObject({
+      status: 'applied',
+      action: 'swap_main',
+      main_assignment: expect.objectContaining({ id: SAMPLE_MAIN_ASSIGNMENT_ID }),
+    });
+  });
+
+  it('does NOT emit SSE on an escalate outcome (confirm gate, nothing changed)', async () => {
+    const planEditService = buildPlanEditService({
+      run: vi.fn().mockResolvedValue({
+        intent: { intent: 'add_dish', confidence: 0.95, dishQuery: 'bibimbap' },
+        dispatch: { tier: 'T2', action: 'escalate' },
+        outcome: { status: 'escalate', reason: 'add_dish', dishQuery: 'bibimbap' },
+        utterance: 'can we do bibimbap',
+        weekOf: SAMPLE_WEEK_OF,
+      }),
+    });
+    const sseDispatcher = buildSseDispatcher();
+    app = await buildTestApp({ planEditService, sseDispatcher });
+    const res = await app.inject({
+      method: 'POST',
+      url: URL,
+      headers: {
+        authorization: `Bearer ${signPrimary(app)}`,
+        'idempotency-key': IDEMPOTENCY_KEY,
+      },
+      payload: { utterance: 'can we do bibimbap' },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(sseDispatcher.emit).not.toHaveBeenCalled();
+    expect(res.json().result).toEqual({
+      status: 'escalate',
+      reason: 'add_dish',
+      dishQuery: 'bibimbap',
+    });
+  });
+
+  it('emits plan.updated on a first commit and returns confirmed_at (Epic 13-s10)', async () => {
+    const planEditService = buildPlanEditService({
+      run: vi.fn().mockResolvedValue({
+        intent: { intent: 'commit', confidence: 1 },
+        dispatch: { tier: 'T0', action: 'commit' },
+        outcome: {
+          status: 'acknowledged',
+          action: 'commit',
+          confirmedAt: '2026-06-29T10:00:00.000Z',
+          changed: true,
+        },
+        utterance: null,
+        weekOf: SAMPLE_WEEK_OF,
+      }),
+    });
+    const sseDispatcher = buildSseDispatcher();
+    app = await buildTestApp({ planEditService, sseDispatcher });
+    const res = await app.inject({
+      method: 'POST',
+      url: URL,
+      headers: {
+        authorization: `Bearer ${signPrimary(app)}`,
+        'idempotency-key': IDEMPOTENCY_KEY,
+      },
+      payload: { intent: { intent: 'commit', confidence: 1 } },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(sseDispatcher.emit).toHaveBeenCalledTimes(1);
+    expect(res.json().result).toEqual({
+      status: 'acknowledged',
+      action: 'commit',
+      confirmed_at: '2026-06-29T10:00:00.000Z',
+    });
+  });
+
+  it('does NOT emit on a re-confirm no-op (changed:false)', async () => {
+    const planEditService = buildPlanEditService({
+      run: vi.fn().mockResolvedValue({
+        intent: { intent: 'commit', confidence: 1 },
+        dispatch: { tier: 'T0', action: 'commit' },
+        outcome: {
+          status: 'acknowledged',
+          action: 'commit',
+          confirmedAt: '2026-06-29T10:00:00.000Z',
+          changed: false,
+        },
+        utterance: null,
+        weekOf: SAMPLE_WEEK_OF,
+      }),
+    });
+    const sseDispatcher = buildSseDispatcher();
+    app = await buildTestApp({ planEditService, sseDispatcher });
+    const res = await app.inject({
+      method: 'POST',
+      url: URL,
+      headers: {
+        authorization: `Bearer ${signPrimary(app)}`,
+        'idempotency-key': IDEMPOTENCY_KEY,
+      },
+      payload: { intent: { intent: 'commit', confidence: 1 } },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(sseDispatcher.emit).not.toHaveBeenCalled();
+  });
+
+  it('does NOT emit on a safety_write no-op re-declaration (inserted:false, AC8)', async () => {
+    const planEditService = buildPlanEditService({
+      run: vi.fn().mockResolvedValue({
+        intent: { intent: 'safety_write', confidence: 1, allergen: 'peanut' },
+        dispatch: { tier: 'T0', action: 'safety_write' },
+        outcome: {
+          status: 'applied',
+          action: 'safety_write',
+          allergen: 'peanut',
+          inserted: false,
+        },
+        utterance: null,
+        weekOf: SAMPLE_WEEK_OF,
+      }),
+    });
+    const sseDispatcher = buildSseDispatcher();
+    app = await buildTestApp({ planEditService, sseDispatcher });
+    const res = await app.inject({
+      method: 'POST',
+      url: URL,
+      headers: {
+        authorization: `Bearer ${signPrimary(app)}`,
+        'idempotency-key': IDEMPOTENCY_KEY,
+      },
+      payload: { intent: { intent: 'safety_write', confidence: 1, allergen: 'peanut' } },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(sseDispatcher.emit).not.toHaveBeenCalled();
+  });
+
+  it('maps NotFoundError from the turn service to 404', async () => {
+    const planEditService = buildPlanEditService({
+      run: vi.fn().mockRejectedValue(new NotFoundError('plan nope')),
+    });
+    app = await buildTestApp({ planEditService });
+    const res = await app.inject({
+      method: 'POST',
+      url: URL,
+      headers: {
+        authorization: `Bearer ${signPrimary(app)}`,
+        'idempotency-key': IDEMPOTENCY_KEY,
+      },
+      payload: { utterance: 'swap monday' },
+    });
+    expect(res.statusCode).toBe(404);
+  });
+
+  it('403 for a guest_author token', async () => {
+    app = await buildTestApp();
+    const res = await app.inject({
+      method: 'POST',
+      url: URL,
+      headers: {
+        authorization: `Bearer ${signGuest(app)}`,
+        'idempotency-key': IDEMPOTENCY_KEY,
+      },
+      payload: { utterance: 'swap monday' },
+    });
+    expect(res.statusCode).toBe(403);
   });
 });

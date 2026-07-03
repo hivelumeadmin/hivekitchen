@@ -58,6 +58,7 @@ function planRow(weekOf: string): NonNullable<GetPlansResponse['plan']> {
     state: null,
     state_set_at: null,
     state_message: null,
+    confirmed_at: null,
     created_at: TS,
     updated_at: TS,
   };

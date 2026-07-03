@@ -1838,3 +1838,107 @@ describe('PlansService.requestOnDemandGeneration', () => {
     ).rejects.toBeInstanceOf(ValidationError);
   });
 });
+
+// Epic 13-s10 — real "Confirm the week".
+describe('PlansService.confirmWeek', () => {
+  function buildConfirmService(opts: {
+    plan: PlanRow | null;
+    setResult?: PlanRow | null;
+  }) {
+    const findByIdForPresentation = vi.fn().mockResolvedValue(opts.plan);
+    const setConfirmedAt = vi
+      .fn()
+      .mockResolvedValue(opts.setResult ?? null);
+    const repo = { findByIdForPresentation, setConfirmedAt } as unknown as PlansRepository;
+    const audit = buildAudit();
+    const service = new PlansService({
+      repository: repo,
+      briefStateRepository: buildBriefStateRepo(),
+      briefStateComposer: buildBriefStateComposer(),
+      allergyGuardrail: buildGuardrail([{ verdict: 'cleared', conflicts: [] }]),
+      auditService: audit,
+      logger: buildLogger(),
+      redis: buildRedis(),
+      regenQueue: buildRegenQueue(),
+    });
+    return { service, findByIdForPresentation, setConfirmedAt, audit };
+  }
+
+  it('sets confirmed_at on the first confirm and writes the audit event', async () => {
+    const plan = buildPlan({ id: PLAN_ID, confirmed_at: null });
+    const confirmed = buildPlan({ id: PLAN_ID, confirmed_at: '2026-05-05T09:00:00.000Z' });
+    const { service, setConfirmedAt, audit } = buildConfirmService({
+      plan,
+      setResult: confirmed,
+    });
+
+    const result = await service.confirmWeek({
+      planId: PLAN_ID,
+      householdId: HOUSEHOLD_ID,
+      requestId: REQUEST_ID,
+    });
+
+    expect(result.changed).toBe(true);
+    expect(result.confirmedAt).toBe('2026-05-05T09:00:00.000Z');
+    expect(setConfirmedAt).toHaveBeenCalledWith(
+      expect.objectContaining({ planId: PLAN_ID, householdId: HOUSEHOLD_ID }),
+    );
+    expect(audit.write).toHaveBeenCalledWith(
+      expect.objectContaining({ event_type: 'plan.week_confirmed', request_id: REQUEST_ID }),
+    );
+  });
+
+  it('is idempotent: a re-confirm returns the existing timestamp with changed=false and writes no audit', async () => {
+    const plan = buildPlan({ id: PLAN_ID, confirmed_at: '2026-05-05T09:00:00.000Z' });
+    const { service, setConfirmedAt, audit } = buildConfirmService({ plan });
+
+    const result = await service.confirmWeek({
+      planId: PLAN_ID,
+      householdId: HOUSEHOLD_ID,
+      requestId: REQUEST_ID,
+    });
+
+    expect(result).toEqual({ confirmedAt: '2026-05-05T09:00:00.000Z', changed: false });
+    expect(setConfirmedAt).not.toHaveBeenCalled();
+    expect(audit.write).not.toHaveBeenCalled();
+  });
+
+  it('throws NotFoundError when the plan is absent or not owned by the household', async () => {
+    const { service } = buildConfirmService({ plan: null });
+
+    await expect(
+      service.confirmWeek({ planId: PLAN_ID, householdId: HOUSEHOLD_ID, requestId: REQUEST_ID }),
+    ).rejects.toBeInstanceOf(NotFoundError);
+  });
+
+  it('treats a lost update race (guard matched no rows) as a no-op', async () => {
+    const plan = buildPlan({ id: PLAN_ID, confirmed_at: null });
+    const winner = buildPlan({ id: PLAN_ID, confirmed_at: '2026-05-05T08:59:59.000Z' });
+    const findByIdForPresentation = vi
+      .fn()
+      .mockResolvedValueOnce(plan)
+      .mockResolvedValueOnce(winner);
+    const setConfirmedAt = vi.fn().mockResolvedValue(null);
+    const repo = { findByIdForPresentation, setConfirmedAt } as unknown as PlansRepository;
+    const audit = buildAudit();
+    const service = new PlansService({
+      repository: repo,
+      briefStateRepository: buildBriefStateRepo(),
+      briefStateComposer: buildBriefStateComposer(),
+      allergyGuardrail: buildGuardrail([{ verdict: 'cleared', conflicts: [] }]),
+      auditService: audit,
+      logger: buildLogger(),
+      redis: buildRedis(),
+      regenQueue: buildRegenQueue(),
+    });
+
+    const result = await service.confirmWeek({
+      planId: PLAN_ID,
+      householdId: HOUSEHOLD_ID,
+      requestId: REQUEST_ID,
+    });
+
+    expect(result).toEqual({ confirmedAt: '2026-05-05T08:59:59.000Z', changed: false });
+    expect(audit.write).not.toHaveBeenCalled();
+  });
+});

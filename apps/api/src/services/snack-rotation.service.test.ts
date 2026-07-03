@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { assignSnackRotation } from './snack-rotation.service.js';
+import { assignSnackRotation, pickReplacementSnackSku } from './snack-rotation.service.js';
 import type { SnackSkuRow } from '../modules/recipe/snack-sku.repository.js';
 
 const sku = (overrides: Partial<SnackSkuRow> & { id: string; category: string }): SnackSkuRow => ({
@@ -425,5 +425,65 @@ describe('assignSnackRotation', () => {
       const used = new Set(omitted.map((r) => r.snack_sku_id));
       expect(used.has(DAIRY_TAGGED.id)).toBe(true);
     });
+  });
+});
+
+// Epic 13-s9 — deterministic single-day replacement pick for a snack swap.
+describe('pickReplacementSnackSku', () => {
+  const base = {
+    bagCompositions: [{ child_id: CHILD_A, child_name: 'Aarav', snack: true, extra: false }],
+    extraRules: [],
+    activeSkus: [FRUIT_SKU, VEG_SKU, GRAIN_SKU],
+    weekOf: '2026-10-13',
+  };
+
+  it('picks a SKU different from the current one, deterministically', () => {
+    const first = pickReplacementSnackSku({ ...base, day: 'monday', currentSkuId: FRUIT_SKU.id });
+    const second = pickReplacementSnackSku({ ...base, day: 'monday', currentSkuId: FRUIT_SKU.id });
+    expect(first).not.toBeNull();
+    expect(first).not.toBe(FRUIT_SKU.id);
+    expect(second).toBe(first);
+  });
+
+  it('returns null when excluding the current SKU empties the pool (fail-closed)', () => {
+    const result = pickReplacementSnackSku({
+      ...base,
+      activeSkus: [FRUIT_SKU],
+      day: 'monday',
+      currentSkuId: FRUIT_SKU.id,
+    });
+    expect(result).toBeNull();
+  });
+
+  it('returns null when the allergen pre-filter empties the pool (fail-closed)', () => {
+    const dairyTagged = sku({
+      id: 'aaaa0000-0000-4000-8000-000000000009',
+      category: 'dairy',
+      allergen_tags: ['milk'],
+    });
+    const result = pickReplacementSnackSku({
+      ...base,
+      activeSkus: [dairyTagged],
+      declaredAllergensByChildId: new Map([[CHILD_A, ['milk']]]),
+      day: 'monday',
+      currentSkuId: FRUIT_SKU.id,
+    });
+    expect(result).toBeNull();
+  });
+
+  it('returns null when no child has snack=ON', () => {
+    const result = pickReplacementSnackSku({
+      ...base,
+      bagCompositions: [{ child_id: CHILD_A, child_name: 'Aarav', snack: false, extra: false }],
+      day: 'monday',
+      currentSkuId: null,
+    });
+    expect(result).toBeNull();
+  });
+
+  it('works with a null current SKU (legacy recipe-backed snack slot)', () => {
+    const result = pickReplacementSnackSku({ ...base, day: 'tuesday', currentSkuId: null });
+    expect(result).not.toBeNull();
+    expect(base.activeSkus.map((s) => s.id)).toContain(result);
   });
 });

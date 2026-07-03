@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
+import { useQueryClient } from '@tanstack/react-query';
 import { useScope } from '@hivekitchen/ui';
 import type {
   BriefStateRow,
@@ -8,7 +9,9 @@ import type {
 } from '@hivekitchen/types';
 import { useLumiContext } from '@/hooks/useLumiContext.js';
 import { deriveWeekId, getMondayWeeksAgo } from '@/lib/derive-week-id.js';
+import { QueryKeys } from '@/lib/realtime/query-keys.js';
 import { useAuthStore } from '@/stores/auth.store.js';
+import { useLumiStore, type PlanEditDay } from '@/stores/lumi.store.js';
 import { FreshnessState } from './FreshnessState.js';
 import { PlanTile, type ChildDotColor, type ChildInfo } from './PlanTile.js';
 import { BriefWhyPanel } from './BriefWhyPanel.js';
@@ -16,7 +19,7 @@ import { PlanActionBar } from './PlanActionBar.js';
 import { PlanPageFooter } from './PlanPageFooter.js';
 import { usePlanQuery } from './queries.js';
 import { useBriefStateQuery } from './useBriefStateQuery.js';
-import { useConfirmVariantProposalMutation } from './mutations.js';
+import { useConfirmVariantProposalMutation, usePlanEditMutation } from './mutations.js';
 import { adaptPlansResponse } from './tree-adapter.js';
 
 // Story 3.14 — FR21 enables the next-week tab on Friday afternoon. UTC for
@@ -36,6 +39,23 @@ export function isNextWeekDraftAvailable(now: Date = new Date()): boolean {
 // appearance in plan variations; child names are resolved from clearedAllergies
 // (the only source that carries child_name alongside child_id).
 const CHILD_COLORS: readonly ChildDotColor[] = ['foliage', 'lumi-terracotta'];
+
+// 13-s10 — plan tiles carry full weekdays; the plan-edit scope + classifier use
+// short weekdays. Saturday has no plan-edit day (mon–fri only).
+const FULL_TO_SHORT: Record<string, PlanEditDay> = {
+  monday: 'mon',
+  tuesday: 'tue',
+  wednesday: 'wed',
+  thursday: 'thu',
+  friday: 'fri',
+};
+const SHORT_DAY_LABEL: Record<PlanEditDay, string> = {
+  mon: 'Monday',
+  tue: 'Tuesday',
+  wed: 'Wednesday',
+  thu: 'Thursday',
+  fri: 'Friday',
+};
 
 function buildChildColorMap(
   childIdOrder: readonly string[],
@@ -108,6 +128,49 @@ function PlanWeekContent({
   }
 
   const planId = data.plan?.id ?? null;
+  const weekOf = data.week_of;
+
+  // 13-s10 — the child roster + editable days the plan-edit clarify chips draw
+  // from, captured here (where the plan data lives) so the sheet stays
+  // self-contained. Names come from childColorMap (cleared-allergies source).
+  const childRoster = useMemo(() => {
+    const out: { id: string; name: string }[] = [];
+    for (const [id, info] of childColorMap) {
+      if (info.name) out.push({ id, name: info.name });
+    }
+    return out;
+  }, [childColorMap]);
+  const editableDays = useMemo(
+    () =>
+      summaries
+        .filter((s) => !s.paused && FULL_TO_SHORT[s.day] !== undefined)
+        .map((s) => FULL_TO_SHORT[s.day]!),
+    [summaries],
+  );
+
+  // AC1 — tapping a day summons the sheet hydrated with that day's context.
+  function summonForDay(summary: (typeof summaries)[number]) {
+    if (planId === null) return;
+    const short = FULL_TO_SHORT[summary.day];
+    if (short === undefined) return;
+    const dishes = [
+      ...new Set(
+        summary.items
+          .map((i) => i.name)
+          .filter((n): n is string => typeof n === 'string' && n.length > 0),
+      ),
+    ];
+    useLumiStore.getState().setPlanEditScope({
+      planId,
+      weekOf,
+      day: short,
+      dayLabel: SHORT_DAY_LABEL[short],
+      dishes,
+      days: editableDays,
+      children: childRoster,
+    });
+    useLumiStore.getState().summon('text');
+  }
 
   return (
     <div className="flex flex-col gap-4" aria-label="Weekly plan">
@@ -119,6 +182,7 @@ function PlanWeekContent({
               key={summary.day}
               summary={summary}
               childColorMap={childColorMap}
+              onSwapIntent={planId !== null ? () => summonForDay(summary) : undefined}
               variantProposal={proposal}
               onVariantChoice={
                 proposal !== undefined && planId !== null
@@ -214,6 +278,41 @@ export function PlanPage() {
   const eyebrow =
     weekDateRange !== null ? `${eyebrowBase} · ${weekDateRange}` : eyebrowBase;
 
+  // 13-s10 (Task 5, W1) — wire the StickyBar. "Confirm the week" is a zero-LLM
+  // chip-bypass commit; "Talk to Lumi" summons the sheet with week-level scope.
+  const queryClient = useQueryClient();
+  const commitMutation = usePlanEditMutation();
+  const planId = data?.plan?.id ?? null;
+  const weekConfirmed = (data?.plan?.confirmed_at ?? null) !== null;
+
+  function handleConfirmWeek() {
+    if (planId === null) return;
+    commitMutation.mutate(
+      { planId, body: { intent: { intent: 'commit', confidence: 1 } } },
+      {
+        onSuccess: () => {
+          // Stamp confirmed_at immediately so the button reflects "Confirmed"
+          // without waiting for the background refetch (prevents flash-back).
+          const confirmedAt = new Date().toISOString();
+          queryClient.setQueryData<GetPlansResponse>(
+            QueryKeys.planByWeek(activeWeek),
+            (prev) =>
+              prev?.plan ? { ...prev, plan: { ...prev.plan, confirmed_at: confirmedAt } } : prev,
+          );
+          // Also invalidate so a disconnected tab (no SSE plan.updated) converges.
+          void queryClient.invalidateQueries({ queryKey: ['plan'] });
+        },
+      },
+    );
+  }
+
+  function handleTalkToLumi() {
+    if (planId !== null && data?.week_of !== undefined) {
+      useLumiStore.getState().setPlanEditScope({ planId, weekOf: data.week_of });
+    }
+    useLumiStore.getState().summon('text');
+  }
+
   return (
     <main className="mx-auto w-full max-w-7xl flex-grow px-8 pb-28">
       {/* Hero section */}
@@ -302,7 +401,12 @@ export function PlanPage() {
 
       {/* Actions — fixed StickyBottomBar (out of flow); pb-28 on <main> clears it.
           Placed before the footer in DOM so keyboard tab order matches visual order. */}
-      <PlanActionBar />
+      <PlanActionBar
+        onConfirm={planId !== null ? handleConfirmWeek : undefined}
+        onTalkToLumi={handleTalkToLumi}
+        confirmed={weekConfirmed}
+        confirming={commitMutation.isPending}
+      />
 
       {/* Footer */}
       <PlanPageFooter />

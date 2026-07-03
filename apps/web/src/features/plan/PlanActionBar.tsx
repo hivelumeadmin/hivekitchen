@@ -9,6 +9,10 @@ interface Readonly_PlanActionBarProps {
   readonly onTalkToLumi?: () => void;
   /** When provided, the "Swap a day" secondary action is rendered. */
   readonly onSwapDay?: () => void;
+  /** 13-s10 — the week is confirmed: the primary reflects the done state. */
+  readonly confirmed?: boolean;
+  /** 13-s10 — a confirm is in flight (disables the primary). */
+  readonly confirming?: boolean;
 }
 
 export type PlanActionBarProps = Readonly<Readonly_PlanActionBarProps>;
@@ -20,12 +24,22 @@ export type PlanActionBarProps = Readonly<Readonly_PlanActionBarProps>;
  * PlanActionSection. `role="region"` name "Plan actions" keeps the surface
  * addressable to assistive tech and the 13-s1 regression baseline.
  */
-export function PlanActionBar({ onConfirm, onTalkToLumi, onSwapDay }: PlanActionBarProps) {
+export function PlanActionBar({
+  onConfirm,
+  onTalkToLumi,
+  onSwapDay,
+  confirmed = false,
+  confirming = false,
+}: PlanActionBarProps) {
   return (
     <StickyBottomBar ariaLabel="Plan actions">
       <div className="flex flex-wrap items-center gap-4">
-        <PrimaryButton onClick={onConfirm} icon={<CheckCircleIcon />}>
-          Confirm the week
+        <PrimaryButton
+          onClick={confirmed ? undefined : onConfirm}
+          disabled={confirmed || confirming}
+          icon={<CheckCircleIcon />}
+        >
+          {confirmed ? 'Confirmed' : confirming ? 'Confirming…' : 'Confirm the week'}
         </PrimaryButton>
         {onSwapDay !== undefined && (
           <SecondaryButton onClick={onSwapDay} icon={<RefreshIcon />}>

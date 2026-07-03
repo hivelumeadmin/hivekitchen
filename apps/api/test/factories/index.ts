@@ -63,6 +63,7 @@ export function buildPlan(overrides: Partial<PlanRow> = {}): PlanRow {
     state: null,
     state_set_at: null,
     state_message: null,
+    confirmed_at: null,
     created_at: NOW_ISO,
     updated_at: '2026-05-02T11:00:01.000Z',
     ...overrides,

@@ -1,5 +1,6 @@
 // apps/api/src/routes/v1/events/events.routes.ts
 import type { FastifyPluginAsync } from 'fastify';
+import type Redis from 'ioredis';
 import { z } from 'zod';
 import type { SurfaceKind } from '@hivekitchen/types';
 import { emitPresenceEvent, getPresenceKey } from '../../../modules/presence/presence.helpers.js';
@@ -32,9 +33,11 @@ const EventsQuerystring = z.object({
 // strictly after `lastEventId` and writes each reconstructed frame in order.
 // Extracted + exported so the ordered-replay + exclusive-range contract is
 // unit-testable without the hijacked SSE response or a live Redis.
-type StreamReader = {
-  xrange(key: string, start: string, end: string, countKeyword?: 'COUNT', count?: number): Promise<[string, string[]][]>;
-};
+// Structurally the ioredis client's `xrange`, so the real `fastify.redis` is
+// assignable without a cast while a `{ xrange: vi.fn() }` test stub still
+// satisfies it. (A hand-narrowed single-signature type is not assignable from
+// ioredis's overloaded `xrange` — its 4th positional arg can be a callback.)
+type StreamReader = Pick<Redis, 'xrange'>;
 
 export async function replayMissedEvents(
   redis: StreamReader,

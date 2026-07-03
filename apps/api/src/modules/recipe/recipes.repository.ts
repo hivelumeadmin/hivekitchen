@@ -653,6 +653,27 @@ export class RecipesRepository extends BaseRepository {
     );
   }
 
+  // Epic 13-s10 — batch-read allergen_flags by recipe id for the safety_write
+  // week re-screen (revalidateWeekAfterAllergen). Mirrors findNamesByIds:
+  // empty ids → no query; ids with no row are simply absent from the map (the
+  // caller treats an absent recipe as "no tag-set conflict" and leaves the
+  // commit-time evaluate() authority to catch it). Tag-set is the cheap
+  // pre-filter — same predicate pickCatalogCandidate uses, never re-implemented.
+  async findAllergenFlagsByIds(ids: readonly string[]): Promise<Map<string, string[]>> {
+    if (ids.length === 0) return new Map();
+    const { data, error } = await this.client
+      .from('recipes')
+      .select('id, allergen_flags')
+      .in('id', [...ids]);
+    if (error) throw error;
+    return new Map(
+      ((data ?? []) as Array<{ id: string; allergen_flags: string[] | null }>).map((r) => [
+        r.id,
+        r.allergen_flags ?? [],
+      ]),
+    );
+  }
+
   async findIngredientsByIds(ids: readonly string[]): Promise<Map<string, string[]>> {
     const out = new Map<string, string[]>();
     if (ids.length === 0) return out;

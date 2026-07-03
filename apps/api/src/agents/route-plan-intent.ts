@@ -1,5 +1,7 @@
 import { z } from 'zod';
 import type { ZodTypeAny } from 'zod';
+import { PLAN_INTENT, PlanIntentResultSchema } from '@hivekitchen/contracts';
+import type { PlanIntent } from '@hivekitchen/contracts';
 import type { LLMProvider } from './providers/llm-provider.interface.js';
 import type { ToolSpec } from './tools.manifest.js';
 import { stripNulls } from './strict-schema-utils.js';
@@ -10,49 +12,15 @@ import { stripNulls } from './strict-schema-utils.js';
 // DB or mutate anything — the deterministic dispatcher (dispatchIntent) executes
 // the result. This is the planner analog of Epic 2.7's stateless turn fn.
 //
-// PLAN_INTENT / PlanIntentResult live in the agent layer (not packages/contracts,
-// which is API request/response shapes only). Promote when a /v1 dispatch
-// endpoint exists.
+// PLAN_INTENT / PlanIntentResultSchema live in packages/contracts (plan-intent.ts)
+// since the chip-tap bypass POSTs a pre-built PlanIntentResult — it is a wire
+// shape. Re-exported here so agent-layer consumers keep one import site.
 
-export const PLAN_INTENT = {
-  // T0 — deterministic downstream (no further LLM)
-  INSPECT: 'inspect', // "show me Tuesday"
-  EXPLAIN: 'explain', // "why this main?"
-  COMMIT: 'commit', // "confirm the week"
-  AFFIRM: 'affirm', // "looks great"
-  SWAP_SLOT: 'swap_slot', // "swap Tuesday's main" -> CatalogRepo.pickRecipe
-  EXCLUDE_FILTER: 'exclude_filter', // "no fish this week" -> pick with constraint
-  VARY_SLOT: 'vary_slot', // "less spicy" -> plan_slot_variations write
-  SAFETY_WRITE: 'safety_write', // "add a peanut allergy" -> household_allergens write
-  // T2 — expensive agentic path
-  ADD_DISH: 'add_dish', // net-new dish not in catalog
-  RECOMPOSE: 'recompose', // "redo the whole week"
-  COMPOSE_NEXT: 'compose_next', // "draft next week"
-  // T1 — cheap reply only
-  FALLBACK: 'fallback',
-} as const;
+export { PLAN_INTENT };
+export type { PlanIntent };
 
-export type PlanIntent = (typeof PLAN_INTENT)[keyof typeof PLAN_INTENT];
-
-const INTENT_VALUES = Object.values(PLAN_INTENT) as [PlanIntent, ...PlanIntent[]];
-
-// Flat args (simpler + fewer strict-mode pitfalls than a nested `slots` object).
-// Slot fields are `.optional()`; the strict adapter emits them as
-// `anyOf:[T,null]`, the model returns explicit nulls, and stripNulls drops them
-// before parse.
-export const PlanIntentResult = z.object({
-  intent: z.enum(INTENT_VALUES),
-  confidence: z.number().min(0).max(1),
-  day: z.enum(['mon', 'tue', 'wed', 'thu', 'fri']).optional(),
-  slotKind: z.enum(['main', 'snack', 'extra']).optional(),
-  childId: z.string().optional(), // resolved from context ("Maya" -> id)
-  constraint: z.string().optional(), // normalized: "exclude:fish" | "time:down"
-  variation: z.string().optional(), // normalized: "spice:down" | "portion:down"
-  dishQuery: z.string().optional(), // for add_dish
-  scope: z.enum(['slot', 'day', 'week']).optional(),
-});
-
-export type PlanIntentResult = z.infer<typeof PlanIntentResult>;
+export const PlanIntentResult = PlanIntentResultSchema;
+export type PlanIntentResult = z.infer<typeof PlanIntentResultSchema>;
 
 const ROUTE_TOOL_NAME = 'plan.route';
 
@@ -98,6 +66,7 @@ const ROUTER_SYSTEM = [
   'Slot rules:',
   '- Resolve a named child to childId using the context; if unresolved, leave childId absent.',
   '- Resolve a weekday to day (mon..fri) from the context.',
+  '- For safety_write set allergen to the canonical allergen name (e.g. "peanut", "milk").',
   '- For exclude_filter set constraint normalized: "exclude:<thing>" or "time:down".',
   '- For vary_slot set variation normalized: "spice:down" | "spice:up" | "portion:down" | "portion:up" | "texture:soft".',
   '- For add_dish set dishQuery to the requested dish name.',

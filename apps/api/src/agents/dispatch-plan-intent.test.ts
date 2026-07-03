@@ -71,9 +71,24 @@ describe('dispatchPlanIntent — non-catalog intents (no catalog call)', () => {
     expect(r).toEqual({ tier: 'T1', action: 'reply', intent: 'vary_slot' });
   });
 
-  it('safety_write → T0 safety_write', async () => {
+  it('safety_write WITH an allergen → T0 safety_write carrying the allergen', async () => {
+    const r = await dispatchPlanIntent(
+      intent({ intent: 'safety_write', childId: 'c1', allergen: 'peanut' }),
+      ctx,
+      noCatalog,
+    );
+    expect(r).toEqual({
+      tier: 'T0',
+      action: 'safety_write',
+      intent: 'safety_write',
+      allergen: 'peanut',
+      target: { childId: 'c1' },
+    });
+  });
+
+  it('safety_write WITHOUT an allergen → T1 clarify (never guess a safety value)', async () => {
     const r = await dispatchPlanIntent(intent({ intent: 'safety_write', childId: 'c1' }), ctx, noCatalog);
-    expect(r).toEqual({ tier: 'T0', action: 'safety_write', intent: 'safety_write', target: { childId: 'c1' } });
+    expect(r).toEqual({ tier: 'T1', action: 'reply', intent: 'safety_write' });
   });
 
   it('fallback → T1 reply', async () => {

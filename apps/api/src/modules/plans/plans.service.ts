@@ -53,6 +53,7 @@ import type {
   RegeneratePlanQuery,
   SwapMainInput,
   SwapSlotRecipeInput,
+  SwapSlotSnackSkuInput,
   UpdateVariationInput,
   Weekday,
 } from '@hivekitchen/types';
@@ -532,6 +533,64 @@ export class PlansService {
       ? []
       : await this.repo.findVariationsBySlotIds(slots.map((s) => s.id));
     return { plan, mainAssignments, days, slots, variations };
+  }
+
+  // Epic 13-s10 — real "Confirm the week". Sets plans.confirmed_at on the
+  // parent's explicit confirm (the StickyBar action / chip-bypass commit
+  // intent). Idempotent: re-confirming an already-confirmed plan is a no-op
+  // that returns the existing timestamp with changed=false, so the edit route
+  // suppresses the plan.updated SSE emit on a re-confirm (AC6/AC8). Guardrail-
+  // cleared plans only (findByIdForPresentation) — an uncleared plan never
+  // reaches the surface to be confirmed.
+  async confirmWeek(opts: {
+    planId: string;
+    householdId: string;
+    requestId: string;
+  }): Promise<{ confirmedAt: string; changed: boolean }> {
+    const plan = await this.repo.findByIdForPresentation({
+      planId: opts.planId,
+      householdId: opts.householdId,
+    });
+    if (!plan) throw new NotFoundError(`plan ${opts.planId}`);
+    if (plan.confirmed_at !== null) {
+      return { confirmedAt: plan.confirmed_at, changed: false };
+    }
+
+    const confirmedAt = new Date().toISOString();
+    const updated = await this.repo.setConfirmedAt({
+      planId: opts.planId,
+      householdId: opts.householdId,
+      confirmedAt,
+    });
+    if (updated === null) {
+      // Raced with a concurrent confirm — treat as a no-op and report the
+      // authoritative timestamp the winner wrote.
+      const existing = await this.repo.findByIdForPresentation({
+        planId: opts.planId,
+        householdId: opts.householdId,
+      });
+      return { confirmedAt: existing?.confirmed_at ?? confirmedAt, changed: false };
+    }
+
+    try {
+      await this.auditService.write({
+        event_type: 'plan.week_confirmed',
+        household_id: opts.householdId,
+        request_id: opts.requestId,
+        metadata: {
+          plan_id: opts.planId,
+          week_of: plan.week_of,
+          confirmed_at: confirmedAt,
+        },
+      });
+    } catch (err) {
+      this.logger.error(
+        { err, plan_id: opts.planId },
+        'audit write failed after week confirm — confirm committed',
+      );
+    }
+
+    return { confirmedAt: updated.confirmed_at ?? confirmedAt, changed: true };
   }
 
   // Story 3.13 — user-triggered plan regeneration.
@@ -1055,6 +1114,112 @@ export class PlansService {
       this.logger.error(
         { err, plan_id: opts.planId },
         'audit write failed after slot recipe swap — swap committed',
+      );
+    }
+
+    return updated;
+  }
+
+  // Epic 13-s9 (routing-spec §9 #3) — swap a snack slot's SKU. A placed snack
+  // is stored as snack_sku_id; the write nulls recipe_id so a legacy
+  // recipe-backed snack slot converges on the SKU column (the slot XOR permits
+  // either). Safety mirrors the commit-time doctrine in
+  // buildCommitGuardrailInputs: a tagged SKU is tag-set-evaluated by the
+  // guardrail engine per child sharing the slot; an untagged SKU is
+  // parent-attested allergen-free (no evaluation).
+  async swapSlotSnackSku(opts: {
+    planId: string;
+    planSlotId: string;
+    householdId: string;
+    requestId: string;
+    input: SwapSlotSnackSkuInput;
+  }): Promise<PlanSlotRow> {
+    if (!this.snackSkuRepo) {
+      throw new ValidationError(
+        'snack-SKU swap unavailable — snackSkuRepository not configured',
+      );
+    }
+
+    const tree = await this.getCurrentPlanTree(opts.planId, opts.householdId);
+    const slot = tree.slots.find((s) => s.id === opts.planSlotId);
+    if (!slot) {
+      throw new NotFoundError(`plan_slot ${opts.planSlotId}`);
+    }
+    if (slot.slot_kind !== 'snack') {
+      throw new ValidationError('only snack slots can swap to a snack SKU');
+    }
+    const day = tree.days.find((d) => d.id === slot.plan_day_id);
+    if (!day) {
+      throw new NotFoundError(`plan_day for slot ${opts.planSlotId}`);
+    }
+
+    // The SKU must be on the household's shelf (global or own), active and
+    // in stock. findActiveForHousehold already scopes visibility + is_active.
+    const shelf = await this.snackSkuRepo.findActiveForHousehold(opts.householdId);
+    const sku = shelf.find(
+      (s) => s.id === opts.input.new_snack_sku_id && s.archived_at === null,
+    );
+    if (!sku) {
+      throw new NotFoundError(`snack_sku ${opts.input.new_snack_sku_id}`);
+    }
+    if (!sku.in_stock) {
+      throw new ValidationError(`snack_sku ${sku.id} is out of stock`);
+    }
+
+    const variations = tree.variations.filter((v) => v.plan_slot_id === slot.id);
+    if (sku.allergen_tags.length > 0 && variations.length > 0) {
+      const items: PlanItemForGuardrail[] = variations.map((v) => ({
+        child_id: v.child_id,
+        day: day.day,
+        slot: slot.slot_kind,
+        ingredients: sku.allergen_tags,
+      }));
+      const verdict = await this.allergyGuardrail.evaluate(items, opts.householdId);
+      if (verdict.verdict === 'blocked' || verdict.verdict === 'uncertain') {
+        const allergens =
+          verdict.verdict === 'blocked'
+            ? verdict.conflicts.map((c) => c.allergen)
+            : [];
+        await this.tryAuditSwapRejection({
+          householdId: opts.householdId,
+          requestId: opts.requestId,
+          planId: opts.planId,
+          source: 'user_swap_slot_snack_sku',
+          subjectId: opts.planSlotId,
+          verdict,
+        });
+        throw new SwapGuardrailBlockedError(opts.planSlotId, allergens);
+      }
+    }
+
+    const updated = await this.repo.updateSlotSnackSku({
+      slotId: opts.planSlotId,
+      newSnackSkuId: sku.id,
+    });
+
+    await this.briefStateComposer.refreshTree(
+      opts.householdId,
+      tree.plan.week_of,
+      opts.requestId,
+      { userInitiated: true },
+    );
+
+    try {
+      await this.auditService.write({
+        event_type: 'plan.slot_snack_swapped',
+        household_id: opts.householdId,
+        request_id: opts.requestId,
+        metadata: {
+          plan_id: opts.planId,
+          plan_slot_id: opts.planSlotId,
+          new_snack_sku_id: sku.id,
+          guardrail_version: GUARDRAIL_VERSION,
+        },
+      });
+    } catch (err) {
+      this.logger.error(
+        { err, plan_id: opts.planId },
+        'audit write failed after snack-SKU swap — swap committed',
       );
     }
 
