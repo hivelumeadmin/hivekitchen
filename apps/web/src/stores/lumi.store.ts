@@ -141,8 +141,11 @@ export const useLumiStore = create<LumiState & LumiActions>()((set) => ({
     set({
       surface: signal.surface,
       contextSignal: signal,
-      // A new surface registration clears any stale plan-edit scope.
+      // A new surface registration clears any stale plan-edit scope and
+      // recedes the sheet — prevents a summon() call on /app/lumi from
+      // leaving presenceState:'summoned' when the user navigates away.
       planEditScope: null,
+      presenceState: 'atRest',
       turns: [],
       isHydrating: false,
     }),

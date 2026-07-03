@@ -103,6 +103,12 @@ function plansResponse() {
   };
 }
 
+// Epic 13-s11 — talk-to-your-plan is summoned from the BRIEF now (the /app/plan
+// duplicate collapsed into a redirect), so the brief must carry the day tiles
+// the summon path taps. Mirrors the 13-s1 tile_summaries shape.
+type Weekday = 'monday' | 'tuesday' | 'wednesday' | 'thursday' | 'friday';
+const WEEKDAYS: readonly Weekday[] = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday'];
+
 function briefResponse() {
   return {
     brief: {
@@ -117,7 +123,18 @@ function briefResponse() {
         plan_state: null,
         plan_state_set_at: null,
         plan_state_message: null,
-        tile_summaries: [],
+        tile_summaries: WEEKDAYS.map((day, i) => ({
+          day,
+          paused: false,
+          items: [
+            {
+              plan_item_id: `99999999-9999-4999-8999-99999999990${i + 1}`,
+              child_id: CHILD_ID,
+              slot: 'main',
+              ingredients: ['rice', 'beans'],
+            },
+          ],
+        })),
       },
       generated_at: ISO,
       plan_revision: 1,
@@ -143,8 +160,11 @@ async function navigateToPlan(page: Page) {
       body: JSON.stringify(plansResponse()),
     });
   });
-  await loginAndNavigate(page, '/app/plan');
-  await page.waitForResponse((r) => r.url().includes('/v1/plans') && r.request().method() === 'GET');
+  // Epic 13-s11 — /app/plan collapsed into a redirect; the talk-to-your-plan
+  // summon now lives on the Brief (BriefCanvas tiles, 13-s10 D1 fix). Land on
+  // /app and wait on the brief that renders the tappable day tiles.
+  await loginAndNavigate(page, '/app');
+  await page.waitForResponse(BRIEF_URL);
 }
 
 async function tapDayAndSummon(page: Page) {

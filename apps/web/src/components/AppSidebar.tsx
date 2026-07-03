@@ -1,34 +1,43 @@
 import { useState } from 'react';
-import { NavLink } from 'react-router-dom';
+import { NavLink, useLocation } from 'react-router-dom';
 import {
-  ArticleIcon,
   CalendarIcon,
   ChevronLeftIcon,
   ChevronRightIcon,
   MailIcon,
-  PackageIcon,
-  SettingsIcon,
-  ShoppingBasketIcon,
+  SparkleIcon,
   UtensilsIcon,
-  UserCircleIcon,
   XIcon,
 } from './icons.js';
 
 const COLLAPSED_KEY = 'hk_sidebar_collapsed';
 
+// Epic 13-s11 — the app collapses to four calm anchors (Brief · Kitchen · People
+// · Lumi). Grocery/Snacks/Memory/Settings/Account leave the nav: the artifact
+// screens summon over the Brief, and Settings/Account move to the header menu.
 const NAV_ITEMS = [
-  { label: 'Plan', href: '/app', Icon: CalendarIcon, end: true },
-  { label: 'Grocery List', href: '/app/grocery-list', Icon: ShoppingBasketIcon, end: false },
-  { label: 'My Snacks', href: '/app/kitchen/snacks', Icon: PackageIcon, end: false },
-  { label: 'Kitchen Profile', href: '/app/kitchen-profile', Icon: UtensilsIcon, end: false },
-  { label: 'Memory', href: '/app/memory', Icon: ArticleIcon, end: false },
-  { label: 'Heart Notes', href: '/app/heart-notes', Icon: MailIcon, end: false },
+  { label: 'Brief', href: '/app', Icon: CalendarIcon, end: true, matchBrief: true },
+  { label: 'Kitchen', href: '/app/kitchen-profile', Icon: UtensilsIcon, end: false, matchBrief: false },
+  { label: 'People', href: '/app/heart-notes', Icon: MailIcon, end: false, matchBrief: false },
+  { label: 'Lumi', href: '/app/lumi', Icon: SparkleIcon, end: false, matchBrief: false },
 ] as const;
 
-const BOTTOM_ITEMS = [
-  { label: 'Settings', href: '/app/household/settings', Icon: SettingsIcon, end: false },
-  { label: 'Account', href: '/account', Icon: UserCircleIcon, end: false },
+// The Brief anchor stays highlighted while an artifact is summoned over it
+// (day-detail, grocery, evening check-in, plan history) — those URLs render the
+// Brief with a sheet open, so their nav home is Brief, not a separate tab.
+const BRIEF_ARTIFACT_PREFIXES = [
+  '/app/day',
+  '/app/grocery-list',
+  '/app/evening-checkin',
+  '/app/plan',
 ] as const;
+
+function isBriefActive(pathname: string): boolean {
+  if (pathname === '/app') return true;
+  return BRIEF_ARTIFACT_PREFIXES.some(
+    (prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`),
+  );
+}
 
 function navItemClass(isActive: boolean) {
   return [
@@ -45,39 +54,25 @@ interface SidebarNavProps {
 }
 
 function SidebarNav({ collapsed, onNavClick }: SidebarNavProps) {
+  const { pathname } = useLocation();
   return (
-    <>
-      <nav className="flex-1 overflow-y-auto p-2 space-y-0.5" aria-label="Main navigation">
-        {NAV_ITEMS.map(({ label, href, Icon, end }) => (
-          <NavLink
-            key={href}
-            to={href}
-            end={end}
-            onClick={onNavClick}
-            className={({ isActive }) => navItemClass(isActive)}
-            title={collapsed ? label : undefined}
-          >
-            <Icon className="h-5 w-5 shrink-0" />
-            {!collapsed && <span className="truncate">{label}</span>}
-          </NavLink>
-        ))}
-      </nav>
-      <div className="border-t border-neutral-400/30 p-2 space-y-0.5">
-        {BOTTOM_ITEMS.map(({ label, href, Icon, end }) => (
-          <NavLink
-            key={href}
-            to={href}
-            end={end}
-            onClick={onNavClick}
-            className={({ isActive }) => navItemClass(isActive)}
-            title={collapsed ? label : undefined}
-          >
-            <Icon className="h-5 w-5 shrink-0" />
-            {!collapsed && <span className="truncate">{label}</span>}
-          </NavLink>
-        ))}
-      </div>
-    </>
+    <nav className="flex-1 overflow-y-auto p-2 space-y-0.5" aria-label="Main navigation">
+      {NAV_ITEMS.map(({ label, href, Icon, end, matchBrief }) => (
+        <NavLink
+          key={href}
+          to={href}
+          end={end}
+          onClick={onNavClick}
+          className={({ isActive }) =>
+            navItemClass(matchBrief ? isActive || isBriefActive(pathname) : isActive)
+          }
+          title={collapsed ? label : undefined}
+        >
+          <Icon className="h-5 w-5 shrink-0" />
+          {!collapsed && <span className="truncate">{label}</span>}
+        </NavLink>
+      ))}
+    </nav>
   );
 }
 

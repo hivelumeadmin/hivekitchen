@@ -111,8 +111,12 @@ describe('LumiSheet (summoned valet sheet)', () => {
     useLumiStore.getState().summon();
     renderSheet();
 
-    // First focusable is the Text-mode button in the header.
-    expect(document.activeElement).toBe(screen.getByRole('button', { name: /text mode/i }));
+    // Epic 13-s11 — the mode toggle moved into the shared <LumiConversation>, so
+    // the close button is now the first focusable in the header. What matters for
+    // the focus-trap contract is that focus lands inside the dialog.
+    const dialog = screen.getByRole('dialog', { name: /lumi/i });
+    expect(dialog.contains(document.activeElement)).toBe(true);
+    expect(document.activeElement).toBe(screen.getByRole('button', { name: /close lumi/i }));
   });
 
   // ── Turn rendering ─────────────────────────────────────────────────────────
