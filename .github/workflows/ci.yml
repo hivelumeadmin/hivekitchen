@@ -87,10 +87,13 @@ jobs:
         run: pnpm --filter @hivekitchen/web build
 
       - name: E2E + A11y tests
-        run: pnpm exec playwright test --passWithNoTests --ignore-glob="**/perf/**"
+        run: pnpm exec playwright test test/e2e
+        # Scoped to test/e2e — the SSE perf spec (test/perf) runs in perf.yml
+        # (Story 1.13), not here. The original invocation used vitest-only
+        # flags (--passWithNoTests / --ignore-glob) that Playwright rejects;
+        # it was written before any e2e specs existed and had never run
+        # (this job was skipped for months behind a red lint gate).
         working-directory: apps/web
-        # --passWithNoTests: passes with 0 test files until Epic 2+ adds functional E2E tests.
-        # --ignore-glob="**/perf/**": SSE perf test runs in perf.yml (Story 1.13), not here.
 
   db-diff:
     name: DB schema drift check
