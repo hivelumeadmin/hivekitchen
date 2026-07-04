@@ -13,7 +13,7 @@ const REQUIRED_FIELDS = [
   'fn',
 ] as const;
 
-function extractManifestNames(mod: unknown): readonly string[] {
+function extractManifestNames(mod: unknown): readonly string[] | null {
   if (
     typeof mod === 'object' &&
     mod !== null &&
@@ -22,7 +22,7 @@ function extractManifestNames(mod: unknown): readonly string[] {
   ) {
     return (mod as Record<string, readonly string[]>).MANIFESTED_TOOL_NAMES;
   }
-  return [];
+  return null;
 }
 
 async function main(): Promise<void> {
@@ -52,9 +52,17 @@ async function main(): Promise<void> {
     const mod: unknown = await import(filePath);
     const manifestedNames = extractManifestNames(mod);
 
-    if (manifestedNames.length === 0) {
+    if (manifestedNames === null) {
       console.error(`❌ [${file}] No MANIFESTED_TOOL_NAMES export — every *.tools.ts file must declare what it provides`);
       violationCount++;
+      continue;
+    }
+
+    // An explicitly-empty manifest opts the file out: its specs are wired
+    // outside TOOL_MANIFEST (e.g. onboarding tools are built per-turn by
+    // createOnboardingToolSpecs(); the planner is the manifest's only consumer).
+    if (manifestedNames.length === 0) {
+      console.log(`ℹ️  [${file}] MANIFESTED_TOOL_NAMES is empty — declared as not orchestrator-manifested`);
       continue;
     }
 
