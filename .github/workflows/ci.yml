@@ -90,6 +90,14 @@ jobs:
           # __hivekitchen_qc) that are compiled in only when VITE_E2E=true —
           # locally this comes from apps/web/.env.local.
           VITE_E2E: 'true'
+          # supabase-client.ts constructs its client at module import; missing
+          # values throw "supabaseUrl is required" and kill the whole bundle
+          # before the test hooks install. Specs mock all network traffic, so
+          # stub values are sufficient — nothing is ever contacted.
+          VITE_API_BASE_URL: 'http://localhost:3001'
+          VITE_SSE_BASE_URL: 'http://localhost:3001'
+          VITE_SUPABASE_URL: 'https://stub-e2e.supabase.co'
+          VITE_SUPABASE_ANON_KEY: 'stub-anon-key-for-e2e'
 
       - name: E2E + A11y tests
         run: pnpm exec playwright test test/e2e --max-failures=10 --workers=100%
