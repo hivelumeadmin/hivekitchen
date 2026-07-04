@@ -112,7 +112,6 @@ export class MemoryService {
           captured_by: input.userId,
           confidence: ONBOARDING_CONFIDENCE,
         });
-        nodeCount += 1;
       } catch (err) {
         // Partial seeding is acceptable per Story 2.13 (Epic 7 reconciles
         // orphaned nodes during the forget job).
@@ -127,6 +126,7 @@ export class MemoryService {
           'memory provenance insert failed during onboarding seed — node retained without provenance',
         );
       }
+      nodeCount += 1;
     }
 
     if (this.audit && nodeCount > 0) {
