@@ -83,8 +83,13 @@ jobs:
         run: pnpm exec playwright install chromium --with-deps
         working-directory: apps/web
 
-      - name: Build apps/web
+      - name: Build apps/web (VITE_E2E mode)
         run: pnpm --filter @hivekitchen/web build
+        env:
+          # The e2e specs drive the app through test hooks (__lumiStore,
+          # __hivekitchen_qc) that are compiled in only when VITE_E2E=true —
+          # locally this comes from apps/web/.env.local.
+          VITE_E2E: 'true'
 
       - name: E2E + A11y tests
         run: pnpm exec playwright test test/e2e --max-failures=10 --workers=100%
