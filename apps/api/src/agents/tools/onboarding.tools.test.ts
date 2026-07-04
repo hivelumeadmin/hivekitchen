@@ -700,8 +700,6 @@ describe('createHouseholdUpsertToolSpec', () => {
 // real test surface; these tests assert the factories register with the
 // right name, validate input via Zod, and return a contract-valid shape.
 
-const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
 describe('createHouseholdSetNameToolSpec (2.5-s5 wired)', () => {
   it('happy path: parses input, calls householdsService.setDisplayName, returns household_id', async () => {
     const deps = makeDeps();

@@ -16,7 +16,7 @@ export function LunchImage({
       <div className="aspect-[4/3] overflow-hidden rounded-lg border border-border/20 bg-surface-2">
         <img src={imageSrc} alt={imageAlt} className="h-full w-full object-cover" />
       </div>
-      <p className="pr-2 text-right text-xs italic text-fg-muted/70">{servingNote}</p>
+      <p className="pe-2 text-right text-xs italic text-fg-muted/70">{servingNote}</p>
     </div>
   );
 }

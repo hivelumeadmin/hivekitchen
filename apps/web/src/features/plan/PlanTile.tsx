@@ -100,7 +100,7 @@ function deriveDishLine(summary: PlanTileSummary): string {
   // Recipe name lives in a future contract field; until then the dish line is
   // resolved item names (Story 3-S40 — snack-SKU names) followed by the unique
   // ingredient list (capped at 3 + overflow).
-  const names = summary.items.flatMap((item) => (item.name != null ? [item.name] : []));
+  const names = summary.items.flatMap((item) => (item.name !== undefined ? [item.name] : []));
   const all = [...new Set([...names, ...summary.items.flatMap((item) => item.ingredients)])];
   if (all.length === 0) return '';
   const preview = all.slice(0, 3).join(', ');

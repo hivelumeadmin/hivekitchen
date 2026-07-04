@@ -145,7 +145,7 @@ export default function AccountPage() {
         setLoadState('error');
       }
     })();
-  }, [accessToken, navigate]);
+  }, [accessToken, navigate, setAcknowledgmentState]);
 
   async function handleSave(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();

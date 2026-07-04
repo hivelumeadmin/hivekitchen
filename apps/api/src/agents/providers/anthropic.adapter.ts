@@ -18,7 +18,7 @@ export class AnthropicAdapter implements LLMProvider {
     throw new NotImplementedError('AnthropicAdapter.completeWithMessages');
   }
 
-  // eslint-disable-next-line require-yield
+   
   async *stream(): AsyncGenerator<LLMStreamEvent> {
     throw new NotImplementedError('AnthropicAdapter.stream');
   }

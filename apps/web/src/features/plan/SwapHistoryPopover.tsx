@@ -100,6 +100,7 @@ export function SwapHistoryPopover({ swaps, childLabels }: SwapHistoryPopoverPro
         {label}
       </button>
       {open && (
+        // eslint-disable-next-line jsx-a11y/no-noninteractive-element-interactions -- Escape-to-dismiss on the popover; role must stay "region" (tests/e2e query it)
         <div
           id={regionId}
           role="region"

@@ -67,7 +67,7 @@ export class HeartNoteService {
       }
       resolvedStatus = 'cancelled';
       cancelledAt = new Date().toISOString();
-    } else if (body.scheduled_for != null && existing.status === 'draft') {
+    } else if (typeof body.scheduled_for === 'string' && existing.status === 'draft') {
       // Setting a date on a draft auto-schedules it.
       resolvedStatus = 'scheduled';
     } else if (body.scheduled_for === null && existing.status === 'scheduled') {

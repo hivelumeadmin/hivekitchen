@@ -1,5 +1,4 @@
 import type {
-  BagCompositionPattern,
   CatalogProvenance,
   KitchenMap,
   KitchenMapAllergen,

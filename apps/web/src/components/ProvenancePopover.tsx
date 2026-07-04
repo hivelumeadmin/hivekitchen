@@ -156,6 +156,7 @@ export function ProvenancePopover({
       )}
 
       {open && (
+        // eslint-disable-next-line jsx-a11y/no-noninteractive-element-interactions -- keyboard-only Escape-to-dismiss on the popover container; all activation is on native buttons inside
         <div
           id={regionId}
           role="region"
@@ -168,7 +169,7 @@ export function ProvenancePopover({
           )}
 
           {status === 'error' && (
-            <p className="text-fg-muted">Couldn't load provenance. Try again.</p>
+            <p className="text-fg-muted">Couldn&apos;t load provenance. Try again.</p>
           )}
 
           {status === 'ready' && (

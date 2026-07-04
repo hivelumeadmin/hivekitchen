@@ -18,6 +18,7 @@
  *     being evaluated.
  */
 
+// eslint-disable-next-line no-restricted-imports -- standalone CLI eval runner (tsx-invoked), not app runtime; talks to the OpenAI Evals API directly
 import OpenAI from 'openai';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
@@ -104,7 +105,7 @@ async function main(): Promise<void> {
 
     if (poll.status === 'completed' || poll.status === 'failed') {
       if (poll.result_counts) {
-        const { passed, failed, total } = poll.result_counts;
+        const { passed, total } = poll.result_counts;
         const pct = total > 0 ? Math.round((passed / total) * 100) : 0;
         process.stdout.write(`\nResults: ${String(passed)}/${String(total)} passed (${String(pct)}%)\n`);
       }

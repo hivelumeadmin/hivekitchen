@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, waitFor, cleanup, fireEvent, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
+import type * as reactRouterDom from 'react-router-dom';
 import type { KitchenMap, KitchenMapAllergen, KitchenMapChild } from '@hivekitchen/types';
 
 const hkFetchMock = vi.fn();
@@ -19,7 +20,7 @@ vi.mock('@/hooks/useLumiContext.js', () => ({
 
 const navigateSpy = vi.fn();
 vi.mock('react-router-dom', async () => {
-  const actual = await vi.importActual<typeof import('react-router-dom')>('react-router-dom');
+  const actual = await vi.importActual<typeof reactRouterDom>('react-router-dom');
   return {
     ...actual,
     useNavigate: () => navigateSpy,

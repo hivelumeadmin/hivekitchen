@@ -323,7 +323,7 @@ export class BriefStateComposer {
         ...new Set(
           slots
             .map((s) => (s as { snack_sku_id?: string | null }).snack_sku_id)
-            .filter((id): id is string => id != null),
+            .filter((id): id is string => typeof id === 'string'),
         ),
       ];
       const snackSkuNames =
@@ -341,7 +341,7 @@ export class BriefStateComposer {
           ...mainAssignments.map((m) => m.recipe_id),
           ...slots
             .map((s) => s.recipe_id)
-            .filter((id): id is string => id != null),
+            .filter((id): id is string => typeof id === 'string'),
         ]),
       ];
       const recipeNames =
@@ -481,11 +481,11 @@ export class BriefStateComposer {
         const tileSnackSkuId = (slotNode.slot as { snack_sku_id?: string | null }).snack_sku_id ?? null;
         // AC6 — resolve the SKU's display name for the tile dish line.
         const tileSnackName =
-          tileSnackSkuId != null ? snackSkuNames.get(tileSnackSkuId) ?? null : null;
+          tileSnackSkuId !== null ? snackSkuNames.get(tileSnackSkuId) ?? null : null;
         // Resolve main/extra recipe name for the dish line (snacks use the SKU
         // name above). Without this the main/extra tiles render "Plan pending".
         const tileRecipeName =
-          tileSnackSkuId == null && tileRecipeId != null
+          tileSnackSkuId === null && tileRecipeId !== null
             ? recipeNames.get(tileRecipeId) ?? null
             : null;
 
@@ -495,17 +495,17 @@ export class BriefStateComposer {
             child_id: variation.child_id,
             slot: slotNode.slot.slot_kind,
             ingredients: [],
-            ...(tileRecipeId != null ? { recipe_id: tileRecipeId } : {}),
-            ...(tileSnackSkuId != null ? { snack_sku_id: tileSnackSkuId } : {}),
-            ...(tileSnackName != null ? { name: tileSnackName } : {}),
-            ...(tileRecipeName != null ? { name: tileRecipeName } : {}),
+            ...(tileRecipeId !== null ? { recipe_id: tileRecipeId } : {}),
+            ...(tileSnackSkuId !== null ? { snack_sku_id: tileSnackSkuId } : {}),
+            ...(tileSnackName !== null ? { name: tileSnackName } : {}),
+            ...(tileRecipeName !== null ? { name: tileRecipeName } : {}),
           };
           tileItems.push(item);
           totalCount++;
           if (
-            dayNode.day_row.paused_at != null ||
-            slotNode.slot.paused_at != null ||
-            variation.paused_at != null
+            dayNode.day_row.paused_at !== null ||
+            slotNode.slot.paused_at !== null ||
+            variation.paused_at !== null
           ) {
             pausedCount++;
           }
@@ -665,18 +665,6 @@ function joinWithAnd(parts: readonly string[]): string {
   if (parts.length <= 1) return parts[0] ?? '';
   if (parts.length === 2) return `${parts[0]} and ${parts[1]}`;
   return `${parts.slice(0, -1).join(', ')}, and ${parts[parts.length - 1]}`;
-}
-
-function dedupeInOrder(values: readonly string[]): string[] {
-  const seen = new Set<string>();
-  const out: string[] = [];
-  for (const v of values) {
-    if (!seen.has(v)) {
-      seen.add(v);
-      out.push(v);
-    }
-  }
-  return out;
 }
 
 export function composeEditorialProse(input: {

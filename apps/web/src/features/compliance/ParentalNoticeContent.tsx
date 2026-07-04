@@ -5,27 +5,33 @@ import type { ParentalNoticeResponse, ProcessorEntry } from '@hivekitchen/types'
 // an h2 and the account-page section heading is h2/h3, so rendering h1 here
 // would break heading hierarchy for screen readers.
 const MARKDOWN_COMPONENTS = {
-  h1: (props: React.ComponentProps<'h1'>) => (
-    <h3 className="font-serif text-xl text-stone-800 mt-2 mb-3" {...props} />
+  h1: ({ children, ...props }: React.ComponentProps<'h1'>) => (
+    <h3 className="font-serif text-xl text-stone-800 mt-2 mb-3" {...props}>
+      {children}
+    </h3>
   ),
-  h2: (props: React.ComponentProps<'h2'>) => (
-    <h4 className="font-serif text-base text-stone-800 mt-4 mb-2" {...props} />
+  h2: ({ children, ...props }: React.ComponentProps<'h2'>) => (
+    <h4 className="font-serif text-base text-stone-800 mt-4 mb-2" {...props}>
+      {children}
+    </h4>
   ),
   p: (props: React.ComponentProps<'p'>) => <p className="my-2" {...props} />,
   ul: (props: React.ComponentProps<'ul'>) => (
-    <ul className="list-disc pl-5 my-2 space-y-1" {...props} />
+    <ul className="list-disc ps-5 my-2 space-y-1" {...props} />
   ),
   li: (props: React.ComponentProps<'li'>) => <li className="my-1" {...props} />,
   strong: (props: React.ComponentProps<'strong'>) => (
     <strong className="font-medium text-stone-800" {...props} />
   ),
-  a: (props: React.ComponentProps<'a'>) => (
+  a: ({ children, ...props }: React.ComponentProps<'a'>) => (
     <a
       className="underline text-stone-800 hover:text-stone-900"
       target="_blank"
       rel="noopener noreferrer"
       {...props}
-    />
+    >
+      {children}
+    </a>
   ),
 };
 

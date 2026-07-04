@@ -49,7 +49,7 @@ export function VariationChip({ kid, variation }: VariationChipProps) {
         <span className="font-medium">{kid.name}</span>
         <span className="text-fg-muted">·</span>
         <span className="text-fg-muted">{formatChipSummary(variation)}</span>
-        <span className="ml-1 text-fg-muted/60">{expanded ? '▴' : '▾'}</span>
+        <span className="ms-1 text-fg-muted/60">{expanded ? '▴' : '▾'}</span>
       </button>
       {expanded ? (
         <VariationExpandedCard kid={kid} variation={variation} />

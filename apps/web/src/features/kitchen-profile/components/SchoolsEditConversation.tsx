@@ -54,7 +54,7 @@ export function SchoolsEditConversation({
         ) : (
           initial.map((s, i) => (
             <span key={s.name} className="font-sans text-[11px] text-fg-muted">
-              {i > 0 && <span className="mr-2">·</span>}
+              {i > 0 && <span className="me-2">·</span>}
               {s.name}
             </span>
           ))

@@ -305,7 +305,7 @@ function CurrentChip({ chip, stagedForRemoval, onToggle }: CurrentChipProps) {
       >
         {chip.label}
         <span className="text-[10px] uppercase tracking-wide text-foliage">· rule</span>
-        <span className="ml-0.5 text-fg-muted/70" aria-hidden>
+        <span className="ms-0.5 text-fg-muted/70" aria-hidden>
           ×
         </span>
       </button>
@@ -320,7 +320,7 @@ function CurrentChip({ chip, stagedForRemoval, onToggle }: CurrentChipProps) {
         aria-label={`Drop ${chip.label}`}
       >
         {chip.label}
-        <span className="ml-0.5 text-fg-muted/70" aria-hidden>
+        <span className="ms-0.5 text-fg-muted/70" aria-hidden>
           ×
         </span>
       </button>
@@ -334,7 +334,7 @@ function CurrentChip({ chip, stagedForRemoval, onToggle }: CurrentChipProps) {
       aria-label={`Drop ${chip.label}`}
     >
       {chip.label}
-      <span className="ml-0.5 text-fg-muted/70 not-italic" aria-hidden>
+      <span className="ms-0.5 text-fg-muted/70 not-italic" aria-hidden>
         ×
       </span>
     </button>

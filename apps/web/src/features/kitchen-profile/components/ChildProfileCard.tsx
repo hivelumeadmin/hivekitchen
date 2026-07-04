@@ -401,7 +401,7 @@ function AllergenRow({
           disabled={disabled}
           onClick={onRemove}
           aria-label={`Remove ${allergen.name}`}
-          className="ml-1 text-fg-muted/60 transition-colors hover:text-safety-red disabled:cursor-not-allowed disabled:opacity-50"
+          className="ms-1 text-fg-muted/60 transition-colors hover:text-safety-red disabled:cursor-not-allowed disabled:opacity-50"
         >
           ✕
         </button>

@@ -1,6 +1,5 @@
 import type {
   AddChildBody,
-  BagComposition,
   BagCompositionPattern,
   ChildResponse,
   SetBagCompositionBody,

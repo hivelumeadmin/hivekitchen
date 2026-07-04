@@ -20,7 +20,7 @@ export function CulturalProposalTurn({
   onSecondary,
 }: CulturalProposalTurnProps) {
   return (
-    <div className="flex flex-col gap-4 border-l-2 border-sacred pl-6">
+    <div className="flex flex-col gap-4 border-l-2 border-sacred ps-6">
       <div className="flex items-center gap-2">
         <span className="text-[11px] font-medium uppercase tracking-widest text-sacred">
           {label}

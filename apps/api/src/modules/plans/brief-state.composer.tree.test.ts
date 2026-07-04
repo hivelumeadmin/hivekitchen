@@ -35,7 +35,6 @@ const MAIN_ASSIGN_1 = '77777777-7777-4777-8777-777777777777';
 const RECIPE_1 = '88888888-8888-4888-8888-888888888888';
 const RECIPE_SNACK = '99999999-9999-4999-8999-999999999999';
 const DAY_MON = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
-const DAY_TUE = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
 const SLOT_MON_MAIN = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
 const SLOT_MON_SNACK = 'dddddddd-dddd-4ddd-8ddd-dddddddddddd';
 const VAR_MON_MAIN_A = 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee';

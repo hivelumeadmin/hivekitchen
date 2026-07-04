@@ -294,7 +294,7 @@ export function useLumiVoiceSession({
     } finally {
       endingRef.current = false;
     }
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  }, []);
 
   endSessionRef.current = endSession;
 
@@ -383,7 +383,7 @@ export function useLumiVoiceSession({
     } finally {
       startingRef.current = false;
     }
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  }, []);
 
   return { startSession, endSession, capReached };
 }

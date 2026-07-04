@@ -1,6 +1,7 @@
 import type { FastifyBaseLogger } from 'fastify';
+import type {
+  AllergyGuardrailRepository} from '../allergy-guardrail/allergy-guardrail.repository.js';
 import {
-  AllergyGuardrailRepository,
   AllergyGuardrailDecryptError,
 } from '../allergy-guardrail/allergy-guardrail.repository.js';
 import {

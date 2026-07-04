@@ -106,8 +106,8 @@ export class SnackSkuRepository extends BaseRepository {
         ...(input.allergen_tags ? { allergen_tags: input.allergen_tags } : {}),
         // Story 3-S44 — only written when supplied; otherwise the column falls
         // back to its NULL default.
-        ...(input.upc_code != null ? { upc_code: input.upc_code } : {}),
-        ...(input.package_type != null ? { package_type: input.package_type } : {}),
+        ...(typeof input.upc_code === 'string' ? { upc_code: input.upc_code } : {}),
+        ...(typeof input.package_type === 'string' ? { package_type: input.package_type } : {}),
       })
       .select(SNACK_SKU_COLUMNS)
       .single();

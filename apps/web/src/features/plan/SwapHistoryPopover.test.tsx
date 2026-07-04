@@ -79,6 +79,7 @@ describe('SwapHistoryPopover (Story 3.15 — tree shape)', () => {
   it('clicking the trigger does not bubble (would otherwise trigger parent tile click)', () => {
     let parentClicks = 0;
     render(
+      // eslint-disable-next-line jsx-a11y/click-events-have-key-events, jsx-a11y/no-static-element-interactions -- test-only wrapper capturing bubbled clicks; adding role="button" would break getByRole('button') queries
       <div onClick={() => parentClicks++}>
         <SwapHistoryPopover swaps={[makeSwap()]} />
       </div>,

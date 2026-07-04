@@ -69,7 +69,7 @@ export function GroceryItemRow({ item }: GroceryItemRowProps) {
           value={unit}
           onChange={(e) => setUnit(e.target.value)}
           aria-label={`Unit for ${item.name}`}
-          className="min-w-0 flex-shrink rounded border border-border/30 bg-surface-2 px-3 py-1.5 pr-8 text-xs font-medium uppercase tracking-widest focus:border-amber-warm focus:ring-amber-warm"
+          className="min-w-0 flex-shrink rounded border border-border/30 bg-surface-2 px-3 py-1.5 pe-8 text-xs font-medium uppercase tracking-widest focus:border-amber-warm focus:ring-amber-warm"
         >
           {item.units.map((u) => (
             <option key={u} value={u}>
@@ -80,7 +80,7 @@ export function GroceryItemRow({ item }: GroceryItemRowProps) {
         <button
           type="button"
           aria-label={`Remove ${item.name}`}
-          className="ml-auto flex-shrink-0 text-fg-muted transition-colors hover:text-safety-red sm:ml-2"
+          className="ms-auto flex-shrink-0 text-fg-muted transition-colors hover:text-safety-red sm:ms-2"
         >
           <TrashIcon className="h-5 w-5" />
         </button>

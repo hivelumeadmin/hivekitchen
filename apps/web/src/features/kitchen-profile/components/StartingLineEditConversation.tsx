@@ -148,7 +148,7 @@ export function StartingLineEditConversation({
         availableSuggestions.length > 0 ? (
           <div className="flex w-full flex-col items-center gap-2">
             <p className="font-sans text-[10px] uppercase tracking-[0.18em] text-memory-provenance-500">
-              Lumi's suggestions
+              Lumi&apos;s suggestions
             </p>
             <div className="flex flex-wrap justify-center gap-1.5">
               {availableSuggestions.map((label) => (

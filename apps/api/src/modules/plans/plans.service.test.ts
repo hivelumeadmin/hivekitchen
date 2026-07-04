@@ -26,7 +26,6 @@ import {
   GuardrailRejectionError,
   NotFoundError,
   PlanAlreadyExistsError,
-  SwapGuardrailBlockedError,
   TooManyRequestsError,
   ValidationError,
 } from '../../common/errors.js';
@@ -122,7 +121,7 @@ function buildRepo(opts: {
     return input.plan_id;
   });
   const existingRow =
-    opts.existingPlanId != null
+    opts.existingPlanId !== null && opts.existingPlanId !== undefined
       ? { id: opts.existingPlanId, household_id: HOUSEHOLD_ID }
       : null;
   const findActiveByHouseholdAndWeek = vi.fn().mockResolvedValue(existingRow);
@@ -1037,8 +1036,6 @@ describe('PlansService.getHardFailStatus (Story 3.25 / 3.26 / pre-4-s3)', () => 
 
 // --- Story 3.12 — swapItem + pauseDay ---
 
-const ITEM_ID = '00000000-0000-4000-8000-000000000010';
-
 // Story 3-DM-A3: thin wrappers around the shared factories so this file's
 // PLAN_ID / HOUSEHOLD_ID / CHILD_ID constants + 3.12-era dates stay pinned at
 // the wrapper, while the row SHAPE (subject to Phase C1's tree-shape cutover)
@@ -1667,7 +1664,7 @@ describe('PlansService.requestOnDemandGeneration', () => {
   } = {}) {
     const existsForHouseholdAndWeek = vi
       .fn()
-      .mockResolvedValue(opts.existingPlan != null);
+      .mockResolvedValue(opts.existingPlan !== null && opts.existingPlan !== undefined);
     const repo = { existsForHouseholdAndWeek } as unknown as PlansRepository & {
       existsForHouseholdAndWeek: ReturnType<typeof vi.fn>;
     };

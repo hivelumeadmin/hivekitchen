@@ -105,22 +105,28 @@ export function OnboardingConsent({ onConsented }: OnboardingConsentProps) {
         <div className="font-sans text-sm text-stone-700 leading-relaxed">
           <Markdown
             components={{
-              h1: (props) => (
-                <h1 className="font-serif text-xl text-stone-800 mt-2 mb-3" {...props} />
+              h1: ({ children, ...props }) => (
+                <h1 className="font-serif text-xl text-stone-800 mt-2 mb-3" {...props}>
+                  {children}
+                </h1>
               ),
-              h2: (props) => (
-                <h2 className="font-serif text-base text-stone-800 mt-4 mb-2" {...props} />
+              h2: ({ children, ...props }) => (
+                <h2 className="font-serif text-base text-stone-800 mt-4 mb-2" {...props}>
+                  {children}
+                </h2>
               ),
               p: (props) => <p className="my-2" {...props} />,
-              ul: (props) => <ul className="list-disc pl-5 my-2 space-y-1" {...props} />,
+              ul: (props) => <ul className="list-disc ps-5 my-2 space-y-1" {...props} />,
               li: (props) => <li className="my-1" {...props} />,
               strong: (props) => <strong className="font-medium text-stone-800" {...props} />,
-              a: (props) => (
+              a: ({ children, ...props }) => (
                 <a
                   className="underline text-stone-800 hover:text-stone-900"
                   rel="noopener noreferrer"
                   {...props}
-                />
+                >
+                  {children}
+                </a>
               ),
             }}
           >

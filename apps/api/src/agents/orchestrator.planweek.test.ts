@@ -4,7 +4,6 @@ import type { Redis } from 'ioredis';
 import { DomainOrchestrator } from './orchestrator.js';
 import type { OrchestratorServices } from './orchestrator.js';
 import { TOOL_MANIFEST } from './tools.manifest.js';
-import type { ToolSpec } from './tools.manifest.js';
 import type { LLMProvider, LLMResponse } from './providers/llm-provider.interface.js';
 import type { AuditService } from '../audit/audit.service.js';
 import type { MemoryService } from '../modules/memory/memory.service.js';

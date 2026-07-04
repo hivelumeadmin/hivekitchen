@@ -237,7 +237,7 @@ export function EditConversation({
             onClick={onDone}
             className="inline-flex items-center gap-2 rounded-full border border-neutral-400/30 px-5 py-2.5 font-sans text-sm font-medium text-fg-muted transition-colors hover:border-amber/50 hover:text-fg"
           >
-            I'm done with my edit
+            I&apos;m done with my edit
           </button>
         </div>
       </div>

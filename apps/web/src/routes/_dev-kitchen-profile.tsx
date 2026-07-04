@@ -61,7 +61,6 @@ type EditingSection =
 
 function logComposite(section: string, composite: string) {
   // In production this would POST to the Lumi conversation thread API.
-  // eslint-disable-next-line no-console
   console.log(`[Kitchen Profile · ${section}] composite sent to Lumi:\n` + composite);
 }
 

@@ -11,7 +11,7 @@ export type LumiTurnProps = Readonly<Readonly_LumiTurnProps>;
 
 export function LumiTurn({ time, message, proposal }: LumiTurnProps) {
   return (
-    <div className="flex flex-col gap-3 border-l-2 border-lumi-terracotta pl-6">
+    <div className="flex flex-col gap-3 border-l-2 border-lumi-terracotta ps-6">
       <span className="text-[11px] font-medium uppercase tracking-widest text-lumi-terracotta">
         {time}
       </span>

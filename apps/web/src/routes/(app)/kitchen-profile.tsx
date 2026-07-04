@@ -36,7 +36,6 @@ function noop() {
 }
 
 function logComposite(section: string, composite: string) {
-  // eslint-disable-next-line no-console
   console.log(`[Kitchen Profile · ${section}] composite (read-only stub):\n` + composite);
 }
 

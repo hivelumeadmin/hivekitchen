@@ -1506,7 +1506,7 @@ export class PlansService {
     for (const day of input.days) {
       for (const slot of day.slots) {
         const skuId = (slot as { snack_sku_id?: string | null }).snack_sku_id;
-        if (skuId != null) snackSkuIdsInPlan.add(skuId);
+        if (typeof skuId === 'string') snackSkuIdsInPlan.add(skuId);
       }
     }
     const skuAllergenMap: Map<string, string[]> =
@@ -1525,7 +1525,7 @@ export class PlansService {
         // Story 3-s43 (Phase-2) — snack-SKU slots are checked by set-membership
         // against the SKU's allergen_tags. Replaces the Phase-1 attested:true
         // blanket exemption.
-        if ((slot as { snack_sku_id?: string | null }).snack_sku_id != null) {
+        if (typeof (slot as { snack_sku_id?: string | null }).snack_sku_id === 'string') {
           const skuId = (slot as { snack_sku_id: string }).snack_sku_id;
           const tags = skuAllergenMap.get(skuId) ?? [];
           for (const variation of slot.variations) {
