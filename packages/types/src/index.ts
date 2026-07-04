@@ -144,7 +144,6 @@ import {
   RecipeDiscoverInputSchema,
   RecipeDiscoverOutputSchema,
   RecipeDiscoverConstraintsSchema,
-  RecipeDetailSchema,
   ChildSignalInputSchema,
   ChildSignalRecipeItemSchema,
   ChildSignalPerChildSchema,
@@ -560,7 +559,6 @@ export type RecipePreview = z.infer<typeof RecipePreviewSchema>;
 export type RecipeFetchInput = z.infer<typeof RecipeFetchInputSchema>;
 export type RecipeFetchOutput = z.infer<typeof RecipeFetchOutputSchema>;
 export type RecipeIngredient = z.infer<typeof RecipeIngredientSchema>;
-export type RecipeDetail = z.infer<typeof RecipeDetailSchema>;
 
 // Story 3-31 — RecipeAgent discover surface
 export type RecipeAgentExtraction = z.infer<typeof RecipeAgentExtractionSchema>;

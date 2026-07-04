@@ -172,10 +172,6 @@ export const RecipeFetchInputSchema = z.object({
 // that lives in the catalog table.
 export const RecipeFetchOutputSchema = RecipeRowSchema;
 
-// Legacy alias kept so existing imports of `RecipeDetailSchema` continue to
-// resolve. New code should reference `RecipeRowSchema` directly.
-export const RecipeDetailSchema = RecipeRowSchema;
-
 // ===========================================================================
 // Story 3-31 — RecipeAgent extraction + discover tool I/O
 // ===========================================================================

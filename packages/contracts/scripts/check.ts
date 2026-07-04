@@ -116,7 +116,7 @@ for (const file of readdirSync(CONTRACTS_SRC)) {
   }
 
   let enclosing: string | null = null;
-  for (const rawLine of content.split('\n')) {
+  for (const rawLine of content.split(/\r?\n/)) {
     const line = rawLine.replace(/\/\/.*$/, ''); // names in comments are not references
     const decl = DECL_START.exec(line);
     if (decl) enclosing = decl[1];
