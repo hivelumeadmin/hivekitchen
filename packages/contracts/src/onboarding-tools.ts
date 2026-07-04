@@ -1,7 +1,6 @@
 import { z } from 'zod';
-import { AgeBandSchema } from './children.js';
+import { AgeBandSchema, BagCompositionPatternSchema } from './children.js';
 import { EnforcementLevelSchema } from './enforcement.js';
-import { BagCompositionPatternSchema } from './kitchen-map.js';
 
 // ===========================================================================
 // Onboarding agent tool I/O
