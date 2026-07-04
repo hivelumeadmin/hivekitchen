@@ -37,6 +37,12 @@ function briefResponse() {
 }
 
 async function navigateToApp(page: import('@playwright/test').Page) {
+  // Pin the clock to a Monday so every weekday tile renders as today/upcoming.
+  // PlanTile.deriveVariant() compares tile.day to new Date().getDay(); without
+  // pinning, days earlier in the week than the real-world clock render as
+  // 'past' (tabindex=-1 + pointer-events-none) and break the focus tests.
+  await page.clock.install({ time: new Date('2026-05-04T08:00:00Z') });
+
   await page.route('**/v1/users/me', (route) =>
     route.fulfill({
       status: 200,
@@ -103,6 +109,12 @@ test.describe('Story 3-9: PlanTile', () => {
     await firstTile.focus();
     await expect(firstTile).toBeFocused();
 
+    // Slice 5-S3 — each tile is followed by its PackerChip button in the tab
+    // order, so reaching the next day's tile takes two Tab presses.
+    await page.keyboard.press('Tab');
+    await expect(
+      page.getByRole('button', { name: /claimed monday|packs monday/i }),
+    ).toBeFocused();
     await page.keyboard.press('Tab');
     await expect(
       page.getByRole('article', { name: 'Tuesday' }),

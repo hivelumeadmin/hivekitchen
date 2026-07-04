@@ -149,7 +149,10 @@ test.describe('Story 3-8: BriefCanvas', () => {
     await page.waitForResponse(BRIEF_URL);
 
     // Retry: 3, backoff: 1s+2s+4s = 7s before isError=true — give 15s headroom.
-    await expect(page.getByRole('status')).toContainText(
+    // Epic 13 — LumiWhisper mounts an always-present sr-only role=status live
+    // region at the app root; scope to the BriefCanvas <main> to avoid a
+    // strict-mode violation.
+    await expect(page.locator('main').getByRole('status')).toContainText(
       "Lumi couldn't reach the plan right now.",
       { timeout: 15_000 },
     );

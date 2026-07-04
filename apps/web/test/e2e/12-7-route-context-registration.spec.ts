@@ -64,18 +64,22 @@ test.describe('Story 12-7: Route context registration', () => {
     page,
   }) => {
     await page.goto('/app');
-    const { surface, contextSignal } = await getLumiState(page);
-    expect(surface).toBe('brief');
-    expect(contextSignal).toEqual({ surface: 'brief' });
+    // App gates the router on isRestoring until /v1/auth/refresh settles, so
+    // the route mounts well after goto resolves — poll instead of reading once.
+    await expect
+      .poll(async () => (await getLumiState(page)).contextSignal)
+      .toEqual({ surface: 'brief' });
+    expect((await getLumiState(page)).surface).toBe('brief');
   });
 
   test('useLumiContext sets surface=general and contextSignal on /account mount (AC #1, #8)', async ({
     page,
   }) => {
     await page.goto('/account');
-    const { surface, contextSignal } = await getLumiState(page);
-    expect(surface).toBe('general');
-    expect(contextSignal).toEqual({ surface: 'general' });
+    await expect
+      .poll(async () => (await getLumiState(page)).contextSignal)
+      .toEqual({ surface: 'general' });
+    expect((await getLumiState(page)).surface).toBe('general');
   });
 
   test('no hydration fetch when threadIds[general] is undefined on mount (AC #5)', async ({
@@ -87,6 +91,11 @@ test.describe('Story 12-7: Route context registration', () => {
     });
 
     await page.goto('/app');
+    // Wait for the gated router to mount the route and register its context
+    // before asserting that no hydration fetch was made.
+    await expect
+      .poll(async () => (await getLumiState(page)).contextSignal)
+      .not.toBeNull();
     await page.waitForTimeout(200);
 
     expect(hydrationFetched).toBe(false);
@@ -107,8 +116,12 @@ test.describe('Story 12-7: Route context registration', () => {
       });
     });
 
-    // Mount /app with no threadId — no fetch
+    // Mount /app with no threadId — no fetch. Poll for the route mount first:
+    // the router is gated on isRestoring until /v1/auth/refresh settles.
     await page.goto('/app');
+    await expect
+      .poll(async () => (await getLumiState(page)).contextSignal)
+      .not.toBeNull();
     expect(fetchCount).toBe(0);
 
     // Seed threadIds, then SPA-navigate to /account — useLumiContext sees the threadId at mount

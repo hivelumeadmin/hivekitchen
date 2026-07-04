@@ -119,7 +119,13 @@ test.describe('Story 5-S16 — cap message on WS voice_cap_reached frame (AC9)',
   // session reaches 'active' state before the WS frame is processed.
   test.use({ permissions: ['microphone'] });
 
-  test('cap copy appears when server sends voice_cap_reached error frame over WS', async ({
+  // OBSOLETE (Epic 13 / voice re-architecture): the app-owned voice WebSocket
+  // (/v1/lumi/voice/ws) no longer exists. useLumiVoiceSession.ts talks REST to
+  // the API and connects directly to ElevenLabs STT/TTS WebSockets; the weekly
+  // cap is enforced only as a 429 at POST /v1/lumi/voice/sessions (covered by
+  // the AC2/AC9 test above). There is no mid-session voice_cap_reached frame
+  // for the client to render. Recommend deleting this test.
+  test.skip('cap copy appears when server sends voice_cap_reached error frame over WS', async ({
     page,
   }) => {
     await page.route('**/v1/lumi/voice/sessions', (route) => {

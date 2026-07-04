@@ -141,7 +141,12 @@ test.describe('Story 3-21: extra rules page — pins and bans', () => {
     await page.getByRole('checkbox', { name: /^fruit$/i }).first().check();
     await page.getByRole('button', { name: /save rules/i }).click();
 
-    await expect(page.getByRole('status')).toContainText(/saved.*lumi will use these/i);
+    // Epic 13 — LumiWhisper mounts an always-present sr-only role=status live
+    // region at the app root; filter to the save-status element to avoid a
+    // strict-mode violation.
+    await expect(
+      page.getByRole('status').filter({ hasText: /saved.*lumi will use these/i }),
+    ).toBeVisible();
     expect(patchBody).toEqual({ pins: ['fruit'], bans: [] });
   });
 
@@ -182,7 +187,9 @@ test.describe('Story 3-21: extra rules page — pins and bans', () => {
 
     await page.getByRole('button', { name: /save rules/i }).click();
 
-    await expect(page.getByRole('status')).toContainText(/couldn.t save extra rules/i);
+    await expect(
+      page.getByRole('status').filter({ hasText: /couldn.t save extra rules/i }),
+    ).toBeVisible();
     // Controls still rendered for retry
     await expect(page.getByRole('button', { name: /save rules/i })).toBeEnabled();
   });
@@ -264,7 +271,9 @@ test.describe('Story 3-21: extra rules page — Extra library', () => {
     await page.getByLabel(/allergen.free/i).check();
     await page.getByRole('button', { name: /add to library/i }).click();
 
-    await expect(page.getByRole('status')).toContainText(/added to your extra library/i);
+    await expect(
+      page.getByRole('status').filter({ hasText: /added to your extra library/i }),
+    ).toBeVisible();
     await expect(page.getByText('homemade oat bar')).toBeVisible();
     expect(postBody).toEqual({
       name: 'homemade oat bar',
@@ -306,7 +315,9 @@ test.describe('Story 3-21: extra rules page — Extra library', () => {
     await page.getByLabel(/add a custom extra/i).fill('mystery item');
     await page.getByRole('button', { name: /add to library/i }).click();
 
-    await expect(page.getByRole('status')).toContainText(/couldn.t save the new extra item/i);
+    await expect(
+      page.getByRole('status').filter({ hasText: /couldn.t save the new extra item/i }),
+    ).toBeVisible();
     await expect(page.getByLabel(/add a custom extra/i)).toHaveValue('mystery item');
   });
 

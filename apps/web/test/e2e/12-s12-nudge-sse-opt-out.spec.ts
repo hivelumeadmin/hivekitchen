@@ -88,6 +88,10 @@ test.describe('Story 12-S12 — orb breathing (AC#4)', () => {
     page,
   }) => {
     await page.goto('/app');
+    // Wait for the route to mount before seeding: useLumiContext's setContext
+    // (Epic 13) resets presenceState to 'atRest' on registration, which would
+    // wipe a seed applied while the router is still gated on session restore.
+    await expect(page.getByRole('button', { name: /open lumi/i })).toBeVisible();
     // Seed summoned + pending nudge — breathing is suppressed while the sheet is showing.
     await seedLumiStore(page, { pendingNudge: NUDGE_TURN, presenceState: 'summoned' });
     // When summoned the dot aria-label becomes "Lumi is open".

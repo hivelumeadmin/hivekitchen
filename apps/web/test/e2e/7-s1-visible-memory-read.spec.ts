@@ -11,11 +11,12 @@ function sampleNode(overrides: Record<string, unknown> = {}) {
   return {
     id: '00000000-0000-4000-8000-000000000001',
     household_id: SAMPLE_HOUSEHOLD_ID,
-    node_type: 'preference',
+    node_type: 'other',
     facet: 'avoids spicy',
     subject_child_id: null,
     prose_text: 'Layla avoids spicy peppers.',
     soft_forget_at: null,
+    forget_reason: null,
     hard_forgotten: false,
     created_at: '2026-04-30T00:00:00.000Z',
     updated_at: '2026-04-30T00:00:00.000Z',
@@ -86,7 +87,9 @@ test.describe('Story 7-S1: Visible Memory Read', () => {
     await page.route(MEMORY_URL, () => undefined);
     await loginAndNavigate(page, '/app/memory');
 
-    await expect(page.getByRole('status')).toBeVisible();
+    // Scoped by name: Epic 13 added a global sr-only role="status" live region,
+    // so a bare getByRole('status') is a strict-mode violation.
+    await expect(page.getByRole('status', { name: 'Loading your memory' })).toBeVisible();
     // Empty-state copy must not appear before the fetch completes.
     await expect(
       page.getByText(/still learning about your family/i),

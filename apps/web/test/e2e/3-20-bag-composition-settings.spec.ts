@@ -119,7 +119,12 @@ test.describe('Story 3-20: bag composition settings page', () => {
     await page.getByLabel(/^snack/i).check();
     await page.getByRole('button', { name: /save changes/i }).click();
 
-    await expect(page.getByRole('status')).toContainText(/saved.*lumi will use this composition/i);
+    // Epic 13 — LumiWhisper mounts an always-present sr-only role=status live
+    // region at the app root; filter to the save-status element to avoid a
+    // strict-mode violation.
+    await expect(
+      page.getByRole('status').filter({ hasText: /saved.*lumi will use this composition/i }),
+    ).toBeVisible();
     expect(patchBody).toEqual({ snack: true, extra: true });
   });
 

@@ -79,8 +79,10 @@ test.describe('Story 3-11: FreshnessState', () => {
     await expect(
       page.getByRole('heading', { level: 1, name: 'A quiet week, with one small surprise.' }),
     ).toBeVisible();
-    // FreshnessState variant=fresh returns null — no <p role="status"> in DOM.
-    await expect(page.getByRole('status')).toHaveCount(0);
+    // FreshnessState variant=fresh returns null — no <p role="status"> inside
+    // the canvas. (Epic 13 — LumiWhisper mounts an always-present sr-only
+    // role=status live region at the app root, so scope to <main>.)
+    await expect(page.locator('main').getByRole('status')).toHaveCount(0);
   });
 
   test('error copy rendered when brief API returns 500 (variant=failed, AC #1)', async ({
@@ -104,7 +106,8 @@ test.describe('Story 3-11: FreshnessState', () => {
     await page.waitForResponse('**/v1/users/me');
 
     // TanStack retries 3× (1s + 2s + 4s backoff) before setting isError=true.
-    await expect(page.getByRole('status')).toContainText(
+    // Scoped to <main> — see the fresh-variant test note above.
+    await expect(page.locator('main').getByRole('status')).toContainText(
       "Lumi couldn't reach the plan right now.",
       { timeout: 15_000 },
     );

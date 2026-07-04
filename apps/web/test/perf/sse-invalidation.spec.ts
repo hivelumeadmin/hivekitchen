@@ -7,36 +7,40 @@ const WEEK_ID = '00000000-0000-4000-8000-000000000001';
 
 test.describe('SSE invalidation → queryClient latency (UX-DR60)', () => {
   test('plan.updated processed within hard ceiling', async ({ page }) => {
-    // Intercept EventSource constructor before app scripts load — captures the
-    // instance the bridge creates in openConnection() so we can dispatch events.
+    // Stub EventSource with a fake that never connects and never errors.
+    //
+    // Why a full fake instead of intercepting the real constructor + mocking
+    // /v1/events: the 13-s2.5 SSE bridge removes its listeners and reconnects
+    // with backoff whenever the EventSource errors. A route.fulfill'ed
+    // text/event-stream body ends immediately, so the real EventSource fires
+    // `error` milliseconds after opening — every captured instance is already
+    // dead (listeners detached) by the time the test dispatches on it. The
+    // fake stays in CONNECTING forever, so the bridge's listeners remain
+    // attached to a single stable instance we can dispatch through.
     await page.addInitScript(() => {
-      const OrigES = window.EventSource;
-      (window as unknown as Record<string, unknown>).__capturedES = null;
-
-      class TrackingES extends (
-        OrigES as unknown as new (url: string | URL, config?: EventSourceInit) => EventSource
-      ) {
-        constructor(url: string | URL, config?: EventSourceInit) {
-          super(url, config);
+      class FakeEventSource extends EventTarget {
+        static readonly CONNECTING = 0;
+        static readonly OPEN = 1;
+        static readonly CLOSED = 2;
+        url: string;
+        readyState = 0; // CONNECTING forever — never opens, never errors.
+        withCredentials = false;
+        onopen: ((e: Event) => void) | null = null;
+        onmessage: ((e: MessageEvent) => void) | null = null;
+        onerror: ((e: Event) => void) | null = null;
+        constructor(url: string | URL) {
+          super();
+          this.url = String(url);
           (window as unknown as Record<string, unknown>).__capturedES = this;
         }
+        close() {
+          this.readyState = 2;
+        }
       }
-
-      (window as unknown as Record<string, unknown>).EventSource = TrackingES;
+      (window as unknown as Record<string, unknown>).__capturedES = null;
+      (window as unknown as Record<string, unknown>).EventSource =
+        FakeEventSource as unknown as typeof EventSource;
     });
-
-    // Mock /v1/events* — prevents network error, keeps EventSource alive for the test.
-    // The SSE bridge will get 200 OK and wait; we inject the event manually below.
-    await page.route('**/v1/events**', (route) =>
-      route.fulfill({
-        status: 200,
-        headers: {
-          'Content-Type': 'text/event-stream',
-          'Cache-Control': 'no-cache',
-        },
-        body: ':ok\n\n',
-      }),
-    );
 
     await page.goto('/');
 
@@ -61,9 +65,10 @@ test.describe('SSE invalidation → queryClient latency (UX-DR60)', () => {
             window as unknown as Record<
               string,
               {
+                setQueryData: (key: unknown[], data: unknown) => void;
                 getQueryCache: () => {
                   subscribe: (
-                    fn: (event?: { query?: { queryKey?: unknown } }) => void,
+                    fn: (event?: { type?: string; query?: { queryKey?: unknown } }) => void,
                   ) => () => void;
                 };
               }
@@ -72,11 +77,17 @@ test.describe('SSE invalidation → queryClient latency (UX-DR60)', () => {
 
           const es = (window as unknown as Record<string, EventSource>).__capturedES;
 
+          // Seed the plan query BEFORE subscribing: invalidateQueries emits
+          // cache notifications only for queries that exist in the cache — an
+          // empty cache produces no 'updated' event and the test would time out.
+          qc.setQueryData(['plan', weekId], { seeded: true });
+
           // Subscribe before dispatch so the listener is registered before the
-          // event fires. Only resolve for the specific plan query this test
-          // invalidates — guards against background cache churn triggering a
-          // false pass.
+          // event fires. Only resolve for an 'updated' notification on the
+          // specific plan query this test invalidates — guards against
+          // background cache churn (or the seed itself) triggering a false pass.
           const unsub = qc.getQueryCache().subscribe((event) => {
+            if (event?.type !== 'updated') return;
             const keyStr = JSON.stringify(event?.query?.queryKey ?? []);
             if (!keyStr.includes(weekId)) return;
             clearTimeout(timeoutId);
