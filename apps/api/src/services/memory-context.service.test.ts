@@ -45,13 +45,13 @@ describe('MemoryContextService.getContextForPlanning', () => {
     expect(result).toEqual({ l0Preferences: [], l1MethodPriors: [], culturalObligations: [] });
   });
 
-  it('routes preference→L0, rhythm→L1, cultural_rhythm→culturalObligations', async () => {
+  it('routes rhythm→L1 and other node types→L0, leaving culturalObligations empty', async () => {
     const client = buildClient({
       rows: [
-        { node_type: 'preference', prose_text: 'Maya refuses bell peppers.' },
+        { node_type: 'other', prose_text: 'Maya refuses bell peppers.' },
         { node_type: 'rhythm', prose_text: 'Ayaan prefers sandwiches over wraps.' },
-        { node_type: 'cultural_rhythm', prose_text: 'Friday dinners are vegetarian.' },
-        { node_type: 'preference', prose_text: 'Ayaan dislikes strong spices.' },
+        { node_type: 'other', prose_text: 'Friday dinners are vegetarian.' },
+        { node_type: 'child_obsession', prose_text: 'Ayaan dislikes strong spices.' },
       ],
     });
     const service = new MemoryContextService(client);
@@ -60,10 +60,11 @@ describe('MemoryContextService.getContextForPlanning', () => {
 
     expect(result.l0Preferences).toEqual([
       'Maya refuses bell peppers.',
+      'Friday dinners are vegetarian.',
       'Ayaan dislikes strong spices.',
     ]);
     expect(result.l1MethodPriors).toEqual(['Ayaan prefers sandwiches over wraps.']);
-    expect(result.culturalObligations).toEqual(['Friday dinners are vegetarian.']);
+    expect(result.culturalObligations).toEqual([]);
   });
 
   it('filters by household, excludes hard_forgotten and soft_forget_at, restricts node types', async () => {
@@ -80,7 +81,7 @@ describe('MemoryContextService.getContextForPlanning', () => {
     expect(capture.is).toEqual({ column: 'soft_forget_at', value: null });
     expect(capture.in).toEqual({
       column: 'node_type',
-      values: ['preference', 'rhythm', 'cultural_rhythm'],
+      values: ['rhythm', 'child_obsession', 'other'],
     });
   });
 

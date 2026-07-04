@@ -83,6 +83,8 @@ function installWsMock() {
 }
 
 // ── VAD mock ──────────────────────────────────────────────────────────────────
+// The hook lazily imports MicVAD from @ricky0123/vad-web on first startSession()
+// (was useMicVAD from vad-react before the epic-5 voice refactor).
 
 const vadState = vi.hoisted(() => ({
   config: null as null | { onSpeechEnd?: (audio: Float32Array) => void },
@@ -90,16 +92,15 @@ const vadState = vi.hoisted(() => ({
     start: vi.fn(),
     pause: vi.fn(),
     destroy: vi.fn(),
-    userSpeaking: false,
-    loading: false,
-    errored: false,
   },
 }));
 
-vi.mock('@ricky0123/vad-react', () => ({
-  useMicVAD: (config: { onSpeechEnd?: (audio: Float32Array) => void }) => {
-    vadState.config = config;
-    return vadState.vad;
+vi.mock('@ricky0123/vad-web', () => ({
+  MicVAD: {
+    new: async (config: { onSpeechEnd?: (audio: Float32Array) => void }) => {
+      vadState.config = config;
+      return vadState.vad;
+    },
   },
 }));
 

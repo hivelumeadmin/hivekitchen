@@ -117,15 +117,26 @@ describe('CuratedBaselineMaterializationService — materialize', () => {
     expect(deps.householdsRepo.setStage0MaterializedAt).not.toHaveBeenCalled();
   });
 
-  it('guardrail blocks tripwire items (name contains FALCPA synonym); survivors persisted', async () => {
-    // 'peanut butter rice bowl' — name contains 'peanut' → blocked by FALCPA
-    // peanut rule. Clean items pass through.
+  it('guardrail blocks tripwire items (name contains declared allergen); survivors persisted', async () => {
+    // Guardrail 1.4.0 — FALCPA rows no longer block on their own; the
+    // household declares peanut (parent_declared), so 'peanut butter rice
+    // bowl' is blocked. Clean items pass through.
     const items = [
       makeItem({ canonical_name: 'Grilled chicken with rice', id: 'safe' }),
       makeItem({ canonical_name: 'peanut butter rice bowl', id: 'tripwire' }),
       makeItem({ canonical_name: 'Rice with black beans', id: 'safe2' }),
     ];
     const deps = buildDeps();
+    deps.guardrailRepo.getRulesForHousehold.mockResolvedValue([
+      ...FALCPA_RULES,
+      {
+        id: 'declared-peanut',
+        household_id: HOUSEHOLD_ID,
+        child_id: null,
+        allergen: 'peanut',
+        rule_type: 'parent_declared',
+      },
+    ]);
     deps.baselineRepo.findAllActive.mockResolvedValue(items);
     deps.recipesRepo.seedFromCatalogBaseline.mockResolvedValue(2);
 

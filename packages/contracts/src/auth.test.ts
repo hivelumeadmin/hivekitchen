@@ -321,16 +321,27 @@ describe('HouseholdMembersResponseSchema (5-S2)', () => {
   };
 
   it('parses a member array', () => {
-    expect(HouseholdMembersResponseSchema.safeParse({ members: [validMember] }).success).toBe(true);
+    expect(
+      HouseholdMembersResponseSchema.safeParse({
+        household_display_name: 'The Menons',
+        members: [validMember],
+      }).success,
+    ).toBe(true);
   });
 
   it('accepts an empty members array', () => {
-    expect(HouseholdMembersResponseSchema.safeParse({ members: [] }).success).toBe(true);
+    expect(
+      HouseholdMembersResponseSchema.safeParse({
+        household_display_name: null,
+        members: [],
+      }).success,
+    ).toBe(true);
   });
 
   it('accepts a null display_name', () => {
     expect(
       HouseholdMembersResponseSchema.safeParse({
+        household_display_name: null,
         members: [{ ...validMember, display_name: null }],
       }).success,
     ).toBe(true);
@@ -339,6 +350,7 @@ describe('HouseholdMembersResponseSchema (5-S2)', () => {
   it('rejects an invalid role', () => {
     expect(
       HouseholdMembersResponseSchema.safeParse({
+        household_display_name: null,
         members: [{ ...validMember, role: 'ops' }],
       }).success,
     ).toBe(false);

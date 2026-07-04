@@ -220,6 +220,9 @@ async function buildTestApp(supabaseMock: ReturnType<typeof buildMockSupabase>):
   const env = { NODE_ENV: 'development' as const, JWT_SECRET: 'a'.repeat(32) };
   app.decorate('env', env as unknown as FastifyInstance['env']);
   app.decorate('supabase', supabaseMock as unknown as FastifyInstance['supabase']);
+  // AuthService now receives fastify.supabaseAuth (dedicated auth-flow client)
+  // while DB repositories keep fastify.supabase. The mock carries both shapes.
+  app.decorate('supabaseAuth', supabaseMock as unknown as FastifyInstance['supabaseAuth']);
 
   await app.register(cookie, { secret: env.JWT_SECRET });
   await app.register(jwt, { secret: env.JWT_SECRET, sign: { expiresIn: '15m' } });

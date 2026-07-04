@@ -572,6 +572,7 @@ describe('GET /v1/households/:householdId/memory', () => {
     subject_child_id: string | null;
     prose_text: string;
     soft_forget_at: string | null;
+    forget_reason: string | null;
     hard_forgotten: boolean;
     created_at: string;
     updated_at: string;
@@ -581,11 +582,12 @@ describe('GET /v1/households/:householdId/memory', () => {
     return {
       id: '00000000-0000-4000-8000-000000000001',
       household_id: SAMPLE_HOUSEHOLD_ID,
-      node_type: 'preference',
+      node_type: 'other',
       facet: 'avoids spicy',
       subject_child_id: null,
       prose_text: 'Child avoids spicy peppers.',
       soft_forget_at: null,
+      forget_reason: null,
       hard_forgotten: false,
       created_at: '2026-04-30T00:00:00.000Z',
       updated_at: '2026-04-30T00:00:00.000Z',

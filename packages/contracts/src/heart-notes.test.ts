@@ -25,6 +25,8 @@ function validResponse() {
     content: 'Hope today is a calm one — carrot ribbons and dates.',
     status: 'draft' as const,
     scheduled_for: null,
+    delivered_at: null,
+    cancelled_at: null,
     created_at: '2026-05-15T12:34:56.000Z',
     updated_at: '2026-05-15T12:35:00.000Z',
   };

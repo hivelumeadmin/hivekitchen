@@ -175,9 +175,12 @@ describe('TurnBodyRatificationPrompt', () => {
 
   it('accepts a body with one or more priors', () => {
     expect(TurnBodyRatificationPrompt.safeParse(validBody).success).toBe(true);
+  });
+
+  it('rejects an empty priors array', () => {
     expect(
       TurnBodyRatificationPrompt.safeParse({ ...validBody, priors: [] }).success,
-    ).toBe(true);
+    ).toBe(false);
   });
 
   it('rejects entries missing prior_id / key / label', () => {

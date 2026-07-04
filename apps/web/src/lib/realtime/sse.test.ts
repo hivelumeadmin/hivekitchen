@@ -4,6 +4,7 @@ import type { QueryClient } from '@tanstack/react-query';
 import { createSseBridge } from './sse.js';
 import * as threadIntegrity from './thread-integrity.js';
 import { hkFetch } from '@/lib/fetch.js';
+import { useAuthStore } from '@/stores/auth.store.js';
 import { useLumiStore } from '@/stores/lumi.store.js';
 import { usePlanProgressStore } from '@/stores/plan-progress.store.js';
 import type { z } from 'zod';
@@ -39,6 +40,14 @@ class FakeEventSource {
     const list = this.listeners.get(type) ?? [];
     list.push(listener);
     this.listeners.set(type, list);
+  }
+
+  removeEventListener(type: string, listener: EventListener): void {
+    const list = this.listeners.get(type) ?? [];
+    this.listeners.set(
+      type,
+      list.filter((l) => l !== listener),
+    );
   }
 
   dispatch(type: string, event: Event | MessageEvent): void {
@@ -165,7 +174,16 @@ describe('SseBridge — event dispatch', () => {
     expect(vi.mocked(qc.invalidateQueries)).toHaveBeenCalledWith({ queryKey: ['thread', UUID1] });
   });
 
-  it('packer.assigned calls invalidateQueries with packer key', () => {
+  it('packer.assigned calls invalidateQueries with household packers key (5-S3)', () => {
+    useAuthStore.setState({
+      user: {
+        id: UUID2,
+        email: 'parent@example.com',
+        display_name: null,
+        current_household_id: UUID1,
+        role: 'primary_parent',
+      },
+    });
     const qc = makeMockQueryClient();
     createSseBridge(qc).connect();
     const [es] = FakeEventSource.instances;
@@ -173,7 +191,8 @@ describe('SseBridge — event dispatch', () => {
       'message',
       makeMessageEvent({ type: 'packer.assigned', date: '2026-04-24', packer_id: UUID2 }),
     );
-    expect(vi.mocked(qc.invalidateQueries)).toHaveBeenCalledWith({ queryKey: ['packer', '2026-04-24'] });
+    expect(vi.mocked(qc.invalidateQueries)).toHaveBeenCalledWith({ queryKey: ['packers', UUID1] });
+    useAuthStore.setState({ user: null });
   });
 
   it('pantry.delta calls invalidateQueries with pantry key', () => {

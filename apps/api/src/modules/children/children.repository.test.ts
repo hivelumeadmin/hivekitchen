@@ -24,11 +24,19 @@ function buildChainClient(terminalResult: unknown): {
     steps.push({ op, args });
     return builder;
   };
-  for (const op of ['select', 'update', 'eq', 'is', 'order']) {
+  for (const op of ['select', 'update', 'eq', 'is', 'order', 'delete', 'upsert']) {
     builder[op] = passthrough(op);
   }
   builder.maybeSingle = vi.fn().mockResolvedValue(terminalResult);
   builder.single = vi.fn().mockResolvedValue(terminalResult);
+  // Story 3-DM-B2 — writeHouseholdScopedTags / readHouseholdScopedTags await
+  // chains directly (delete().eq(), upsert(...), select().eq().is()), so the
+  // builder must be thenable. Resolve with empty data so household-scoped tag
+  // reads map over an array.
+  builder.then = (
+    onFulfilled: (v: unknown) => unknown,
+    onRejected?: (e: unknown) => unknown,
+  ) => Promise.resolve({ data: [], error: null }).then(onFulfilled, onRejected);
   const fromMock = vi.fn().mockImplementation((table: string) => {
     steps.push({ op: 'from', args: [table] });
     return builder;

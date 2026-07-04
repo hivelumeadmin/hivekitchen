@@ -119,7 +119,7 @@ describe('MemoryNoteInputSchema', () => {
   it('round-trips a fully-specified valid input', () => {
     const r = MemoryNoteInputSchema.safeParse({
       household_id: UUID1,
-      node_type: 'preference',
+      node_type: 'other',
       facet: 'avoids spicy food',
       prose_text: 'Child avoids spicy peppers and chili oil',
       subject_child_id: UUID2,
@@ -144,7 +144,7 @@ describe('MemoryNoteInputSchema', () => {
 
   it('rejects missing required household_id', () => {
     const r = MemoryNoteInputSchema.safeParse({
-      node_type: 'preference',
+      node_type: 'other',
       facet: 'x',
       prose_text: 'y',
       subject_child_id: null,
@@ -155,7 +155,7 @@ describe('MemoryNoteInputSchema', () => {
   it('rejects facet over 200 chars', () => {
     const r = MemoryNoteInputSchema.safeParse({
       household_id: UUID1,
-      node_type: 'preference',
+      node_type: 'other',
       facet: 'x'.repeat(201),
       prose_text: 'y',
       subject_child_id: null,
@@ -166,7 +166,7 @@ describe('MemoryNoteInputSchema', () => {
   it('rejects confidence outside [0,1]', () => {
     const base = {
       household_id: UUID1,
-      node_type: 'preference' as const,
+      node_type: 'other' as const,
       facet: 'a',
       prose_text: 'b',
       subject_child_id: null,
@@ -219,7 +219,7 @@ describe('MemoryRecallOutputSchema', () => {
       nodes: [
         {
           node_id: UUID1,
-          node_type: 'preference',
+          node_type: 'other',
           facet: 'avoids spicy',
           prose_text: 'Child avoids spicy peppers.',
           subject_child_id: null,
@@ -252,7 +252,7 @@ describe('MemoryNodeSchema and MemoryProvenanceSchema', () => {
     const r = MemoryNodeSchema.safeParse({
       id: UUID1,
       household_id: UUID2,
-      node_type: 'allergy',
+      node_type: 'other',
       facet: 'peanut',
       subject_child_id: null,
       prose_text: 'Declared allergy: peanut',
@@ -269,7 +269,7 @@ describe('MemoryNodeSchema and MemoryProvenanceSchema', () => {
     const r = MemoryNodeSchema.safeParse({
       id: UUID1,
       household_id: UUID2,
-      node_type: 'allergy',
+      node_type: 'other',
       facet: 'peanut',
       subject_child_id: null,
       prose_text: 'Declared allergy: peanut',
@@ -301,7 +301,7 @@ describe('GetMemoryResponseSchema', () => {
   const node = {
     id: UUID1,
     household_id: UUID2,
-    node_type: 'allergy' as const,
+    node_type: 'other' as const,
     facet: 'peanut',
     subject_child_id: null,
     prose_text: 'Declared allergy: peanut',
@@ -388,7 +388,7 @@ describe('EditMemoryResponseSchema', () => {
   const node = {
     id: UUID1,
     household_id: UUID2,
-    node_type: 'preference' as const,
+    node_type: 'other' as const,
     facet: 'avoids spicy',
     subject_child_id: null,
     prose_text: 'Layla avoids spicy peppers.',
@@ -426,7 +426,7 @@ describe('ForgetMemoryResponseSchema', () => {
   const node = {
     id: UUID1,
     household_id: UUID2,
-    node_type: 'preference' as const,
+    node_type: 'other' as const,
     facet: 'avoids spicy',
     subject_child_id: null,
     prose_text: 'Layla avoids spicy peppers.',

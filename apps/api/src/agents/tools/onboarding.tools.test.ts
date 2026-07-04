@@ -245,7 +245,7 @@ describe('createChildUpsertToolSpec', () => {
     expect(deps.childrenService.upsertByName).toHaveBeenCalled();
     expect(deps.memoryService.noteFromAgent).toHaveBeenCalledWith(
       expect.objectContaining({
-        nodeType: 'allergy',
+        nodeType: 'other',
         facet: 'allergen',
       }),
     );
@@ -1050,14 +1050,16 @@ describe('createFavoriteLunchAddToolSpec (2.6-s1 — writes to recipes catalog)'
     expect(result.position).toBe(0);
   });
 
-  it('uses explicit position when the agent supplies one', async () => {
+  it('ignores an agent-supplied position and derives it from the declared count', async () => {
     const deps = makeDeps();
     const spec = createFavoriteLunchAddToolSpec(makeCtx(), deps);
 
     const result = (await spec.fn({ item: 'Wrap', position: 7 })) as { position: number };
 
     expect(deps.recipesRepository.declareForHousehold).toHaveBeenCalledWith(HOUSEHOLD_ID, 'Wrap');
-    expect(result.position).toBe(7);
+    // position input was removed from FavoriteLunchAddInputSchema; the value is
+    // derived from countDeclaredFavorites (mocked to 1) → max(0, 1-1) = 0
+    expect(result.position).toBe(0);
   });
 
   it('rejects empty item at the Zod boundary (M5 chip must have a label)', async () => {
