@@ -172,10 +172,13 @@ test.describe('Story 2-9: parental notice disclosure (pre-data-collection gate)'
     ).toBeVisible();
   });
 
-  test('user with prior ack bypasses the dialog entirely and opens the child form', async ({
+  test('user with prior ack bypasses the dialog entirely and lands on the Brief', async ({
     page,
   }) => {
     // Acknowledged-state profile — the gate should not render the dialog.
+    // Epic 13-s5 removed the "Add your first child" CTA (children are created
+    // during Lumi onboarding now), so the post-gate landmark is the Brief's
+    // empty state rather than the child form.
     await page.route('**/v1/users/me', (route) =>
       route.fulfill({
         status: 200,
@@ -183,8 +186,7 @@ test.describe('Story 2-9: parental notice disclosure (pre-data-collection gate)'
         body: JSON.stringify(userProfile()), // default factory has acknowledged_at set
       }),
     );
-    // Return empty brief so BriefCanvas enters its empty state and shows the
-    // "Add your first child" CTA (story 3-8 moved the form entry point here).
+    // Empty brief → BriefCanvas empty state ("preparing your first plan").
     await page.route(`**/v1/households/${SAMPLE_HOUSEHOLD_ID}/brief`, (route) =>
       route.fulfill({
         status: 200,
@@ -194,13 +196,10 @@ test.describe('Story 2-9: parental notice disclosure (pre-data-collection gate)'
     );
 
     await loginAndNavigate(page, '/app');
-    await page.getByRole('button', { name: /add your first child/i }).click();
-    // The notice dialog never appears; the child form opens directly.
+    // BriefCanvas renders — proof the gate passed without showing the dialog.
+    await expect(page.getByText(/lumi is preparing your first plan/i)).toBeVisible();
     await expect(
       page.getByRole('heading', { name: /before we collect data about your family/i }),
     ).toHaveCount(0);
-    // The "Save child" button is the form's primary affordance — a stable
-    // landmark that the form actually rendered.
-    await expect(page.getByRole('button', { name: /save child/i })).toBeVisible();
   });
 });

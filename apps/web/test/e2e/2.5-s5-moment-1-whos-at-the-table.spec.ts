@@ -149,9 +149,12 @@ test.describe('Slice 2.5-s5: Moment 1 — Who\'s at the table', () => {
     expect(turnCallCount).toBe(countBeforeClick);
   });
 
-  // AC5 / MOMENT_CONFIG — summary is assigned number:6 so the progress bar
-  // shows 100% (5 of 5 moments complete) rather than 80%.
-  test('profile panel progress shows 100% at summary moment', async ({ page }) => {
+  // AC5 → 13-s6 — at moment_key 'summary' the header renders the dedicated
+  // summary subtitle (never "Moment 6 of 5" from MOMENT_CONFIG number:6) and
+  // the recognition ending replaces the old profile-panel progress footer.
+  test('summary moment shows summary subtitle and recognition ending (never "Moment 6 of 5")', async ({
+    page,
+  }) => {
     await page.route(TURN_URL, (route) =>
       route.fulfill({
         status: 200,
@@ -165,13 +168,12 @@ test.describe('Slice 2.5-s5: Moment 1 — Who\'s at the table', () => {
     await page.getByLabel(/your message to lumi/i).fill('Done');
     await page.getByRole('button', { name: /^send$/i }).click();
 
-    // Header must render "Moment 5 of 5" (clamped from number:6) not "Moment 6 of 5".
-    await expect(page.getByText(/moment 5 of 5 · summary/i)).toBeVisible();
+    // 13-s5/13-s6 — summary short-circuits to its own subtitle.
+    await expect(page.getByText(/summary · lock in your kitchen/i)).toBeVisible();
+    await expect(page.getByText(/moment 6 of 5/i)).not.toBeVisible();
 
-    // Profile panel footer on desktop shows "Moment 5 of 5 complete".
-    // The panel is in the right column (hidden on mobile viewport — use a wider viewport).
-    await page.setViewportSize({ width: 1280, height: 800 });
-    await expect(page.getByText(/moment 5 of 5 complete/i).first()).toBeVisible();
+    // The recognition ending (13-s6) replaces the old "Moment 5 of 5 complete" footer.
+    await expect(page.getByTestId('recognition-ending')).toBeVisible();
   });
 
   // parseMomentKey guard — a stale or malicious directive of 'pre_start' must

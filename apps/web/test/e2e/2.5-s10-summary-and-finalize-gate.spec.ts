@@ -177,12 +177,16 @@ test.describe('Slice 2.5-s10 → 13-s6: Summary + Recognition Ending', () => {
     await expect.poll(() => finalizeCalled).toBe(true);
   });
 
-  // AC8d — KitchenProfilePanel shows "All moments captured" footer in summary (desktop).
-  test('profile panel shows "All moments captured" in summary moment (desktop)', async ({
+  // 13-s5 — the "All moments captured" footer belonged to the deleted
+  // KitchenProfilePanel. The projection-only KitchenMapHero has no per-moment
+  // footer; in summary the panel simply persists alongside the recognition ending.
+  test('profile panel stays visible alongside the recognition ending in summary (desktop)', async ({
     page,
   }) => {
     await page.setViewportSize({ width: 1280, height: 800 });
     await landOnSummary(page, { required_set_complete: true, missing_required_set: [] });
-    await expect(page.getByText(/all moments captured/i).first()).toBeVisible();
+    await expect(page.getByRole('region', { name: /your kitchen profile/i })).toBeVisible();
+    await expect(page.getByTestId('recognition-ending')).toBeVisible();
+    await expect(page.getByText(/all moments captured/i)).toHaveCount(0);
   });
 });
