@@ -6,7 +6,6 @@ import {
   RatifyActionSchema,
   RatifyCulturalPriorBodySchema,
   RatifyCulturalPriorResponseSchema,
-  TemplateStateChangedEventSchema,
   TemplateStateSchema,
   TierSchema,
   CulturalLookupInputSchema,
@@ -135,35 +134,6 @@ describe('CulturalPriorListResponseSchema / RatifyCulturalPriorResponseSchema', 
         lumi_response: 'Tell me more about that.',
       }).success,
     ).toBe(true);
-  });
-});
-
-describe('TemplateStateChangedEventSchema', () => {
-  it('round-trips a valid event', () => {
-    const event = {
-      type: 'template.state_changed' as const,
-      prior_id: PRIOR_UUID,
-      household_id: HOUSEHOLD_UUID,
-      key: 'halal' as const,
-      from_state: 'detected' as const,
-      to_state: 'opt_in_confirmed' as const,
-      at: '2026-04-28T10:00:00.000Z',
-    };
-    expect(TemplateStateChangedEventSchema.safeParse(event).success).toBe(true);
-  });
-
-  it('rejects events with the wrong literal type', () => {
-    expect(
-      TemplateStateChangedEventSchema.safeParse({
-        type: 'plan.regenerated',
-        prior_id: PRIOR_UUID,
-        household_id: HOUSEHOLD_UUID,
-        key: 'halal',
-        from_state: 'detected',
-        to_state: 'opt_in_confirmed',
-        at: '2026-04-28T10:00:00.000Z',
-      }).success,
-    ).toBe(false);
   });
 });
 

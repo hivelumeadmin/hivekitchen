@@ -51,15 +51,6 @@ export const AddChildAllergenRequestSchema = z.object({
 });
 export type AddChildAllergenRequest = z.infer<typeof AddChildAllergenRequestSchema>;
 
-// Remove accepts any allergen string (not just the curated set) so a parent can
-// also clear allergens declared during onboarding, which predate this vocabulary
-// and may be free-text. The server hashes it to find the row; the client never
-// needs the stored hash, so none is exposed.
-export const RemoveChildAllergenRequestSchema = z.object({
-  allergen: z.string().min(1).max(100),
-});
-export type RemoveChildAllergenRequest = z.infer<typeof RemoveChildAllergenRequestSchema>;
-
 // Response is the child's current allergen list as plain strings — the same
 // shape the KitchenMap projection exposes, so the client can swap it straight in.
 export const ChildAllergenMutationResponseSchema = z.object({

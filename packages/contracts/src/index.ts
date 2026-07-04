@@ -3,7 +3,6 @@ export * from './plan.js';
 export * from './plan-intent.js';
 export * from './plan-generate.js';
 export * from './auto-compose.js';
-export * from './lists.js';
 export * from './thread.js';
 export * from './voice.js';
 export * from './events.js';

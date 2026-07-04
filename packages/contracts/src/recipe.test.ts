@@ -6,8 +6,6 @@ import {
   RecipeFetchOutputSchema,
   RecipeIngredientSchema,
   RecipeRowSchema,
-  HouseholdRecipeUsageRowSchema,
-  RecipeCommentPublicSchema,
   RecipeAgentExtractionSchema,
   RecipeDiscoverInputSchema,
 } from './recipe.js';
@@ -275,127 +273,6 @@ describe('RecipeRowSchema / RecipeFetchOutputSchema', () => {
     const row: Record<string, unknown> = { ...makeRecipeRow(), applicable_slots: [] };
     const r = RecipeRowSchema.safeParse(row);
     expect(r.success).toBe(false);
-  });
-});
-
-// ---------------------------------------------------------------------------
-// HouseholdRecipeUsageRowSchema
-// ---------------------------------------------------------------------------
-
-describe('HouseholdRecipeUsageRowSchema', () => {
-  it('round-trips a valid row', () => {
-    const r = HouseholdRecipeUsageRowSchema.safeParse({
-      household_id: UUID1,
-      recipe_id: UUID2,
-      use_count: 5,
-      acceptance_count: 4,
-      swap_out_count: 1,
-      positive_outcome_count: 3,
-      negative_outcome_count: 0,
-      confidence_score: 75,
-      is_household_favorite: false,
-      is_household_banned: false,
-      first_used_at: NOW,
-      last_used_at: NOW,
-      last_outcome_at: null,
-    });
-    expect(r.success).toBe(true);
-  });
-
-  it('rejects confidence_score above 100', () => {
-    const r = HouseholdRecipeUsageRowSchema.safeParse({
-      household_id: UUID1,
-      recipe_id: UUID2,
-      use_count: 0,
-      acceptance_count: 0,
-      swap_out_count: 0,
-      positive_outcome_count: 0,
-      negative_outcome_count: 0,
-      confidence_score: 150,
-      is_household_favorite: false,
-      is_household_banned: false,
-      first_used_at: NOW,
-      last_used_at: NOW,
-      last_outcome_at: null,
-    });
-    expect(r.success).toBe(false);
-  });
-
-  it('rejects negative use_count', () => {
-    const r = HouseholdRecipeUsageRowSchema.safeParse({
-      household_id: UUID1,
-      recipe_id: UUID2,
-      use_count: -1,
-      acceptance_count: 0,
-      swap_out_count: 0,
-      positive_outcome_count: 0,
-      negative_outcome_count: 0,
-      confidence_score: 50,
-      is_household_favorite: false,
-      is_household_banned: false,
-      first_used_at: NOW,
-      last_used_at: NOW,
-      last_outcome_at: null,
-    });
-    expect(r.success).toBe(false);
-  });
-});
-
-// ---------------------------------------------------------------------------
-// RecipeCommentPublicSchema
-// ---------------------------------------------------------------------------
-
-describe('RecipeCommentPublicSchema', () => {
-  it('round-trips a rating-only comment', () => {
-    const r = RecipeCommentPublicSchema.safeParse({
-      id: UUID1,
-      recipe_id: UUID2,
-      display_handle: 'A South Asian household',
-      rating: 5,
-      prose_text: null,
-      created_at: NOW,
-    });
-    expect(r.success).toBe(true);
-  });
-
-  it('round-trips a prose-only comment (null rating)', () => {
-    const r = RecipeCommentPublicSchema.safeParse({
-      id: UUID1,
-      recipe_id: UUID2,
-      display_handle: 'A halal household',
-      rating: null,
-      prose_text: 'Worked well as Friday lunch.',
-      created_at: NOW,
-    });
-    expect(r.success).toBe(true);
-  });
-
-  it('rejects rating below 1', () => {
-    const r = RecipeCommentPublicSchema.safeParse({
-      id: UUID1,
-      recipe_id: UUID2,
-      display_handle: 'Anon',
-      rating: 0,
-      prose_text: null,
-      created_at: NOW,
-    });
-    expect(r.success).toBe(false);
-  });
-
-  it('does not allow author_household_id / author_user_id fields', () => {
-    // Schema is .object({...}) — extra keys are allowed by default in Zod.
-    // The PUBLIC contract is what it returns; the row writer is responsible
-    // for not exposing author fields. This test asserts the schema doesn't
-    // require them (no author fields = valid).
-    const r = RecipeCommentPublicSchema.safeParse({
-      id: UUID1,
-      recipe_id: UUID2,
-      display_handle: 'Anon',
-      rating: 4,
-      prose_text: null,
-      created_at: NOW,
-    });
-    expect(r.success).toBe(true);
   });
 });
 

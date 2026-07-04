@@ -86,15 +86,6 @@ export const VoiceTalkSessionResponseSchema = z.object({
   talk_session_id: z.string().uuid(),
 });
 
-// Story 5-S5b — client → server text frames on GET /v1/lumi/voice/ws. The
-// browser sends `context` once on open (so the server can drive the LumiAgent
-// turn with the same LumiContextSignal the text path uses), then streams WAV
-// utterances as binary frames. `ping` mirrors the onboarding WS keepalive.
-export const LumiVoiceClientMessageSchema = z.discriminatedUnion('type', [
-  z.object({ type: z.literal('context'), context_signal: LumiContextSignalSchema }).strict(),
-  z.object({ type: z.literal('ping') }).strict(),
-]);
-
 // NudgeTrigger — the event class that produced a proactive Lumi nudge (Story
 // 12-S11). Carried on the lumi-nudge job data and stamped (DB-only) on the
 // resulting thread_turns row. plan_completed is the only trigger wired at MVP;
@@ -128,6 +119,5 @@ export type LumiThreadTurnsResponse = z.infer<typeof LumiThreadTurnsResponseSche
 export type LumiTurnResponse = z.infer<typeof LumiTurnResponseSchema>;
 export type VoiceTalkSessionCreate = z.infer<typeof VoiceTalkSessionCreateSchema>;
 export type VoiceTalkSessionResponse = z.infer<typeof VoiceTalkSessionResponseSchema>;
-export type LumiVoiceClientMessage = z.infer<typeof LumiVoiceClientMessageSchema>;
 export type LumiNudgeEvent = z.infer<typeof LumiNudgeEventSchema>;
 export type NudgeTrigger = z.infer<typeof NudgeTriggerSchema>;

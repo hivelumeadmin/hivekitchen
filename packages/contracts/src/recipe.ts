@@ -5,9 +5,8 @@ import { z } from 'zod';
 // ===========================================================================
 // Two distinct concerns share this file:
 //
-// 1. The recipes CATALOG row shapes (RecipeRowSchema, RecipeIngredientSchema,
-//    HouseholdRecipeUsageRowSchema, RecipeCommentPublicSchema). These mirror
-//    the rows in the migration created by
+// 1. The recipes CATALOG row shapes (RecipeRowSchema, RecipeIngredientSchema).
+//    These mirror the rows in the migration created by
 //    supabase/migrations/20260514010000_create_recipes_and_usage.sql.
 //
 // 2. The planner-agent TOOL I/O shapes (RecipeSearchInputSchema,
@@ -124,58 +123,13 @@ export const RecipeRowSchema = z.object({
   updated_at: z.string().datetime({ offset: true }),
 });
 
-// ---- Recipe step (structured method) -------------------------------------
+// ---- Step mode -------------------------------------------------------------
 //
-// Story 3-DM-A1 — replaces the opaque recipes.instructions jsonb. One row
-// per step in recipe_steps. mode classifies the step as part of the
-// make-ahead (prep) or morning-of (finish) phase; the Wall Card's mode
-// toggle filters by this tag.
+// Story 3-DM-A1 — mode classifies a method step as part of the make-ahead
+// (prep) or morning-of (finish) phase; the Wall Card's mode toggle filters
+// by this tag. Used by RecipeAgentExtractionSchema's steps array below.
 
 export const StepModeSchema = z.enum(['prep', 'finish']);
-
-export const RecipeStepSchema = z.object({
-  id: z.string().uuid(),
-  recipe_id: z.string().uuid(),
-  sequence: z.number().int().min(1).max(40),
-  mode: StepModeSchema,
-  text: z.string().min(1).max(600),
-  created_at: z.string().datetime({ offset: true }),
-});
-
-export const RecipeStepsArraySchema = z.array(RecipeStepSchema).max(40);
-
-// ---- Household usage row --------------------------------------------------
-
-export const HouseholdRecipeUsageRowSchema = z.object({
-  household_id: z.string().uuid(),
-  recipe_id: z.string().uuid(),
-
-  use_count: z.number().int().min(0),
-  acceptance_count: z.number().int().min(0),
-  swap_out_count: z.number().int().min(0),
-  positive_outcome_count: z.number().int().min(0),
-  negative_outcome_count: z.number().int().min(0),
-
-  confidence_score: z.number().int().min(0).max(100),
-
-  is_household_favorite: z.boolean(),
-  is_household_banned: z.boolean(),
-
-  first_used_at: z.string().datetime({ offset: true }),
-  last_used_at: z.string().datetime({ offset: true }),
-  last_outcome_at: z.string().datetime({ offset: true }).nullable(),
-});
-
-// ---- Comments (public projection — author identity stripped) -------------
-
-export const RecipeCommentPublicSchema = z.object({
-  id: z.string().uuid(),
-  recipe_id: z.string().uuid(),
-  display_handle: z.string().min(1).max(128),
-  rating: z.number().int().min(1).max(5).nullable(),
-  prose_text: z.string().nullable(),
-  created_at: z.string().datetime({ offset: true }),
-});
 
 // ===========================================================================
 // Planner-agent tool I/O — unchanged interface, evolved shapes

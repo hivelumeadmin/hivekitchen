@@ -14,10 +14,6 @@ import {
   AcceptInviteResponseSchema,
   HouseholdMemberSchema,
   HouseholdMembersResponseSchema,
-  MealItem,
-  DayPlan,
-  WeeklyPlan,
-  CreatePlanResponse,
   AllergyVerdict,
   PlanUpdatedEvent,
   PlanProgressEvent,
@@ -27,8 +23,6 @@ import {
   PlanItemForGuardrailSchema,
   AllergyCheckInputSchema,
   AllergyCheckOutputSchema,
-  GroceryItem,
-  GroceryList,
   Turn,
   TurnBody,
   TurnBodyMessage,
@@ -39,17 +33,7 @@ import {
   VoiceSessionCreateSchema,
   VoiceSessionCreateResponseSchema,
   TtsTokenResponseSchema,
-  WsClientMessageSchema,
-  WsServerMessageSchema,
-  WsSessionReadySchema,
-  WsTranscriptSchema,
-  WsResponseStartSchema,
-  WsResponseEndSchema,
-  WsSessionSummarySchema,
-  WsErrorSchema,
-  WsErrorCodeSchema,
   InvalidationEvent,
-  ForgetRequest,
   ForgetCompletedEvent,
   NodeTypeSchema,
   SourceTypeSchema,
@@ -133,7 +117,6 @@ import {
   RatifyCulturalPriorBodySchema,
   CulturalPriorListResponseSchema,
   RatifyCulturalPriorResponseSchema,
-  TemplateStateChangedEventSchema,
   TurnBodyRatificationPrompt,
   TurnBodyFamilyLanguagePrompt,
   FamilyLanguageStateSchema,
@@ -172,8 +155,6 @@ import {
   RecipeSourceSchema,
   RecipeVisibilitySchema,
   RecipeSlotSchema,
-  HouseholdRecipeUsageRowSchema,
-  RecipeCommentPublicSchema,
   AllergenRuleClassSchema,
   AllergenSeveritySchema,
   AllergenTagRowSchema,
@@ -315,7 +296,6 @@ import {
   SwapSlotRecipeInputSchema,
   SwapSlotRecipeResponseSchema,
   SwapSlotSnackSkuInputSchema,
-  SwapSlotSnackSkuResponseSchema,
   // Epic 13-s9 — conversational plan-edit wire shapes
   PlanIntentResultSchema,
   PlanEditParamSchema,
@@ -342,7 +322,6 @@ import {
   // Story 7-S14 — Kitchen Profile parent-deterministic safety edits
   AllergenKeySchema,
   AddChildAllergenRequestSchema,
-  RemoveChildAllergenRequestSchema,
   ChildAllergenMutationResponseSchema,
   SetCulturalEnforcementRequestSchema,
   SetCulturalEnforcementResponseSchema,
@@ -389,10 +368,6 @@ export type {
 } from '@hivekitchen/contracts';
 
 // Plans
-export type MealItem = z.infer<typeof MealItem>;
-export type DayPlan = z.infer<typeof DayPlan>;
-export type WeeklyPlan = z.infer<typeof WeeklyPlan>;
-export type CreatePlanResponse = z.infer<typeof CreatePlanResponse>;
 export type AllergyVerdict = z.infer<typeof AllergyVerdict>;
 export type PlanUpdatedEvent = z.infer<typeof PlanUpdatedEvent>;
 export type PlanProgressEvent = z.infer<typeof PlanProgressEvent>;
@@ -404,10 +379,6 @@ export type GuardrailResult = z.infer<typeof GuardrailResultSchema>;
 export type PlanItemForGuardrail = z.infer<typeof PlanItemForGuardrailSchema>;
 export type AllergyCheckInput = z.infer<typeof AllergyCheckInputSchema>;
 export type AllergyCheckOutput = z.infer<typeof AllergyCheckOutputSchema>;
-
-// Lists
-export type GroceryItem = z.infer<typeof GroceryItem>;
-export type GroceryList = z.infer<typeof GroceryList>;
 
 // Threads
 export type Turn = z.infer<typeof Turn>;
@@ -423,21 +394,11 @@ export type VoiceSessionCreate = z.infer<typeof VoiceSessionCreateSchema>;
 export type VoiceSessionCreateResponse = z.infer<typeof VoiceSessionCreateResponseSchema>;
 // Slice 2-S20 — browser-direct TTS via single-use token + TTS WebSocket
 export type TtsTokenResponse = z.infer<typeof TtsTokenResponseSchema>;
-export type WsClientMessage = z.infer<typeof WsClientMessageSchema>;
-export type WsServerMessage = z.infer<typeof WsServerMessageSchema>;
-export type WsSessionReady = z.infer<typeof WsSessionReadySchema>;
-export type WsTranscript = z.infer<typeof WsTranscriptSchema>;
-export type WsResponseStart = z.infer<typeof WsResponseStartSchema>;
-export type WsResponseEnd = z.infer<typeof WsResponseEndSchema>;
-export type WsSessionSummary = z.infer<typeof WsSessionSummarySchema>;
-export type WsError = z.infer<typeof WsErrorSchema>;
-export type WsErrorCode = z.infer<typeof WsErrorCodeSchema>;
 
 // Events
 export type InvalidationEvent = z.infer<typeof InvalidationEvent>;
 
 // Memory
-export type ForgetRequest = z.infer<typeof ForgetRequest>;
 export type ForgetCompletedEvent = z.infer<typeof ForgetCompletedEvent>;
 
 // Memory (Story 2.13 — visible memory write primitives)
@@ -569,7 +530,6 @@ export type RatifyAction = z.infer<typeof RatifyActionSchema>;
 export type RatifyCulturalPriorBody = z.infer<typeof RatifyCulturalPriorBodySchema>;
 export type CulturalPriorListResponse = z.infer<typeof CulturalPriorListResponseSchema>;
 export type RatifyCulturalPriorResponse = z.infer<typeof RatifyCulturalPriorResponseSchema>;
-export type TemplateStateChangedEvent = z.infer<typeof TemplateStateChangedEventSchema>;
 export type TurnBodyRatificationPrompt = z.infer<typeof TurnBodyRatificationPrompt>;
 
 // Family-language ratchet (Slice 5-S10 — UX-DR47 forward-only kinship terms)
@@ -621,8 +581,6 @@ export type RecipeUnit = z.infer<typeof RecipeUnitSchema>;
 export type RecipeSource = z.infer<typeof RecipeSourceSchema>;
 export type RecipeVisibility = z.infer<typeof RecipeVisibilitySchema>;
 export type RecipeSlot = z.infer<typeof RecipeSlotSchema>;
-export type HouseholdRecipeUsageRow = z.infer<typeof HouseholdRecipeUsageRowSchema>;
-export type RecipeCommentPublic = z.infer<typeof RecipeCommentPublicSchema>;
 
 // Slice A0c — Vocabulary table row shapes
 export type AllergenRuleClass = z.infer<typeof AllergenRuleClassSchema>;
@@ -823,7 +781,6 @@ export type UpdateVariationResponse = z.infer<typeof UpdateVariationResponseSche
 export type SwapSlotRecipeInput = z.infer<typeof SwapSlotRecipeInputSchema>;
 export type SwapSlotRecipeResponse = z.infer<typeof SwapSlotRecipeResponseSchema>;
 export type SwapSlotSnackSkuInput = z.infer<typeof SwapSlotSnackSkuInputSchema>;
-export type SwapSlotSnackSkuResponse = z.infer<typeof SwapSlotSnackSkuResponseSchema>;
 // Epic 13-s9 — conversational plan-edit wire types.
 export type PlanIntentResult = z.infer<typeof PlanIntentResultSchema>;
 export type PlanEditParam = z.infer<typeof PlanEditParamSchema>;
@@ -856,7 +813,6 @@ export type AssignPackerResponse = z.infer<typeof AssignPackerResponseSchema>;
 // Story 7-S14 — Kitchen Profile parent-deterministic safety edits (Phase 1)
 export type AllergenKey = z.infer<typeof AllergenKeySchema>;
 export type AddChildAllergenRequest = z.infer<typeof AddChildAllergenRequestSchema>;
-export type RemoveChildAllergenRequest = z.infer<typeof RemoveChildAllergenRequestSchema>;
 export type ChildAllergenMutationResponse = z.infer<typeof ChildAllergenMutationResponseSchema>;
 export type SetCulturalEnforcementRequest = z.infer<typeof SetCulturalEnforcementRequestSchema>;
 export type SetCulturalEnforcementResponse = z.infer<typeof SetCulturalEnforcementResponseSchema>;
