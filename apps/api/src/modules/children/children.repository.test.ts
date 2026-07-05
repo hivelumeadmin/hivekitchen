@@ -63,8 +63,6 @@ function rowFixture(overrides: Record<string, unknown> = {}): Record<string, unk
   };
 }
 
-const silentLogger = { error: vi.fn() };
-
 // Slice 2.6-s8 — ChildrenRepository depends on ChildAllergensRepository.
 // These tests target updateProfile's column-write behaviour only; the
 // allergen write paths are exercised by children.routes.test and the
@@ -75,7 +73,7 @@ function stubChildAllergensRepo() {
     declareIfNew: vi.fn().mockResolvedValue({ inserted: true }),
     deleteByChild: vi.fn().mockResolvedValue(undefined),
     findByHousehold: vi.fn().mockResolvedValue([]),
-  } as unknown as ConstructorParameters<typeof ChildrenRepository>[3];
+  } as unknown as ConstructorParameters<typeof ChildrenRepository>[2];
 }
 
 // Slice 2.6-s8 — updateProfile must wipe then re-declare allergens (replace
@@ -84,7 +82,7 @@ describe('ChildrenRepository.updateProfile — allergen replacement (Slice 2.6-s
   it('calls deleteByChild before declareIfNew, passing source=parent_edited', async () => {
     const { client } = buildChainClient({ data: rowFixture(), error: null });
     const stub = stubChildAllergensRepo();
-    const repo = new ChildrenRepository(client, null, silentLogger, stub);
+    const repo = new ChildrenRepository(client, null, stub);
 
     await repo.updateProfile({
       id: CHILD_ID,
@@ -117,7 +115,7 @@ describe('ChildrenRepository.updateProfile — bag_composition_pattern (Slice 2.
       data: rowFixture({ bag_composition_pattern: 'main_plus_snack' }),
       error: null,
     });
-    const repo = new ChildrenRepository(client, null, silentLogger, stubChildAllergensRepo());
+    const repo = new ChildrenRepository(client, null, stubChildAllergensRepo());
 
     await repo.updateProfile({
       id: CHILD_ID,
@@ -149,7 +147,7 @@ describe('ChildrenRepository.updateProfile — bag_composition_pattern (Slice 2.
       data: rowFixture(),
       error: null,
     });
-    const repo = new ChildrenRepository(client, null, silentLogger, stubChildAllergensRepo());
+    const repo = new ChildrenRepository(client, null, stubChildAllergensRepo());
 
     await repo.updateProfile({
       id: CHILD_ID,

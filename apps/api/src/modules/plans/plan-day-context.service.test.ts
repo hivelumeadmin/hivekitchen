@@ -4,7 +4,6 @@ import type { Queue } from 'bullmq';
 import { PlanDayContextService } from './plan-day-context.service.js';
 import type { PlanDayContextRepository } from './plan-day-context.repository.js';
 import type { PlansRepository } from './plans.repository.js';
-import type { BriefStateComposer } from './brief-state.composer.js';
 import type { AuditService } from '../../audit/audit.service.js';
 import type {
   PlanDayRow,
@@ -102,7 +101,6 @@ function buildService(opts: {
 
   const repo = { upsert, revert, findActiveById } as unknown as PlanDayContextRepository;
   const plansRepo = { findByIdForOps, findDaysByPlanId, findSlotsByPlanId } as unknown as PlansRepository;
-  const composer = { refresh: vi.fn() } as unknown as BriefStateComposer;
   const queue = { add: queueAdd } as unknown as Queue;
   const audit = { write } as unknown as AuditService;
 
@@ -110,7 +108,6 @@ function buildService(opts: {
     service: new PlanDayContextService({
       repository: repo,
       plansRepository: plansRepo,
-      briefStateComposer: composer,
       regenQueue: queue,
       auditService: audit,
       logger: buildLogger(),

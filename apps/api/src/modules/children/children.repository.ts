@@ -79,10 +79,6 @@ const CHILD_COLUMNS =
   // child row level (canonical §5: those are household-shared in the model).
   'id, household_id, name, age_band, school_policy_notes, appetite_level, texture_needs, spice_tolerance, bag_composition_pattern, created_at';
 
-interface RepositoryLogger {
-  error: (obj: Record<string, unknown>, msg: string) => void;
-}
-
 export class ChildrenRepository extends BaseRepository {
   // Slice 2.6-s8 — declared_allergens reads + writes now route through the
   // structured child_allergens table. The legacy children.declared_allergens
@@ -93,7 +89,6 @@ export class ChildrenRepository extends BaseRepository {
   constructor(
     client: SupabaseClient,
     private readonly kek: Buffer | null,
-    private readonly log: RepositoryLogger,
     private readonly childAllergensRepo: ChildAllergensRepository,
   ) {
     super(client);

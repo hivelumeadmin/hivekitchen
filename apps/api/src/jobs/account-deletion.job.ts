@@ -4,7 +4,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import type { AuditService } from '../audit/audit.service.js';
 import { HouseholdsRepository } from '../modules/households/households.repository.js';
 
-export const ACCOUNT_DELETION_QUEUE = 'account-deletion';
+const ACCOUNT_DELETION_QUEUE = 'account-deletion';
 const ACCOUNT_DELETION_SCHEDULER_ID = 'nightly-account-deletion';
 const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
 

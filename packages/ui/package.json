@@ -14,7 +14,6 @@
     "@hivekitchen/design-system": "workspace:*"
   },
   "devDependencies": {
-    "@hivekitchen/eslint-config": "workspace:*",
     "@hivekitchen/tsconfig": "workspace:*",
     "@types/react": "^19.0.0",
     "react": "^19.0.0",

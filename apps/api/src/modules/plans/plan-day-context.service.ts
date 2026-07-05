@@ -9,14 +9,11 @@ import type {
 } from '@hivekitchen/types';
 import type { PlanDayContextRepository } from './plan-day-context.repository.js';
 import type { PlansRepository } from './plans.repository.js';
-import type { BriefStateComposer } from './brief-state.composer.js';
 import type { PlanRegenerationJobData } from '../../jobs/plan-regeneration.job.js';
-import { REGEN_QUEUE } from '../../jobs/plan-regeneration.job.js';
 
 export interface PlanDayContextServiceDeps {
   repository: PlanDayContextRepository;
   plansRepository: PlansRepository;
-  briefStateComposer: BriefStateComposer;
   regenQueue: Queue;
   auditService: AuditService;
   logger: FastifyBaseLogger;
@@ -43,7 +40,6 @@ const COMPOSITION_CHANGING_OVERRIDES = new Set<PlanDayContextType>([
 export class PlanDayContextService {
   private readonly repo: PlanDayContextRepository;
   private readonly plansRepo: PlansRepository;
-  private readonly briefStateComposer: BriefStateComposer;
   private readonly regenQueue: Queue;
   private readonly auditService: AuditService;
   private readonly logger: FastifyBaseLogger;
@@ -51,7 +47,6 @@ export class PlanDayContextService {
   constructor(deps: PlanDayContextServiceDeps) {
     this.repo = deps.repository;
     this.plansRepo = deps.plansRepository;
-    this.briefStateComposer = deps.briefStateComposer;
     this.regenQueue = deps.regenQueue;
     this.auditService = deps.auditService;
     this.logger = deps.logger;
@@ -212,5 +207,3 @@ export class PlanDayContextService {
     }
   }
 }
-
-export { REGEN_QUEUE };

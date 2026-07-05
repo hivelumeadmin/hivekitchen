@@ -17,7 +17,7 @@ import type { DispatchResult } from './dispatch-plan-intent.js';
 // are visibly free — the trace never claims a model that did not run.
 // Fire-and-forget: a trace IO failure never affects the edit response.
 
-export const PLAN_INTENT_CLASSIFIER_TIER = 'mini' as const;
+const PLAN_INTENT_CLASSIFIER_TIER = 'mini' as const;
 
 export interface PlanIntentTracerInit {
   householdId: string;

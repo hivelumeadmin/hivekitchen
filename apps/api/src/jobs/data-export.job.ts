@@ -193,7 +193,7 @@ const dataExportPlugin: FastifyPluginAsync = async (fastify) => {
   const kek = kekHex ? Buffer.from(kekHex, 'hex') : null;
 
   fastify.bullmq.getWorker(DATA_EXPORT_QUEUE, async (job: Job<DataExportJobData>) => {
-    const repo = new DataExportRepository(fastify.supabase, kek, fastify.log);
+    const repo = new DataExportRepository(fastify.supabase, kek);
     await runDataExport(
       {
         repo,

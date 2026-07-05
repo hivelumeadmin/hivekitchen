@@ -82,7 +82,7 @@ const FALCPA_KEYS = [
 // Slice 2.6-s3 — per-item shape emitted by the LLM. Layer 1 only —
 // ingredients are populated lazily via RecipeAgent.discover() at plan-commit
 // time (Layer 2 trigger in PlansService.materializeBeforeCommit()).
-export const CatalogSeedItemSchema = z.object({
+const CatalogSeedItemSchema = z.object({
   canonical_name: z.string().min(1).max(200),
   allergen_flags: z.array(z.string()),
   dietary_flags: z.array(z.string()),
@@ -90,9 +90,8 @@ export const CatalogSeedItemSchema = z.object({
   cuisine_tags: z.array(z.string()),
   applicable_slots: z.array(z.string()).min(1),
 });
-export type CatalogSeedItem = z.infer<typeof CatalogSeedItemSchema>;
 
-export const CatalogSeedResponseSchema = z.object({
+const CatalogSeedResponseSchema = z.object({
   items: z.array(CatalogSeedItemSchema),
 });
 

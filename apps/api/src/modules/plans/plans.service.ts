@@ -26,14 +26,12 @@ import type { AuditService } from '../../audit/audit.service.js';
 import type { PlansRepository } from './plans.repository.js';
 import type { BriefStateRepository } from './brief-state.repository.js';
 import type { BriefStateComposer } from './brief-state.composer.js';
-import type { ExtraRemovalSignalService } from './extra-removal-signal.service.js';
 import type { RecipeService } from '../recipe/recipe.service.js';
 import type { RecipesRepository } from '../recipe/recipes.repository.js';
 import type { SnackSkuRepository } from '../recipe/snack-sku.repository.js';
 import type { PlanRegenerationJobData } from '../../jobs/plan-regeneration.job.js';
 import type { PlanGenerationJobData } from '../../jobs/plan-generation.job.js';
 import type { HouseholdsRepository } from '../households/households.repository.js';
-import type { VariantProposalService } from './variant-proposal.service.js';
 import { FlaggedCompoundItemSchema } from '@hivekitchen/contracts';
 import type {
   BriefStateRow,
@@ -67,10 +65,6 @@ export interface PlansServiceDeps {
   logger: FastifyBaseLogger;
   redis: Redis;                     // Story 3.13 — for rate limiting
   regenQueue: Queue;                // Story 3.13 — BullMQ plan-regeneration queue
-  // Story 3.22 — passive bias from repeated Extra removals. Optional so existing
-  // tests that pre-date the dep can construct PlansService without wiring it.
-  // The swapItem hook is a no-op when the service is not provided.
-  extraRemovalSignalService?: ExtraRemovalSignalService;
   // Slice D — household_recipe_usage bumps post-commit so the kitchen map's
   // favourite-recipes projection has signal. Optional so tests pre-dating
   // slice D can construct PlansService without it; when omitted, commit()
@@ -86,11 +80,6 @@ export interface PlansServiceDeps {
   // without wiring it — swap methods that require it throw a clear domain
   // error when omitted.
   recipesRepository?: RecipesRepository;
-  // Story 3.27 — persists Lumi-proposed preparation-method variants after a
-  // plan clears the guardrail. Optional so pre-3.27 tests continue to compose;
-  // when omitted, planner-emitted variant_proposal is silently ignored at
-  // commit time.
-  variantProposalService?: VariantProposalService;
   // Story 3-S34 — on-demand ("compose now") plan composition. The plan-generation
   // BullMQ queue (immediate enqueue, no delay) and the households repository
   // (single-household timezone lookup for the composition window). Optional so
@@ -127,10 +116,8 @@ export class PlansService {
   private readonly logger: FastifyBaseLogger;
   private readonly redis: Redis;
   private readonly regenQueue: Queue;
-  private readonly extraRemovalSignalService: ExtraRemovalSignalService | null;
   private readonly recipeService: RecipeService | null;
   private readonly recipesRepo: RecipesRepository | null;
-  private readonly variantProposalService: VariantProposalService | null;
   private readonly generateQueue: Queue | null;
   private readonly householdsRepo: HouseholdsRepository | null;
   private readonly snackSkuRepo: SnackSkuRepository | null;
@@ -144,10 +131,8 @@ export class PlansService {
     this.logger = deps.logger;
     this.redis = deps.redis;
     this.regenQueue = deps.regenQueue;
-    this.extraRemovalSignalService = deps.extraRemovalSignalService ?? null;
     this.recipeService = deps.recipeService ?? null;
     this.recipesRepo = deps.recipesRepository ?? null;
-    this.variantProposalService = deps.variantProposalService ?? null;
     this.generateQueue = deps.generateQueue ?? null;
     this.householdsRepo = deps.householdsRepository ?? null;
     this.snackSkuRepo = deps.snackSkuRepository ?? null;

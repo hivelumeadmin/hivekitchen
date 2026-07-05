@@ -145,8 +145,6 @@ const EnvSchema = z
 
 export type Env = z.infer<typeof EnvSchema>;
 
-export { EnvSchema };
-
 export function parseEnv(): Env {
   const result = EnvSchema.safeParse(process.env);
   if (!result.success) {

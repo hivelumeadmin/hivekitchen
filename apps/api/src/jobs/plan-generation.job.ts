@@ -178,7 +178,7 @@ export function buildPlanProgressPayload(
 // recipe_id at the contract layer; canonical_name may be present on resolved
 // rows, so read it defensively and fall back to "a new meal". Trimmed to 200
 // chars to keep the agent context bounded.
-export function buildPlanNudgeContext(output: PlanComposeTreeOutput, weekOf: string): string {
+function buildPlanNudgeContext(output: PlanComposeTreeOutput, weekOf: string): string {
   const mains = (output.main_assignments ?? [])
     .slice(0, 3)
     .map((a) => (a as { canonical_name?: string }).canonical_name ?? 'a new meal')
@@ -257,7 +257,6 @@ const planGenerationPlugin: FastifyPluginAsync = async (fastify) => {
   const childrenRepository = new ChildrenRepository(
     fastify.supabase,
     null,
-    fastify.log,
     childAllergensRepository,
   );
   // Story 4-S11 — variant-eligible derivation now reads child_preferences

@@ -29,16 +29,3 @@ export function getCurrentWeekMonday(now: Date = new Date()): string {
   return monday.toISOString().slice(0, 10);
 }
 
-// Returns the ISO date string for the Monday `weeksAgo` whole weeks before
-// today (UTC). weeksAgo=1 → last Monday's plan. UTC mirrors the server's
-// week math in plans.service.ts:getCurrentWeekMonday().
-export function getMondayWeeksAgo(weeksAgo: number, now: Date = new Date()): string {
-  if (!Number.isInteger(weeksAgo) || weeksAgo < 1) {
-    throw new RangeError('weeksAgo must be a positive integer');
-  }
-  const day = now.getUTCDay();
-  const daysBackToThisMonday = day === 0 ? 6 : day - 1;
-  const monday = new Date(now);
-  monday.setUTCDate(now.getUTCDate() - daysBackToThisMonday - 7 * weeksAgo);
-  return monday.toISOString().slice(0, 10);
-}
