@@ -49,7 +49,7 @@ const M2_ALLERGEN_LABELS: Readonly<Record<string, string>> = {
 // The exclusive "no known allergens" option. NOT a vocabulary key — a control
 // key the client mutually-excludes against the rest (AC6) and the service maps
 // to "fire no allergen.declare".
-export const M2_NONE_OPTION: ChipOption = { key: 'none', label: 'No known allergens' };
+const M2_NONE_OPTION: ChipOption = { key: 'none', label: 'No known allergens' };
 
 // Curated DISPLAY ORDER for the known FALCPA allergens (matches Moment2Page.tsx
 // and the eval goldens — notably soy BEFORE wheat, which the vocab sort_order

@@ -15,7 +15,7 @@ import type { PlannerRecipeCandidate } from '../orchestrator.js';
 export const HH = '11111111-1111-4111-8111-111111111111';
 export const WEEK_OF = '2026-05-11'; // a Monday
 export const REQUEST_ID = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
-export const PROMPT_VERSION = 'v2.9.0';
+const PROMPT_VERSION = 'v2.9.0';
 const FIXED_TS = '2026-05-01T00:00:00+00:00';
 
 export const CHILD = {
@@ -23,7 +23,7 @@ export const CHILD = {
   b: '33333333-3333-4333-8333-333333333333',
 } as const;
 
-export function makeFavourite(name: string): KitchenMapFavouriteRecipe {
+function makeFavourite(name: string): KitchenMapFavouriteRecipe {
   return {
     recipe_id: '44444444-4444-4444-8444-444444444444',
     canonical_name: name,

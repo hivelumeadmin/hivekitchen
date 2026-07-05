@@ -47,7 +47,7 @@ const kitchenProfileEditRoutesPlugin: FastifyPluginAsync = async (fastify) => {
   // (findById returns null for cross-household childIds → 404). It requires a
   // ChildAllergensRepository dependency, mirroring children.routes wiring.
   const childAllergens = new ChildAllergensRepository(fastify.supabase, kek);
-  const children = new ChildrenRepository(fastify.supabase, kek, fastify.log, childAllergens);
+  const children = new ChildrenRepository(fastify.supabase, kek, childAllergens);
   const culturalPriors = new CulturalPriorRepository(fastify.supabase);
   // Story 7-S15 (Arc B) — reuse the cultural-prior state machine for the
   // key-addressed opt_in/forget endpoint. threads + agent are only exercised by

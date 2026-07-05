@@ -111,7 +111,6 @@ const householdsRoutesPlugin: FastifyPluginAsync = async (fastify) => {
     childrenRepository: new ChildrenRepository(
       fastify.supabase,
       kek,
-      fastify.log,
       childAllergensRepository,
     ),
     memoryRepository: new MemoryRepository(fastify.supabase),

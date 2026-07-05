@@ -11,7 +11,6 @@ import { getOrCreateHouseholdDek } from '../../lib/household-key.js';
 
 const UNIQUE_VIOLATION_CODE = '23505';
 const NO_UNIQUE_CONSTRAINT_CODE = '42P10';
-const SENTINEL_CHILD_UUID = '00000000-0000-0000-0000-000000000000';
 
 function pgErrorCode(err: unknown): string | undefined {
   if (typeof err !== 'object' || err === null) return undefined;
@@ -159,6 +158,3 @@ export class FoodPreferencesRepository {
   }
 }
 
-// Exported only so tests can reference the sentinel; in service code it is
-// internal to the unique index.
-export { SENTINEL_CHILD_UUID };

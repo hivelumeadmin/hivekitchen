@@ -78,7 +78,6 @@ const orchestratorHookPlugin: FastifyPluginAsync = async (fastify) => {
   const childrenRepository = new ChildrenRepository(
     fastify.supabase,
     null,
-    fastify.log,
     childAllergensRepository,
   );
 

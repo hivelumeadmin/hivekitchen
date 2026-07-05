@@ -79,7 +79,7 @@ async function main(): Promise<void> {
   // the cutover that read now returns the child_allergens-backed list, which
   // is the desired union source for the household-level rollup.
   const childAllergensRepo = new ChildAllergensRepository(supabase, kek);
-  const childrenRepo = new ChildrenRepository(supabase, kek, logger, childAllergensRepo);
+  const childrenRepo = new ChildrenRepository(supabase, kek, childAllergensRepo);
 
   // Paginate to avoid hitting Supabase/PostgREST's default 1 000-row result cap.
   const BATCH_SIZE = 500;

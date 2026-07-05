@@ -58,7 +58,6 @@ const childrenRoutesPlugin: FastifyPluginAsync = async (fastify) => {
   const childrenRepository = new ChildrenRepository(
     fastify.supabase,
     kek,
-    fastify.log,
     childAllergensRepository,
   );
   const childrenService = new ChildrenService(childrenRepository);

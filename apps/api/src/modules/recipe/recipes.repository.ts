@@ -1162,7 +1162,7 @@ export function canonicalizeFavoriteName(label: string): string {
  * "any sequence" / "any single char". Backslash is escaped first because
  * it's the postgres LIKE escape character itself.
  */
-export function escapeIlikeWildcards(raw: string): string {
+function escapeIlikeWildcards(raw: string): string {
   return raw.replace(/\\/g, '\\\\').replace(/%/g, '\\%').replace(/_/g, '\\_');
 }
 
@@ -1173,7 +1173,7 @@ export function escapeIlikeWildcards(raw: string): string {
  * the convention used by RecipeService.toIngredientKey for write-side
  * derivation so the two paths use the same vocabulary.
  */
-export function slugifyTerm(raw: string): string {
+function slugifyTerm(raw: string): string {
   const cleaned = raw
     .toLowerCase()
     .replace(/[0-9/]+/g, ' ')

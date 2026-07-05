@@ -69,7 +69,7 @@ export interface DayTreeView {
 // Build per-day views from the tree arrays. Days the API didn't return
 // (e.g. Saturday for a Mon-Fri household) still produce a stub view so the
 // calendar grid renders a uniform five/six-wide row.
-export function buildDayViews(
+function buildDayViews(
   source: {
     days?: readonly PlanDayRow[];
     slots?: readonly PlanSlotRow[];
@@ -139,7 +139,7 @@ export function buildDayViews(
 // canonical handle but the picker may know only the slot view. This map
 // is built from `main_assignments[]` so the picker can resolve M-rows
 // (e.g. "swap this Main affects every day pointing at it").
-export function buildMainAssignmentMap(
+function buildMainAssignmentMap(
   mainAssignments: readonly PlanMainAssignmentRow[] | undefined,
 ): ReadonlyMap<string, PlanMainAssignmentRow> {
   return new Map((mainAssignments ?? []).map((m) => [m.id, m]));
@@ -152,7 +152,7 @@ export function buildMainAssignmentMap(
 // `plan_item_id` is reused as the variation row id so the tile retains a
 // stable key per (child, slot) entry — DisambiguationPicker doesn't use it
 // in the tree-shape flow.
-export function dayViewToPlanTileSummary(view: DayTreeView): PlanTileSummary {
+function dayViewToPlanTileSummary(view: DayTreeView): PlanTileSummary {
   const items: PlanTileSummary['items'] = [];
   for (const slot of view.slots) {
     for (const v of slot.variations) {
@@ -181,7 +181,7 @@ export function dayViewToPlanTileSummary(view: DayTreeView): PlanTileSummary {
 
 // Build the set of distinct child UUIDs in first-appearance order. Used by
 // PlanPage to derive a stable child→color map across the week.
-export function buildChildIdOrder(
+function buildChildIdOrder(
   source: { variations?: readonly PlanSlotVariationRow[] },
 ): readonly string[] {
   const seen = new Set<string>();

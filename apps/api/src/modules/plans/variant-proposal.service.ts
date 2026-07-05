@@ -1,25 +1,21 @@
 import type { FastifyBaseLogger } from 'fastify';
 import type { AuditService } from '../../audit/audit.service.js';
 import type { PlanComposeTreeOutput } from '@hivekitchen/types';
-import type { PlansRepository } from './plans.repository.js';
 import type { VariantProposalRepository } from './variant-proposal.repository.js';
 
 export interface VariantProposalServiceDeps {
   repo: VariantProposalRepository;
-  plansRepo: PlansRepository;
   auditService: AuditService;
   logger: FastifyBaseLogger;
 }
 
 export class VariantProposalService {
   private readonly repo: VariantProposalRepository;
-  private readonly plansRepo: PlansRepository;
   private readonly auditService: AuditService;
   private readonly logger: FastifyBaseLogger;
 
   constructor(deps: VariantProposalServiceDeps) {
     this.repo = deps.repo;
-    this.plansRepo = deps.plansRepo;
     this.auditService = deps.auditService;
     this.logger = deps.logger;
   }

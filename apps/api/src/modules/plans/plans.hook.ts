@@ -13,8 +13,6 @@ import { GENERATE_QUEUE } from '../../jobs/plan-generation.job.js';
 import { HouseholdsRepository } from '../households/households.repository.js';
 import { PlanDayContextRepository } from './plan-day-context.repository.js';
 import { PlanDayContextService } from './plan-day-context.service.js';
-import { ExtraRulesRepository } from '../children/extra-rules.repository.js';
-import { ExtraRemovalSignalService } from './extra-removal-signal.service.js';
 import { RecipeService } from '../recipe/recipe.service.js';
 import { RecipesRepository } from '../recipe/recipes.repository.js';
 import { SnackSkuRepository } from '../recipe/snack-sku.repository.js';
@@ -74,7 +72,6 @@ const plansHookPlugin: FastifyPluginAsync = async (fastify) => {
   const childrenRepository = new ChildrenRepository(
     fastify.supabase,
     kek,
-    fastify.log,
     childAllergensRepository,
   );
   // Story 3.28 — lunch link suppression. Created here so both BriefStateComposer
@@ -106,16 +103,6 @@ const plansHookPlugin: FastifyPluginAsync = async (fastify) => {
     snackSkuRepository,
     recipesRepository: recipesRepositoryForComposer,
   });
-  // Story 3.22 — passive Extra-removal bias service. Lives next to PlansService
-  // because the swap path is the only signal source today; co-locating avoids
-  // a separate plugin for a single fire-and-forget hook.
-  const extraRulesRepositoryForBias = new ExtraRulesRepository(fastify.supabase);
-  const extraRemovalSignalService = new ExtraRemovalSignalService({
-    client: fastify.supabase,
-    extraRulesRepo: extraRulesRepositoryForBias,
-    auditService: fastify.auditService,
-    logger: fastify.log,
-  });
   // Slice D — recipes catalog. At plan-commit time, RecipeService materializes
   // a recipes row for each main-slot plan item (idempotent by canonical name
   // within the household) and bumps household_recipe_usage so the kitchen
@@ -132,7 +119,6 @@ const plansHookPlugin: FastifyPluginAsync = async (fastify) => {
   const variantProposalRepository = new VariantProposalRepository(fastify.supabase);
   const variantProposalService = new VariantProposalService({
     repo: variantProposalRepository,
-    plansRepo: repository,
     auditService: fastify.auditService,
     logger: fastify.log,
   });
@@ -150,10 +136,8 @@ const plansHookPlugin: FastifyPluginAsync = async (fastify) => {
     logger: fastify.log,
     redis: fastify.redis,                              // Story 3.13
     regenQueue: fastify.bullmq.getQueue(REGEN_QUEUE),  // Story 3.13
-    extraRemovalSignalService,                         // Story 3.22
     recipeService,                                     // post-Phase-9: recordUse() only
     recipesRepository,                                 // 3-DM-C1 9b/4 step 2: swap recipe-ingredient lookup
-    variantProposalService,                            // Story 3.27
     generateQueue: fastify.bullmq.getQueue(GENERATE_QUEUE), // Story 3-S34
     householdsRepository,                              // Story 3-S34
     snackSkuRepository,                                // Story 3-s43 (Phase-2 allergen fail-safe)
@@ -185,7 +169,6 @@ const plansHookPlugin: FastifyPluginAsync = async (fastify) => {
   const planDayContextService = new PlanDayContextService({
     repository: planDayContextRepository,
     plansRepository: repository,
-    briefStateComposer,
     regenQueue: fastify.bullmq.getQueue(REGEN_QUEUE),
     auditService: fastify.auditService,
     logger: fastify.log,

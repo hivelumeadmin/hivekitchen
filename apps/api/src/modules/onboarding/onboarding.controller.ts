@@ -53,7 +53,7 @@ export interface OnboardingSlots {
 // controller advances out of it) the instant its required slots are filled.
 // Exported so the service's shadow comparison and the transition tests share
 // one source of truth.
-export const MOMENT_SLOT_PREDICATES = {
+const MOMENT_SLOT_PREDICATES = {
   /** M1 (`m1_table`): household_name set AND ≥1 child declared. */
   m1Complete: (s: OnboardingSlots): boolean => s.m1HouseholdName && s.m1ChildDeclared,
   /** M2 (`m2_safe`): an allergen_response recorded (the required safety gate). */

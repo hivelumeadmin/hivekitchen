@@ -106,7 +106,6 @@ const planRegenerationPlugin: FastifyPluginAsync = async (fastify) => {
   const childrenRepository = new ChildrenRepository(
     fastify.supabase,
     null,
-    fastify.log,
     childAllergensRepository,
   );
   // Story 4-S11 — variant-eligible derivation now reads child_preferences

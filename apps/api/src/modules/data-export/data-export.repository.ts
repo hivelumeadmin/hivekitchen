@@ -1,6 +1,5 @@
 import type { Buffer } from 'node:buffer';
 import type { SupabaseClient } from '@supabase/supabase-js';
-import type { FastifyBaseLogger } from 'fastify';
 import { ChildAllergensRepository } from '../children/child-allergens.repository.js';
 import { ChildrenRepository } from '../children/children.repository.js';
 import { HeartNoteRepository } from '../heart-notes/heart-note.repository.js';
@@ -16,12 +15,11 @@ export class DataExportRepository {
   constructor(
     private readonly client: SupabaseClient,
     kek: Buffer | null,
-    logger: FastifyBaseLogger,
   ) {
     // ChildrenRepository needs the allergens adapter (per-child allergens live in
     // household_allergens post-3-DM-B2). The kek Buffer drives envelope decryption.
     const childAllergens = new ChildAllergensRepository(client, kek);
-    this.children = new ChildrenRepository(client, kek, logger, childAllergens);
+    this.children = new ChildrenRepository(client, kek, childAllergens);
     this.heartNotes = new HeartNoteRepository(client, kek);
   }
 

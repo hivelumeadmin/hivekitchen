@@ -12,7 +12,7 @@ import type { CuratedBaselineMaterializationService } from './curated-baseline.s
 // household's declared cuisine buckets when the personalized catalog
 // has dropped below the floor or been mass-blocked by allergen rules.
 
-export const STAGE2_SKIP_FLOOR = 35;
+const STAGE2_SKIP_FLOOR = 35;
 
 export type Stage2Trigger = 'floor_breach' | 'mass_block' | 'stage1_failure';
 

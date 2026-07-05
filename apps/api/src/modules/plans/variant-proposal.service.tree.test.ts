@@ -2,7 +2,6 @@ import { describe, it, expect, vi } from 'vitest';
 import type { FastifyBaseLogger } from 'fastify';
 import { VariantProposalService } from './variant-proposal.service.js';
 import type { VariantProposalRepository } from './variant-proposal.repository.js';
-import type { PlansRepository } from './plans.repository.js';
 import type { AuditService } from '../../audit/audit.service.js';
 import type { PlanComposeTreeOutput } from '@hivekitchen/types';
 
@@ -29,10 +28,9 @@ function buildService(opts: { existing?: unknown[] } = {}) {
   const findActiveByPlan = vi.fn().mockResolvedValue(opts.existing ?? []);
   const write = vi.fn().mockResolvedValue(undefined);
   const repo = { createTree, findActiveByPlan } as unknown as VariantProposalRepository;
-  const plansRepo = {} as unknown as PlansRepository;
   const audit = { write } as unknown as AuditService;
   return {
-    service: new VariantProposalService({ repo, plansRepo, auditService: audit, logger: buildLogger() }),
+    service: new VariantProposalService({ repo, auditService: audit, logger: buildLogger() }),
     mocks: { createTree, findActiveByPlan, write },
   };
 }

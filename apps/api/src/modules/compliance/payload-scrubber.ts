@@ -11,7 +11,7 @@
  * Exported as the canonical source of truth so callers can gate on `.has(field)`
  * without duplicating the list. `ReadonlySet` — membership-checkable, immutable.
  */
-export const SAFETY_CLASSIFIED_SENSITIVE_FIELDS: ReadonlySet<string> = new Set([
+const SAFETY_CLASSIFIED_SENSITIVE_FIELDS: ReadonlySet<string> = new Set([
   'child_name',
   'declared_allergens',
   'cultural_identifiers',

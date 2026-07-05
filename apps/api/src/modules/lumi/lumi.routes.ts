@@ -51,7 +51,6 @@ export const lumiRoutes: FastifyPluginAsync = async (fastify) => {
   const childrenRepository = new ChildrenRepository(
     fastify.supabase,
     kek,
-    fastify.log,
     childAllergensRepository,
   );
   const householdAllergensRepository = new HouseholdAllergensRepository(fastify.supabase, kek);

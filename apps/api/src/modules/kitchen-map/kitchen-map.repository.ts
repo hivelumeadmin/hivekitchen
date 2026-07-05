@@ -687,38 +687,4 @@ export class KitchenMapRepository extends BaseRepository {
     };
   }
 
-  private parseObject(raw: string): Record<string, unknown> | null {
-    try {
-      const parsed = JSON.parse(raw);
-      return typeof parsed === 'object' && parsed !== null ? (parsed as Record<string, unknown>) : null;
-    } catch {
-      return null;
-    }
-  }
-
-  // Slice 2-s27 — decrypt one of the household-level food-identity columns.
-  // NULL → []; corrupt cell → [] with a warn log.
-  private decryptHouseholdArrayColumn(
-    stored: string | null,
-    dek: Buffer | null,
-    fieldName: string,
-    householdId: string,
-  ): string[] {
-    if (stored === null) return [];
-    try {
-      return decryptField<string[]>(stored, dek);
-    } catch (err) {
-      this.logger.error(
-        {
-          err,
-          module: 'kitchen-map',
-          action: 'kitchen_map.household_field_decrypt_failed',
-          household_id: householdId,
-          field: fieldName,
-        },
-        'kitchen-map household-field decryption failed — projected as []',
-      );
-      return [];
-    }
-  }
 }
