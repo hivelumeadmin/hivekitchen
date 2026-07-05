@@ -133,9 +133,9 @@ export const AUDIT_EVENT_TYPES = [
   'tile.edit_retried',
 ] as const;
 
-export type AuditEventType = (typeof AUDIT_EVENT_TYPES)[number];
+type AuditEventType = (typeof AUDIT_EVENT_TYPES)[number];
 
-export interface AuditStage {
+interface AuditStage {
   stage: string;
   [key: string]: unknown;
 }

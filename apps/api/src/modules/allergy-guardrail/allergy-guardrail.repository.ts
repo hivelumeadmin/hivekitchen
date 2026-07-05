@@ -7,7 +7,7 @@ import type { AllergyRule } from './allergy-rules.engine.js';
 
 const UuidSchema = z.string().uuid();
 
-export type GuardrailVerdict = 'cleared' | 'blocked' | 'uncertain';
+type GuardrailVerdict = 'cleared' | 'blocked' | 'uncertain';
 
 export interface WriteDecisionInput {
   plan_id?: string;

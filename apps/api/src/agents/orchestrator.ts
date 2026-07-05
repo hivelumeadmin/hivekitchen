@@ -75,10 +75,8 @@ export type {
   PlannerExtraLibraryItem,
   PlannerExtraProposal,
   PlannerExtraRules,
-  PlannerPantrySnapshot,
   PlannerRecipeCandidate,
   PlannerRecipeCandidateSlate,
-  PlannerVariantEligibleChild,
 } from './planner/context/assemble.js';
 
 // Slice E — input shape for DomainOrchestrator.swapBlockedItems. One entry

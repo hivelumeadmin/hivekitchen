@@ -6,7 +6,7 @@ import type { UserRepository, UserProfileRow } from '../users/user.repository.js
 
 const INVITE_TTL_SECONDS = 14 * 24 * 60 * 60; // 1209600 = 14d
 
-export interface InviteClaims {
+interface InviteClaims {
   household_id: string;
   role: InviteRole;
   invite_id: string;

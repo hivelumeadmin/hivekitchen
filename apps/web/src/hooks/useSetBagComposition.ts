@@ -4,7 +4,7 @@ import { ZodError } from 'zod';
 import type { ChildResponse, SetBagCompositionBody } from '@hivekitchen/types';
 import { hkFetch, HkApiError } from '@/lib/fetch.js';
 
-export type SetBagCompositionOutcome =
+type SetBagCompositionOutcome =
   | { ok: true; child: ChildResponse }
   | { ok: false; message: string };
 

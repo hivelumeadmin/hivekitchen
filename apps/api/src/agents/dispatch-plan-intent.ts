@@ -14,7 +14,6 @@ import type { CatalogCandidate, RecipeSlotKind } from '../services/catalog-pick.
 // typed decision keeps dispatch pure + testable and lets routing-spec decision
 // #3 (plan_slots recipe_id vs snack_sku_id) live in the swap service, not here.
 
-export type DispatchTier = 'T0' | 'T1' | 'T2';
 export type EscalateReason = 'catalog_miss' | 'add_dish' | 'recompose' | 'compose_next';
 
 export interface SlotTarget {

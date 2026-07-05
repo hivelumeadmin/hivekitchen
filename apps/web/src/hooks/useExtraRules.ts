@@ -13,11 +13,11 @@ import type {
 } from '@hivekitchen/types';
 import { hkFetch, HkApiError } from '@/lib/fetch.js';
 
-export type SaveRulesOutcome =
+type SaveRulesOutcome =
   | { ok: true; rules: ExtraRules }
   | { ok: false; message: string };
 
-export type AddLibraryItemOutcome =
+type AddLibraryItemOutcome =
   | { ok: true; item: ExtraLibraryItem }
   | { ok: false; message: string };
 

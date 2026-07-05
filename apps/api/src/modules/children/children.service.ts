@@ -19,7 +19,7 @@ export interface AddChildInput {
  * explicit overwrite). name + age_band stay required because they're
  * the identifying fields.
  */
-export interface UpsertByNameBody {
+interface UpsertByNameBody {
   name: AddChildBody['name'];
   age_band: AddChildBody['age_band'];
   school_policy_notes?: AddChildBody['school_policy_notes'] | undefined;

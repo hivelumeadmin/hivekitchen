@@ -1,4 +1,4 @@
-export type FreshnessVariant = 'fresh' | 'stale' | 'loading' | 'failed' | 'offline' | 'reworking';
+type FreshnessVariant = 'fresh' | 'stale' | 'loading' | 'failed' | 'offline' | 'reworking';
 
 interface FreshnessStateProps {
   variant: FreshnessVariant;

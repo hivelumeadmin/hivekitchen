@@ -1,6 +1,6 @@
 import { RailCard } from '../../../components/RailCard.js';
 
-export interface MealPreview {
+interface MealPreview {
   readonly name: string;
   readonly allergens: readonly string[];
 }

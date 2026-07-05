@@ -54,4 +54,3 @@ export const noHeartNoteFrequencyReference: Rule.RuleModule = {
   },
 };
 
-export default noHeartNoteFrequencyReference;

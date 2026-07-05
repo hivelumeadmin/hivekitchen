@@ -1,6 +1,6 @@
 import { RailCard } from '../../../components/RailCard.js';
 
-export interface ChildReaction {
+interface ChildReaction {
   readonly emoji: string;
   readonly text: string;
   readonly date: string;

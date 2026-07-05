@@ -51,7 +51,6 @@ import type { ThreadRow, TurnRow } from '../../modules/threads/thread.repository
 const HOUSEHOLD_ID = '11111111-1111-4111-8111-111111111111';
 const USER_ID = '22222222-2222-4222-8222-222222222222';
 const THREAD_ID = '33333333-3333-4333-8333-333333333333';
-const CLOSED_THREAD_ID = '44444444-4444-4444-8444-444444444444';
 // Fixed timestamp — no Date.now() anywhere in the harness (parity with the
 // planner harness; keeps any time-derived value deterministic).
 const FIXED_TS = '2026-01-01T00:00:00.000Z';
@@ -82,13 +81,13 @@ function makeLogger(): FastifyBaseLogger {
 /** One recorded LLM emission inside a turn's tool-call loop. Intermediate
  *  steps carry tool calls (finishReason 'tool_calls'); the final step carries
  *  prose with finishReason 'stop' so the agent loop returns. */
-export interface LlmStep {
+interface LlmStep {
   content?: string | null;
   toolCalls?: Array<{ name: string; args: Record<string, unknown> }>;
   finishReason?: 'stop' | 'tool_calls';
 }
 
-export interface ScenarioTurn {
+interface ScenarioTurn {
   /** The message string passed to submitTextTurn (free text or a
    *  `[Chips selected: ...]` header — exactly what the route would forward). */
   userInput: string;
@@ -102,7 +101,7 @@ export interface ScenarioTurn {
 /** Pre-seeded store state for scenarios that model a resumed/reset interview
  *  whose moment-state row is missing but whose kitchen-map data exists (the
  *  re-anchoring safety net). */
-export interface ScenarioSeed {
+interface ScenarioSeed {
   householdName?: string;
   children?: Array<{ name: string; ageBand: AgeBand }>;
   /** child-scoped allergens (drives child_allergen_count > 0). */
@@ -110,7 +109,7 @@ export interface ScenarioSeed {
   favorites?: string[];
 }
 
-export interface M5ProjectionFixture {
+interface M5ProjectionFixture {
   chips: ChipOption[];
   coldStartReason: string | null;
   /** isStage1Complete return. Defaults to true so the projection runs. */
@@ -148,7 +147,7 @@ type AgeBand = 'toddler' | 'child' | 'preteen' | 'teen';
 
 // ---- Structured outcome (the golden record shape) -------------------------
 
-export interface CapturedToolCall {
+interface CapturedToolCall {
   tool: string;
   args: Record<string, unknown>;
 }
@@ -1035,4 +1034,4 @@ function buildFinalSlots(stores: Stores): ScenarioOutcome['finalSlots'] {
   };
 }
 
-export { HOUSEHOLD_ID, USER_ID, THREAD_ID, CLOSED_THREAD_ID };
+export { HOUSEHOLD_ID };

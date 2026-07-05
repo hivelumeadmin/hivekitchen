@@ -15,7 +15,7 @@
 // 3. Add the trigger type to PlanAdjustmentTriggerType below.
 // 4. AUDIT_EVENT_TYPES already includes 'plan.adjustment_triggered' — reuse it;
 //    distinguish the cause via `metadata.trigger_type`.
-export type PlanAdjustmentTriggerType =
+type PlanAdjustmentTriggerType =
   | 'school_policy_changed'
   | 'pantry_leftover_changed'
   | 'cultural_calendar_event'

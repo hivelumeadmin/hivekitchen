@@ -50,4 +50,3 @@ export const noAssistantFiller: Rule.RuleModule = {
   },
 };
 
-export default noAssistantFiller;

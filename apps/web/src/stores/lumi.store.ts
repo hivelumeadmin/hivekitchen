@@ -8,7 +8,7 @@ type PanelMode = 'text' | 'voice';
 // open sheet. `summoned` = the focused temporary sheet is open (runs a turn, then
 // recedes). `whisper` is reserved for 13-s3 (the single dismissible nudge line);
 // this slice defines the value but drives only atRest ↔ summoned.
-export type PresenceState = 'atRest' | 'whisper' | 'summoned';
+type PresenceState = 'atRest' | 'whisper' | 'summoned';
 
 // Epic 13-s10 — the plan-edit scope. Frontend-only routing state (NOT part of
 // the LumiContextSignal wire shape POSTed to /v1/lumi/turns): when it is set,

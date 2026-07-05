@@ -29,7 +29,7 @@ export type WeekAllergenConflict =
   | { kind: 'extra'; planSlotId: string }
   | { kind: 'snack'; planSlotId: string; day: Weekday; currentSnackSkuId: string | null };
 
-export interface RevalidationTree {
+interface RevalidationTree {
   days: readonly PlanDayRow[];
   slots: readonly PlanSlotRow[];
   variations: readonly PlanSlotVariationRow[];

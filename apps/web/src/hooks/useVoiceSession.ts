@@ -7,7 +7,7 @@ import {
 } from '@hivekitchen/contracts';
 import { hkFetch } from '@/lib/fetch.js';
 
-export type VoiceSessionStatus =
+type VoiceSessionStatus =
   | 'idle'
   | 'connecting'
   | 'ready'

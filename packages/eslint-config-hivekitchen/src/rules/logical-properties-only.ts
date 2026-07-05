@@ -220,4 +220,3 @@ export const logicalPropertiesOnly: Rule.RuleModule = {
   },
 };
 
-export default logicalPropertiesOnly;

@@ -761,13 +761,13 @@ export function composeEditorialProse(input: {
 // stable iteration.
 // ===========================================================================
 
-export interface PlanTreeSlot {
+interface PlanTreeSlot {
   slot: PlanSlotRow;
   mainAssignment: PlanMainAssignmentRow | undefined;
   variations: PlanSlotVariationRow[];
 }
 
-export interface PlanTreeDay {
+interface PlanTreeDay {
   day: Weekday;
   day_row: PlanDayRow;
   slots: PlanTreeSlot[];

@@ -110,7 +110,7 @@ function makeRedis(): Redis {
   return { pipeline: () => pipeline } as unknown as Redis;
 }
 
-export interface CapturedAudit {
+interface CapturedAudit {
   event_type: string;
   metadata?: Record<string, unknown>;
 }
@@ -126,7 +126,7 @@ function makeAudit(sink: CapturedAudit[]): AuditService {
 // Replays a fixed queue of responses. Tracks turns + token usage actually
 // consumed so the harness can assert the cost/turn budget (AC E). Throws if the
 // orchestrator asks for more turns than the fixture provides — a fixture bug.
-export class FakeLLMProvider implements LLMProvider {
+class FakeLLMProvider implements LLMProvider {
   readonly name = 'eval-fake';
   private cursor = 0;
   readonly consumed: LLMResponse[] = [];
@@ -202,25 +202,6 @@ export function planComposeTurn(
   return {
     content: null,
     toolCalls: [{ id, name: 'plan.compose', arguments: treeInput }],
-    finishReason: 'tool_calls',
-    usage: { ...usage, cachedPromptTokens: 0 },
-  };
-}
-
-// Build a generic (non-compose) tool-call response, e.g. recipe.search on the
-// cold-slate path. The orchestrator runs the tool then loops for another turn.
-export function toolTurn(
-  name: string,
-  args: unknown,
-  usage: { promptTokens: number; completionTokens: number } = {
-    promptTokens: 100,
-    completionTokens: 50,
-  },
-  id = `call_${name.replace('.', '_')}`,
-): LLMResponse {
-  return {
-    content: null,
-    toolCalls: [{ id, name, arguments: args }],
     finishReason: 'tool_calls',
     usage: { ...usage, cachedPromptTokens: 0 },
   };

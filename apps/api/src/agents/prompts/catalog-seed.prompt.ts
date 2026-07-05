@@ -8,7 +8,7 @@
 //
 // See: _bmad-output/implementation-artifacts/2.6-s3-stage-1-async-seeding-layer-1.md
 
-export interface CatalogSeedSnapshotChild {
+interface CatalogSeedSnapshotChild {
   readonly name: string;
   readonly age_band: string;
 }

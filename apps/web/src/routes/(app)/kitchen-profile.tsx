@@ -670,15 +670,3 @@ function mapStartingLine(
   };
 }
 
-// Exported only for unit tests. The page itself uses them as locals.
-export const __test__ = {
-  apiEnforcementToUi,
-  mapCulturalToChips,
-  synthesizeQuote,
-  synthesizeSharedTastes,
-  mapBagComposition,
-  allergensByChild,
-  foodPrefsByChild,
-  mapChild,
-  mapStartingLine,
-};

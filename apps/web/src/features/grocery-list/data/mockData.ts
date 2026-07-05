@@ -12,7 +12,7 @@ export interface GroceryItem {
   readonly checked?: boolean;
 }
 
-export interface StoreSubsection {
+interface StoreSubsection {
   readonly title: string;
   readonly items: readonly GroceryItem[];
 }

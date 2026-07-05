@@ -1,6 +1,6 @@
 export type ChildDotColor = 'foliage' | 'lumi-terracotta' | 'sacred';
 
-export type AgeBand = 'toddler' | 'child' | 'preteen' | 'teen';
+type AgeBand = 'toddler' | 'child' | 'preteen' | 'teen';
 
 export interface ChildPerson {
   readonly id: string;
@@ -11,12 +11,12 @@ export interface ChildPerson {
 
 export type CookingMode = 'prep' | 'finish';
 
-export interface MethodStep {
+interface MethodStep {
   readonly text: string;
   readonly mode: CookingMode;
 }
 
-export interface MainRecipe {
+interface MainRecipe {
   readonly id: string;
   readonly title: string;
   readonly ingredients: readonly string[];
@@ -26,9 +26,9 @@ export interface MainRecipe {
   readonly familiarityKnown: boolean;
 }
 
-export type PortionSize = 'small' | 'regular' | 'large';
-export type TextureLevel = 'soft' | 'normal' | 'diced' | 'finger';
-export type SpiceLevel = 'mild' | 'regular' | 'spicy';
+type PortionSize = 'small' | 'regular' | 'large';
+type TextureLevel = 'soft' | 'normal' | 'diced' | 'finger';
+type SpiceLevel = 'mild' | 'regular' | 'spicy';
 
 export interface ChildVariation {
   readonly childId: string;
@@ -42,7 +42,7 @@ export interface ChildVariation {
   readonly notes?: string;
 }
 
-export interface SnackEntry {
+interface SnackEntry {
   readonly title: string;
   readonly ingredients: readonly string[];
   readonly perChildVariation?: Readonly<Record<string, string>>;
@@ -64,7 +64,7 @@ export interface OptionalExtra {
   readonly perChildAssignment: Readonly<Record<string, 'included' | 'excluded'>>;
 }
 
-export interface PrepInvestment {
+interface PrepInvestment {
   readonly savedMinutes: number;
   readonly label: string;
 }
@@ -72,7 +72,7 @@ export interface PrepInvestment {
 // Story 3-DM-A3: aligned mock-data DayName with PlanComposeDaySchema and the
 // SCHOOL_DAYS canonical enum. Mock surfaces still render Mon-Fri only; Saturday
 // is type-allowed for households whose school week declares it.
-export type DayName = 'monday' | 'tuesday' | 'wednesday' | 'thursday' | 'friday' | 'saturday';
+type DayName = 'monday' | 'tuesday' | 'wednesday' | 'thursday' | 'friday' | 'saturday';
 
 export interface DayPlan {
   readonly id: string;
