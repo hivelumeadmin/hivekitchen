@@ -41,7 +41,7 @@
     "fastify-plugin": "^5.0.0",
     "fastify-type-provider-zod": "4.0.2",
     "ioredis": "^5.0.0",
-    "openai": "^4.0.0",
+    "openai": "^6.45.0",
     "pdfkit": "^0.18.0",
     "pino": "^9.6.0",
     "stripe": "^22.1.0",
