@@ -51,6 +51,13 @@ jobs:
       - name: Tool manifest check
         run: pnpm tools:check
 
+      - name: Dead code check (knip)
+        run: pnpm deadcode:check
+        # Adjudicated exceptions live in knip.json (operational scripts as
+        # entries, deliberate contract aliases, dynamic tool-manifest exports
+        # tagged @public). A failure here means NEW dead code — delete it or,
+        # if it's deliberate, record the exception in knip.json with a reason.
+
       - name: Sacred-channel boundary check
         run: pnpm --filter @hivekitchen/api check:sacred-channel
 

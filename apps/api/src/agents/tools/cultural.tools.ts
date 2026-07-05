@@ -4,6 +4,7 @@ import { recordToolLatency } from '../../observability/tool-latency.histogram.js
 import type { ToolSpec } from '../tools.manifest.js';
 import type { CulturalPriorService } from '../../modules/cultural-priors/cultural-prior.service.js';
 
+/** @public consumed dynamically by scripts/check-tool-manifest.ts */
 export const MANIFESTED_TOOL_NAMES = ['cultural.lookup'] as const;
 
 export function createCulturalLookupSpec(

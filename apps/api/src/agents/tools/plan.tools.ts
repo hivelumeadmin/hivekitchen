@@ -8,6 +8,7 @@ import type { ToolSpec } from '../tools.manifest.js';
 import type { PlansService } from '../../modules/plans/plans.service.js';
 import type { RecipeService } from '../../modules/recipe/recipe.service.js';
 
+/** @public consumed dynamically by scripts/check-tool-manifest.ts */
 export const MANIFESTED_TOOL_NAMES = ['plan.compose'] as const;
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;

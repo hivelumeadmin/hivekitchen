@@ -11,6 +11,7 @@ import { recordToolLatency } from '../../observability/tool-latency.histogram.js
 import type { ToolSpec } from '../tools.manifest.js';
 import type { RecipeService, RecipeServiceDiscoverDeps } from '../../modules/recipe/recipe.service.js';
 
+/** @public consumed dynamically by scripts/check-tool-manifest.ts */
 export const MANIFESTED_TOOL_NAMES = ['recipe.search', 'recipe.fetch', 'recipe.discover'] as const;
 
 export function createRecipeSearchSpec(recipeService: RecipeService, redis: Redis): ToolSpec {
