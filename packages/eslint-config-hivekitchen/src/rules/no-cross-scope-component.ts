@@ -6,7 +6,7 @@ export interface ScopeRestrictions {
 
 export type ScopeClass = 'app-scope' | 'child-scope' | 'grandparent-scope' | 'ops-scope';
 
-export interface NoCrossScopeOptions {
+interface NoCrossScopeOptions {
   scopeAllowlist: Record<string, ScopeRestrictions>;
 }
 
@@ -113,4 +113,3 @@ export const noCrossScopeComponent: Rule.RuleModule = {
   },
 };
 
-export default noCrossScopeComponent;

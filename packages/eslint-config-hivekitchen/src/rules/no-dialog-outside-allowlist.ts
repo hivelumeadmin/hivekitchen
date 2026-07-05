@@ -9,7 +9,7 @@ const DIALOG_SOURCE_EXACT = new Set([
 
 const DIALOG_NAME_PATTERN = /Dialog|AlertDialog|Sheet|Drawer/;
 
-export interface NoDialogOptions {
+interface NoDialogOptions {
   allowlist: string[];
 }
 
@@ -88,4 +88,3 @@ export const noDialogOutsideAllowlist: Rule.RuleModule = {
   },
 };
 
-export default noDialogOutsideAllowlist;
