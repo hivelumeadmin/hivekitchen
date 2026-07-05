@@ -4,6 +4,7 @@ import { recordToolLatency } from '../../observability/tool-latency.histogram.js
 import type { ToolSpec } from '../tools.manifest.js';
 import type { PantryService } from '../../modules/pantry/pantry.service.js';
 
+/** @public consumed dynamically by scripts/check-tool-manifest.ts */
 export const MANIFESTED_TOOL_NAMES = ['pantry.read'] as const;
 
 export function createPantryReadSpec(pantryService: PantryService, redis: Redis): ToolSpec {

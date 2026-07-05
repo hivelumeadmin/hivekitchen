@@ -1,0 +1,35 @@
+{
+  "$schema": "https://unpkg.com/knip@6/schema.json",
+  "ignore": [
+    ".agents/**",
+    ".claude/**",
+    "packages/eslint-config-hivekitchen/__fixtures__/**"
+  ],
+  "rules": {
+    "duplicates": "off"
+  },
+  "workspaces": {
+    ".": {
+      "entry": ["scripts/**/*.{ts,mjs}", "test/helpers/*.ts"],
+      "ignoreDependencies": [
+        "@playwright/test",
+        "eslint-plugin-boundaries",
+        "eslint-plugin-jsx-a11y",
+        "eslint-plugin-react",
+        "eslint-plugin-react-hooks"
+      ]
+    },
+    "apps/api": {
+      "entry": [
+        "src/app.ts",
+        "scripts/**/*.ts",
+        "src/evals/runner.ts",
+        "src/seeds/*.ts"
+      ],
+      "ignoreDependencies": ["pino", "pino-pretty"]
+    },
+    "apps/web": {
+      "ignore": ["src/lib/a11y/index.ts"]
+    }
+  }
+}

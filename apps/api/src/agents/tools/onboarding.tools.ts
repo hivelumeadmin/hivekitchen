@@ -56,6 +56,7 @@ import type { ToolSpec } from '../tools.manifest.js';
 // specs are built per-turn by createOnboardingToolSpecs() and the planner (the
 // manifest's only consumer) never offers them. The empty list opts this file
 // out of the manifest cross-check (scripts/check-tool-manifest.ts).
+/** @public consumed dynamically by scripts/check-tool-manifest.ts */
 export const MANIFESTED_TOOL_NAMES = [] as const;
 
 export interface OnboardingToolContext {

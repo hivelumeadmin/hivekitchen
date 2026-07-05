@@ -6,6 +6,7 @@ import type { ChildPreferencesRepository } from '../../modules/child-preferences
 import type { ChildrenRepository } from '../../modules/children/children.repository.js';
 import { loadChildSignal } from '../../modules/child-preferences/child-signal.assembler.js';
 
+/** @public consumed dynamically by scripts/check-tool-manifest.ts */
 export const MANIFESTED_TOOL_NAMES = ['child_signal'] as const;
 
 // Story 4-S11 — child_signal planner tool. Surfaces per-child recipe preference
