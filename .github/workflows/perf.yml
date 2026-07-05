@@ -50,6 +50,14 @@ jobs:
           name: marketing-dist
           path: apps/marketing/dist/
 
+  # LHCI thresholds (apps/*/lighthouserc.json) are RATCHETS, not aspirations:
+  # hard "error" floors sit just under the current measured scores so any
+  # regression fails, while known gaps stay visible as "warn" (web
+  # color-contrast, marketing meta-description, metric budgets). When the
+  # web bundle gets code-split, raise categories:performance accordingly.
+  # Baseline 2026-07-05: web perf 0.67 / a11y 0.90; the old config asserted
+  # 0.95 everywhere plus a preset that failed on informational audits — red
+  # on every branch since June with zero signal.
   lhci-web:
     name: Perf / apps/web LHCI
     needs: build
