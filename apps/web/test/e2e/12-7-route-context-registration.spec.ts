@@ -186,6 +186,10 @@ test.describe('Story 12-7: Route context registration', () => {
 
   test('voice session fields survive route navigation (AC #9)', async ({ page }) => {
     await page.goto('/app');
+    // Suppress auth-redirect effects (as in the pre-hydration test above) —
+    // without a token the session-restore failure races the navigation and
+    // resets the store on slower CI runners, nulling the seeded voice fields.
+    await seedFakeAuthToken(page);
     await seedLumiStore(page, {
       talkSessionId: 'session-alive',
       voiceStatus: 'active',
