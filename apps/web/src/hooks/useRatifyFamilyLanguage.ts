@@ -4,7 +4,7 @@ import { FamilyLanguageRatifyResponseSchema } from '@hivekitchen/contracts';
 import type { FamilyLanguageRatifyAction, FamilyLanguageRatifyResponse } from '@hivekitchen/types';
 import { hkFetch, HkApiError } from '@/lib/fetch.js';
 
-export type RatifyFamilyLanguageOutcome =
+type RatifyFamilyLanguageOutcome =
   | { status: 'ok'; result: FamilyLanguageRatifyResponse }
   | { status: 'forbidden' }
   | { status: 'not_found' }

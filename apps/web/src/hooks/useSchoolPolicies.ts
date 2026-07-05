@@ -10,11 +10,11 @@ import type {
 } from '@hivekitchen/types';
 import { hkFetch, HkApiError } from '@/lib/fetch.js';
 
-export type LoadOutcome =
+type LoadOutcome =
   | { ok: true; policies: SchoolPolicy[] }
   | { ok: false; message: string };
 
-export type ToggleOutcome =
+type ToggleOutcome =
   | { ok: true; policy: SchoolPolicy; regenerationTriggered: boolean }
   | { ok: false; message: string };
 

@@ -12,7 +12,6 @@
 // the single point of change when PlanRow / PlanItemRow shapes evolve.
 
 import type {
-  BriefStateRow,
   PlanDayRow,
   PlanMainAssignmentRow,
   PlanRow,
@@ -20,10 +19,6 @@ import type {
   PlanSlotVariationRow,
 } from '@hivekitchen/types';
 import type { DecryptedChildRow } from '../../src/modules/children/children.repository.js';
-import type {
-  RecipeRow,
-  RecipeStepRow,
-} from '../../src/modules/recipe/recipes.repository.js';
 
 // Stable test UUIDs. Convention: pad nibble 1+ with the role's repeating digit,
 // keep the v4 + variant bits so the strings round-trip through z.string().uuid().
@@ -76,36 +71,6 @@ export function buildPlan(overrides: Partial<PlanRow> = {}): PlanRow {
 // buildPlanSlotVariation, buildPlanTree) are the canonical replacements.
 
 // ===========================================================================
-// BriefStateRow
-// ===========================================================================
-
-export function buildBriefState(overrides: Partial<BriefStateRow> = {}): BriefStateRow {
-  return {
-    household_id: TEST_IDS.household,
-    plan_id: TEST_IDS.plan,
-    moment_headline: 'This week feels light.',
-    lumi_note: '',
-    memory_prose: '',
-    // Story 3-DM-D1 — consolidated payload column.
-    payload: {
-      tile_summaries: [],
-      cleared_allergies: [],
-      scaffolding_diff: null,
-      plan_state: null,
-      plan_state_set_at: null,
-      plan_state_message: null,
-      learning_moment_callout: null,
-      learning_moment_suppressed_until: null,
-      plan_reasoning: null,
-    },
-    generated_at: NOW_ISO,
-    plan_revision: 1,
-    updated_at: NOW_ISO,
-    ...overrides,
-  };
-}
-
-// ===========================================================================
 // DecryptedChildRow (post-B1 shape: 3 variation-driving enums + pattern enum;
 // no bag_composition jsonb, no allergen_rule_version)
 // ===========================================================================
@@ -125,50 +90,6 @@ export function buildChild(overrides: Partial<DecryptedChildRow> = {}): Decrypte
     spice_tolerance: 'mild',
     bag_composition_pattern: 'main_plus_snack_plus_extra',
     created_at: '2026-04-28T10:00:00.000Z',
-    ...overrides,
-  };
-}
-
-// ===========================================================================
-// RecipeRow + RecipeStepRow (post-A1 canonical shape)
-// ===========================================================================
-
-export function buildRecipe(overrides: Partial<RecipeRow> = {}): RecipeRow {
-  return {
-    id: TEST_IDS.recipe,
-    canonical_name: 'Lentil dal',
-    slug: null,
-    ingredients: [],
-    ingredient_keys: ['lentil'],
-    primary_ingredient_key: 'lentil',
-    allergen_flags: [],
-    dietary_flags: ['vegetarian'],
-    cultural_tags: [],
-    cuisine_tags: ['indian'],
-    applicable_slots: ['main'],
-    prep_time_minutes: 25,
-    finish_time_minutes: null,
-    source: 'agent_generated',
-    created_by_household_id: TEST_IDS.household,
-    visibility: 'private',
-    community_use_count: 0,
-    community_rating_avg: null,
-    community_rating_count: 0,
-    is_active: true,
-    created_at: NOW_ISO,
-    updated_at: NOW_ISO,
-    ...overrides,
-  };
-}
-
-export function buildRecipeStep(overrides: Partial<RecipeStepRow> = {}): RecipeStepRow {
-  return {
-    id: TEST_IDS.recipeStep,
-    recipe_id: TEST_IDS.recipe,
-    sequence: 1,
-    mode: 'prep',
-    text: 'Soak the lentils for 20 minutes.',
-    created_at: NOW_ISO,
     ...overrides,
   };
 }

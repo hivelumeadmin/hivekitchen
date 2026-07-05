@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { AlertTriangleIcon, CheckCircleIcon, ClockIcon } from '../../../components/icons.js';
 
-export interface Envelope {
+interface Envelope {
   readonly toLabel: string;
   readonly deliveryTime: string;
   readonly scheduled: boolean;

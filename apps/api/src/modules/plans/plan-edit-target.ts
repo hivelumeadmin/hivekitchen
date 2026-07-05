@@ -17,7 +17,7 @@ const DAY_BY_SHORT: Record<string, Weekday> = {
   fri: 'friday',
 };
 
-export type PlanEditMissReason =
+type PlanEditMissReason =
   | 'day_required'
   | 'day_not_found'
   | 'day_paused'

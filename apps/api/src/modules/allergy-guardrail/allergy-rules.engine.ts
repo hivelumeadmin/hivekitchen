@@ -55,7 +55,7 @@ export const FALCPA_TOP_9 = [
 // Editing rules: synonyms must be lowercase, single-word or hyphen/space-joined, and
 // represent actual ingredient names parents would see on a school menu. Add liberally —
 // false positives are acceptable; false negatives are not.
-export const FALCPA_SYNONYMS: Readonly<Record<string, readonly string[]>> = {
+const FALCPA_SYNONYMS: Readonly<Record<string, readonly string[]>> = {
   peanut: ['peanuts', 'groundnut', 'arachis', 'goober'],
   tree_nut: [
     'tree_nuts', 'tree nuts', 'tree-nut',

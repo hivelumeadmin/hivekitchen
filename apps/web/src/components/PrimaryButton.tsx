@@ -1,6 +1,6 @@
 import * as React from 'react';
 
-export type PrimaryButtonSize = 'default' | 'lg';
+type PrimaryButtonSize = 'default' | 'lg';
 
 interface Readonly_PrimaryButtonProps {
   readonly children: React.ReactNode;

@@ -10,7 +10,7 @@ import type {
 } from './child-preferences.repository.js';
 import type { ChildrenRepository } from '../children/children.repository.js';
 
-export interface ChildNameRef {
+interface ChildNameRef {
   child_id: string;
   child_name: string;
 }
@@ -25,7 +25,7 @@ export interface ChildNameRef {
 // rated in two slots produces two independent items.
 // FR126: family_liked requires >= 2 distinct children liking the same
 // (recipe_id, slot_kind) pair.
-export function assembleChildSignal(
+function assembleChildSignal(
   aggregates: readonly ChildPreferenceAggregate[],
   children: readonly ChildNameRef[],
 ): ChildSignalOutput {

@@ -1,7 +1,7 @@
 import type { ButtonHTMLAttributes, ReactNode } from 'react';
 
-export type ChoiceChipMode = 'single' | 'multi';
-export type ChoiceChipVariant = 'choice' | 'skip';
+type ChoiceChipMode = 'single' | 'multi';
+type ChoiceChipVariant = 'choice' | 'skip';
 
 interface ChoiceChipProps extends Omit<ButtonHTMLAttributes<HTMLButtonElement>, 'children'> {
   label: string;

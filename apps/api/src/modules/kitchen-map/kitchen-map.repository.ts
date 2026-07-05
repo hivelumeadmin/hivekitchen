@@ -11,7 +11,7 @@ import { getHouseholdDek } from '../../lib/household-key.js';
 // canonical KitchenMap projection.
 // ---------------------------------------------------------------------------
 
-export interface RawHouseholdRow {
+interface RawHouseholdRow {
   id: string;
   tier: string;
   tier_variant: string;
@@ -76,7 +76,7 @@ export interface RawSchoolPolicyRow {
   slot_scope: 'bag_wide' | 'main' | 'snack' | 'extra';
 }
 
-export interface RawExtraLibraryItemRow {
+interface RawExtraLibraryItemRow {
   id: string;
   name: string;
   component_type: string;

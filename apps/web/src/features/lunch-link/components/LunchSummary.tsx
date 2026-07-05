@@ -1,6 +1,6 @@
 import { CheckIcon } from '../../../components/icons.js';
 
-export interface LunchSummaryData {
+interface LunchSummaryData {
   readonly eyebrow: string;
   readonly name: string;
   readonly sub: string;

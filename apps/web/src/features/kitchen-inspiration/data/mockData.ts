@@ -7,7 +7,7 @@ export interface RecipeBadge {
   readonly label: string;
 }
 
-export type RecipeCardVariant = 'large' | 'small';
+type RecipeCardVariant = 'large' | 'small';
 
 export interface Recipe {
   readonly id: string;

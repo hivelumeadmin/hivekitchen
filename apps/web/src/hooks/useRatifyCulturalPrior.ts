@@ -4,7 +4,7 @@ import { RatifyCulturalPriorResponseSchema } from '@hivekitchen/contracts';
 import type { RatifyAction, RatifyCulturalPriorResponse } from '@hivekitchen/types';
 import { hkFetch, HkApiError } from '@/lib/fetch.js';
 
-export type RatifyOutcome =
+type RatifyOutcome =
   | { status: 'ok'; result: RatifyCulturalPriorResponse }
   | { status: 'forbidden' }
   | { status: 'not_found' }

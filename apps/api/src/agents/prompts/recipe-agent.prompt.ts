@@ -9,7 +9,7 @@
 // active rows from each *_tags table. The agent never embeds a hardcoded
 // vocabulary list — it would drift the moment a new tag is added.
 
-export interface RecipeAgentPromptSpec {
+interface RecipeAgentPromptSpec {
   readonly version: string;
   readonly template: string;
 }
@@ -216,7 +216,7 @@ emit null (or [] for arrays). Do not fabricate.
 }
 `;
 
-export const RECIPE_AGENT_SYSTEM_PROMPT_V1_0_0: RecipeAgentPromptSpec = {
+const RECIPE_AGENT_SYSTEM_PROMPT_V1_0_0: RecipeAgentPromptSpec = {
   version: 'recipe-agent.v1.2.0',
   template: TEMPLATE,
 };

@@ -20,7 +20,7 @@ export interface LoginResult {
   refresh_token_max_age_seconds: number;
 }
 
-export interface RefreshRotatedResult {
+interface RefreshRotatedResult {
   type: 'rotated';
   access_token: string;
   expires_in: number;
@@ -29,7 +29,7 @@ export interface RefreshRotatedResult {
   refresh_token_max_age_seconds: number;
 }
 
-export interface ReuseDetectedResult {
+interface ReuseDetectedResult {
   type: 'reuse_detected';
   user_id: string;
 }

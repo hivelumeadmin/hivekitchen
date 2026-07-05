@@ -52,7 +52,7 @@ export interface RecipeAgentDeps {
   readonly logger: FastifyBaseLogger;
 }
 
-export interface RecipeCandidate {
+interface RecipeCandidate {
   readonly candidateId: string;
   readonly extraction: RecipeAgentExtraction;
   readonly preview: RecipePreview;

@@ -6,7 +6,7 @@ import type { PlanEditResult } from '@hivekitchen/types';
 
 // A clarify reason maps to a friendly line plus the deterministic recovery
 // affordance the panel should offer (zero-LLM chips, or a plain re-prompt).
-export type ClarifyChipKind = 'day' | 'child' | 'none';
+type ClarifyChipKind = 'day' | 'child' | 'none';
 
 export interface ClarifyCopy {
   line: string;

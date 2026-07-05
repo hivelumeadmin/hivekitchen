@@ -1,5 +1,5 @@
-export type PageHeaderSize = 'sm' | 'md' | 'lg';
-export type EyebrowTone = 'muted' | 'sacred';
+type PageHeaderSize = 'sm' | 'md' | 'lg';
+type EyebrowTone = 'muted' | 'sacred';
 
 interface Readonly_PageHeaderProps {
   readonly eyebrow: string;
