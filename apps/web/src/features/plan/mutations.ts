@@ -7,20 +7,14 @@ import type {
   GetPlansResponse,
   PlanEditInput,
   PlanEditResponse,
-  PlanMainAssignmentRow,
-  PlanSlotRow,
-  PlanSlotVariationRow,
   PauseReason,
   RegeneratePlanResponse,
   SetPlanDayContextInput,
   SetPlanDayContextResponse,
   SwapMainInput,
   SwapMainResponse,
-  SwapSlotRecipeInput,
-  SwapSlotRecipeResponse,
   UpdateVariationInput,
   UpdateVariationResponse,
-  ConfirmVariantProposalInput,
   UpdateSovereigntyModeInput,
   UpdateSovereigntyModeResponse,
 } from '@hivekitchen/types';
@@ -135,30 +129,6 @@ export function useUpdateVariationMutation() {
   });
 }
 
-// PATCH /v1/plans/:planId/slots/:planSlotId/recipe.
-export function useSwapSlotRecipeMutation() {
-  const queryClient = useQueryClient();
-  return useMutation<
-    SwapSlotRecipeResponse,
-    Error,
-    { planId: string; planSlotId: string; input: SwapSlotRecipeInput }
-  >({
-    mutationFn: ({ planId, planSlotId, input }) =>
-      hkFetch<SwapSlotRecipeResponse>(
-        `/v1/plans/${planId}/slots/${planSlotId}/recipe`,
-        {
-          method: 'PATCH',
-          body: input,
-          headers: { 'Idempotency-Key': safeRandomUuid() },
-        },
-      ),
-    onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ['brief'] });
-      void queryClient.invalidateQueries({ queryKey: ['plan'] });
-    },
-  });
-}
-
 // PATCH /v1/plans/:planId/days/:day/pause — tree-shape body.
 // reason is REQUIRED (DB CHECK demands paused_at + paused_reason both set);
 // enum widens from flat 'sick'|'absent'|'holiday' to PauseReason's six-value set.
@@ -255,32 +225,6 @@ export function useRevertPlanDayContextMutation() {
   });
 }
 
-// POST /v1/plans/:planId/variant-proposals/:proposalId/confirm with Idempotency-Key.
-// Story 3.27 — parent confirms or rejects a Lumi-proposed preparation variant.
-// On success the proposal stops being active, so we invalidate ['plans'] to
-// drop the pending-input pills from the tile on the next render.
-export function useConfirmVariantProposalMutation() {
-  const queryClient = useQueryClient();
-  return useMutation<
-    void,
-    Error,
-    { planId: string; proposalId: string; input: ConfirmVariantProposalInput }
-  >({
-    mutationFn: ({ planId, proposalId, input }) =>
-      hkFetch(
-        `/v1/plans/${planId}/variant-proposals/${proposalId}/confirm`,
-        {
-          method: 'POST',
-          body: input,
-          headers: { 'Idempotency-Key': safeRandomUuid() },
-        },
-      ),
-    onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ['plan'] });
-    },
-  });
-}
-
 // PATCH /v1/households/:id/sovereignty-mode — Story 3.29.
 // On success invalidates ['brief'] so the inline degraded note disappears (the
 // API clears plans.state) and the queued regen plan replaces the
@@ -370,7 +314,3 @@ export function usePlanEditMutation() {
   });
 }
 
-// Re-export the row shapes the parent component consumes so callers don't need
-// to thread @hivekitchen/types imports through every layer that handles a
-// mutation result.
-export type { PlanMainAssignmentRow, PlanSlotRow, PlanSlotVariationRow };
