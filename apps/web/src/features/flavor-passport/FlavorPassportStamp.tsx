@@ -31,7 +31,7 @@ export function FlavorPassportStampCard({ stamp, scope }: FlavorPassportStampPro
     <>
       <h3
         id={scope === 'child' ? headingId : undefined}
-        className="pr-8 font-serif text-lg text-fg"
+        className="pe-8 font-serif text-lg text-fg"
       >
         {stamp.recipe_name}
       </h3>

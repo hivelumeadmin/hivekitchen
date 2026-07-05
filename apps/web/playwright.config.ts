@@ -3,8 +3,17 @@ import { defineConfig, devices } from '@playwright/test';
 export default defineConfig({
   testDir: './test',
   reporter: process.env.CI ? 'github' : 'list',
+  // CI runners are ~3x slower than dev machines; optimistic-UI specs (toggle
+  // reverts, store snapshots after navigation) can race the slower event loop.
+  // Retries are CI-only so local runs still surface flakiness loudly.
+  retries: process.env.CI ? 2 : 0,
   use: {
     baseURL: 'http://localhost:4173',
+    // The Workbox service worker (vite-plugin-pwa) intercepts fetches at the SW
+    // layer, BYPASSING page.route() mocks — in full-suite runs this produced
+    // ~99 reproducible failures (see epic-13 retro, 2026-07-03). Blocking SW
+    // registration keeps every spec's route mocks authoritative.
+    serviceWorkers: 'block',
   },
   webServer: {
     command: 'pnpm preview --port 4173',

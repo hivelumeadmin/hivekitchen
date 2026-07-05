@@ -12,9 +12,10 @@ import {
 import { QueryKeys } from '@/lib/realtime/query-keys.js';
 import type { GetPlansResponse } from '@hivekitchen/types';
 import { HkApiError } from '@/lib/fetch.js';
+import type * as fetchModule from '@/lib/fetch.js';
 
 vi.mock('@/lib/fetch.js', async () => {
-  const actual = await vi.importActual<typeof import('@/lib/fetch.js')>(
+  const actual = await vi.importActual<typeof fetchModule>(
     '@/lib/fetch.js',
   );
   return {

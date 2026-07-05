@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { CulturalPriorListResponseSchema } from '@hivekitchen/contracts';
-import type { CulturalPrior, RatifyAction } from '@hivekitchen/types';
+import type { CulturalPrior } from '@hivekitchen/types';
 import { hkFetch } from '@/lib/fetch.js';
 import { CulturalRatificationCard } from './CulturalRatificationCard.js';
 
@@ -76,7 +76,7 @@ export function CulturalRatificationStep({
     return null;
   }
 
-  function handleResolved(priorId: string, _action: RatifyAction): void {
+  function handleResolved(priorId: string): void {
     setPriors((prev) => {
       if (prev === null) return prev;
       return prev.filter((p) => p.id !== priorId);

@@ -81,22 +81,84 @@ for (const pattern of CONSUMER_GLOBS) {
   }
 }
 
-// Step 3: verify the packages/types plumbing chain — a name only counts if it
-// appears in a `z.infer<typeof NAME>` site, not merely as a string in the file.
+// Step 3: verify the packages/types plumbing chain. A `z.infer<typeof NAME>`
+// site in packages/types only counts if the alias it declares is itself
+// imported by an app — otherwise the plumbing is tautological (packages/types
+// mirrors every schema 1:1 by design, which would silently protect dead ones).
 const typesContent = readFileSync(TYPES_INDEX, 'utf8');
 const typesPlumbed = new Set<string>();
-for (const m of typesContent.matchAll(/z\.infer\s*<\s*typeof\s+(\w+)\s*>/g)) {
-  typesPlumbed.add(m[1]);
+for (const m of typesContent.matchAll(
+  /export\s+type\s+(\w+)\s*=\s*z\.infer\s*<\s*typeof\s+(\w+)\s*>/g,
+)) {
+  if (appImported.has(m[1])) typesPlumbed.add(m[2]);
 }
 
-// Step 4: verify each export.
+// Step 4: build a reference graph within contracts so transitive usage counts.
+// A schema referenced in the definition of another export gets used-credit when
+// that export is used (e.g. DashboardChildSchema inside
+// ParentalDashboardResponseSchema). Declarations start at column 0 in contracts
+// files, so the enclosing export of each line is tracked by a simple scan.
+// Companion rule: `export type X = z.infer<typeof XSchema>` in contracts also
+// counts X as used when XSchema is used (apps typically import only one of the
+// pair; the alias is the documented shape of a live contract, not dead code).
+const referencedBy = new Map<string, Set<string>>(); // name -> exports whose definitions reference it
+const companionOf = new Map<string, string>(); // alias -> schema it z.infers from
+
+const DECL_START = /^export\s+(?:const|let|var|function|class|type|interface|enum)\s+(\w+)/;
+for (const file of readdirSync(CONTRACTS_SRC)) {
+  if (!file.endsWith('.ts') || file.endsWith('.test.ts') || file === 'index.ts') continue;
+  const content = readFileSync(join(CONTRACTS_SRC, file), 'utf8');
+
+  for (const m of content.matchAll(
+    /export\s+type\s+(\w+)\s*=\s*z\.infer\s*<\s*typeof\s+(\w+)\s*>/g,
+  )) {
+    companionOf.set(m[1], m[2]);
+  }
+
+  let enclosing: string | null = null;
+  for (const rawLine of content.split(/\r?\n/)) {
+    const line = rawLine.replace(/\/\/.*$/, ''); // names in comments are not references
+    const decl = DECL_START.exec(line);
+    if (decl) enclosing = decl[1];
+    if (!enclosing) continue;
+    for (const m of line.matchAll(/\b(\w+)\b/g)) {
+      const name = m[1];
+      if (name === enclosing || !exportedNames.has(name)) continue;
+      let refs = referencedBy.get(name);
+      if (!refs) referencedBy.set(name, (refs = new Set()));
+      refs.add(enclosing);
+    }
+  }
+}
+
+// Step 5: propagate usage to a fixpoint, then verify each export.
+const used = new Set<string>();
+for (const name of exportedNames.keys()) {
+  if (appImported.has(name) || typesPlumbed.has(name)) used.add(name);
+}
+let grew = true;
+while (grew) {
+  grew = false;
+  for (const name of exportedNames.keys()) {
+    if (used.has(name)) continue;
+    const refs = referencedBy.get(name);
+    const referenced = refs !== undefined && [...refs].some((r) => used.has(r));
+    const companionSchema = companionOf.get(name);
+    const viaCompanion = companionSchema !== undefined && used.has(companionSchema);
+    if (referenced || viaCompanion) {
+      used.add(name);
+      grew = true;
+    }
+  }
+}
+
 const violations: string[] = [];
 for (const [name, file] of exportedNames) {
-  if (appImported.has(name) || typesPlumbed.has(name)) continue;
+  if (used.has(name)) continue;
   const srcContent = readFileSync(join(CONTRACTS_SRC, file), 'utf8');
   if (srcContent.includes('@unused-by-design')) continue;
   violations.push(
-    `${file}: ${name} is not imported by apps/api or apps/web and is not plumbed via z.infer<> in packages/types`
+    `${file}: ${name} is not imported by apps/api or apps/web, not plumbed to an app-imported type in packages/types, and not referenced by any used contract export`
   );
 }
 

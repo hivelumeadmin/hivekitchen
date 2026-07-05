@@ -93,7 +93,7 @@ export class ResilientProvider implements LLMProvider {
         return result;
       } catch (err) {
         const isRateLimit =
-          err != null &&
+          err !== null &&
           typeof err === 'object' &&
           'status' in err &&
           (err as { status: number }).status === 429;

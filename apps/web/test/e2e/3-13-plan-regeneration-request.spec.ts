@@ -53,7 +53,90 @@ function briefResponse(opts: BriefOpts = {}) {
   };
 }
 
+// Canonical tree response (GET /v1/plans?week=current) matching the brief
+// fixture — the DisambiguationPicker (day-regen entry) renders only when the
+// tapped day resolves to a DayTreeView with slots.
+function plansResponse() {
+  const days = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday'].map((day, i) => ({
+    id: `dddddddd-dddd-4ddd-8ddd-ddddddddd${(i + 1).toString().padStart(3, '0')}`,
+    plan_id: PLAN_ID,
+    day,
+    paused_at: null,
+    paused_reason: null,
+    paused_note: null,
+    created_at: '2026-05-02T00:00:00.000Z',
+    updated_at: '2026-05-02T00:00:00.000Z',
+  }));
+  const slots = days.map((d, i) => ({
+    id: `eeeeeeee-eeee-4eee-8eee-eeeeeeeee${(i + 1).toString().padStart(3, '0')}`,
+    plan_day_id: d.id,
+    slot_kind: 'main',
+    main_assignment_id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1',
+    recipe_id: null,
+    extra_kind: null,
+    snack_sku_id: null,
+    paused_at: null,
+    created_at: '2026-05-02T00:00:00.000Z',
+    updated_at: '2026-05-02T00:00:00.000Z',
+  }));
+  const variations = slots.map((s, i) => ({
+    id: `99999999-9999-4999-8999-99999999990${i + 1}`,
+    plan_slot_id: s.id,
+    child_id: CHILD_ID,
+    portion_size: 'regular',
+    texture: 'normal',
+    spice_level: 'mild',
+    cutting_style: null,
+    container: null,
+    add_ons: [],
+    removals: [],
+    notes: null,
+    paused_at: null,
+    created_at: '2026-05-02T00:00:00.000Z',
+    updated_at: '2026-05-02T00:00:00.000Z',
+  }));
+  return {
+    plan: {
+      id: PLAN_ID,
+      household_id: SAMPLE_HOUSEHOLD_ID,
+      week_of: '2026-05-04',
+      revision: 1,
+      generated_at: '2026-05-02T00:00:00.000Z',
+      guardrail_cleared_at: '2026-05-02T00:00:00.000Z',
+      guardrail_version: 'v1',
+      prompt_version: 'v1',
+      state: null,
+      state_set_at: null,
+      state_message: null,
+      confirmed_at: null,
+      created_at: '2026-05-02T00:00:00.000Z',
+      updated_at: '2026-05-02T00:00:00.000Z',
+    },
+    main_assignments: [
+      { id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1', plan_id: PLAN_ID, sequence: 1, recipe_id: null, created_at: '2026-05-02T00:00:00.000Z' },
+    ],
+    days,
+    slots,
+    variations,
+    is_draft: false,
+    week_of: '2026-05-04',
+    variant_proposals: [],
+  };
+}
+
+async function mockPlans(page: Page) {
+  await page.route('**/v1/plans*', (route) => {
+    if (route.request().method() !== 'GET') return route.fallback();
+    return route.fulfill({
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(plansResponse()),
+    });
+  });
+}
+
 async function navigateToApp(page: Page, opts: BriefOpts = {}) {
+  await mockPlans(page);
   await page.route('**/v1/users/me', (route) =>
     route.fulfill({
       status: 200,
@@ -129,14 +212,23 @@ test.describe('Story 3-13: Week regeneration POST (AC #1)', () => {
     // Inline regen progress copy.
     await expect(page.getByText(/lumi is rethinking this week/i)).toBeVisible();
     // FreshnessState variant=loading (hasFetchError=false takes precedence per P1 fix).
-    await expect(page.getByRole('status')).toContainText("Lumi is drafting this week's plan");
+    // Epic 13 — LumiWhisper mounts an always-present sr-only role=status live
+    // region at the app root; scope to <main> to avoid a strict-mode violation.
+    await expect(page.locator('main').getByRole('status')).toContainText(
+      "Lumi is drafting this week's plan",
+    );
   });
 });
 
 test.describe('Story 3-13: Regen completion via revision bump (AC #2)', () => {
-  test('plan_revision bump in polling brief clears regen state and restores button', async ({ page }) => {
-    // Fake clock: prevents real network stale-time refetches from interfering;
-    // page.clock.tick() fires the 5s polling setInterval on demand.
+  test('plan_revision bump in a refetched brief clears regen state and restores button', async ({ page }) => {
+    // Story 13-s2.5 — the 5s completion poll was removed; in production a
+    // `plan.updated` SSE event invalidates ['brief'] and the refetch carries
+    // the bumped plan_revision. The SSE stream is mocked inert in e2e, so this
+    // test drives the equivalent refetch through TanStack's
+    // refetchOnWindowFocus: fake clock past the 5-min staleTime, then fire a
+    // visibilitychange. The assertion target is unchanged — a refetched brief
+    // with plan_revision+1 clears the regenerating state.
     await page.clock.install();
 
     let planRevision = 1;
@@ -174,9 +266,15 @@ test.describe('Story 3-13: Regen completion via revision bump (AC #2)', () => {
     // Switch brief to return revision 2 (BullMQ job committed new plan).
     planRevision = 2;
 
-    // Advance fake clock past the 5s polling interval to fire the setInterval.
-    await page.clock.runFor(5100);
-    await page.waitForResponse(BRIEF_URL);
+    // Age the cache past the brief's 5-min staleTime, then trigger a focus
+    // refetch (stand-in for the plan.updated invalidation).
+    await page.clock.fastForward(5 * 60_000 + 1000);
+    const refetch = page.waitForResponse(BRIEF_URL);
+    await page.evaluate(() => {
+      window.dispatchEvent(new Event('visibilitychange'));
+      window.dispatchEvent(new Event('focus'));
+    });
+    await refetch;
 
     // Detection effect: plan_revision(2) > baseline(1) → setIsRegenerating(false).
     await expect(page.getByText(/lumi is rethinking this week/i)).toHaveCount(0);
@@ -189,11 +287,14 @@ test.describe('Story 3-13: Regen completion via revision bump (AC #2)', () => {
 // a frozen clock, tiles for past days have pointer-events-none and can't be clicked.
 const SUNDAY_ISO = '2026-05-03T12:00:00Z';
 
+// Epic 13-s10 — a day-tile tap now summons the Lumi sheet; the
+// DisambiguationPicker (day-regen entry) opens via the PlanActionBar's
+// "Swap a day" action, which targets the first unpaused day (Monday here).
 test.describe('Story 3-13: Day regeneration via picker (AC #1)', () => {
   test('"Ask Lumi to redo this day" button appears in picker L1', async ({ page }) => {
     await page.clock.install({ time: new Date(SUNDAY_ISO) });
     await navigateToApp(page);
-    await page.getByRole('article', { name: /monday/i }).click();
+    await page.getByRole('button', { name: /swap a day/i }).click();
 
     await expect(page.getByRole('button', { name: /ask lumi to redo this day/i })).toBeVisible();
   });
@@ -216,7 +317,7 @@ test.describe('Story 3-13: Day regeneration via picker (AC #1)', () => {
     });
 
     await navigateToApp(page);
-    await page.getByRole('article', { name: /monday/i }).click();
+    await page.getByRole('button', { name: /swap a day/i }).click();
     await expect(page.getByRole('group', { name: /edit monday/i })).toBeVisible();
 
     await page.getByRole('button', { name: /ask lumi to redo this day/i }).click();

@@ -72,12 +72,13 @@ test.describe('Slice 2-s26: resume mid-flow onboarding', () => {
     // Mode picker primary CTA is "Start with voice" — must NOT be visible.
     await expect(page.getByRole('button', { name: /Start with voice/i })).toHaveCount(0);
 
-    // Tap Continue → text mode mounts with prior turns + the synthetic greeting.
+    // Tap Continue → text mode mounts rehydrated. Epic 13-s5's one calm
+    // conversation mode shows only the latest Lumi turn and the parent's last
+    // echo (no scrolling transcript), so the resumed turns supersede the
+    // synthetic greeting — asserting the greeting is obsolete.
     await page.getByRole('button', { name: /^Continue$/i }).click();
     await expect(page.getByText('My grandmother made daal.')).toBeVisible();
     await expect(page.getByText('That sounds wonderful — tell me more.')).toBeVisible();
-    // Greeting still renders — it's a client-render constant.
-    await expect(page.getByText(/i'm lumi.*your family/i)).toBeVisible();
   });
 
   test('Start over: posts reset and reveals the mode picker', async ({ page }) => {

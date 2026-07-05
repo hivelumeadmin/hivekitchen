@@ -244,8 +244,12 @@ test.describe('13-s10 — talk to your plan', () => {
     // The cost wall: nothing fired yet.
     expect(regenCalls).toBe(0);
 
+    // Subscribe before clicking — on slow CI runners the mocked response can
+    // complete before a post-click waitForResponse registers, and the wait
+    // then times out on a response that already happened.
+    const regenResponse = page.waitForResponse((r) => r.url().includes('/regenerate'));
     await confirm.click();
-    await page.waitForResponse((r) => r.url().includes('/regenerate'));
+    await regenResponse;
     expect(regenCalls).toBe(1);
   });
 

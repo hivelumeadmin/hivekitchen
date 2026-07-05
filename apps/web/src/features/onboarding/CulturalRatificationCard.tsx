@@ -70,7 +70,7 @@ export function CulturalRatificationCard({
 
       {lumiFollowUp !== null ? (
         <p
-          className="font-sans text-stone-700 italic border-l-2 border-purple-200 pl-3"
+          className="font-sans text-stone-700 italic border-l-2 border-purple-200 ps-3"
           role="status"
         >
           {lumiFollowUp}

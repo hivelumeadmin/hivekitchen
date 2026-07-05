@@ -245,7 +245,7 @@ describe('createChildUpsertToolSpec', () => {
     expect(deps.childrenService.upsertByName).toHaveBeenCalled();
     expect(deps.memoryService.noteFromAgent).toHaveBeenCalledWith(
       expect.objectContaining({
-        nodeType: 'allergy',
+        nodeType: 'other',
         facet: 'allergen',
       }),
     );
@@ -700,8 +700,6 @@ describe('createHouseholdUpsertToolSpec', () => {
 // real test surface; these tests assert the factories register with the
 // right name, validate input via Zod, and return a contract-valid shape.
 
-const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
 describe('createHouseholdSetNameToolSpec (2.5-s5 wired)', () => {
   it('happy path: parses input, calls householdsService.setDisplayName, returns household_id', async () => {
     const deps = makeDeps();
@@ -1050,14 +1048,16 @@ describe('createFavoriteLunchAddToolSpec (2.6-s1 — writes to recipes catalog)'
     expect(result.position).toBe(0);
   });
 
-  it('uses explicit position when the agent supplies one', async () => {
+  it('ignores an agent-supplied position and derives it from the declared count', async () => {
     const deps = makeDeps();
     const spec = createFavoriteLunchAddToolSpec(makeCtx(), deps);
 
     const result = (await spec.fn({ item: 'Wrap', position: 7 })) as { position: number };
 
     expect(deps.recipesRepository.declareForHousehold).toHaveBeenCalledWith(HOUSEHOLD_ID, 'Wrap');
-    expect(result.position).toBe(7);
+    // position input was removed from FavoriteLunchAddInputSchema; the value is
+    // derived from countDeclaredFavorites (mocked to 1) → max(0, 1-1) = 0
+    expect(result.position).toBe(0);
   });
 
   it('rejects empty item at the Zod boundary (M5 chip must have a label)', async () => {

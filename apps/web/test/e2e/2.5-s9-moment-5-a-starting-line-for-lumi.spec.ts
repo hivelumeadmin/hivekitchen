@@ -2,6 +2,42 @@ import { test, expect } from '@playwright/test';
 import { loginAndNavigate } from './_helpers.js';
 
 const TURN_URL = '**/v1/onboarding/text/turn';
+const KITCHEN_MAP_URL = '**/v1/households/*/kitchen-map';
+
+// Minimal valid KitchenMap projection (contracts/src/kitchen-map.ts, 1.1.0) —
+// the hero binds to this authoritative shape after every turn (13-s5).
+function kitchenMapFixture(favoriteLunches: Array<{ item: string; position: number }>) {
+  return {
+    household: {
+      id: '22222222-2222-4222-8222-222222222222',
+      tier: 'standard',
+      tier_variant: 'default',
+      timezone: 'America/New_York',
+      display_name: 'The Menon Kitchen',
+      cultural_identifiers: [],
+      dietary_preferences: [],
+      declared_allergens: [],
+    },
+    caregivers: [],
+    children: [],
+    cultural: { active: [], suggested: [] },
+    memory: { nodes: [] },
+    household_extras: { library: [] },
+    recipes: { favourites: [], banned: [] },
+    allergens: [],
+    dietary: [],
+    food_preferences: [],
+    favorite_lunches: favoriteLunches.map((l) => ({ ...l, provenance: 'declared' })),
+    rules: [],
+    meta: {
+      composed_at: '2026-07-01T00:00:00.000Z',
+      map_version: 1,
+      schema_version: '1.1.0',
+      is_complete: false,
+      required_set_complete: false,
+    },
+  };
+}
 
 const M5_CHIP_CONFIG = {
   mode: 'choice',
@@ -159,109 +195,56 @@ test.describe('Slice 2.5-s9: Moment 5 — A starting line for Lumi', () => {
     ).toBeVisible();
   });
 
-  // AC7 — M5 "Still listening…" card appears in the right-column profile panel
-  // the moment the agent enters m5_starting_line. Requires wide viewport.
-  test('M5 card shows "Still listening…" in the profile panel when agent enters m5_starting_line', async ({
+  // 13-s5 — the per-moment M5 progress card ("Still listening…" / session chip
+  // counts / "(started with fewer)") was removed with the projection-only
+  // KitchenMapHero. The starting line now renders exclusively from the
+  // authoritative kitchen-map projection's favorite_lunches array.
+  test('no starting-lineup card renders while the projection has no favorite lunches (13-s5)', async ({
     page,
   }) => {
+    await page.route(KITCHEN_MAP_URL, (route) =>
+      route.fulfill({
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(kitchenMapFixture([])),
+      }),
+    );
+
     await page.setViewportSize({ width: 1280, height: 800 });
     await landOnM5(page);
 
-    const card = page.getByTestId('m5-starting-line-card').first();
+    await expect(page.getByTestId('starting-lineup-card')).toHaveCount(0);
+    await expect(page.getByTestId('m5-starting-line-card')).toHaveCount(0);
+  });
+
+  // 13-s5 — once the backend has persisted the declared lunches, the post-turn
+  // kitchen-map refetch lands them in the "Lunches to start from" card.
+  test('"Lunches to start from" card renders the projection favorite_lunches (13-s5)', async ({
+    page,
+  }) => {
+    await page.route(KITCHEN_MAP_URL, (route) =>
+      route.fulfill({
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(
+          kitchenMapFixture([
+            { item: 'Paratha roll', position: 0 },
+            { item: 'Sandwich', position: 1 },
+            { item: 'Wrap', position: 2 },
+          ]),
+        ),
+      }),
+    );
+
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await landOnM5(page);
+
+    const card = page.getByTestId('starting-lineup-card').first();
     await expect(card).toBeVisible();
-    await expect(card).toContainText(/still listening/i);
-  });
-
-  // AC7 — M5 card transitions to "X lunches — Lumi has a starting line." after the
-  // parent submits chips and the agent advances to summary.
-  test('M5 card shows session chip count after agent advances past m5_starting_line', async ({
-    page,
-  }) => {
-    let callCount = 0;
-    await page.route(TURN_URL, (route) => {
-      callCount += 1;
-      route.fulfill({
-        status: 200,
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(
-          callCount === 1
-            ? turnResponse({
-                moment_key: 'm5_starting_line',
-                chip_config: M5_CHIP_CONFIG,
-                lumi_response: "Let's pick 10 favourite lunches.",
-              })
-            : turnResponse({
-                moment_key: 'summary',
-                chip_config: null,
-                lumi_response: "All set — here's what we've gathered.",
-              }),
-        ),
-      });
-    });
-
-    await page.setViewportSize({ width: 1280, height: 800 });
-    await loginAndNavigate(page, '/onboarding', { isFirstLogin: true });
-    await page.getByRole('button', { name: /i'd rather type/i }).click();
-    await page.getByLabel(/your message to lumi/i).fill('Two kids — Layla and Adam.');
-    await page.getByRole('button', { name: /^send$/i }).click();
-
-    await expect(page.getByRole('group', { name: 'Suggested replies' })).toBeVisible();
-
-    // Tap 3 chips and submit — agent advances to summary.
-    await page.getByRole('checkbox', { name: 'Paratha roll', exact: true }).click();
-    await page.getByRole('checkbox', { name: 'Sandwich', exact: true }).click();
-    await page.getByRole('checkbox', { name: 'Wrap', exact: true }).click();
-    await page.getByRole('button', { name: /^send$/i }).click();
-
-    const card = page.getByTestId('m5-starting-line-card').first();
-    await expect(card).toContainText(/3 lunches — Lumi has a starting line\./);
-    await expect(card).not.toContainText(/still listening/i);
-    await expect(card).not.toContainText(/started with fewer/i);
-  });
-
-  // AC7 — "(started with fewer)" suffix appears on the M5 card when the override chip
-  // was included in the submitted chip_selections and the agent advanced past M5.
-  test('M5 card shows "(started with fewer)" suffix when parent invokes the override chip', async ({
-    page,
-  }) => {
-    let callCount = 0;
-    await page.route(TURN_URL, (route) => {
-      callCount += 1;
-      route.fulfill({
-        status: 200,
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(
-          callCount === 1
-            ? turnResponse({
-                moment_key: 'm5_starting_line',
-                chip_config: M5_CHIP_CONFIG_WITH_OVERRIDE,
-                lumi_response: 'Four down — start with what you have?',
-              })
-            : turnResponse({
-                moment_key: 'summary',
-                chip_config: null,
-                lumi_response: "Starting strong with what we've got.",
-              }),
-        ),
-      });
-    });
-
-    await page.setViewportSize({ width: 1280, height: 800 });
-    await loginAndNavigate(page, '/onboarding', { isFirstLogin: true });
-    await page.getByRole('button', { name: /i'd rather type/i }).click();
-    await page.getByLabel(/your message to lumi/i).fill('Two kids — Layla and Adam.');
-    await page.getByRole('button', { name: /^send$/i }).click();
-
-    await expect(page.getByRole('group', { name: 'Suggested replies' })).toBeVisible();
-
-    // Tap one real chip + the override chip.
-    await page.getByRole('checkbox', { name: 'Paratha roll', exact: true }).click();
-    await page.getByRole('checkbox', { name: 'Start with fewer', exact: true }).click();
-    await page.getByRole('button', { name: /^send$/i }).click();
-
-    const card = page.getByTestId('m5-starting-line-card').first();
-    await expect(card).toContainText(/lunches — Lumi has a starting line\./);
-    await expect(card).toContainText(/started with fewer/i);
+    await expect(card).toContainText(/lunches to start from/i);
+    await expect(card).toContainText('Paratha roll');
+    await expect(card).toContainText('Sandwich');
+    await expect(card).toContainText('Wrap');
   });
 
   // AC4 — POST body carries all selected chip keys in chip_selections (multi-key array).

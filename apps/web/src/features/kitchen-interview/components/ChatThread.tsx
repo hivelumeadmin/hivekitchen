@@ -44,7 +44,7 @@ function LumiTurn({
     <div className="flex w-full gap-4">
       <LumiAvatar />
       <TurnBody name="Lumi" timestamp={timestamp}>
-        <div className="border-l-2 border-lumi-terracotta py-1 pl-4">
+        <div className="border-l-2 border-lumi-terracotta py-1 ps-4">
           <InterviewMessage parts={message} variant="serif" />
         </div>
       </TurnBody>
@@ -67,7 +67,7 @@ function UserTurn({
     <div className="flex w-full gap-4">
       <UserAvatar src={avatarSrc} alt={avatarAlt} />
       <TurnBody name="You" timestamp={timestamp}>
-        <div className="border-l-2 border-border py-1 pl-4">
+        <div className="border-l-2 border-border py-1 ps-4">
           <div className="inline-block rounded-xl border border-border bg-surface-2 p-4">
             <InterviewMessage parts={message} variant="sans" />
           </div>
@@ -82,7 +82,7 @@ function LumiListeningTurn({ timestamp }: Readonly<{ readonly timestamp: string 
     <div className="mt-4 flex w-full gap-4 opacity-80">
       <LumiListeningAvatar />
       <TurnBody name="Lumi" timestamp={timestamp}>
-        <div className="flex h-8 items-center border-l-2 border-border py-1 pl-4">
+        <div className="flex h-8 items-center border-l-2 border-border py-1 ps-4">
           <div className="flex items-center gap-1">
             <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-border [animation-delay:0ms]" />
             <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-border [animation-delay:150ms]" />

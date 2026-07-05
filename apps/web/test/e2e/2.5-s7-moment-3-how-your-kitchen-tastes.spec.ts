@@ -1,7 +1,48 @@
 import { test, expect } from '@playwright/test';
-import { loginAndNavigate } from './_helpers.js';
+import { loginAndNavigate, SAMPLE_HOUSEHOLD_ID } from './_helpers.js';
 
 const TURN_URL = '**/v1/onboarding/text/turn';
+const KITCHEN_MAP_URL = '**/v1/households/*/kitchen-map';
+
+// 13-s5 — the hero taste card is projection-sourced: it renders ONLY when the
+// authoritative GET /households/:id/kitchen-map projection carries taste data
+// (household dietary/cultural tags or liked food-preferences). The old
+// client-side m3 state machine (Waiting/Skipped/Noted) was deleted.
+function sampleKitchenMap(opts: {
+  dietary?: string[];
+  cultural?: string[];
+} = {}): Record<string, unknown> {
+  return {
+    household: {
+      id: SAMPLE_HOUSEHOLD_ID,
+      tier: 'standard',
+      tier_variant: 'control',
+      timezone: 'Europe/London',
+      display_name: 'Sharma Kitchen',
+      cultural_identifiers: opts.cultural ?? [],
+      dietary_preferences: opts.dietary ?? [],
+      declared_allergens: [],
+    },
+    caregivers: [],
+    children: [],
+    cultural: { active: [], suggested: [] },
+    memory: { nodes: [] },
+    household_extras: { library: [] },
+    recipes: { favourites: [], banned: [] },
+    allergens: [],
+    dietary: [],
+    food_preferences: [],
+    favorite_lunches: [],
+    rules: [],
+    meta: {
+      composed_at: '2026-05-22T00:00:00.000Z',
+      map_version: 1,
+      schema_version: '1.1.0',
+      is_complete: false,
+      required_set_complete: false,
+    },
+  };
+}
 
 const M3_HINT_CHIP_CONFIG = {
   mode: 'hint',
@@ -100,21 +141,37 @@ test.describe('Slice 2.5-s7: Moment 3 — How your kitchen tastes', () => {
     await expect(page.getByRole('radiogroup', { name: 'Suggested replies' })).not.toBeVisible();
   });
 
-  // AC11 — M3 taste card shows "Waiting on your response…" in the profile panel
-  // when agent enters m3_taste. Requires wide viewport to show the right column.
-  test('M3 taste card shows "Waiting on your response…" in the profile panel when m3_taste is active', async ({
+  // AC11 → 13-s5 — the taste card is projection-gated: while m3_taste is active
+  // and the projection carries no taste data, NO taste card renders (the old
+  // "Waiting on your response…" client-side state was deleted by design).
+  test('taste card stays absent while m3_taste is active with an empty projection', async ({
     page,
   }) => {
     await page.setViewportSize({ width: 1280, height: 800 });
+    await page.route(KITCHEN_MAP_URL, (route) =>
+      route.fulfill({
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(sampleKitchenMap()),
+      }),
+    );
     await landOnM3(page);
 
-    const card = page.getByTestId('m3-taste-card').first();
-    await expect(card).toBeVisible();
-    await expect(card).toContainText(/waiting on your response/i);
+    await expect(page.getByTestId('taste-card')).toHaveCount(0);
   });
 
-  // AC11 — M3 taste card shows "Skipped for now" when the parent taps Skip.
-  test('M3 taste card shows "Skipped for now" copy after parent taps Skip', async ({ page }) => {
+  // AC11 → 13-s5/13-s6 — tapping Skip advances the agent to m4_bag; no taste
+  // card renders because the projection carries no taste data.
+  test('Skip advances to m4_bag and no taste card renders (projection stays empty)', async ({
+    page,
+  }) => {
+    await page.route(KITCHEN_MAP_URL, (route) =>
+      route.fulfill({
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(sampleKitchenMap()),
+      }),
+    );
     let callCount = 0;
     await page.route(TURN_URL, (route) => {
       callCount += 1;
@@ -147,19 +204,35 @@ test.describe('Slice 2.5-s7: Moment 3 — How your kitchen tastes', () => {
     // Tap the skip chip.
     await page.getByRole('radio', { name: /skip this moment/i }).click();
 
-    const card = page.getByTestId('m3-taste-card').first();
-    await expect(card).toContainText(/skipped for now/i);
-    await expect(card).not.toContainText(/waiting on your response/i);
+    // The agent advances to m4_bag; a skipped M3 leaves the projection empty,
+    // so no taste card ever appears (13-s5 — no client-side "Skipped for now").
+    await expect(page.getByText(/moment 4 of 5 · what goes in the bag/i)).toBeVisible();
+    await expect(page.getByTestId('taste-card')).toHaveCount(0);
   });
 
-  // AC11 — M3 taste card transitions to "Noted" state when the parent submits
-  // free text and the agent advances out of m3_taste.
-  test('M3 taste card shows "Noted" copy after parent submits free text and agent advances', async ({
+  // AC11 → 13-s5 — after the parent submits free text and the agent advances,
+  // the taste card renders the tags the backend wrote, read back through the
+  // kitchen-map projection (replaces the old client-side "Noted" state).
+  test('taste card renders projection taste tags after parent submits free text and agent advances', async ({
     page,
   }) => {
+    // Projection stays empty until the taste turn lands server-side.
+    let tastePersisted = false;
+    await page.route(KITCHEN_MAP_URL, (route) =>
+      route.fulfill({
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(
+          tastePersisted
+            ? sampleKitchenMap({ dietary: ['Halal'], cultural: ['Punjabi'] })
+            : sampleKitchenMap(),
+        ),
+      }),
+    );
     let callCount = 0;
     await page.route(TURN_URL, (route) => {
       callCount += 1;
+      if (callCount >= 2) tastePersisted = true;
       route.fulfill({
         status: 200,
         headers: { 'Content-Type': 'application/json' },
@@ -193,9 +266,11 @@ test.describe('Slice 2.5-s7: Moment 3 — How your kitchen tastes', () => {
     // Wait for the second turn's Lumi response to confirm the request landed.
     await expect(page.getByText(/what goes in their lunch bag/i)).toBeVisible();
 
-    const card = page.getByTestId('m3-taste-card').first();
-    await expect(card).toContainText(/noted/i);
-    await expect(card).not.toContainText(/waiting on your response/i);
+    // The hero refetches the projection after the turn — taste tags land.
+    const card = page.getByTestId('taste-card').first();
+    await expect(card).toBeVisible();
+    await expect(card).toContainText('Halal');
+    await expect(card).toContainText('Punjabi');
   });
 
   // AC9 / AC12 — elevation chip flow: when the agent emits elevation chips,

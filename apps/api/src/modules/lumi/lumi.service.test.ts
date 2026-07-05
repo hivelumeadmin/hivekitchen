@@ -501,7 +501,7 @@ describe('LumiService.submitTextTurn — passive enrichment (Story 5-S7)', () =>
     const { service, openai } = buildDeps({ activeThread: null, memoryService });
     openai.chat.completions.create.mockResolvedValue(
       enrichmentCompletion(
-        '{"signals":[{"node_type":"cultural_rhythm","facet":"diwali-2026","prose_text":"Diwali is in three weeks.","confidence":0.8}]}',
+        '{"signals":[{"node_type":"other","facet":"diwali-2026","prose_text":"Diwali is in three weeks.","confidence":0.8}]}',
       ),
     );
 
@@ -515,7 +515,7 @@ describe('LumiService.submitTextTurn — passive enrichment (Story 5-S7)', () =>
     expect(memoryService.noteFromAgent).toHaveBeenCalledTimes(1);
     expect(memoryService.noteFromAgent).toHaveBeenCalledWith({
       householdId: 'hh1',
-      nodeType: 'cultural_rhythm',
+      nodeType: 'other',
       facet: 'diwali-2026',
       proseText: 'Diwali is in three weeks.',
       subjectChildId: null,

@@ -7,7 +7,6 @@ import {
   LumiTurnResponseSchema,
   VoiceTalkSessionCreateSchema,
   VoiceTalkSessionResponseSchema,
-  LumiVoiceClientMessageSchema,
   LumiNudgeEventSchema,
   NudgeTriggerSchema,
 } from './lumi.js';
@@ -27,13 +26,14 @@ const TURN_FIXTURE = {
 } as const;
 
 describe('LumiSurfaceSchema', () => {
-  it('pins the exact set of 9 surface values (drift guard)', () => {
+  it('pins the exact set of 10 surface values (drift guard)', () => {
     expect(LumiSurfaceSchema.options).toEqual([
       'onboarding',
       'planning',
       'brief',
       'meal-detail',
       'child-profile',
+      'kitchen-profile',
       'grocery-list',
       'evening-check-in',
       'heart-note',
@@ -393,37 +393,6 @@ describe('VoiceTalkSessionResponseSchema', () => {
 
   it('rejects a missing talk_session_id', () => {
     expect(VoiceTalkSessionResponseSchema.safeParse({}).success).toBe(false);
-  });
-});
-
-describe('LumiVoiceClientMessageSchema', () => {
-  it('accepts a context frame carrying a LumiContextSignal', () => {
-    const result = LumiVoiceClientMessageSchema.safeParse({
-      type: 'context',
-      context_signal: { surface: 'planning' },
-    });
-    expect(result.success).toBe(true);
-  });
-
-  it('accepts a ping frame', () => {
-    expect(LumiVoiceClientMessageSchema.safeParse({ type: 'ping' }).success).toBe(true);
-  });
-
-  it('rejects a context frame with an invalid surface', () => {
-    expect(
-      LumiVoiceClientMessageSchema.safeParse({
-        type: 'context',
-        context_signal: { surface: 'dashboard' },
-      }).success,
-    ).toBe(false);
-  });
-
-  it('rejects a context frame missing context_signal', () => {
-    expect(LumiVoiceClientMessageSchema.safeParse({ type: 'context' }).success).toBe(false);
-  });
-
-  it('rejects an unknown frame type', () => {
-    expect(LumiVoiceClientMessageSchema.safeParse({ type: 'user_audio' }).success).toBe(false);
   });
 });
 

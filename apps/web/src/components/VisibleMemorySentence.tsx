@@ -112,6 +112,7 @@ export function VisibleMemorySentence({ node, onNodeUpdated, showHelper }: Props
 
   if (isConfirmingForget) {
     return (
+      // eslint-disable-next-line jsx-a11y/no-static-element-interactions -- keyboard-only Escape-to-cancel bubbling from the inputs/buttons inside; activation stays on native controls
       <div
         aria-busy={isForgetting}
         className="flex flex-col gap-2 py-3 border-b border-border last:border-0"

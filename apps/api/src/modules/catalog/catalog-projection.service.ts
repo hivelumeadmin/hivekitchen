@@ -120,7 +120,7 @@ export class CatalogProjectionService {
   ): Promise<M5ChipResult> {
     try {
       // Step 1 — Stage 1 wait (polling).
-      const { timedOut } = await this.waitForStage1(householdId);
+      await this.waitForStage1(householdId);
 
       // Step 2 — single read.
       const allRows: CatalogRow[] =

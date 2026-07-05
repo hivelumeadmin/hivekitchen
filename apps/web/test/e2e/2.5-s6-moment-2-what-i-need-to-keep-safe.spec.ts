@@ -1,7 +1,44 @@
 import { test, expect } from '@playwright/test';
-import { loginAndNavigate } from './_helpers.js';
+import { loginAndNavigate, SAMPLE_HOUSEHOLD_ID } from './_helpers.js';
 
 const TURN_URL = '**/v1/onboarding/text/turn';
+const KITCHEN_MAP_URL = '**/v1/households/*/kitchen-map';
+
+// 13-s5 — the hero safety card is projection-sourced: allergens surface only
+// via the authoritative GET /households/:id/kitchen-map projection, never from
+// client-side chat/chip heuristics.
+function sampleKitchenMap(householdAllergens: string[]): Record<string, unknown> {
+  return {
+    household: {
+      id: SAMPLE_HOUSEHOLD_ID,
+      tier: 'standard',
+      tier_variant: 'control',
+      timezone: 'Europe/London',
+      display_name: 'Sharma Kitchen',
+      cultural_identifiers: [],
+      dietary_preferences: [],
+      declared_allergens: householdAllergens,
+    },
+    caregivers: [],
+    children: [],
+    cultural: { active: [], suggested: [] },
+    memory: { nodes: [] },
+    household_extras: { library: [] },
+    recipes: { favourites: [], banned: [] },
+    allergens: [],
+    dietary: [],
+    food_preferences: [],
+    favorite_lunches: [],
+    rules: [],
+    meta: {
+      composed_at: '2026-05-22T00:00:00.000Z',
+      map_version: 1,
+      schema_version: '1.1.0',
+      is_complete: false,
+      required_set_complete: false,
+    },
+  };
+}
 
 const M2_CHIP_CONFIG = {
   mode: 'choice',
@@ -191,19 +228,35 @@ test.describe("Slice 2.5-s6: Moment 2 — What I need to keep safe", () => {
     ).toBeVisible();
   });
 
-  // AC7.3 — safety card shows "Waiting on your response…" while in m2_safe.
-  test('safety card shows "Waiting on your response…" when m2_safe moment is active', async ({
+  // AC7.3 → 13-s5 — the safety card's waiting copy is now "Noting what to keep
+  // safe…" (projection-gated: it never asserts "All clear" before the parent
+  // answers and the projection confirms).
+  test('safety card shows "Noting what to keep safe…" when m2_safe moment is active', async ({
     page,
   }) => {
     await landOnM2(page);
 
     await page.setViewportSize({ width: 1280, height: 800 });
     await expect(page.getByTestId('m2-safety-card').first()).toBeVisible();
-    await expect(page.getByTestId('m2-safety-card').first()).toContainText(/waiting on your response/i);
+    await expect(page.getByTestId('m2-safety-card').first()).toContainText(
+      /noting what to keep safe/i,
+    );
+    // Gate — must never claim "All clear" before the parent has answered.
+    await expect(page.getByTestId('m2-safety-card').first()).not.toContainText(/all clear/i);
   });
 
-  // AC7.3 — safety card shows "✓ All clear" after submitting "No known allergens".
+  // AC7.3 → 13-s5 — "✓ All clear" renders only once the agent has advanced past
+  // m2_safe AND the loaded kitchen-map projection confirms zero allergen rows.
   test('safety card shows "All clear" after submitting "No known allergens"', async ({ page }) => {
+    // Empty projection — no allergen data anywhere. The card may only say
+    // "All clear" because the moment advanced to m3_taste with this loaded.
+    await page.route(KITCHEN_MAP_URL, (route) =>
+      route.fulfill({
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(sampleKitchenMap([])),
+      }),
+    );
     let callCount = 0;
     await page.route(TURN_URL, (route) => {
       callCount += 1;
@@ -240,11 +293,23 @@ test.describe("Slice 2.5-s6: Moment 2 — What I need to keep safe", () => {
     await expect(page.getByTestId('m2-safety-card').first()).toContainText(/all clear/i);
   });
 
-  // AC7.3 — safety card shows allergen badge(s) after submitting allergen chip(s).
+  // AC7.3 → 13-s5 — allergen badges are fed by the kitchen-map projection (the
+  // backend writes the chips to the DB; the hero refetches after the turn).
   test('safety card shows allergen badges after submitting allergen chips', async ({ page }) => {
+    // Projection is empty until the allergen turn lands server-side; afterwards
+    // it carries the declared allergens (the authoritative source for the card).
+    let allergensPersisted = false;
+    await page.route(KITCHEN_MAP_URL, (route) =>
+      route.fulfill({
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(sampleKitchenMap(allergensPersisted ? ['Peanut', 'Dairy'] : [])),
+      }),
+    );
     let callCount = 0;
     await page.route(TURN_URL, (route) => {
       callCount += 1;
+      if (callCount >= 2) allergensPersisted = true;
       route.fulfill({
         status: 200,
         headers: { 'Content-Type': 'application/json' },

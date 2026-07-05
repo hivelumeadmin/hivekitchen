@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { hkFetch, publicGet, publicPost } from '@/lib/fetch.js';
 import type {
@@ -85,7 +85,8 @@ type LoadedPayload = {
 // a parent peeking at the link recognizes the family of surfaces.
 export default function LunchLinkRoute() {
   const { linkId } = useParams<{ linkId: string }>();
-  const stubParsed = linkId ? parseStubLinkId(linkId) : null;
+  // Memoized so the load effect can depend on it without re-running every render.
+  const stubParsed = useMemo(() => (linkId ? parseStubLinkId(linkId) : null), [linkId]);
   const isStub = stubParsed !== null;
   const isHmac = linkId !== undefined && !isStub && isHmacToken(linkId);
 
@@ -213,7 +214,7 @@ export default function LunchLinkRoute() {
     return () => {
       isMounted = false;
     };
-  }, [linkId, isStub, isHmac, stubParsed?.childId, stubParsed?.date]);
+  }, [linkId, isStub, isHmac, stubParsed]);
 
   if (loadState === 'invalid-link') {
     return <LunchLinkErrorState message="This link doesn't look right." />;
@@ -379,7 +380,7 @@ function LunchLinkExpiredState({
           }
           from={snapshot.heartNote ? `— ${snapshot.heartNote.authorDisplayName}` : ''}
         />
-        {snapshot.rating != null && (
+        {snapshot.rating !== null && snapshot.rating !== undefined && (
           <p
             className="text-center text-4xl"
             aria-label={`Child rated: ${snapshot.rating}`}

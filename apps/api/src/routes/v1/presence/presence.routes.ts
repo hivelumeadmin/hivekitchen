@@ -1,5 +1,5 @@
 import fp from 'fastify-plugin';
-import { z } from 'zod';
+import type { z } from 'zod';
 import type { FastifyInstance, FastifyPluginAsync } from 'fastify';
 import { PresenceHeartbeatRequestSchema, PresenceResponseSchema } from '@hivekitchen/contracts';
 import type { PresencePartner, SurfaceKind } from '@hivekitchen/types';

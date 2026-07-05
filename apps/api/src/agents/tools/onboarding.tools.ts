@@ -52,6 +52,12 @@ import type { ToolSpec } from '../tools.manifest.js';
 // factory functions — each request constructs its own tool spec bundle.
 // ===========================================================================
 
+// Slice 2.7-s4 — onboarding tools are deliberately NOT in TOOL_MANIFEST: the
+// specs are built per-turn by createOnboardingToolSpecs() and the planner (the
+// manifest's only consumer) never offers them. The empty list opts this file
+// out of the manifest cross-check (scripts/check-tool-manifest.ts).
+export const MANIFESTED_TOOL_NAMES = [] as const;
+
 export interface OnboardingToolContext {
   householdId: string;
   userId: string;

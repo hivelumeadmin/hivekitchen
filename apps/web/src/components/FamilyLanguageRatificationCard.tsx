@@ -17,7 +17,6 @@ interface FamilyLanguageRatificationCardProps {
 // (UX-DR45). On opt_in the term locks forward forever.
 export function FamilyLanguageRatificationCard({
   term,
-  maps_to,
   householdId,
   onResolved,
 }: FamilyLanguageRatificationCardProps) {
@@ -69,7 +68,7 @@ export function FamilyLanguageRatificationCard({
       </p>
 
       {lumiFollowUp !== null ? (
-        <p className="border-l-2 border-sacred pl-3 font-sans text-xs italic text-fg-muted" role="status">
+        <p className="border-l-2 border-sacred ps-3 font-sans text-xs italic text-fg-muted" role="status">
           {lumiFollowUp}
         </p>
       ) : null}

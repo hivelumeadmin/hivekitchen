@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import type OpenAI from 'openai';
+import type { ChatCompletionTool } from 'openai/resources/chat/completions';
 import type { LumiSurface, Turn } from '@hivekitchen/types';
 import { LumiAgent } from './lumi.agent.js';
 import { LUMI_BASE_PERSONA } from './prompts/lumi-base.prompt.js';
@@ -378,7 +379,7 @@ describe('LumiAgent.respond — tool-call loop (7-S15)', () => {
         parameters: { type: 'object', properties: {} },
       },
     },
-  ] as unknown as import('openai/resources/chat/completions').ChatCompletionTool[];
+  ] as unknown as ChatCompletionTool[];
 
   it('executes a tool call then returns the follow-up prose', async () => {
     const create = vi

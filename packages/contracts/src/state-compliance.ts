@@ -1,5 +1,7 @@
 import { z } from 'zod';
 
+// @unused-by-design — 7-S12 state-compliance scaffold; wired when the story lands
+
 export const StateComplianceOverrideSchema = z.object({
   id: z.string().uuid(),
   state: z.string().min(2).max(2),

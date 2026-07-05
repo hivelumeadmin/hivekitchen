@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, waitFor, cleanup } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
+import type * as reactRouterDom from 'react-router-dom';
 import LoginPage from './login.js';
 
 vi.mock('@/lib/supabase-client.js', () => ({
@@ -9,7 +10,7 @@ vi.mock('@/lib/supabase-client.js', () => ({
 
 const navigateSpy = vi.fn();
 vi.mock('react-router-dom', async () => {
-  const actual = await vi.importActual<typeof import('react-router-dom')>('react-router-dom');
+  const actual = await vi.importActual<typeof reactRouterDom>('react-router-dom');
   return {
     ...actual,
     useNavigate: () => navigateSpy,

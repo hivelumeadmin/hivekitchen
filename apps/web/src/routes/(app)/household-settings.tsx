@@ -8,7 +8,6 @@ import {
 import type {
   HouseholdMember,
   CreateInviteResponse,
-  HouseholdGeolocationConsent,
 } from '@hivekitchen/types';
 import { hkFetch, HkApiError } from '@/lib/fetch.js';
 import { useLumiContext } from '@/hooks/useLumiContext.js';

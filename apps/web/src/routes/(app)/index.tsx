@@ -13,12 +13,15 @@ export default function AppHomePage({ artifact }: { artifact?: ReactNode }) {
   useScope('app-scope');
   useLumiContext({ surface: 'brief' });
   const gate = useRequireParentalNoticeAcknowledgment();
+  // Destructured so the effect can list plain deps (requireAcknowledgment is a
+  // stable useCallback inside the hook).
+  const { state: gateState, requireAcknowledgment } = gate;
 
   useEffect(() => {
-    if (gate.state === 'required') {
-      gate.requireAcknowledgment(() => {});
+    if (gateState === 'required') {
+      requireAcknowledgment(() => {});
     }
-  }, [gate.state, gate.requireAcknowledgment]);
+  }, [gateState, requireAcknowledgment]);
 
   if (gate.state !== 'acknowledged') {
     return <>{gate.dialog}</>;

@@ -29,6 +29,10 @@ const SNACK_LIST = [
     category: 'fruit',
     created_by_household_id: null,
     created_at: '2026-06-01T00:00:00.000Z',
+    allergen_tags: [],
+    upc_code: null,
+    package_type: null,
+    in_stock: true,
   },
   {
     id: HOUSEHOLD_SKU_ID,
@@ -37,6 +41,10 @@ const SNACK_LIST = [
     category: 'grain',
     created_by_household_id: SAMPLE_HOUSEHOLD_ID,
     created_at: '2026-06-10T00:00:00.000Z',
+    allergen_tags: ['wheat'],
+    upc_code: null,
+    package_type: null,
+    in_stock: true,
   },
 ];
 
@@ -108,6 +116,10 @@ test.describe('Story 3-S41 — Add snack (AC7)', () => {
       category: 'protein',
       created_by_household_id: SAMPLE_HOUSEHOLD_ID,
       created_at: '2026-06-20T12:00:00.000Z',
+      allergen_tags: [],
+      upc_code: null,
+      package_type: null,
+      in_stock: true,
     };
 
     let capturedBody: Record<string, unknown> | null = null;
@@ -152,6 +164,10 @@ test.describe('Story 3-S41 — Add snack (AC7)', () => {
           category: 'dairy',
           created_by_household_id: SAMPLE_HOUSEHOLD_ID,
           created_at: '2026-06-20T12:00:00.000Z',
+          allergen_tags: [],
+          upc_code: null,
+          package_type: null,
+          in_stock: true,
         }),
       });
     });

@@ -83,14 +83,39 @@ jobs:
         run: pnpm exec playwright install chromium --with-deps
         working-directory: apps/web
 
-      - name: Build apps/web
+      - name: Build apps/web (VITE_E2E mode)
         run: pnpm --filter @hivekitchen/web build
+        env:
+          # The e2e specs drive the app through test hooks (__lumiStore,
+          # __hivekitchen_qc) that are compiled in only when VITE_E2E=true —
+          # locally this comes from apps/web/.env.local.
+          VITE_E2E: 'true'
+          # supabase-client.ts constructs its client at module import; missing
+          # values throw "supabaseUrl is required" and kill the whole bundle
+          # before the test hooks install. Specs mock all network traffic, so
+          # stub values are sufficient — nothing is ever contacted.
+          VITE_API_BASE_URL: 'http://localhost:3001'
+          VITE_SSE_BASE_URL: 'http://localhost:3001'
+          VITE_SUPABASE_URL: 'https://stub-e2e.supabase.co'
+          VITE_SUPABASE_ANON_KEY: 'stub-anon-key-for-e2e'
 
       - name: E2E + A11y tests
-        run: pnpm exec playwright test --passWithNoTests --ignore-glob="**/perf/**"
+        run: pnpm exec playwright test test/e2e --max-failures=10 --workers=100%
+        timeout-minutes: 25
+        # Scoped to test/e2e — the SSE perf spec (test/perf) runs in perf.yml
+        # (Story 1.13), not here. The original invocation used vitest-only
+        # flags (--passWithNoTests / --ignore-glob) that Playwright rejects;
+        # it was written before any e2e specs existed and had never run
+        # (this job was skipped for months behind a red lint gate).
         working-directory: apps/web
-        # --passWithNoTests: passes with 0 test files until Epic 2+ adds functional E2E tests.
-        # --ignore-glob="**/perf/**": SSE perf test runs in perf.yml (Story 1.13), not here.
+
+      - name: Upload Playwright report on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: apps/web/playwright-report/
+          retention-days: 7
 
   db-diff:
     name: DB schema drift check

@@ -1,5 +1,4 @@
 import type { CulturalTemplateKey } from '../../../services/cultural-calendar.service.js';
-import type { ChildSignalOutput } from '@hivekitchen/types';
 import type { PlannerContext, PlannerRecipeCandidate } from './assemble.js';
 
 const CULTURAL_TEMPLATE_DISPLAY_NAMES: Record<CulturalTemplateKey, string> = {
@@ -253,7 +252,7 @@ export function renderPlannerKitchenMapBlock(ctx: PlannerContext): string {
 
   const householdSection = [
     'household:',
-    `  display_name: ${map.household.display_name != null ? yamlStr(map.household.display_name) : 'null'}`,
+    `  display_name: ${map.household.display_name !== null && map.household.display_name !== undefined ? yamlStr(map.household.display_name) : 'null'}`,
     `  timezone: "${map.household.timezone}"`,
     `  declared_allergens: ${JSON.stringify(map.household.declared_allergens)}`,
     `  dietary_preferences: ${JSON.stringify(map.household.dietary_preferences)}`,

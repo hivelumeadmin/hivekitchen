@@ -17,7 +17,7 @@ function sampleNode(overrides: Record<string, unknown> = {}) {
   return {
     id: ACTIVE_NODE_ID,
     household_id: SAMPLE_HOUSEHOLD_ID,
-    node_type: 'preference',
+    node_type: 'other',
     facet: 'avoids spicy',
     subject_child_id: null,
     prose_text: ORIGINAL,

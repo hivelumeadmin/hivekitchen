@@ -75,6 +75,14 @@ export function baseConfig(): Linter.Config[] {
         'hivekitchen/no-assistant-filler': 'error',
         '@typescript-eslint/consistent-type-imports': 'error',
         '@typescript-eslint/no-explicit-any': 'error',
+        '@typescript-eslint/no-unused-vars': [
+          'error',
+          {
+            argsIgnorePattern: '^_',
+            varsIgnorePattern: '^_',
+            caughtErrorsIgnorePattern: '^_',
+          },
+        ],
         eqeqeq: ['error', 'always'],
       },
     },

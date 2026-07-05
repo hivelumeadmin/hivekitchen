@@ -140,7 +140,12 @@ test.describe('Story 3-16: school policy update propagation', () => {
     // is server-driven and only updates once the PATCH response arrives.
     await page.getByLabel(/^nut.free/i).click();
 
-    await expect(page.getByRole('status')).toContainText(/saved.*updating future plans/i);
+    // Epic 13 — LumiWhisper mounts an always-present sr-only role=status live
+    // region at the app root; filter to the save-status element to avoid a
+    // strict-mode violation.
+    await expect(
+      page.getByRole('status').filter({ hasText: /saved.*updating future plans/i }),
+    ).toBeVisible();
     expect(patchedBody).toMatchObject({ policy_type: 'nut_free', is_active: true, slot_scope: 'bag_wide' });
   });
 
@@ -164,7 +169,7 @@ test.describe('Story 3-16: school policy update propagation', () => {
 
     await page.getByLabel(/^nut.free/i).click();
 
-    await expect(page.getByRole('status')).toHaveText(/^saved\.$/i);
+    await expect(page.getByRole('status').filter({ hasText: /^saved\.$/i })).toBeVisible();
     // Deactivated policy should be unchecked in the updated UI.
     await expect(page.getByLabel(/^nut.free/i)).not.toBeChecked();
   });
@@ -213,7 +218,9 @@ test.describe('Story 3-16: school policy update propagation', () => {
 
     await page.getByLabel(/^no pork/i).click();
 
-    await expect(page.getByRole('status')).toContainText(/couldn.t save school policy/i);
+    await expect(
+      page.getByRole('status').filter({ hasText: /couldn.t save school policy/i }),
+    ).toBeVisible();
     // Toggle row should still be visible so the user can retry.
     await expect(page.getByLabel(/^no pork/i)).toBeVisible();
   });
@@ -268,10 +275,10 @@ test.describe('Story 3-16: school policy update propagation', () => {
     });
 
     await page.getByLabel(/^no heating/i).click();
-    await expect(page.getByRole('status')).toContainText(/saved/i);
+    await expect(page.getByRole('status').filter({ hasText: /saved/i })).toBeVisible();
 
     await page.getByLabel(/^nut.free/i).click();
-    await expect(page.getByRole('status')).toHaveText(/^saved\.$/i);
+    await expect(page.getByRole('status').filter({ hasText: /^saved\.$/i })).toBeVisible();
 
     expect(callCount).toBe(2);
   });

@@ -469,7 +469,7 @@ const childrenRoutesPlugin: FastifyPluginAsync = async (fastify) => {
       return reply.send({
         child_id: childId,
         date: body.date,
-        suppressed: session?.suppressed_at != null,
+        suppressed: typeof session?.suppressed_at === 'string',
         suppressed_at: session?.suppressed_at ?? null,
       });
     },

@@ -50,7 +50,7 @@ export function RemovableChip({
           · {badge}
         </span>
       )}
-      <span className="ml-0.5 text-fg-muted/70" aria-hidden>
+      <span className="ms-0.5 text-fg-muted/70" aria-hidden>
         ×
       </span>
     </button>

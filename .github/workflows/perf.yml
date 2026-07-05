@@ -30,6 +30,12 @@ jobs:
         run: pnpm --filter @hivekitchen/web build
         env:
           VITE_E2E: 'true'
+          # Missing Supabase envs throw at module import (supabase-client.ts)
+          # and kill the bundle before boot — same stubs as ci.yml's E2E job.
+          VITE_API_BASE_URL: 'http://localhost:3001'
+          VITE_SSE_BASE_URL: 'http://localhost:3001'
+          VITE_SUPABASE_URL: 'https://stub-e2e.supabase.co'
+          VITE_SUPABASE_ANON_KEY: 'stub-anon-key-for-e2e'
 
       - name: Build apps/marketing
         run: pnpm --filter @hivekitchen/marketing build

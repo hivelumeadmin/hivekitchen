@@ -48,7 +48,7 @@ function buildReasons(brief: BriefStateRow): readonly WhyReason[] {
 }
 
 export function BriefWhyPanel({ brief }: BriefWhyPanelProps) {
-  if (brief == null) return null;
+  if (brief === null || brief === undefined) return null;
 
   const reasons = buildReasons(brief);
 

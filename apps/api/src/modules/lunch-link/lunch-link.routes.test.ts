@@ -94,16 +94,20 @@ function buildMockSupabase(opts: MockOpts) {
         };
       }
       if (table === 'heart_notes') {
+        // findByChildAndDate queries a created_at day window:
+        // select → eq → eq → gte → lt → order → limit → maybeSingle
         return {
           select: () => ({
             eq: () => ({
               eq: () => ({
-                eq: () => ({
-                  order: () => ({
-                    limit: () => ({
-                      maybeSingle: vi.fn().mockResolvedValue({
-                        data: opts.findResult ?? null,
-                        error: null,
+                gte: () => ({
+                  lt: () => ({
+                    order: () => ({
+                      limit: () => ({
+                        maybeSingle: vi.fn().mockResolvedValue({
+                          data: opts.findResult ?? null,
+                          error: null,
+                        }),
                       }),
                     }),
                   }),

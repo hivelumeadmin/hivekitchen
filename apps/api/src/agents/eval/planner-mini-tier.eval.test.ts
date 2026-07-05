@@ -1,4 +1,5 @@
 import { describe, it, afterAll } from 'vitest';
+// eslint-disable-next-line no-restricted-imports -- opt-in live-API eval (RUN_LIVE_EVALS), deliberately bypasses the plugin layer to probe the mini tier directly
 import OpenAI from 'openai';
 import type { FastifyBaseLogger } from 'fastify';
 import type { Redis } from 'ioredis';

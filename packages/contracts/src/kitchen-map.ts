@@ -63,9 +63,9 @@ export const KitchenMapCaregiverSchema = z.object({
 // ---- Children -------------------------------------------------------------
 
 // Story 3-DM-B1 — BagCompositionPatternSchema moved to children.ts (canonical
-// column home). Re-export from this module so existing imports continue to work.
+// column home); imported here for the projection only (a re-export would
+// collide with children.ts in the package-level duplicate-export check).
 import { BagCompositionPatternSchema } from './children.js';
-export { BagCompositionPatternSchema };
 export type BagCompositionPattern = z.infer<typeof BagCompositionPatternSchema>;
 
 // Re-uses AgeBandSchema + BagCompositionSchema from children.ts to avoid

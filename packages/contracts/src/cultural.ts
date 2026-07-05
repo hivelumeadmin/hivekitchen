@@ -76,15 +76,3 @@ const CulturalLookupPriorSchema = CulturalPriorSchema.pick({
 export const CulturalLookupOutputSchema = z.object({
   priors: z.array(CulturalLookupPriorSchema),
 });
-
-// SSE event — Story 5.2 wires the real fan-out. Defined here so consumers
-// can already type-check against the wire shape.
-export const TemplateStateChangedEventSchema = z.object({
-  type: z.literal('template.state_changed'),
-  prior_id: z.string().uuid(),
-  household_id: z.string().uuid(),
-  key: CulturalKeySchema,
-  from_state: TemplateStateSchema,
-  to_state: TemplateStateSchema,
-  at: z.string(),
-});

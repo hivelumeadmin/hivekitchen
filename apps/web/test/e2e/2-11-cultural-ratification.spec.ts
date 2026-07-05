@@ -31,7 +31,16 @@ const PRIOR_B = priorFactory({
   label: 'caribbean',
 });
 
-async function reachRatificationStep(page: Page) {
+// Epic 13-s5/s6 — cultural ratification no longer lands directly on /app.
+// onComplete advances to the mental-model step ("The plan is always ready…"),
+// whose "Get started" button performs the final navigate('/app').
+async function completeMentalModelToApp(page: Page) {
+  await expect(page.getByText(/the plan is always ready/i)).toBeVisible();
+  await page.getByRole('button', { name: /get started/i }).click();
+  await expect(page).toHaveURL(/\/app$/);
+}
+
+async function reachRatificationStep(page: Page, opts: { expectHeading?: boolean } = {}) {
   // Drive: login → text onboarding → finalize → consent → sign → ratification
   await page.route('**/v1/onboarding/text/turn', (route) =>
     route.fulfill({
@@ -89,7 +98,9 @@ async function reachRatificationStep(page: Page) {
   await page.getByRole('button', { name: /^send$/i }).click();
   await page.getByRole('button', { name: /finish onboarding/i }).click();
   await page.getByRole('button', { name: /i agree and sign/i }).click();
-  await expect(page.getByRole('heading', { name: /lumi noticed a few things/i })).toBeVisible();
+  if (opts.expectHeading !== false) {
+    await expect(page.getByRole('heading', { name: /lumi noticed a few things/i })).toBeVisible();
+  }
 }
 
 test.describe('Story 2-11: cultural template inference + parental confirmation', () => {
@@ -101,8 +112,10 @@ test.describe('Story 2-11: cultural template inference + parental confirmation',
         body: JSON.stringify({ priors: [] }),
       }),
     );
-    await reachRatificationStep(page);
-    await expect(page).toHaveURL(/\/app$/);
+    // Zero priors → the ratification step auto-completes (heading may never be
+    // observable) and advances straight to the mental-model step.
+    await reachRatificationStep(page, { expectHeading: false });
+    await completeMentalModelToApp(page);
   });
 
   test('one card per detected prior is rendered with the three sanctioned actions', async ({
@@ -155,8 +168,8 @@ test.describe('Story 2-11: cultural template inference + parental confirmation',
     await reachRatificationStep(page);
     await page.getByRole('button', { name: /yes, keep it in mind/i }).click();
     await expect.poll(() => patchedBody).toEqual({ action: 'opt_in' });
-    // Last card resolved → step completes → onComplete navigates to /app.
-    await expect(page).toHaveURL(/\/app$/);
+    // Last card resolved → step completes → mental-model step → /app.
+    await completeMentalModelToApp(page);
   });
 
   test('"Tell Lumi more" renders the inline reply WITHOUT removing the card', async ({ page }) => {
@@ -221,7 +234,7 @@ test.describe('Story 2-11: cultural template inference + parental confirmation',
     await reachRatificationStep(page);
     await page.getByRole('button', { name: /not for us/i }).click();
     await expect.poll(() => patchedBody).toEqual({ action: 'forget' });
-    await expect(page).toHaveURL(/\/app$/);
+    await completeMentalModelToApp(page);
   });
 
   test('403/404 from PATCH treats the prior as already-resolved (card disappears)', async ({
@@ -246,7 +259,7 @@ test.describe('Story 2-11: cultural template inference + parental confirmation',
 
     await reachRatificationStep(page);
     await page.getByRole('button', { name: /yes, keep it in mind/i }).click();
-    await expect(page).toHaveURL(/\/app$/);
+    await completeMentalModelToApp(page);
   });
 
   test('5xx error keeps the card AND surfaces a friendly error message', async ({ page }) => {
@@ -287,6 +300,6 @@ test.describe('Story 2-11: cultural template inference + parental confirmation',
     await reachRatificationStep(page);
     await expect(page.getByText(/couldn.t load lumi.s notes/i)).toBeVisible();
     await page.getByRole('button', { name: /^continue$/i }).click();
-    await expect(page).toHaveURL(/\/app$/);
+    await completeMentalModelToApp(page);
   });
 });

@@ -129,6 +129,17 @@ export async function loginAndNavigate(
   destination: string,
   opts: { isFirstLogin?: boolean } = {},
 ) {
+  // The SSE bridge (13-s2.5) opens GET /v1/events on every authenticated app
+  // mount. Without a mock it hits the preview server (connection refused) and
+  // the bridge retries in a loop for the life of the test. Registered FIRST so
+  // any spec's own **/v1/events** route (registered later) takes precedence.
+  await page.route('**/v1/events**', (route) =>
+    route.fulfill({
+      status: 200,
+      headers: { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache' },
+      body: ':ok\n\n',
+    }),
+  );
   await mockLogin(page, { isFirstLogin: opts.isFirstLogin ?? false });
   await page.goto(`/auth/login?next=${encodeURIComponent(destination)}`);
   // v2.0 labels — see login.tsx loginCopyMock. Exact-match the email and

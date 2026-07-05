@@ -1,11 +1,11 @@
-import { Buffer } from 'node:buffer';
+import type { Buffer } from 'node:buffer';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { HouseholdGeolocationConsentSchema } from '@hivekitchen/contracts';
 import type { HouseholdGeolocationConsent } from '@hivekitchen/types';
 import { BaseRepository } from '../../repository/base.repository.js';
 import { decryptField, encryptField, normalizedHash } from '../../lib/envelope-encryption.js';
 import { getHouseholdDek, getOrCreateHouseholdDek } from '../../lib/household-key.js';
-import { DataIntegrityError, NotFoundError, ValidationError } from '../../common/errors.js';
+import { DataIntegrityError, NotFoundError } from '../../common/errors.js';
 import { HouseholdAllergensRepository } from './household-allergens.repository.js';
 import { HouseholdCulturalIdentifiersRepository } from './household-cultural-identifiers.repository.js';
 

@@ -196,12 +196,11 @@ describe('PlanAdjustmentService.triggerAdjustment', () => {
     );
   });
 
-  it('returns zero queued without throwing when findActiveFuturePlanIds rejects', async () => {
+  it('logs and rethrows when findActiveFuturePlanIds rejects; nothing enqueued or audited', async () => {
     mocks.plansRepo.findActiveFuturePlanIds.mockRejectedValueOnce(new Error('db-down'));
 
-    const result = await service.triggerAdjustment(baseTrigger);
+    await expect(service.triggerAdjustment(baseTrigger)).rejects.toThrow('db-down');
 
-    expect(result).toEqual({ plansQueued: 0, enqueuedPlanIds: [], failedPlanIds: [] });
     expect(mocks.regenQueue.add).not.toHaveBeenCalled();
     expect(mocks.auditService.write).not.toHaveBeenCalled();
   });

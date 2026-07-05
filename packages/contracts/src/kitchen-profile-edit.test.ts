@@ -3,7 +3,6 @@ import {
   AddChildAllergenRequestSchema,
   ChildAllergenMutationResponseSchema,
   COMMON_ALLERGENS,
-  RemoveChildAllergenRequestSchema,
   SetCulturalEnforcementRequestSchema,
   SetCulturalEnforcementResponseSchema,
 } from './kitchen-profile-edit.js';
@@ -42,16 +41,6 @@ describe('ChildAllergenMutationResponseSchema', () => {
     expect(
       ChildAllergenMutationResponseSchema.safeParse({ child_id: 'nope', allergens: [] }).success,
     ).toBe(false);
-  });
-});
-
-describe('RemoveChildAllergenRequestSchema', () => {
-  it('accepts an arbitrary (onboarding-era) allergen string', () => {
-    expect(RemoveChildAllergenRequestSchema.safeParse({ allergen: 'peanuts' }).success).toBe(true);
-  });
-
-  it('rejects an empty allergen', () => {
-    expect(RemoveChildAllergenRequestSchema.safeParse({ allergen: '' }).success).toBe(false);
   });
 });
 

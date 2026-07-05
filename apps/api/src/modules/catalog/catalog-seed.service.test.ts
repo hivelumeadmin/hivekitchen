@@ -33,7 +33,9 @@ function buildLogger(): FastifyBaseLogger {
   } as unknown as FastifyBaseLogger;
 }
 
-// FALCPA rules — same shape as curated-baseline tests.
+// FALCPA rules — same shape as curated-baseline tests. Since guardrail 1.4.0
+// these are vocabulary + baseline-presence only; hard blocks come exclusively
+// from parent_declared rules (household-wide or per-child).
 const FALCPA_RULES: AllergyRule[] = [
   { id: 'peanut', household_id: null, child_id: null, allergen: 'peanut', rule_type: 'falcpa' },
   { id: 'tree_nut', household_id: null, child_id: null, allergen: 'tree_nut', rule_type: 'falcpa' },
@@ -197,8 +199,21 @@ describe('CatalogSeedService — seedForHousehold', () => {
     vi.useRealTimers();
   });
 
-  it('happy path: LLM emits 50 → 2 Zod-invalid dropped → 5 guardrail-blocked dropped → 43 persisted', async () => {
+  it('happy path: LLM emits 50 → 2 name-prefilter dropped → 5 guardrail-blocked dropped → 43 persisted', async () => {
     const deps = buildDeps();
+    // Guardrail 1.4.0 — only parent_declared rules block, so the household
+    // declares peanut. FALCPA rows still satisfy the baseline-presence check
+    // and provide the synonym vocabulary.
+    deps.guardrailRepo.getRulesForHousehold.mockResolvedValue([
+      ...FALCPA_RULES,
+      {
+        id: 'declared-peanut',
+        household_id: HOUSEHOLD_ID,
+        child_id: null,
+        allergen: 'peanut',
+        rule_type: 'parent_declared',
+      },
+    ]);
     // 43 clean items
     const cleanItems = Array.from({ length: 43 }, (_, i) => ({
       canonical_name: `safe lunch ${i + 1}`,
@@ -208,32 +223,33 @@ describe('CatalogSeedService — seedForHousehold', () => {
       cuisine_tags: ['south_asian'],
       applicable_slots: ['main'],
     }));
-    // 5 items with allergen_flags matching the FALCPA peanut rule; names contain
-    // no FALCPA token so they pass the name pre-filter but get blocked by the
-    // guardrail engine (peanut rule in FALCPA_RULES fires on allergen_flags).
+    // 5 items whose names match a peanut SYNONYM ('groundnut') — no bare
+    // 'peanut' token, so they pass the name pre-filter but get blocked by the
+    // guardrail engine (declared peanut rule fires via synonym expansion).
     const guardrailBlockedItems = Array.from({ length: 5 }, (_, i) => ({
-      canonical_name: `savory wraps ${i + 1}`,
+      canonical_name: `groundnut wraps ${i + 1}`,
       allergen_flags: ['peanut'],
       dietary_flags: [],
       cultural_tags: [],
       cuisine_tags: ['south_asian'],
       applicable_slots: ['main'],
     }));
-    // 2 items missing applicable_slots — Zod rejects these before guardrail.
-    const zodInvalidItems = Array.from({ length: 2 }, (_, i) => ({
-      canonical_name: `broken item ${i + 1}`,
-      allergen_flags: [],
+    // 2 items whose names contain the bare declared-allergen token 'peanut' —
+    // dropped by the belt-and-suspenders name pre-filter before the guardrail.
+    const prefilterDroppedItems = Array.from({ length: 2 }, (_, i) => ({
+      canonical_name: `peanut brittle ${i + 1}`,
+      allergen_flags: ['peanut'],
       dietary_flags: [],
       cultural_tags: [],
       cuisine_tags: [],
-      // applicable_slots intentionally omitted
+      applicable_slots: ['main'],
     }));
     deps.openai.chat.completions.create.mockResolvedValue({
       choices: [
         {
           message: {
             content: JSON.stringify({
-              items: [...cleanItems, ...guardrailBlockedItems, ...zodInvalidItems],
+              items: [...cleanItems, ...guardrailBlockedItems, ...prefilterDroppedItems],
             }),
           },
         },
@@ -609,9 +625,21 @@ describe('CatalogSeedService — seedForHousehold', () => {
   it('Stage 2 trigger: mass-block (> 50% blocked) → enqueueRecovery with mass_block + emitted/blocked counts; logs mass_block_detected', async () => {
     const logger = buildLogger();
     const deps = buildDeps();
+    // Guardrail 1.4.0 — blocking requires a parent_declared rule; the
+    // household declares wheat (FALCPA rows alone no longer block).
+    deps.guardrailRepo.getRulesForHousehold.mockResolvedValue([
+      ...FALCPA_RULES,
+      {
+        id: 'declared-wheat',
+        household_id: HOUSEHOLD_ID,
+        child_id: null,
+        allergen: 'wheat',
+        rule_type: 'parent_declared',
+      },
+    ]);
     // 10 items: 6 blocked by guardrail (canonical_name 'pasta dish N' matches
     // wheat synonym 'pasta'), 4 clean. Ratio 6/10 > 0.5 → mass-block fires.
-    // Note: pre-filter checks bare FALCPA keys ('wheat', 'dairy', ...) only,
+    // Note: pre-filter checks bare allergen keys ('wheat', 'dairy', ...) only,
     // NOT synonyms — so 'pasta dish' passes pre-filter then hits guardrail.
     const blocked = Array.from({ length: 6 }, (_, i) => ({
       canonical_name: `pasta dish ${i + 1}`,

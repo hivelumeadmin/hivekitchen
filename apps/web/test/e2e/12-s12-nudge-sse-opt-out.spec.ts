@@ -88,6 +88,10 @@ test.describe('Story 12-S12 — orb breathing (AC#4)', () => {
     page,
   }) => {
     await page.goto('/app');
+    // Wait for the route to mount before seeding: useLumiContext's setContext
+    // (Epic 13) resets presenceState to 'atRest' on registration, which would
+    // wipe a seed applied while the router is still gated on session restore.
+    await expect(page.getByRole('button', { name: /open lumi/i })).toBeVisible();
     // Seed summoned + pending nudge — breathing is suppressed while the sheet is showing.
     await seedLumiStore(page, { pendingNudge: NUDGE_TURN, presenceState: 'summoned' });
     // When summoned the dot aria-label becomes "Lumi is open".
@@ -320,7 +324,9 @@ test.describe('Story 12-S12 — account page nudge checkbox (AC#8)', () => {
     await loginAndNavigate(page, '/account');
     const checkbox = page.getByRole('checkbox', { name: /lumi proactive nudges/i });
     await expect(checkbox).toBeChecked();
-    await checkbox.uncheck();
+    // click(), not uncheck(): uncheck() asserts the post-click state, which
+    // races the intentional optimistic revert on slow CI runners.
+    await checkbox.click();
     await expect(page.getByRole('alert')).toContainText(/could not update notification/i);
     await expect(checkbox).toBeChecked();
   });

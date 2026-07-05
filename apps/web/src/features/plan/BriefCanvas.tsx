@@ -274,8 +274,8 @@ export function BriefCanvas() {
   // returns raw JSON without Zod parsing, so payload (or a sub-field) may be
   // absent on a pre-migration cached response — default each to prevent a crash.
   const payload = brief?.payload;
-  const clearedAllergies = payload?.cleared_allergies ?? [];
-  const tileSummaries = payload?.tile_summaries ?? [];
+  const clearedAllergies = useMemo(() => payload?.cleared_allergies ?? [], [payload]);
+  const tileSummaries = useMemo(() => payload?.tile_summaries ?? [], [payload]);
   const scaffoldingDiff = payload?.scaffolding_diff ?? null;
   const planState = payload?.plan_state ?? null;
   const planStateMessage = payload?.plan_state_message ?? null;

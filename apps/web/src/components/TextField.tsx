@@ -71,7 +71,7 @@ export function TextField({
     <div className={`flex flex-col ${className}`.trim()}>
       <label
         htmlFor={id}
-        className="mb-2 ml-1 text-[11px] font-medium uppercase tracking-widest text-fg-muted"
+        className="mb-2 ms-1 text-[11px] font-medium uppercase tracking-widest text-fg-muted"
       >
         {label}
       </label>
@@ -109,7 +109,7 @@ export function TextField({
         <p
           id={`${id}-error`}
           role="alert"
-          className="mt-2 ml-1 text-xs text-safety-red"
+          className="mt-2 ms-1 text-xs text-safety-red"
         >
           {error}
         </p>

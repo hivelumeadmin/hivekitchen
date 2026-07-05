@@ -23,7 +23,7 @@ function buildRedis() {
 function buildService(nodes = [
   {
     node_id: NODE_ID,
-    node_type: 'preference' as const,
+    node_type: 'other' as const,
     facet: 'avoids spicy',
     prose_text: 'Child avoids spicy food.',
     subject_child_id: null,
@@ -69,7 +69,7 @@ describe('createMemoryRecallSpec', () => {
       nodes: [
         {
           node_id: NODE_ID,
-          node_type: 'preference',
+          node_type: 'other',
           facet: 'avoids spicy',
           prose_text: 'Child avoids spicy food.',
           subject_child_id: null,

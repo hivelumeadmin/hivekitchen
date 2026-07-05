@@ -383,16 +383,37 @@ describe('BriefCanvas — Story 3.12 (paused, swap picker)', () => {
     expect(screen.queryByRole('group', { name: /Edit / })).toBeNull();
   });
 
-  it('tapping a tile when canSwap=true renders the DisambiguationPicker', async () => {
+  // Story 13-s10 (D1) — a tile tap no longer opens the DisambiguationPicker
+  // directly; it summons the Lumi sheet armed with that day's edit scope.
+  it('tapping a tile when canSwap=true summons Lumi with the day edit scope (13-s10)', async () => {
     const { hkFetch } = await import('@/lib/fetch.js');
-    vi.mocked(hkFetch).mockResolvedValue({ brief: makeBrief() } satisfies BriefResponse);
+    const { useLumiStore } = await import('@/stores/lumi.store.js');
+    useLumiStore.getState().reset();
+    vi.mocked(hkFetch).mockImplementation(async (path: string) => {
+      if (path.startsWith('/v1/plans')) {
+        return {
+          plan: null,
+          main_assignments: [],
+          days: [],
+          slots: [],
+          variations: [],
+          is_draft: false,
+          week_of: '2026-04-20',
+        };
+      }
+      return { brief: makeBrief() } satisfies BriefResponse;
+    });
 
     renderWithClient(<BriefCanvas />);
 
     const monday = await screen.findByLabelText('Monday');
-    fireEvent.click(monday);
-
-    expect(screen.getByRole('group', { name: 'Edit Monday' })).toBeDefined();
+    await waitFor(() => {
+      fireEvent.click(monday);
+      expect(useLumiStore.getState().presenceState).toBe('summoned');
+    });
+    expect(useLumiStore.getState().planEditScope?.day).toBe('mon');
+    expect(useLumiStore.getState().planEditScope?.planId).toBe(PLAN_ID);
+    useLumiStore.getState().reset();
   });
 
   it('tile does NOT trigger picker when brief.plan_id is null (canSwap=false)', async () => {

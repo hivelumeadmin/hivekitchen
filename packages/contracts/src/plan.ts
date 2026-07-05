@@ -1,31 +1,5 @@
 import { z } from 'zod';
 
-// --- Existing meal-planning schemas (kept unchanged) ---
-
-export const MealItem = z.object({
-  id: z.string().uuid(),
-  name: z.string(),
-  description: z.string().optional(),
-  tags: z.array(z.string()).optional(),
-});
-
-export const DayPlan = z.object({
-  day: z.enum(['monday', 'tuesday', 'wednesday', 'thursday', 'friday']),
-  meal: MealItem,
-});
-
-export const WeeklyPlan = z.object({
-  id: z.string().uuid(),
-  weekOf: z.string(),
-  status: z.enum(['draft', 'confirmed']),
-  days: z.array(DayPlan),
-  promptVersion: z.string(),
-});
-
-export const CreatePlanResponse = z.object({
-  plan: WeeklyPlan,
-});
-
 // --- Foundation Gate schemas ---
 
 export const AllergyVerdict = z.discriminatedUnion('verdict', [
@@ -893,10 +867,6 @@ export const SwapSlotRecipeResponseSchema = z.object({
 // Snack slots only — recipe-backed snack swaps go through SwapSlotRecipeInput.
 export const SwapSlotSnackSkuInputSchema = z.object({
   new_snack_sku_id: z.string().uuid(),
-});
-
-export const SwapSlotSnackSkuResponseSchema = z.object({
-  slot: PlanSlotRowSchema,
 });
 
 // --- PATCH /v1/plans/:planId/days/:day/pause — tree shape ---

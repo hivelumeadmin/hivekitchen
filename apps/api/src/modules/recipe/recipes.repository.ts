@@ -187,7 +187,7 @@ export class RecipesRepository extends BaseRepository {
       .limit(1)
       .maybeSingle();
     if (error) throw error;
-    return data != null ? (data as { id: string }).id : null;
+    return data !== null ? (data as { id: string }).id : null;
   }
 
   async insertRecipe(input: InsertRecipeInput): Promise<RecipeRowMinimal> {

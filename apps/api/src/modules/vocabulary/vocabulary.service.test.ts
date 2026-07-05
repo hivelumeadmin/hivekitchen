@@ -11,10 +11,6 @@ import type { RawVocabularyData, VocabularyRepository } from './vocabulary.repos
 
 const NOW = '2026-05-14T10:00:00.000Z';
 
-function row<T>(partial: Partial<T> & Pick<T, keyof T & string>): T {
-  return partial as T;
-}
-
 function allergen(partial: Partial<AllergenTagRow> & { key: string }): AllergenTagRow {
   return {
     key: partial.key,
@@ -309,7 +305,3 @@ describe('VocabularyService — snapshot', () => {
     expect(Date.parse(snap.loaded_at)).toBeGreaterThan(0);
   });
 });
-
-// row helper not strictly needed but kept to suppress unused-import warning
-// in case the type tooling tightens.
-row;

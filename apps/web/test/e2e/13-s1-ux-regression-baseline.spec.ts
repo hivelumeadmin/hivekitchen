@@ -430,14 +430,19 @@ test.describe('13-s1 / AC5 — Safety display', () => {
     const mondayTile = page.getByRole('article', { name: /monday/i });
     await expect(mondayTile).toHaveAttribute('tabindex', '-1');
 
-    // Negative: forcing a click on the paused tile must NOT open the edit picker.
+    // Negative: forcing a click on the paused tile must NOT summon the plan-edit
+    // sheet. (Post-13-s10 a tile tap opens LumiSheet with PlanEditPanel; the old
+    // DisambiguationPicker role=group flow this test originally pinned is gone.)
     await mondayTile.click({ force: true });
-    await expect(page.getByRole('group', { name: /edit monday/i })).toHaveCount(0);
+    await expect(page.getByRole('dialog', { name: /lumi/i })).toHaveCount(0);
 
-    // Positive control: a NON-paused day DOES open its picker on click. This is
-    // what proves the negative above is meaningful — the edit-group selector is
-    // real and would have matched if pausing didn't disable interaction.
+    // Positive control: a NON-paused day DOES summon the sheet with that day's
+    // edit context. This is what proves the negative above is meaningful — the
+    // selector is real and would have matched if pausing didn't disable
+    // interaction.
     await page.getByRole('article', { name: /tuesday/i }).click();
-    await expect(page.getByRole('group', { name: /edit tuesday/i })).toBeVisible();
+    const sheet = page.getByRole('dialog', { name: /lumi/i });
+    await expect(sheet).toBeVisible();
+    await expect(sheet.getByText(/tell me what to change about tuesday/i)).toBeVisible();
   });
 });

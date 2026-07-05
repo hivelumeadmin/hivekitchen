@@ -76,7 +76,7 @@ export function StartingLineCard({
           / {line.target} lunches
         </span>
         {!isComplete && line.count > 0 && (
-          <span className="ml-2 font-sans text-[10px] uppercase tracking-wide text-fg-muted">
+          <span className="ms-2 font-sans text-[10px] uppercase tracking-wide text-fg-muted">
             · starting with fewer
           </span>
         )}

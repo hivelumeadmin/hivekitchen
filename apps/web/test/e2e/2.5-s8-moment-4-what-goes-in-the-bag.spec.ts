@@ -100,60 +100,23 @@ test.describe('Slice 2.5-s8: Moment 4 — What goes in the bag', () => {
     await expect(snackChip).toHaveAttribute('aria-checked', 'false');
   });
 
-  // AC6 / AC7 — M4 bag card appears in "Still listening…" state when the agent
-  // enters m4_bag. Requires a wide viewport to show the right-column profile panel.
-  test('M4 bag card shows "Still listening…" in the profile panel when agent enters m4_bag', async ({
+  // 13-s5 — the per-moment M4 progress card ("Still listening…" → "Saved") was
+  // removed with the projection-only KitchenMapHero. Bag composition is deferred
+  // out of the interview; the panel shows the dashed "The bag & your week"
+  // placeholder instead. Requires a wide viewport for the right-column panel.
+  test('profile panel shows the deferred "The bag & your week" placeholder at m4_bag (13-s5)', async ({
     page,
   }) => {
     await page.setViewportSize({ width: 1280, height: 800 });
     await landOnM4(page);
 
-    const card = page.getByTestId('m4-bag-card').first();
-    await expect(card).toBeVisible();
-    await expect(card).toContainText(/still listening/i);
-  });
-
-  // AC6 / AC7 — M4 bag card transitions to "Saved" after the parent submits a chip
-  // and the agent advances to m5_starting_line.
-  test('M4 bag card shows "Saved" copy after agent advances past m4_bag', async ({ page }) => {
-    let callCount = 0;
-    await page.route(TURN_URL, (route) => {
-      callCount += 1;
-      route.fulfill({
-        status: 200,
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(
-          callCount === 1
-            ? turnResponse({
-                moment_key: 'm4_bag',
-                chip_config: M4_CHIP_CONFIG,
-                lumi_response: 'What goes in their lunch bag?',
-              })
-            : turnResponse({
-                moment_key: 'm5_starting_line',
-                lumi_response: "Great — now let's pick 10 favourite lunches as a starting point.",
-              }),
-        ),
-      });
-    });
-
-    await loginAndNavigate(page, '/onboarding', { isFirstLogin: true });
-    await page.setViewportSize({ width: 1280, height: 800 });
-    await page.getByRole('button', { name: /i'd rather type/i }).click();
-    await page.getByLabel(/your message to lumi/i).fill('Two kids — Layla and Adam.');
-    await page.getByRole('button', { name: /^send$/i }).click();
-
-    // Wait for M4 chips.
-    await expect(page.getByRole('radiogroup', { name: 'Suggested replies' })).toBeVisible();
-
-    // Tap a chip and submit.
-    await page.getByRole('radio', { name: 'Main + snack', exact: true }).click();
-    await page.getByRole('button', { name: /^send$/i }).click();
-
-    // Card should flip to "Saved" state.
-    const card = page.getByTestId('m4-bag-card').first();
-    await expect(card).toContainText(/saved/i);
-    await expect(card).not.toContainText(/still listening/i);
+    const panel = page.getByRole('region', { name: /your kitchen profile/i });
+    await expect(panel.getByText(/the bag & your week/i)).toBeVisible();
+    await expect(
+      panel.getByText(/lumi learns these as you cook the first week/i),
+    ).toBeVisible();
+    // The old KitchenProfilePanel M4 card must not come back.
+    await expect(page.getByTestId('m4-bag-card')).toHaveCount(0);
   });
 
   // AC4 / AC5 — the chip selection key (matching BagCompositionPatternSchema) is

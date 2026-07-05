@@ -20,7 +20,7 @@ export function VideoPanel({ imageSrc, imageAlt }: VideoPanelProps) {
       <div className="absolute inset-0 bg-bg/30 transition-colors duration-500 group-hover:bg-bg/10" />
       <div className="absolute inset-0 flex items-center justify-center">
         <div className="flex h-20 w-20 items-center justify-center rounded-full border border-amber-warm/30 bg-amber-warm/20 backdrop-blur-md transition-all duration-300 group-hover:scale-110 group-hover:bg-amber-warm/30">
-          <PlayArrowIcon className="ml-1 h-10 w-10 text-amber-warm" />
+          <PlayArrowIcon className="ms-1 h-10 w-10 text-amber-warm" />
         </div>
       </div>
     </div>
@@ -307,7 +307,7 @@ export function AudioPanel({ caption, text }: AudioPanelProps) {
         {isPlaying ? (
           <PauseCircleIcon className="h-8 w-8" />
         ) : (
-          <PlayArrowIcon className="ml-1 h-8 w-8" />
+          <PlayArrowIcon className="ms-1 h-8 w-8" />
         )}
       </button>
 

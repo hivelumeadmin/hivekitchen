@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import { AllergyGuardrailRepository } from './allergy-guardrail.repository.js';
-import { HouseholdAllergensRepository } from '../households/household-allergens.repository.js';
+import type { HouseholdAllergensRepository } from '../households/household-allergens.repository.js';
 import { encryptField } from '../../lib/envelope-encryption.js';
 import { evaluate, type AllergyRule } from './allergy-rules.engine.js';
 import type { PlanItemForGuardrail } from '@hivekitchen/types';

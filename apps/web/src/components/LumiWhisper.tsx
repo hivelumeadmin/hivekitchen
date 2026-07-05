@@ -60,6 +60,7 @@ export function LumiWhisper() {
   }
 
   return (
+    // eslint-disable-next-line jsx-a11y/no-noninteractive-element-interactions -- handlers only pause/resume the auto-dismiss timer (WCAG 2.2.1 timing adjustability); activation lives on the buttons inside
     <div
       role="status"
       aria-live="polite"

@@ -4,6 +4,14 @@ import { loginAndNavigate, userProfile, SAMPLE_HOUSEHOLD_ID } from './_helpers.j
 const SAMPLE_CHILD_ID = '44444444-4444-4444-8444-444444444444';
 const CHILD_NAME = 'Maya';
 
+// Epic 13-s5 removed the post-add-child BagCompositionCard flow (the "Add your
+// first child" CTA and AddChildForm are gone — children are created during
+// Lumi onboarding). The live surface for per-child bag slot declaration is the
+// settings-style BagCompositionForm mounted at
+// /app/children/:childId/bag-composition (story 3.20), which writes through
+// the same PATCH /v1/children/:id/bag-composition endpoint from story 2.12.
+// These tests exercise that surface.
+
 // Story 3-DM-B1: ChildResponseSchema replaced bag_composition jsonb +
 // allergen_rule_version with bag_composition_pattern enum + the three
 // variation enums. Accept the legacy (main, snack, extra) call-site shape and
@@ -39,7 +47,7 @@ function childResponse(
   };
 }
 
-async function reachBagCompositionCard(page: Page) {
+async function reachBagCompositionForm(page: Page) {
   await page.route('**/v1/users/me', (route) =>
     route.fulfill({
       status: 200,
@@ -47,35 +55,28 @@ async function reachBagCompositionCard(page: Page) {
       body: JSON.stringify(userProfile()), // factory has prior ack
     }),
   );
-  await page.route(`**/v1/households/${SAMPLE_HOUSEHOLD_ID}/brief`, (route) =>
+  // ChildBagCompositionPage loads the child via
+  // GET /v1/households/{householdId}/children/{childId} on mount.
+  await page.route(`**/v1/households/*/children/${SAMPLE_CHILD_ID}`, (route) =>
     route.fulfill({
       status: 200,
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ brief: null }),
-    }),
-  );
-  await page.route(`**/v1/households/*/children`, (route) =>
-    route.fulfill({
-      status: 201,
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ child: childResponse() }),
     }),
   );
 
-  await loginAndNavigate(page, '/app');
-  await page.getByRole('button', { name: /add your first child/i }).click();
-  await page.getByLabel(/^name$/i).fill(CHILD_NAME);
-  await page.getByLabel(/age band/i).selectOption('child');
-  await page.getByRole('button', { name: /save child/i }).click();
+  await loginAndNavigate(page, `/app/children/${SAMPLE_CHILD_ID}/bag-composition`);
   await expect(
-    page.getByRole('heading', { name: new RegExp(`how does ${CHILD_NAME}.s lunch bag look`, 'i') }),
+    page.getByRole('heading', { name: new RegExp(`${CHILD_NAME}.s lunch bag`, 'i') }),
   ).toBeVisible();
 }
 
 test.describe('Story 2-12: per-child lunch-bag slot declaration', () => {
-  test('card mounts with Main locked, Snack on, and Extra on by default', async ({ page }) => {
-    await reachBagCompositionCard(page);
-    await expect(page.getByText('Main')).toBeVisible();
+  test('form mounts with Main locked, Snack on, and Extra on from the loaded pattern', async ({
+    page,
+  }) => {
+    await reachBagCompositionForm(page);
+    await expect(page.getByText('Main', { exact: true })).toBeVisible();
     await expect(page.getByText('Always included')).toBeVisible();
     // Locked badge — non-interactive but accessible to screen readers.
     await expect(page.getByText('Locked')).toBeVisible();
@@ -100,41 +101,23 @@ test.describe('Story 2-12: per-child lunch-bag slot declaration', () => {
       });
     });
 
-    await reachBagCompositionCard(page);
+    await reachBagCompositionForm(page);
     await page.getByLabel(/^snack/i).uncheck();
-    await page.getByRole('button', { name: /^save$/i }).click();
+    await page.getByRole('button', { name: /save changes/i }).click();
 
     await expect.poll(() => patchedBody).not.toBeNull();
     expect(patchedUrl).toContain(`/v1/children/${SAMPLE_CHILD_ID}/bag-composition`);
     // The hook must never put `main` on the wire — it is a server-side invariant.
     expect(patchedBody).toEqual({ snack: false, extra: true });
 
-    // After save the card unmounts and the saved child appears in the list.
+    // The settings form stays mounted and confirms the explicit save.
     await expect(
-      page.getByRole('heading', { name: /how does .* lunch bag look/i }),
-    ).toHaveCount(0);
-    await expect(page.getByText(new RegExp(`${CHILD_NAME}.*child`, 'i'))).toBeVisible();
+      page.getByText(/saved\. lumi will use this composition/i),
+    ).toBeVisible();
+    await expect(page.getByLabel(/^snack/i)).not.toBeChecked();
   });
 
-  test('Skip closes the card without making any network request', async ({ page }) => {
-    let serverHit = false;
-    await page.route(`**/v1/children/*/bag-composition`, (route) => {
-      serverHit = true;
-      return route.fulfill({ status: 500, body: '{}' });
-    });
-
-    await reachBagCompositionCard(page);
-    await page.getByRole('button', { name: /^skip$/i }).click();
-
-    await expect(
-      page.getByRole('heading', { name: /how does .* lunch bag look/i }),
-    ).toHaveCount(0);
-    expect(serverHit).toBe(false);
-    // Skip preserves the original child (with default bag_composition) in the list.
-    await expect(page.getByText(new RegExp(`${CHILD_NAME}.*child`, 'i'))).toBeVisible();
-  });
-
-  test('5xx PATCH failure surfaces a friendly error and keeps the card open', async ({ page }) => {
+  test('5xx PATCH failure surfaces a friendly error and keeps the form open', async ({ page }) => {
     await page.route(`**/v1/children/*/bag-composition`, (route) =>
       route.fulfill({
         status: 500,
@@ -143,19 +126,19 @@ test.describe('Story 2-12: per-child lunch-bag slot declaration', () => {
       }),
     );
 
-    await reachBagCompositionCard(page);
+    await reachBagCompositionForm(page);
     await page.getByLabel(/^snack/i).uncheck();
-    await page.getByRole('button', { name: /^save$/i }).click();
+    await page.getByRole('button', { name: /save changes/i }).click();
 
     await expect(page.getByRole('alert')).toContainText(/couldn.t save bag preferences/i);
-    // Card stays mounted so the user can retry without losing their toggle.
+    // Form stays mounted so the user can retry without losing their toggle.
     await expect(
-      page.getByRole('heading', { name: /how does .* lunch bag look/i }),
+      page.getByRole('heading', { name: new RegExp(`${CHILD_NAME}.s lunch bag`, 'i') }),
     ).toBeVisible();
     await expect(page.getByLabel(/^snack/i)).not.toBeChecked();
   });
 
-  test('Save and Skip are both disabled while a PATCH is in-flight', async ({ page }) => {
+  test('Save and the slot toggles are disabled while a PATCH is in-flight', async ({ page }) => {
     let resolveRequest: (() => void) | null = null;
     await page.route(`**/v1/children/*/bag-composition`, (route) => {
       resolveRequest = () =>
@@ -166,10 +149,11 @@ test.describe('Story 2-12: per-child lunch-bag slot declaration', () => {
         });
     });
 
-    await reachBagCompositionCard(page);
-    await page.getByRole('button', { name: /^save$/i }).click();
+    await reachBagCompositionForm(page);
+    await page.getByRole('button', { name: /save changes/i }).click();
     await expect(page.getByRole('button', { name: /saving/i })).toBeDisabled();
-    await expect(page.getByRole('button', { name: /^skip$/i })).toBeDisabled();
+    await expect(page.getByLabel(/^snack/i)).toBeDisabled();
+    await expect(page.getByLabel(/^extra/i)).toBeDisabled();
     // Drain the in-flight request so Playwright can tear the page down cleanly.
     resolveRequest?.();
   });

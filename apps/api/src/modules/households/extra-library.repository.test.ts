@@ -27,7 +27,7 @@ interface Step {
 
 function buildChainClient(
   terminalResult: unknown,
-  mode: 'list' | 'single' | 'void',
+  mode: 'list' | 'single',
 ): { client: SupabaseClient; steps: Step[] } {
   const steps: Step[] = [];
   const builder: Record<string, unknown> = {};
@@ -35,7 +35,7 @@ function buildChainClient(
     steps.push({ op, args });
     return builder;
   };
-  for (const op of ['select', 'update', 'eq', 'insert', 'is', 'order']) {
+  for (const op of ['select', 'update', 'eq', 'insert', 'is', 'order', 'limit']) {
     builder[op] = passthrough(op);
   }
   if (mode === 'list') {
@@ -44,14 +44,10 @@ function buildChainClient(
       onFulfilled: (v: unknown) => unknown,
       onRejected?: (e: unknown) => unknown,
     ) => Promise.resolve(terminalResult).then(onFulfilled, onRejected);
-  } else if (mode === 'single') {
-    builder.single = vi.fn().mockResolvedValue(terminalResult);
   } else {
-    // archive() awaits the builder for a void result.
-    builder.then = (
-      onFulfilled: (v: unknown) => unknown,
-      onRejected?: (e: unknown) => unknown,
-    ) => Promise.resolve(terminalResult).then(onFulfilled, onRejected);
+    builder.single = vi.fn().mockResolvedValue(terminalResult);
+    // archive() terminates with .select('id').maybeSingle().
+    builder.maybeSingle = vi.fn().mockResolvedValue(terminalResult);
   }
   const fromMock = vi.fn().mockImplementation((table: string) => {
     steps.push({ op: 'from', args: [table] });
@@ -125,6 +121,8 @@ describe('ExtraLibraryRepository.findByHousehold', () => {
     expect(isCall?.args).toEqual(['archived_at', null]);
     const orderCall = steps.find((s) => s.op === 'order');
     expect(orderCall?.args[0]).toBe('created_at');
+    const limitCall = steps.find((s) => s.op === 'limit');
+    expect(limitCall?.args).toEqual([50]);
   });
 
   it('returns an empty array when the query yields null data', async () => {
@@ -136,12 +134,13 @@ describe('ExtraLibraryRepository.findByHousehold', () => {
 });
 
 describe('ExtraLibraryRepository.archive', () => {
-  it('soft-deletes by setting archived_at scoped to the household', async () => {
-    const { client, steps } = buildChainClient({ error: null }, 'void');
+  it('soft-deletes by setting archived_at scoped to the household and returns true when a row matched', async () => {
+    const { client, steps } = buildChainClient({ data: { id: ITEM_ID }, error: null }, 'single');
     const repo = new ExtraLibraryRepository(client);
 
-    await repo.archive(ITEM_ID, HOUSEHOLD_ID);
+    const result = await repo.archive(ITEM_ID, HOUSEHOLD_ID);
 
+    expect(result).toBe(true);
     const updateCall = steps.find((s) => s.op === 'update');
     expect(updateCall?.args[0]).toMatchObject({});
     const updatePayload = updateCall?.args[0] as { archived_at?: unknown };

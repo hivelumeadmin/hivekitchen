@@ -23,7 +23,7 @@ export function AddItemComposer({
   return (
     <div className="mb-10 flex items-center gap-1 rounded border border-border/30 bg-surface-2 p-1 shadow-sm">
       <div className="flex min-w-0 flex-grow items-center px-2 sm:px-4">
-        <AddCircleIcon className="mr-2 h-5 w-5 flex-shrink-0 text-fg-muted sm:mr-3" />
+        <AddCircleIcon className="me-2 h-5 w-5 flex-shrink-0 text-fg-muted sm:me-3" />
         <input
           type="text"
           value={value}

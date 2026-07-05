@@ -198,22 +198,22 @@ export default function SnackShelfRoute() {
                   <span className={item.in_stock ? undefined : 'opacity-50'}>
                     <span className="font-sans text-sm text-fg">{item.name}</span>
                     {item.brand && (
-                      <span className="ml-2 font-sans text-xs text-fg-muted">{item.brand}</span>
+                      <span className="ms-2 font-sans text-xs text-fg-muted">{item.brand}</span>
                     )}
                     {item.upc_code && (
-                      <span className="ml-2 font-sans text-xs text-fg-muted">{item.upc_code}</span>
+                      <span className="ms-2 font-sans text-xs text-fg-muted">{item.upc_code}</span>
                     )}
                     {item.package_type && (
-                      <span className="ml-2 font-sans text-xs text-fg-muted">
+                      <span className="ms-2 font-sans text-xs text-fg-muted">
                         {PACKAGE_TYPES.find((p) => p.value === item.package_type)?.label ??
                           item.package_type}
                       </span>
                     )}
                     {isBuiltIn && (
-                      <span className="ml-2 font-sans text-xs text-fg-muted">(built-in)</span>
+                      <span className="ms-2 font-sans text-xs text-fg-muted">(built-in)</span>
                     )}
                     {!item.in_stock && (
-                      <span className="ml-2 font-sans text-xs text-fg-muted">(out of stock)</span>
+                      <span className="ms-2 font-sans text-xs text-fg-muted">(out of stock)</span>
                     )}
                   </span>
                   {!isBuiltIn && isPrimaryParent && (

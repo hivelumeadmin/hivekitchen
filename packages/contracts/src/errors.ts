@@ -1,5 +1,8 @@
 import { z } from 'zod';
 
+// @unused-by-design — documented API error envelope (apps/api/docs/APIDesign.md);
+// server implements the shape in apps/api/src/common/errors.ts
+
 export const ErrorCode = z.enum([
   'VALIDATION_FAILED',
   'UNAUTHORIZED',
