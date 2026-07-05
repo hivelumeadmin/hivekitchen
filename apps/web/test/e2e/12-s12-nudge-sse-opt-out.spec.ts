@@ -324,7 +324,9 @@ test.describe('Story 12-S12 — account page nudge checkbox (AC#8)', () => {
     await loginAndNavigate(page, '/account');
     const checkbox = page.getByRole('checkbox', { name: /lumi proactive nudges/i });
     await expect(checkbox).toBeChecked();
-    await checkbox.uncheck();
+    // click(), not uncheck(): uncheck() asserts the post-click state, which
+    // races the intentional optimistic revert on slow CI runners.
+    await checkbox.click();
     await expect(page.getByRole('alert')).toContainText(/could not update notification/i);
     await expect(checkbox).toBeChecked();
   });

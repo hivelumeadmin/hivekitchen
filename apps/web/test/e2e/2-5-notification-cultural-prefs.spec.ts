@@ -71,7 +71,9 @@ test.describe('Story 2-5: notification preferences + cultural language ratchet',
     await loginAndNavigate(page, '/account');
     const checkbox = page.getByRole('checkbox', { name: /weekly plan is ready/i });
     await expect(checkbox).toBeChecked();
-    await checkbox.uncheck();
+    // click(), not uncheck(): uncheck() asserts the post-click state, which
+    // races the intentional optimistic revert on slow CI runners.
+    await checkbox.click();
     await expect(page.getByRole('alert')).toContainText(/could not update notification/i);
     // Optimistic UI rolled back to the prior server-truth value.
     await expect(checkbox).toBeChecked();
@@ -124,6 +126,9 @@ test.describe('Story 2-5: notification preferences + cultural language ratchet',
     await mockProfileGet(page);
     await loginAndNavigate(page, '/account');
     const select = page.getByLabel(/family language/i);
+    // toHaveCount auto-waits — allTextContents() alone races the options
+    // fetch on slow CI runners and reads an empty list.
+    await expect(select.locator('option')).toHaveCount(7);
     const options = await select.locator('option').allTextContents();
     expect(options).toHaveLength(7);
     expect(options.join('\n')).toMatch(/english/i);
