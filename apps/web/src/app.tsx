@@ -136,6 +136,10 @@ const router = createBrowserRouter([
       },
       // /app/plan is a duplicate of the Brief plan surface — redirect, not 404.
       { path: '/app/plan', element: <Navigate to="/app" replace /> },
+      // NOTE (post-13-s11 route collapse, decided 2026-07-05): the routes below
+      // have no sidebar/menu entry ON PURPOSE — they are deep-link-only
+      // surfaces awaiting Lumi-led conversational entry per the valet doctrine.
+      // Not dead code; do not remove them in dead-code sweeps.
       { path: '/app/children/:childId/school-policies', element: <ChildSchoolPoliciesPage /> },
       { path: '/app/children/:childId/bag-composition', element: <ChildBagCompositionPage /> },
       { path: '/app/children/:childId/extra-rules', element: <ChildExtraRulesPage /> },
