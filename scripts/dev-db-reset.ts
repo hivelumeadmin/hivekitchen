@@ -8,7 +8,9 @@
  *     cultural_tags, cultural_calendar_observances,
  *     curated_baseline_items
  *
- * Also flushes Redis (removes stale kitchen-map cache + BullMQ job queues).
+ * Also clears Redis: explicitly removes the KitchenMap projection cache
+ * entries (`kitchen-map:*`), then flushes the DB to drop the BullMQ job
+ * queues that now reference deleted households.
  *
  * After reset: clear the browser's httpOnly sb-* cookie (DevTools → Application
  * → Cookies), then log in normally — the next login recreates public.users and
@@ -74,8 +76,11 @@ async function clearTable(
 ): Promise<void> {
   const { error } = await supabase.from(table).delete().not(idColumn, 'is', null);
   if (error) {
-    // Table doesn't exist yet (migration not applied) — skip gracefully
-    if (error.message.includes('schema cache') || error.message.includes('does not exist')) {
+    // Missing TABLE (migration not applied / legacy name already dropped) —
+    // skip gracefully. PostgREST reports this as PGRST205 / "schema cache".
+    // A missing COLUMN (42703) is NOT skipped — that means the wrong
+    // idColumn was passed and the table would go uncleared, so fail loudly.
+    if (error.code === 'PGRST205' || error.message.includes('schema cache')) {
       log(`skipped ${table} (table not found — migration may not be applied yet)`);
       return;
     }
@@ -86,14 +91,38 @@ async function clearTable(
 
 // ─── Main ─────────────────────────────────────────────────────────────────────
 
-async function flushRedis(redisUrl: string): Promise<void> {
+interface RedisClient {
+  connect(): Promise<void>;
+  scan(cursor: string, ...args: string[]): Promise<[string, string[]]>;
+  unlink(...keys: string[]): Promise<number>;
+  flushdb(): Promise<void>;
+  quit(): Promise<void>;
+}
+
+async function clearRedis(redisUrl: string): Promise<void> {
   // eslint-disable-next-line @typescript-eslint/no-unsafe-call
   const redis = new Redis(redisUrl, {
     lazyConnect: true,
     maxRetriesPerRequest: null,
     enableReadyCheck: false,
-  }) as { connect(): Promise<void>; flushdb(): Promise<void>; quit(): Promise<void> };
+  }) as RedisClient;
   await redis.connect();
+
+  // Explicitly remove the KitchenMap projection cache. Key shape:
+  //   `kitchen-map:{householdId}:schema-{v}:v{mapVersion}`
+  // (see kitchen-map.service.ts). SCAN + UNLINK so the count is logged and
+  // the intent is legible, rather than relying on the blanket flush below.
+  let cursor = '0';
+  let removed = 0;
+  do {
+    const [next, keys] = await redis.scan(cursor, 'MATCH', 'kitchen-map:*', 'COUNT', '200');
+    cursor = next;
+    if (keys.length > 0) removed += await redis.unlink(...keys);
+  } while (cursor !== '0');
+  log(`removed ${removed} kitchen-map cache ${removed === 1 ? 'entry' : 'entries'}`);
+
+  // Flush the rest of the DB — BullMQ job queues now reference deleted
+  // households, so a fresh slate is the correct dev-reset behavior.
   await redis.flushdb();
   await redis.quit();
 }
@@ -111,37 +140,76 @@ async function main(): Promise<void> {
 
   log('Starting dev reset — users and vocabulary tables will be preserved.');
 
-  // Deepest-leaf tables first (nothing else FKs into them)
+  // Deepest-leaf tables first (nothing else FKs into them), root last.
+  // Legacy names (dropped/renamed by the canonical data-model migration) are
+  // kept in the list so an un-migrated DB still resets cleanly — clearTable
+  // skips any table that no longer exists.
+
+  // ── Plan tree (canonical, post 3-DM-C) + legacy names ──
   await clearTable(supabase, 'variant_proposals');
+  await clearTable(supabase, 'plan_slot_variations');
+  await clearTable(supabase, 'plan_slots');
+  await clearTable(supabase, 'plan_days');
+  await clearTable(supabase, 'plan_main_assignments');
   await clearTable(supabase, 'extra_removal_signals');
   await clearTable(supabase, 'plan_day_context');
   await clearTable(supabase, 'guardrail_decisions');
-  await clearTable(supabase, 'plan_items');
+  await clearTable(supabase, 'day_assignments', 'household_id'); // composite PK — no id column
+  await clearTable(supabase, 'day_overrides'); // legacy — renamed to plan_day_context
+  await clearTable(supabase, 'plan_items'); // legacy — replaced by plan_slots tree
   await clearTable(supabase, 'plans');
-  await clearTable(supabase, 'household_recipe_usage', 'household_id');
+
+  // ── Recipe / catalog ──
   await clearTable(supabase, 'recipe_comments');
+  await clearTable(supabase, 'recipe_steps');
+  await clearTable(supabase, 'household_recipe_usage', 'household_id');
+  await clearTable(supabase, 'snack_skus');
   await clearTable(supabase, 'recipes');
+
+  // ── Brief + memory + heart notes ──
   await clearTable(supabase, 'brief_state', 'household_id');
   await clearTable(supabase, 'memory_provenance');
   await clearTable(supabase, 'memory_nodes');
   await clearTable(supabase, 'heart_notes');
-  await clearTable(supabase, 'child_allergens');
+
+  // ── Child / household profile satellites ──
+  await clearTable(supabase, 'child_lunch_requests');
+  await clearTable(supabase, 'child_preferences');
+  await clearTable(supabase, 'household_allergens');
+  await clearTable(supabase, 'household_cultural_identifiers', 'household_id'); // composite PK — no id column
   await clearTable(supabase, 'food_preferences');
   await clearTable(supabase, 'dietary_preferences');
   await clearTable(supabase, 'household_rules');
-  await clearTable(supabase, 'favorite_lunches');
+  await clearTable(supabase, 'child_allergens'); // legacy — folded into household_allergens
+  await clearTable(supabase, 'favorite_lunches'); // legacy — folded into recipes
+  await clearTable(supabase, 'allergy_rules'); // legacy — dropped
   await clearTable(supabase, 'cultural_priors');
   await clearTable(supabase, 'school_policies');
   await clearTable(supabase, 'onboarding_moment_state', 'household_id');
   await clearTable(supabase, 'extra_library');
+
+  // ── Lunch link ──
   await clearTable(supabase, 'lunch_link_sessions');
-  await clearTable(supabase, 'allergy_rules');
-  await clearTable(supabase, 'vpc_consents');
-  await clearTable(supabase, 'audit_log');
-  await clearTable(supabase, 'thread_turns');
+
+  // ── Voice ──
+  await clearTable(supabase, 'voice_transcripts');
   await clearTable(supabase, 'voice_sessions');
+  await clearTable(supabase, 'voice_usage', 'user_id'); // composite PK — no id column
+
+  // ── Consent / compliance / audit ──
+  await clearTable(supabase, 'vpc_consents');
+  await clearTable(supabase, 'processor_deletion_log');
+  await clearTable(supabase, 'audit_log');
+
+  // ── Threads ──
+  await clearTable(supabase, 'thread_turns');
   await clearTable(supabase, 'threads');
+
+  // ── Invites + session tokens ──
   await clearTable(supabase, 'invites');
+  await clearTable(supabase, 'refresh_tokens');
+
+  // ── Children (child-referencing satellites cleared above) ──
   await clearTable(supabase, 'children');
 
   // Null current_household_id first to drop the FK before deleting households.
@@ -160,9 +228,9 @@ async function main(): Promise<void> {
   // with current_household_id = null but no household to attach to.
   await clearTable(supabase, 'users');
 
-  // Flush Redis: removes stale kitchen-map cache entries and BullMQ job queues
-  await flushRedis(redisUrl);
-  log('flushed Redis (kitchen-map cache + BullMQ queues cleared)');
+  // Clear Redis: explicit kitchen-map cache removal, then flush BullMQ queues
+  await clearRedis(redisUrl);
+  log('Redis cleared (kitchen-map cache removed + BullMQ queues flushed)');
 
   log('Done. Clear the browser sb-* cookie then log in — fresh onboarding will start.');
 }
