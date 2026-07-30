@@ -80,7 +80,7 @@ See `ux-design-directions.html` for exact hexes per theme.
 
 **Headlines / brand:** Instrument Serif (v2.0 lockdown). Used for:
 - Section titles (40px)
-- Brief moment (34px)
+- Brief moment (56px — `PageHeader` `headlineSize="lg"`; corrected 2026-07-30, this doc previously said 34px while the shipped `PageHeader` has rendered 56px since the v2.0 lockdown. Ruled code-is-canon in the 14-s3 review.)
 - Heart Note Composer (26px, italic)
 - Page header (24px)
 

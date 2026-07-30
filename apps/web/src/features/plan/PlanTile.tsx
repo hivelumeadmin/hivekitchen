@@ -48,7 +48,23 @@ export interface PlanTileProps {
   // BriefCanvas. Rendered only when provided (parent passes it only when
   // payload.plan_reasoning is non-null).
   onWhyThis?: () => void;
+  // Story 14-s3 — the day column of the editorial row. Pre-formatted by the
+  // caller (WeekGrid owns the week's dates); omitted on surfaces with no date
+  // context, e.g. the historical plan view.
+  dateLabel?: string;
+  // Story 14-s3 — this day carries the previous day's Main forward. The row
+  // renders at reduced prominence with a quiet "again" marker so the 3-Main
+  // weekly rhythm is legible without repeating the dish at full weight.
+  repeatsPreviousDay?: boolean;
+  // Story 14-s3 — position in the staggered first-paint reveal. Undefined means
+  // no stagger delay (the settle animation still runs from its start offset);
+  // reduced motion collapses it to static.
+  revealIndex?: number;
 }
+
+// Story 14-s3 — 50ms between rows keeps the whole five-row reveal inside one
+// --motion-slow beat, so the stagger reads as settling rather than loading.
+const REVEAL_STAGGER_MS = 50;
 
 const RATING_EMOJIS: Record<'loved' | 'ok' | 'not-really', string> = {
   loved: '😋',
@@ -97,11 +113,25 @@ function deriveVariant(day: PlanTileSummary['day']): PlanTileVariant {
 }
 
 function deriveDishLine(summary: PlanTileSummary): string {
-  // Recipe name lives in a future contract field; until then the dish line is
-  // resolved item names (Story 3-S40 — snack-SKU names) followed by the unique
-  // ingredient list (capped at 3 + overflow).
-  const names = summary.items.flatMap((item) => (item.name !== undefined ? [item.name] : []));
-  const all = [...new Set([...names, ...summary.items.flatMap((item) => item.ingredients)])];
+  // Story 14-s3 (review P1) — resolved dish names ARE the editorial line, but
+  // the fallback is PER ITEM: each item contributes its name when resolved,
+  // else its ingredients. A whole-line names-or-ingredients switch would let a
+  // named snack hide an unnamed Main entirely — a real state, since snack-SKU
+  // names shipped (3-S40) before recipe names (Epic 3.5) and the composer
+  // tolerates unresolvable recipe ids.
+  const seen = new Set<string>();
+  const all: string[] = [];
+  for (const item of summary.items) {
+    const tokens =
+      item.name !== undefined && item.name !== '' ? [item.name] : item.ingredients;
+    for (const token of tokens) {
+      const key = token.toLowerCase();
+      if (!seen.has(key)) {
+        seen.add(key);
+        all.push(token);
+      }
+    }
+  }
   if (all.length === 0) return '';
   const preview = all.slice(0, 3).join(', ');
   return all.length > 3 ? `${preview} +${all.length - 3} more` : preview;
@@ -164,6 +194,9 @@ export function PlanTile({
   onVariantChoice,
   childRatings,
   onWhyThis,
+  dateLabel,
+  repeatsPreviousDay = false,
+  revealIndex,
 }: PlanTileProps) {
   const variant = forceVariant ?? deriveVariant(summary.day);
   const tileRef = useRef<HTMLElement>(null);
@@ -212,14 +245,28 @@ export function PlanTile({
       ? 'border-2 border-dashed border-amber-warm'
       : 'border border-border';
 
+  // Story 14-s3 — the editorial day row: full-width, three columns (day/date ·
+  // dish + chips · status), stacking to one column on narrow screens. The
+  // staggered hk-row-settle reveal rises each row into place on first paint;
+  // it is transform-only (see the keyframe comment) so text contrast and LCP are
+  // unaffected. Fill mode is `backwards`, NOT `both`: backwards holds the row at
+  // its start offset through its stagger delay, while a forwards/both fill would
+  // keep applying translateY(0) after the animation ended and — since animations
+  // outrank class declarations — permanently suppress the hover lift below.
   const articleClasses = [
-    'group relative rounded-lg p-6 flex flex-col h-full transition-colors',
+    'group relative flex flex-col gap-3 rounded-lg px-5 py-4 sm:flex-row sm:items-start sm:gap-6',
+    // Duration = --motion-slow (360ms, "first-load Brief fade-in ONLY" — this is
+    // exactly that case); the token also collapses to 0ms under reduced motion.
+    'animate-[hk-row-settle_var(--motion-slow)_ease-out_backwards] motion-reduce:animate-none',
+    'transition-[border-color,background-color,transform] duration-medium motion-reduce:transition-none',
     borderClass,
     hasMorningTint && !isPaused ? 'bg-amber-warm/10' : 'bg-surface-2',
     isPaused ? 'opacity-60 pointer-events-none' : '',
     isPast ? 'opacity-60 pointer-events-none' : '',
+    // Honey rule (DESIGN.md): amber is recognition only and NEVER a hover — the
+    // row's hover lift borrows the proposal channel's warmed terracotta.
     isInteractive
-      ? 'cursor-pointer hover:[border-left-width:2px] hover:border-l-amber-warm hover:[padding-left:calc(1.5rem-2px)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-warm focus-visible:ring-offset-1'
+      ? 'cursor-pointer hover:border-lumi-terracotta-warmed hover:-translate-y-px focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-warm focus-visible:ring-offset-1'
       : '',
   ]
     .filter((c) => c !== '')
@@ -247,191 +294,223 @@ export function PlanTile({
         if (!tileRef.current?.contains(e.relatedTarget as Node)) setExpanded(false);
       }}
       className={articleClasses}
+      style={
+        revealIndex !== undefined
+          ? { animationDelay: `${revealIndex * REVEAL_STAGGER_MS}ms` }
+          : undefined
+      }
     >
-      {/* Story 5-S1 — live presence is brief-only; plan_tile presence is deferred
-          (see Dev Notes). This is the static lock-by-partner badge; it renders
-          only when the parent supplies an explicit partnerName. */}
-      {isLocked && partnerName && (
-        <span
-          role="status"
-          aria-live="polite"
-          className="absolute top-2 end-2 inline-flex items-center gap-1 font-sans text-[13px] text-warm-neutral-600"
-        >
-          <span
-            aria-hidden="true"
-            className="inline-block h-5 w-5 rounded-full bg-sacred-200"
-          />
-          <span>{partnerName} is editing</span>
-        </span>
-      )}
-
-      <h2 className="text-xs uppercase tracking-wider text-fg-muted mb-4">
-        {DAY_LABELS[summary.day]}
-      </h2>
-
-      {dishLine !== '' ? (
-        <p className="font-serif text-2xl leading-[1.25] text-fg mb-6 flex-grow">
-          {dishLine}
-        </p>
-      ) : (
-        <p className="text-[15px] leading-[1.4] text-fg-muted/60 mb-6 flex-grow">
-          Plan pending
-        </p>
-      )}
-
-      {/* Story 13-s7 — focus-only slot breakdown. Only when there is more than
-          one slot to show (a lone Main needs no redundant disclosure). */}
-      {expanded && isInteractive && slotGroups.length > 1 && (
-        <div className="-mt-4 mb-6 flex flex-col gap-1">
-          {slotGroups.map(({ slot, label, line }) => (
-            <div key={slot} className="flex items-baseline gap-2">
-              <span className="w-10 flex-shrink-0 text-[10px] font-medium uppercase tracking-wider text-fg-muted/70">
-                {label}
-              </span>
-              <span className="font-sans text-[13px] text-fg">{line}</span>
-            </div>
-          ))}
-        </div>
-      )}
-
-      {/* Slice 5-S9 — "Why this?" ghost button. stopPropagation so it does not
-          also trigger the tile's onSwapIntent click. Hidden while a swap is
-          in flight (5-S12 AC8: interactive affordances disabled in the
-          proposal-pending / swap-in-progress states). */}
-      {onWhyThis !== undefined &&
-        state !== 'proposal-pending' &&
-        state !== 'swap-in-progress' && (
-        <button
-          type="button"
-          onClick={(e) => {
-            e.stopPropagation();
-            onWhyThis();
-          }}
-          className="mb-3 self-start text-xs text-honey-amber-600 underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-amber-warm"
-        >
-          Why this?
-        </button>
-      )}
-
-      {effectiveState === 'pending-input' && variantProposal !== undefined && (
-        <div className="mt-2 mb-4 flex flex-col gap-2">
-          <p className="font-sans text-[13px] leading-relaxed text-fg-muted">
-            {variantProposal.variant_description}
+      {/* Day column — the serif weekday is the row's anchor; the date sits under
+          it in the quiet sans register. */}
+      <div className="flex shrink-0 items-baseline gap-2 sm:w-32 sm:flex-col sm:items-start sm:gap-1">
+        <h2 className="font-serif text-[22px] leading-none text-fg">
+          {DAY_LABELS[summary.day]}
+        </h2>
+        {dateLabel !== undefined && dateLabel !== '' && (
+          <p className="font-sans text-[11px] uppercase tracking-[0.14em] text-fg-muted">
+            {dateLabel}
           </p>
-          <div className="flex flex-wrap gap-2">
-            <button
-              type="button"
-              onClick={(e) => {
-                e.stopPropagation();
-                onVariantChoice?.(variantProposal.id, 'try_variant');
-              }}
-              className="rounded-full border border-amber-warm bg-amber-warm/10 px-3 py-1 font-sans text-[13px] text-fg hover:bg-amber-warm/20 transition-colors motion-reduce:transition-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-warm"
-            >
-              Try the variant
-            </button>
-            <button
-              type="button"
-              onClick={(e) => {
-                e.stopPropagation();
-                onVariantChoice?.(variantProposal.id, 'keep_original');
-              }}
-              className="rounded-full border border-border px-3 py-1 font-sans text-[13px] text-fg-muted hover:bg-surface-2 transition-colors motion-reduce:transition-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-warm"
-            >
-              Keep the original
-            </button>
-          </div>
-        </div>
-      )}
+        )}
+      </div>
 
-      {childColorMap !== undefined && childColorMap.size > 0 && (() => {
-        const seen = new Set<string>();
-        const uniqueItems = summary.items.filter((item) => {
-          const info = childColorMap.get(item.child_id);
-          if (info === undefined || info.name === '') return false;
-          if (seen.has(item.child_id)) return false;
-          seen.add(item.child_id);
-          return true;
-        });
-        return uniqueItems.length > 0 ? (
-          <div className="flex flex-wrap items-center gap-1.5 mb-3">
-            {uniqueItems.map((item) => {
-              const info = childColorMap.get(item.child_id)!;
-              const rating = childRatings?.[item.child_id];
-              return (
-                <span key={item.child_id} className="inline-flex items-center gap-1.5">
-                  <ChildChip name={info.name} color={info.color} />
-                  {rating !== undefined && (
-                    <span
-                      aria-label={`Rated: ${rating}`}
-                      className="text-[14px] leading-none"
-                    >
-                      {RATING_EMOJIS[rating]}
-                    </span>
-                  )}
+      {/* Dish column — the answer for this day, plus who it is for. */}
+      <div className="flex min-w-0 flex-1 flex-col gap-2">
+        {dishLine !== '' ? (
+          <p
+            className={
+              repeatsPreviousDay
+                ? 'flex flex-wrap items-baseline gap-x-2 font-serif text-lg leading-snug text-fg-muted'
+                : 'flex flex-wrap items-baseline gap-x-2 font-serif text-[22px] leading-snug text-fg'
+            }
+          >
+            <span>{dishLine}</span>
+            {/* Story 14-s3 — the 3-Main rhythm made legible: a carried-forward
+                Main is named once at full weight, then quietly marked. */}
+            {repeatsPreviousDay && (
+              <span className="font-sans text-[11px] uppercase tracking-[0.14em] text-fg-muted">
+                again
+              </span>
+            )}
+          </p>
+        ) : (
+          <p className="text-[15px] leading-[1.4] text-fg-muted/60">Plan pending</p>
+        )}
+
+        {/* Story 13-s7 — focus-only slot breakdown. Only when there is more than
+            one slot to show (a lone Main needs no redundant disclosure). */}
+        {expanded && isInteractive && slotGroups.length > 1 && (
+          <div className="flex flex-col gap-1">
+            {slotGroups.map(({ slot, label, line }) => (
+              <div key={slot} className="flex items-baseline gap-2">
+                <span className="w-10 flex-shrink-0 text-[10px] font-medium uppercase tracking-wider text-fg-muted/70">
+                  {label}
                 </span>
-              );
-            })}
+                <span className="font-sans text-[13px] text-fg">{line}</span>
+              </div>
+            ))}
           </div>
-        ) : null;
-      })()}
+        )}
 
-      {trustChips !== undefined && trustChips.length > 0 && (
-        <div
-          className="flex flex-wrap gap-1 mt-1"
-          aria-label="Trust indicators"
-        >
-          {trustChips.map((chip) => (
-            <TrustChip key={`${chip.variant}-${chip.label}`} variant={chip.variant} label={chip.label} />
-          ))}
-        </div>
-      )}
+        {effectiveState === 'pending-input' && variantProposal !== undefined && (
+          <div className="flex flex-col gap-2">
+            <p className="font-sans text-[13px] leading-relaxed text-fg-muted">
+              {variantProposal.variant_description}
+            </p>
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onVariantChoice?.(variantProposal.id, 'try_variant');
+                }}
+                className="rounded-full border border-amber-warm bg-amber-warm/10 px-3 py-1 font-sans text-[13px] text-fg hover:bg-amber-warm/20 transition-colors motion-reduce:transition-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-warm"
+              >
+                Try the variant
+              </button>
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onVariantChoice?.(variantProposal.id, 'keep_original');
+                }}
+                className="rounded-full border border-border px-3 py-1 font-sans text-[13px] text-fg-muted hover:bg-surface-2 transition-colors motion-reduce:transition-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-warm"
+              >
+                Keep the original
+              </button>
+            </div>
+          </div>
+        )}
 
-      {isPaused && (
-        <p
-          className="mt-1 flex items-center gap-2 text-xs italic text-fg-muted/70"
-          aria-label="Day paused — sick day"
-        >
-          <PauseCircleIcon className="h-4 w-4 shrink-0" aria-hidden />
-          Paused
-        </p>
-      )}
+        {childColorMap !== undefined && childColorMap.size > 0 && (() => {
+          const seen = new Set<string>();
+          const uniqueItems = summary.items.filter((item) => {
+            const info = childColorMap.get(item.child_id);
+            if (info === undefined || info.name === '') return false;
+            if (seen.has(item.child_id)) return false;
+            seen.add(item.child_id);
+            return true;
+          });
+          return uniqueItems.length > 0 ? (
+            <div className="flex flex-wrap items-center gap-1.5">
+              {uniqueItems.map((item) => {
+                const info = childColorMap.get(item.child_id)!;
+                const rating = childRatings?.[item.child_id];
+                return (
+                  <span key={item.child_id} className="inline-flex items-center gap-1.5">
+                    <ChildChip name={info.name} color={info.color} />
+                    {rating !== undefined && (
+                      <span
+                        aria-label={`Rated: ${rating}`}
+                        className="text-[14px] leading-none"
+                      >
+                        {RATING_EMOJIS[rating]}
+                      </span>
+                    )}
+                  </span>
+                );
+              })}
+            </div>
+          ) : null;
+        })()}
 
-      {isFrozen && (
-        <>
+        {/* Slice 5-S9 — "Why this?" ghost button. stopPropagation so it does not
+            also trigger the tile's onSwapIntent click. Hidden while a swap is
+            in flight (5-S12 AC8: interactive affordances disabled in the
+            proposal-pending / swap-in-progress states). */}
+        {onWhyThis !== undefined &&
+          state !== 'proposal-pending' &&
+          state !== 'swap-in-progress' && (
           <button
             type="button"
-            aria-expanded={explainOpen}
-            aria-controls={`plan-tile-frozen-${summary.day}`}
-            onClick={() => setExplainOpen((open) => !open)}
-            className="mt-1 self-start text-xs text-fg-muted underline underline-offset-2 cursor-pointer focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-amber-warm"
+            onClick={(e) => {
+              e.stopPropagation();
+              onWhyThis();
+            }}
+            className="self-start text-xs text-honey-amber-600 underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-amber-warm"
           >
-            Editing locked
+            Why this?
           </button>
-          {explainOpen && (
-            <p
-              id={`plan-tile-frozen-${summary.day}`}
-              role="note"
-              className="mt-1 rounded-md bg-surface-2 p-2 text-[14px] leading-[1.5] text-fg"
-            >
-              Editing is locked every Sunday while we finalise your grocery list. It
-              reopens within 4 hours.
-            </p>
-          )}
-        </>
-      )}
+        )}
+      </div>
 
-      {/* Story 3.28 — pause/resume Lunch Link delivery. Shown only for today/
-          upcoming tiles when the parent provides the callback. Does not appear
-          on past tiles or when state prevents interaction. */}
-      {!isPast && onPauseLunchLink !== undefined && (
-        <button
-          type="button"
-          onClick={onPauseLunchLink}
-          className="mt-2 self-start text-xs text-fg-muted underline underline-offset-2 cursor-pointer hover:text-terracotta focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-amber-warm"
-        >
-          {(summary.lunch_link_suppressed_children?.length ?? 0) > 0 ? 'Resume Lunch Link' : 'Pause Lunch Link'}
-        </button>
-      )}
+      {/* Status column — the row's standing: who holds it, whether it is parked,
+          locked, or has a Lunch Link paused. */}
+      <div className="flex shrink-0 flex-col items-start gap-2 sm:items-end">
+        {/* Story 5-S1 — live presence is brief-only; plan_tile presence is deferred
+            (see Dev Notes). This is the static lock-by-partner badge; it renders
+            only when the parent supplies an explicit partnerName. */}
+        {isLocked && partnerName && (
+          <span
+            role="status"
+            aria-live="polite"
+            className="inline-flex items-center gap-1 font-sans text-[13px] text-warm-neutral-600"
+          >
+            <span
+              aria-hidden="true"
+              className="inline-block h-5 w-5 rounded-full bg-sacred-200"
+            />
+            <span>{partnerName} is editing</span>
+          </span>
+        )}
+
+        {trustChips !== undefined && trustChips.length > 0 && (
+          <div
+            className="flex flex-wrap gap-1"
+            aria-label="Trust indicators"
+          >
+            {trustChips.map((chip) => (
+              <TrustChip key={`${chip.variant}-${chip.label}`} variant={chip.variant} label={chip.label} />
+            ))}
+          </div>
+        )}
+
+        {isPaused && (
+          <p
+            className="flex items-center gap-2 text-xs italic text-fg-muted"
+            aria-label="Day paused — sick day"
+          >
+            <PauseCircleIcon className="h-4 w-4 shrink-0" aria-hidden />
+            Paused
+          </p>
+        )}
+
+        {isFrozen && (
+          <>
+            <button
+              type="button"
+              aria-expanded={explainOpen}
+              aria-controls={`plan-tile-frozen-${summary.day}`}
+              onClick={() => setExplainOpen((open) => !open)}
+              className="text-xs text-fg-muted underline underline-offset-2 cursor-pointer focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-amber-warm"
+            >
+              Editing locked
+            </button>
+            {explainOpen && (
+              <p
+                id={`plan-tile-frozen-${summary.day}`}
+                role="note"
+                className="rounded-md bg-surface-2 p-2 text-[14px] leading-[1.5] text-fg"
+              >
+                Editing is locked every Sunday while we finalise your grocery list. It
+                reopens within 4 hours.
+              </p>
+            )}
+          </>
+        )}
+
+        {/* Story 3.28 — pause/resume Lunch Link delivery. Shown only for today/
+            upcoming tiles when the parent provides the callback. Does not appear
+            on past tiles or when state prevents interaction. */}
+        {!isPast && onPauseLunchLink !== undefined && (
+          <button
+            type="button"
+            onClick={onPauseLunchLink}
+            className="text-xs text-fg-muted underline underline-offset-2 cursor-pointer hover:text-lumi-terracotta-warmed focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-amber-warm"
+          >
+            {(summary.lunch_link_suppressed_children?.length ?? 0) > 0 ? 'Resume Lunch Link' : 'Pause Lunch Link'}
+          </button>
+        )}
+      </div>
 
       {state === 'swap-in-progress' && (
         <span

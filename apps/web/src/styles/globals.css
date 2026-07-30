@@ -29,6 +29,18 @@
   to   { opacity: 1; transform: translateY(0); }
 }
 
+/* Story 14-s3 — the Brief's day rows settle into place on first paint, staggered
+   by row (animation-delay is set per row at the call site). Deliberately
+   TRANSFORM-ONLY, no opacity: the dish text must be painted at full contrast
+   from the first frame, both so the reveal cannot dip below WCAG AA mid-flight
+   (the 13-s1 axe gate samples during animation) and so a fading LCP element
+   cannot delay the Brief's paint on the anchor device. transform is out of
+   layout flow, so nothing shifts once the row lands. */
+@keyframes hk-row-settle {
+  from { transform: translateY(0.5rem); }
+  to   { transform: translateY(0); }
+}
+
 /* Slice 5-S12 — sacred-plum proposal-pending pulse on PlanTile. Reduced-motion
    suppression is handled at the call site via Tailwind's motion-reduce variant
    (compiles to @media (prefers-reduced-motion: reduce)). */

@@ -91,6 +91,42 @@ describe('PlanTile structure', () => {
     expect(screen.getByText('Plan pending')).toBeDefined();
   });
 
+  it('a named snack does not hide an unnamed main from the dish line (review P1)', () => {
+    render(
+      <PlanTile
+        summary={makeSummary({
+          items: [
+            { plan_item_id: null, child_id: CHILD_ID, slot: 'main', ingredients: ['rice', 'chicken'] },
+            { plan_item_id: null, child_id: CHILD_ID, slot: 'snack', ingredients: [], name: 'Apple slices' },
+          ],
+        })}
+      />,
+    );
+    // Per-item fallback: the unnamed main contributes its ingredients, the
+    // named snack contributes only its name.
+    expect(screen.getByText('rice, chicken, Apple slices')).toBeDefined();
+  });
+
+  it('a named item contributes only its name, never its ingredients', () => {
+    render(
+      <PlanTile
+        summary={makeSummary({
+          items: [
+            {
+              plan_item_id: null,
+              child_id: CHILD_ID,
+              slot: 'main',
+              ingredients: ['rice', 'beans'],
+              name: 'Chicken Biriyani',
+            },
+          ],
+        })}
+      />,
+    );
+    expect(screen.getByText('Chicken Biriyani')).toBeDefined();
+    expect(screen.queryByText(/rice/)).toBeNull();
+  });
+
   it('deduplicates ingredients across items before slicing', () => {
     render(
       <PlanTile
@@ -459,6 +495,60 @@ describe('PlanTile — slot disclosure (Story 13-s7)', () => {
     render(<PlanTile summary={multiSlot} />);
     fireEvent.focus(screen.getByLabelText('Monday'));
     expect(screen.queryByText('Main')).toBeNull();
+  });
+});
+
+// Story 14-s3 — the tile is now an editorial full-width day row: serif day name
+// + date column, dish column, status column. These pin the row-only additions;
+// every assertion above still holds because the semantic contract is unchanged.
+describe('PlanTile — editorial day row (14-s3)', () => {
+  it('renders the date beside the serif day name when dateLabel is provided', () => {
+    render(<PlanTile summary={makeSummary({ day: 'monday' })} dateLabel="May 4" />);
+    expect(screen.getByText('May 4')).toBeDefined();
+    expect(screen.getByRole('heading', { level: 2 }).textContent).toBe('Monday');
+  });
+
+  it('renders no date text when dateLabel is absent', () => {
+    render(<PlanTile summary={makeSummary({ day: 'monday' })} />);
+    expect(screen.queryByText('May 4')).toBeNull();
+  });
+
+  it('renders the quiet "again" marker when the day repeats the previous main', () => {
+    render(<PlanTile summary={makeSummary({ day: 'tuesday' })} repeatsPreviousDay />);
+    expect(screen.getByText('again')).toBeDefined();
+    // The dish line itself is still readable — the marker sits beside it.
+    expect(screen.getByText('rice, beans, cheese')).toBeDefined();
+  });
+
+  it('omits the "again" marker by default', () => {
+    render(<PlanTile summary={makeSummary({ day: 'tuesday' })} />);
+    expect(screen.queryByText('again')).toBeNull();
+  });
+
+  it('hover lift uses lumi-terracotta-warmed, never amber (Honey rule)', () => {
+    render(<PlanTile summary={makeSummary({ day: 'monday' })} onSwapIntent={() => {}} />);
+    const article = screen.getByLabelText('Monday');
+    expect(article.className).toContain('hover:border-lumi-terracotta-warmed');
+    expect(article.className).not.toContain('hover:border-l-amber-warm');
+  });
+
+  it('reveals with the staggered settle animation, disabled under reduced motion', () => {
+    render(<PlanTile summary={makeSummary({ day: 'monday' })} revealIndex={2} />);
+    const article = screen.getByLabelText('Monday');
+    // Transform-only: an opacity fade would dip the dish text below AA mid-reveal.
+    expect(article.className).toContain('animate-[hk-row-settle');
+    expect(article.className).toContain('motion-reduce:animate-none');
+    // A forwards/both fill would keep translateY(0) applied after the reveal and,
+    // because animations outrank class declarations, kill the hover lift.
+    expect(article.className).toContain('_backwards]');
+    expect(article.className).not.toContain('_both]');
+    expect(article.className).not.toContain('_forwards]');
+    expect(article.style.animationDelay).toBe('100ms');
+  });
+
+  it('applies no reveal delay when revealIndex is absent', () => {
+    render(<PlanTile summary={makeSummary({ day: 'monday' })} />);
+    expect(screen.getByLabelText('Monday').style.animationDelay).toBe('');
   });
 });
 

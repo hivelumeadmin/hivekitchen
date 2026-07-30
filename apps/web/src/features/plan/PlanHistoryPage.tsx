@@ -108,7 +108,10 @@ export function PlanHistoryPage() {
             </p>
           ) : (
             <div
-              className="grid grid-cols-2 md:grid-cols-5 gap-4"
+              // Story 14-s3 — PlanTile is a full-width day row now, so the
+              // historical week stacks like the live itinerary instead of
+              // sitting in a five-column grid.
+              className="flex flex-col gap-3"
               aria-label="Historical weekly plan"
             >
               {summaries.map((summary) => {
