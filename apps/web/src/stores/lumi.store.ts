@@ -17,7 +17,10 @@ type PresenceState = 'atRest' | 'whisper' | 'summoned';
 // short weekday the plan-intent classifier uses; dayLabel + dishes are the
 // display context the summoning surface (a PlanTile, or the week-level
 // TalkToLumi button) captured. Week-level scope omits day/dayLabel/dishes.
-export type PlanEditDay = 'mon' | 'tue' | 'wed' | 'thu' | 'fri';
+// 'sat' included: WeekdaySchema admits saturday plan days and the day-detail
+// sheet (14-s4) can summon a swap for one. The Brief's day-chip picker still
+// offers mon–fri only (ALL_DAYS in PlanEditPanel).
+export type PlanEditDay = 'mon' | 'tue' | 'wed' | 'thu' | 'fri' | 'sat';
 
 export interface PlanEditScope {
   planId: string;

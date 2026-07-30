@@ -30,6 +30,7 @@ const DAY_LABELS: Record<PlanEditDay, string> = {
   wed: 'Wednesday',
   thu: 'Thursday',
   fri: 'Friday',
+  sat: 'Saturday',
 };
 
 const SHORT_TO_FULL: Record<PlanEditDay, string> = {
@@ -38,8 +39,11 @@ const SHORT_TO_FULL: Record<PlanEditDay, string> = {
   wed: 'wednesday',
   thu: 'thursday',
   fri: 'friday',
+  sat: 'saturday',
 };
 
+// The day-chip picker offers the school week; a 'sat' scope only arrives
+// pre-set (day-detail sheet on a Saturday plan day, 14-s4).
 const ALL_DAYS: PlanEditDay[] = ['mon', 'tue', 'wed', 'thu', 'fri'];
 
 interface Entry {

@@ -1,10 +1,11 @@
 import { useState } from 'react';
+import { PauseCircleIcon } from '../../../components/icons.js';
 import type {
   ChildPerson,
   CookingMode,
   DayPlan,
-} from '../data/multiChildMockData.js';
-import { formatAttribution } from '../data/multiChildMockData.js';
+} from '../day-view-model.js';
+import { formatAttribution } from '../day-view-model.js';
 import { MainGroupBadge } from './MainGroupBadge.js';
 import { OptionalExtraBlock } from './OptionalExtraBlock.js';
 import { VariationChip } from './VariationChip.js';
@@ -35,22 +36,43 @@ export function WallCardPage({ day, kids, mode }: WallCardPageProps) {
       ? `~${String(minutes)} min ${verb}`
       : `Nothing in ${mode === 'prep' ? 'Prep' : 'Finish'}`;
   const filteredMethod = day.main.method.filter((s) => s.mode === mode);
-  const familiarityFragment = day.main.familiarityKnown
-    ? 'Familiar recipe'
-    : 'New recipe';
+  // Undefined means no familiarity signal exists — say nothing rather than
+  // claim "New recipe" about a dish the household may well cook every month.
+  const familiarityFragment =
+    day.main.familiarityKnown === undefined
+      ? null
+      : day.main.familiarityKnown
+        ? 'Familiar recipe'
+        : 'New recipe';
 
   return (
-    <article className="flex w-full shrink-0 snap-start flex-col gap-8 px-6 py-10 md:gap-10 md:px-12 md:py-14 lg:px-20 lg:py-16">
+    <article
+      aria-label={dayNameLabel(day.dayName)}
+      className="flex w-full shrink-0 snap-start flex-col gap-8 px-6 py-10 md:gap-10 md:px-12 md:py-14 lg:px-20 lg:py-16"
+    >
       <header className="space-y-2">
         <p className="text-[11px] uppercase tracking-[0.25em] text-fg-muted">
           {dayNameLabel(day.dayName)} · {day.dateLabel}
         </p>
-        <MainGroupBadge
-          groupId={day.mainGroupId}
-          {...(day.mainGroupNote !== undefined
-            ? { note: day.mainGroupNote }
-            : {})}
-        />
+        {day.mainGroupId !== '' ? (
+          <MainGroupBadge
+            groupId={day.mainGroupId}
+            {...(day.mainGroupNote !== undefined
+              ? { note: day.mainGroupNote }
+              : {})}
+          />
+        ) : null}
+        {/* Story 14-s4 — a paused day still shows its card (the parent may want
+            to see what they parked), marked plainly rather than hidden. */}
+        {/* Visible text only: an aria-label on a <p> is prohibited ARIA (role
+            `paragraph` cannot be named) — and the data carries no pause reason
+            to announce, so the marker claims none. */}
+        {day.paused ? (
+          <p className="inline-flex items-center gap-2 text-xs italic text-fg-muted">
+            <PauseCircleIcon className="h-4 w-4 shrink-0" aria-hidden />
+            Paused
+          </p>
+        ) : null}
       </header>
 
       <section className="space-y-3">
@@ -60,11 +82,15 @@ export function WallCardPage({ day, kids, mode }: WallCardPageProps) {
         <h3 className="font-serif text-3xl italic leading-tight text-fg md:text-4xl lg:text-5xl">
           {day.main.title}
         </h3>
-        <p className="text-sm text-fg-muted/80 md:text-base">
-          {attribution} · × {String(kids.length)}
-        </p>
+        {/* Roster still loading or failed → no attribution line at all, never
+            a dangling " · × 0" fragment. */}
+        {kids.length > 0 ? (
+          <p className="text-sm text-fg-muted md:text-base">
+            {attribution} · × {String(kids.length)}
+          </p>
+        ) : null}
         <p className="text-xs text-fg-muted md:text-sm">
-          {timeFragment} · {familiarityFragment}
+          {familiarityFragment !== null ? `${timeFragment} · ${familiarityFragment}` : timeFragment}
         </p>
       </section>
 
@@ -91,13 +117,15 @@ export function WallCardPage({ day, kids, mode }: WallCardPageProps) {
             You&apos;ll need
           </h4>
           <ul className="space-y-2.5">
-            {day.main.ingredients.map((i) => (
-              <li key={i} className="flex items-start gap-3 text-fg">
+            {/* Index keys: legacy rows can repeat an ingredient line, and a
+                duplicated string key breaks React reconciliation. */}
+            {day.main.ingredients.map((ing, idx) => (
+              <li key={idx} className="flex items-start gap-3 text-fg">
                 <span
                   className="mt-2 h-1.5 w-1.5 shrink-0 rounded-full bg-amber-warm"
                   aria-hidden
                 />
-                <span>{i}</span>
+                <span>{ing}</span>
               </li>
             ))}
           </ul>
@@ -109,19 +137,19 @@ export function WallCardPage({ day, kids, mode }: WallCardPageProps) {
             onClick={() => {
               setMethodExpanded((v) => !v);
             }}
-            className="flex w-full items-center justify-between gap-3 text-left transition-colors hover:text-amber-warm"
+            className="flex w-full items-center justify-between gap-3 text-left transition-colors hover:text-lumi-terracotta-warmed"
           >
             <span className="text-[10px] font-medium uppercase tracking-[0.25em] text-fg-muted">
               How to make it
             </span>
-            <span className="text-[11px] font-medium text-fg-muted/80">
+            <span className="text-[11px] font-medium text-fg-muted">
               {methodExpanded ? 'Hide steps ▴' : 'Show steps ▾'}
             </span>
           </button>
 
           {methodExpanded ? (
             filteredMethod.length === 0 ? (
-              <p className="rounded-md border border-dashed border-border/30 p-4 text-sm italic text-fg-muted">
+              <p className="rounded-md border border-dashed border-border p-4 text-sm italic text-fg-muted">
                 {mode === 'prep'
                   ? 'Nothing to prep tonight — this one comes together at packing.'
                   : 'Already finished — nothing else to do at packing.'}
@@ -133,7 +161,10 @@ export function WallCardPage({ day, kids, mode }: WallCardPageProps) {
                     key={`${String(i)}-${step.text.slice(0, 24)}`}
                     className="flex items-start gap-4"
                   >
-                    <span className="mt-0.5 inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-amber-warm/20 text-xs font-semibold text-amber-warm md:h-7 md:w-7 md:text-sm">
+                    {/* The honey scale is theme-flipped, so this pairing reads
+                        in both modes. `bg-amber-warm/20` did not: an alpha
+                        modifier on a hex-valued var token compiles to nothing. */}
+                    <span className="mt-0.5 inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-honey-amber-100 text-xs font-semibold text-honey-amber-800 md:h-7 md:w-7 md:text-sm">
                       {i + 1}
                     </span>
                     <span className="leading-relaxed text-fg">{step.text}</span>
@@ -145,7 +176,7 @@ export function WallCardPage({ day, kids, mode }: WallCardPageProps) {
         </section>
       </div>
 
-      <section className="space-y-3 border-t border-border/15 pt-6 md:grid md:grid-cols-12 md:gap-12 md:space-y-0">
+      <section className="space-y-3 border-t border-border pt-6 md:grid md:grid-cols-12 md:gap-12 md:space-y-0">
         <div className="md:col-span-5">
           <p className="text-[10px] font-medium uppercase tracking-[0.25em] text-fg-muted">
             Snack
@@ -156,13 +187,13 @@ export function WallCardPage({ day, kids, mode }: WallCardPageProps) {
         </div>
         <div className="md:col-span-7">
           <ul className="space-y-1.5 text-sm text-fg-muted">
-            {day.snack.ingredients.map((i) => (
-              <li key={i}>· {i}</li>
+            {day.snack.ingredients.map((ing, idx) => (
+              <li key={idx}>· {ing}</li>
             ))}
           </ul>
           {day.snack.perChildVariation !== undefined &&
           Object.keys(day.snack.perChildVariation).length > 0 ? (
-            <ul className="space-y-1 pt-2 text-xs text-fg-muted/80">
+            <ul className="space-y-1 pt-2 text-xs text-fg-muted">
               {Object.entries(day.snack.perChildVariation).map(
                 ([cid, note]) => {
                   const kid = childById.get(cid);

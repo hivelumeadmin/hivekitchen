@@ -15,6 +15,7 @@ const DAY_BY_SHORT: Record<string, Weekday> = {
   wed: 'wednesday',
   thu: 'thursday',
   fri: 'friday',
+  sat: 'saturday',
 };
 
 type PlanEditMissReason =

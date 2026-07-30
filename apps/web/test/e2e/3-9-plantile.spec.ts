@@ -109,12 +109,15 @@ test.describe('Story 3-9: PlanTile', () => {
     await firstTile.focus();
     await expect(firstTile).toBeFocused();
 
-    // Slice 5-S3 — each tile is followed by its PackerChip button in the tab
-    // order, so reaching the next day's tile takes two Tab presses.
+    // Slice 5-S3 — each tile is followed by its PackerChip button, and 14-s4
+    // added the "Open day" link after it, so reaching the next day's tile
+    // takes three Tab presses.
     await page.keyboard.press('Tab');
     await expect(
       page.getByRole('button', { name: /claimed monday|packs monday/i }),
     ).toBeFocused();
+    await page.keyboard.press('Tab');
+    await expect(page.getByRole('link', { name: 'Open Monday' })).toBeFocused();
     await page.keyboard.press('Tab');
     await expect(
       page.getByRole('article', { name: 'Tuesday' }),

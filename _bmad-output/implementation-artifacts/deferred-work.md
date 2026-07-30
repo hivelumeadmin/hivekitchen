@@ -1,5 +1,13 @@
 # Deferred Work Log
 
+## Deferred from: 14-s4-ship-family-first-day-view (2026-07-30, dev-story)
+
+- **D-14S4-1: Cooked / prepped signals have no persistence** — "Mark cooked" and "Done prepping" (and "Skip prep tonight") are part of the locked day-detail action vocabulary but no endpoint records them, so they ship disabled with an honest hint. Needs a `plan_day` completion signal (table + route + optimistic mutation) — and it is the natural source for the *familiarity* signal below. [`apps/web/src/features/day-detail/components/WallCardSwipeStack.tsx` ModeActionBar]
+- **D-14S4-2: A paused day cannot be resumed from the UI** — `PlansRepository.unpauseDayById` exists (`plans.repository.ts:418`) but no HTTP route exposes it (verified against every registered `/v1/` path). The day view therefore renders a paused day view-only. Fix: a `DELETE`/`PATCH …/days/:day/pause` mirror of the pause route, then re-enable the action. [`apps/api/src/modules/plans/plans.routes.ts`]
+- **D-14S4-3: No familiarity signal, so recipe-vs-method gating cannot work** — the locked rule says Method is shown only when the cook doesn't know the recipe; nothing in the data records that, so the method always expands and the card prints no familiarity claim (`familiarityKnown` is left undefined). Derive it from cook-count / `household_recipe_usage` once D-14S4-1 lands. [`apps/web/src/features/day-detail/day-view-model.ts`]
+- **D-14S4-4: `prepInvestment` ("Sunday prep saved you 14 min") is mock-only** — no data source records what weekend prep saved, so the live projection never sets it and the Wall Card's rollup line self-hides. Revisit with D-14S4-1's timing data. [`apps/web/src/features/day-detail/day-view-model.ts`]
+- **D-14S4-5: `/alpha` modifiers are dead on EVERY semantic token, repo-wide** — verified against the compiled CSS: no alpha-modified utility on a `var()`-backed token is generated at all (`border-border/30`, `text-fg-muted/80`, `bg-surface/60`, `bg-bg/90`, `text-fg/90`, `bg-amber-warm/10`…). Borders silently fall back to `currentColor`; "muted" text just inherits. Fixed inside `features/day-detail` by this story; the rest of the app still carries them. Needs a repo-wide sweep plus the `--amber-warm-fill`-style token work already tracked as D-14S3-CR4. [repo-wide; see also `packages/design-system/tokens/colors.css`]
+
 ## Deferred from: code review of 14-s3-elevate-the-week (2026-07-30)
 
 - **D-14S3-CR1: Saturday row interactive but tap/Enter silently no-ops** — 6-day plans render Saturday with full swap affordance (cursor-pointer, tabIndex=0, Enter handler), but `summonForDay` early-returns because `FULL_TO_SHORT` has no `saturday` key; the user gets no feedback. Pre-existing (identical in the old tile grid). Fix: gate `onSwapIntent` on `FULL_TO_SHORT[day] !== undefined` in BriefContent, or extend the plan-edit day vocabulary to saturday. [`apps/web/src/features/plan/useBriefView.ts:15-21`, `BriefContent.tsx:summonForDay`]
@@ -1940,3 +1948,10 @@
 
 - **D-14S2-1: `BriefContent.tsx` at 314 lines exceeds the ~300-line guideline** — verbatim extraction of the old path-4 monolith; the S3 restyle is the planned split-by-concern. [`apps/web/src/features/plan/BriefContent.tsx`]
 - **D-14S2-2: Lateral feature imports travel with the extraction** — `BriefContent` imports `@/features/child-requests/PendingChildRequests` and `@/features/thread/PresenceIndicator` (pre-existing in old BriefCanvas; "never cross feature boundaries laterally" rule). Revisit when S3 touches the canvas or S5 promotes primitives. [`apps/web/src/features/plan/BriefContent.tsx`]
+
+## Deferred from: code review of 14-s4-ship-family-first-day-view (2026-07-30)
+
+- **D-14S4-CR1: `as unknown as DayInput[]` double-cast in `useDayView` defeats the type boundary** — the projection's structural input types are force-cast from `adapted.dayViews`; drift in `tree-adapter` output compiles cleanly and silently mis-renders (it hid the main-slot `recipe_id` mismatch found this review). Harden at S5 promotion. [`apps/web/src/features/day-detail/useDayView.ts:58-61`]
+- **D-14S4-CR2: per-child snack variations project `notes` only** — `SnackEntry.perChildVariation` is a single display string per child; a snack-slot variation expressing portion/texture/cutting with no note is invisible. Needs a model-shape change. [`apps/web/src/features/day-detail/day-view-model.ts:337-340`]
+- **D-14S4-CR3: `buildWeekDates` re-implements `useBriefView`'s week_of-anchored weekDates** — semantics currently match, but two implementations can drift; share one when the hooks next co-locate. [`apps/web/src/features/day-detail/useDayView.ts:121-142`]
+- **D-14S4-CR4: unknown `/app/day/<junk>` renders breadcrumb "This week → This week" and silently shows Monday** — junk-URL-only; partially superseded by the Saturday-support decision (D5) from the same review. [`apps/web/src/routes/(app)/day-detail.tsx` currentLabel fallback]

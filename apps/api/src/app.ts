@@ -61,6 +61,7 @@ import { familyLanguageRoutes } from './modules/family-language/family-language.
 import { householdsRoutes } from './modules/households/households.routes.js';
 import { memoryRoutes } from './modules/memory/memory.routes.js';
 import { plansRoutes } from './modules/plans/plans.routes.js';
+import { recipeRoutes } from './modules/recipe/recipe.routes.js';
 import { lumiRoutes } from './modules/lumi/lumi.routes.js';
 import { heartNoteRoutes } from './modules/heart-notes/heart-note.routes.js';
 import { guestAuthorRoutes } from './modules/guest-author/guest-author.routes.js';
@@ -266,6 +267,7 @@ export async function buildApp(opts: BuildAppOptions) {
   await app.register(householdsRoutes);
   await app.register(memoryRoutes);
   await app.register(plansRoutes);
+  await app.register(recipeRoutes);
   await app.register(lumiRoutes, { prefix: '/v1/lumi' });
   await app.register(heartNoteRoutes);
   await app.register(guestAuthorRoutes);

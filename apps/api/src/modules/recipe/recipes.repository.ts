@@ -131,6 +131,38 @@ export interface InsertRecipeInput {
   visibility: 'private' | 'shared';
 }
 
+// `recipes.ingredients` is JSONB with two historical shapes: the canonical
+// object form (key/modifier/display/…) written by the recipe agent, and plain
+// display strings on catalog-seeded / legacy rows. Both project to a display
+// string; anything else is dropped. Shared by findIngredientsByIds (guardrail
+// path) and findForDayView (Story 14-s4) so the two never drift.
+function projectIngredientDisplays(raw: unknown): string[] {
+  const list = Array.isArray(raw) ? raw : [];
+  const display: string[] = [];
+  for (const entry of list) {
+    if (typeof entry === 'string') {
+      if (entry.length > 0) display.push(entry);
+    } else if (entry !== null && typeof entry === 'object' && 'display' in entry) {
+      const d = (entry as { display?: unknown }).display;
+      if (typeof d === 'string' && d.length > 0) display.push(d);
+    }
+  }
+  return display;
+}
+
+// Story 14-s4 — narrow read for the day-detail Wall Card. Carries the two
+// visibility columns so the route can authorize without a second query.
+export interface RecipeDayViewRow {
+  id: string;
+  canonical_name: string;
+  ingredients: string[];
+  prep_time_minutes: number | null;
+  finish_time_minutes: number | null;
+  source: string;
+  visibility: string;
+  created_by_household_id: string | null;
+}
+
 // Story 3-DM-A1 — full recipe_steps row shape returned by findStepsByRecipeId.
 export interface RecipeStepRow {
   id: string;
@@ -685,19 +717,32 @@ export class RecipesRepository extends BaseRepository {
     if (error) throw error;
 
     for (const raw of (data ?? []) as Array<{ id: string; ingredients: unknown }>) {
-      const list = Array.isArray(raw.ingredients) ? raw.ingredients : [];
-      const display: string[] = [];
-      for (const entry of list) {
-        if (typeof entry === 'string') {
-          if (entry.length > 0) display.push(entry);
-        } else if (entry !== null && typeof entry === 'object' && 'display' in entry) {
-          const d = (entry as { display?: unknown }).display;
-          if (typeof d === 'string' && d.length > 0) display.push(d);
-        }
-      }
-      out.set(raw.id, display);
+      out.set(raw.id, projectIngredientDisplays(raw.ingredients));
     }
     return out;
+  }
+
+  /**
+   * Story 14-s4 — day-detail Wall Card read. Returns the recipe CONTENT the
+   * cook needs plus the two columns the route authorizes on. Ingredients are
+   * normalized to display strings here (see projectIngredientDisplays) so a
+   * legacy string-shaped row can never fail response serialization.
+   */
+  async findForDayView(id: string): Promise<RecipeDayViewRow | null> {
+    const { data, error } = await this.client
+      .from('recipes')
+      .select(
+        'id, canonical_name, ingredients, prep_time_minutes, finish_time_minutes, ' +
+          'source, visibility, created_by_household_id',
+      )
+      .eq('id', id)
+      .maybeSingle();
+    if (error) throw error;
+    if (data === null) return null;
+    const row = data as unknown as Omit<RecipeDayViewRow, 'ingredients'> & {
+      ingredients: unknown;
+    };
+    return { ...row, ingredients: projectIngredientDisplays(row.ingredients) };
   }
 
   /**

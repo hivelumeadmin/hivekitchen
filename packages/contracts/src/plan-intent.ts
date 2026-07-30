@@ -42,7 +42,9 @@ const INTENT_VALUES = Object.values(PLAN_INTENT) as [PlanIntent, ...PlanIntent[]
 export const PlanIntentResultSchema = z.object({
   intent: z.enum(INTENT_VALUES),
   confidence: z.number().min(0).max(1),
-  day: z.enum(['mon', 'tue', 'wed', 'thu', 'fri']).optional(),
+  // 'sat' included (14-s4): WeekdaySchema admits saturday plan days and the
+  // day-detail sheet can arm a Saturday-scoped edit.
+  day: z.enum(['mon', 'tue', 'wed', 'thu', 'fri', 'sat']).optional(),
   slotKind: z.enum(['main', 'snack', 'extra']).optional(),
   childId: z.string().optional(), // resolved from context ("Maya" -> id)
   allergen: z.string().optional(), // for safety_write: canonical allergen name
@@ -75,7 +77,7 @@ export const PlanEditEscalateReasonSchema = z.enum([
 ]);
 
 const PlanEditTargetSchema = z.object({
-  day: z.enum(['mon', 'tue', 'wed', 'thu', 'fri']).optional(),
+  day: z.enum(['mon', 'tue', 'wed', 'thu', 'fri', 'sat']).optional(),
   slotKind: z.enum(['main', 'snack', 'extra']).optional(),
   childId: z.string().optional(),
 });

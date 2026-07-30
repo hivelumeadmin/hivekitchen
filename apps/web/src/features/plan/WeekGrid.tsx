@@ -1,6 +1,13 @@
+import { Link } from 'react-router-dom';
 import type { PlanTileSummary } from '@hivekitchen/types';
 import { PlanTile, type PlanTileState, type ChildInfo } from './PlanTile.js';
 import { PackerChip } from './PackerChip.js';
+
+// 14-s4 review D2 — each day row links to the day-detail sheet. The tile tap
+// itself stays Lumi's (summon-to-swap); this is the cooking entry point.
+function dayLabel(day: PlanTileSummary['day']): string {
+  return day.charAt(0).toUpperCase() + day.slice(1);
+}
 
 // Story 14-s3 — render the week's ISO date as the row's quiet date line. The
 // dates come from useBriefView's local-anchored week map, so parse as local too.
@@ -108,11 +115,20 @@ export function WeekGrid({
                   : undefined
               }
             />
-            <PackerChip
-              day={summary.day}
-              date={weekDates[summary.day] ?? ''}
-              householdId={householdId ?? ''}
-            />
+            <div className="flex items-center justify-between gap-3">
+              <PackerChip
+                day={summary.day}
+                date={weekDates[summary.day] ?? ''}
+                householdId={householdId ?? ''}
+              />
+              <Link
+                to={`/app/day/${summary.day}`}
+                aria-label={`Open ${dayLabel(summary.day)}`}
+                className="shrink-0 text-[11px] font-medium uppercase tracking-widest text-fg-muted transition-colors motion-reduce:transition-none hover:text-lumi-terracotta-warmed focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-warm"
+              >
+                Open day ↗
+              </Link>
+            </div>
           </div>
         );
       })}

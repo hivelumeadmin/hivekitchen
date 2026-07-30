@@ -18,6 +18,7 @@ export const FULL_TO_SHORT: Record<string, PlanEditDay> = {
   wednesday: 'wed',
   thursday: 'thu',
   friday: 'fri',
+  saturday: 'sat',
 };
 export const SHORT_DAY_LABEL: Record<PlanEditDay, string> = {
   mon: 'Monday',
@@ -25,6 +26,7 @@ export const SHORT_DAY_LABEL: Record<PlanEditDay, string> = {
   wed: 'Wednesday',
   thu: 'Thursday',
   fri: 'Friday',
+  sat: 'Saturday',
 };
 
 // Slice 5-S3 — map each weekday name to the plan week's ISO date (Mon-anchored)

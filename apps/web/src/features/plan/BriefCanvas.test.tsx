@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, waitFor, cleanup, fireEvent } from '@testing-library/react';
+import { render as rtlRender, screen, waitFor, cleanup, fireEvent } from '@testing-library/react';
 import type { ReactNode } from 'react';
+import { MemoryRouter } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { BriefResponse, BriefStatePayload, BriefStateRow } from '@hivekitchen/types';
 import { useAuthStore } from '@/stores/auth.store.js';
@@ -26,6 +27,13 @@ function setUser() {
 
 function clearUser() {
   useAuthStore.getState().clearSession();
+}
+
+// 14-s4 review D2: WeekGrid's day rows now carry an "Open day" <Link>, so the
+// canvas needs a Router in the tree. Harness-only change — every assertion in
+// this file is untouched.
+function render(ui: ReactNode) {
+  return rtlRender(<MemoryRouter>{ui}</MemoryRouter>);
 }
 
 function renderWithClient(ui: ReactNode) {
