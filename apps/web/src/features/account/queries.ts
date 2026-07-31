@@ -34,8 +34,11 @@ function hydrateStores(profile: UserProfile): void {
     );
 }
 
-// staleTime 0 preserves the previous fetch-on-every-mount behavior; the user-id
-// key keeps a re-login from reading the prior account's profile.
+// Reproduces the previous `didLoad`-guarded semantics exactly: fetch once per
+// mount, then never again on its own. `refetchOnMount: 'always'` gives the
+// per-mount fetch; `staleTime: Infinity` stops window-focus refetches from
+// clobbering an optimistic toggle with a stale server snapshot. The user-id key
+// keeps a re-login from reading the prior account's profile.
 export function useMeQuery(userId: string | null) {
   return useQuery({
     queryKey: userId !== null ? QueryKeys.me(userId) : ['me', null],
@@ -44,7 +47,8 @@ export function useMeQuery(userId: string | null) {
       hydrateStores(profile);
       return profile;
     },
-    staleTime: 0,
+    staleTime: Infinity,
+    refetchOnMount: 'always',
     enabled: userId !== null,
   });
 }
@@ -60,7 +64,8 @@ export function useVoiceTranscriptsQuery(userId: string | null, options?: { enab
         method: 'GET',
         signal,
       }),
-    staleTime: 0,
+    staleTime: Infinity,
+    refetchOnMount: 'always',
     retry: false,
     enabled: userId !== null && (options?.enabled ?? true),
   });

@@ -14,6 +14,12 @@ import type { VoiceTranscriptsResponse } from './queries.js';
 
 // None of these carry an Idempotency-Key: the account endpoints are plain
 // idempotent PATCHes and the header is not part of their wire contract.
+//
+// OPTIMISTIC TOGGLES: `onMutate` writes the cache without awaiting
+// cancelQueries, so the write itself is synchronous with the click. Getting
+// that write onto the SCREEN synchronously additionally requires the
+// notifyManager scheduler override in providers/query-provider.tsx — see the
+// comment there.
 
 type MeKey = readonly unknown[];
 type ProfileSnapshot = { key: MeKey; previous: UserProfile | undefined };
@@ -61,8 +67,8 @@ export function useNotificationPrefsMutation() {
         method: 'PATCH',
         body: { [field]: checked },
       }),
-    onMutate: async ({ field, checked }) => {
-      await queryClient.cancelQueries({ queryKey: key });
+    onMutate: ({ field, checked }) => {
+      void queryClient.cancelQueries({ queryKey: key });
       const previous = queryClient.getQueryData<UserProfile>(key);
       if (previous !== undefined) {
         queryClient.setQueryData<UserProfile>(key, {
@@ -93,8 +99,8 @@ export function useCulturalLanguageMutation() {
         method: 'PATCH',
         body: { cultural_language },
       }),
-    onMutate: async (cultural_language) => {
-      await queryClient.cancelQueries({ queryKey: key });
+    onMutate: (cultural_language) => {
+      void queryClient.cancelQueries({ queryKey: key });
       const previous = queryClient.getQueryData<UserProfile>(key);
       if (previous !== undefined) {
         queryClient.setQueryData<UserProfile>(key, { ...previous, cultural_language });
@@ -119,8 +125,8 @@ export function useAccessibilityMutation() {
         method: 'PATCH',
         body: { caption_only_mode },
       }),
-    onMutate: async (caption_only_mode) => {
-      await queryClient.cancelQueries({ queryKey: key });
+    onMutate: (caption_only_mode) => {
+      void queryClient.cancelQueries({ queryKey: key });
       const previous = queryClient.getQueryData<UserProfile>(key);
       if (previous !== undefined) {
         queryClient.setQueryData<UserProfile>(key, { ...previous, caption_only_mode });
@@ -162,8 +168,8 @@ export function useVoiceRetentionMutation() {
         method: 'PATCH',
         body: { voice_retention_mode },
       }),
-    onMutate: async (voice_retention_mode) => {
-      await queryClient.cancelQueries({ queryKey: key });
+    onMutate: (voice_retention_mode) => {
+      void queryClient.cancelQueries({ queryKey: key });
       const previous = queryClient.getQueryData<VoiceTranscriptsResponse>(key);
       queryClient.setQueryData<VoiceTranscriptsResponse>(key, {
         voice_retention_mode,
