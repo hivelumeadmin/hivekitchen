@@ -1,5 +1,9 @@
 import { describe, it, expect } from 'vitest';
 import { notifyManager } from '@tanstack/react-query';
+// Static, not a dynamic import inside the test: importing it lazily made this
+// probe timing-dependent and it flaked once under full-suite load. A top-level
+// import is hoisted, so the scheduler override is installed before any test runs.
+import './query-provider.js';
 
 // Story 14-s6 review — guards the notifyManager scheduler override installed by
 // providers/query-provider.tsx. React Query's default scheduler is
@@ -14,9 +18,7 @@ import { notifyManager } from '@tanstack/react-query';
 // (queryCache.subscribe listeners fire synchronously either way, so probing
 // those would pass with the default scheduler too and prove nothing.)
 describe('query-provider notifyManager scheduler', () => {
-  it('flushes observer notifications synchronously', async () => {
-    await import('./query-provider.js');
-
+  it('flushes observer notifications synchronously', () => {
     let notified = false;
     notifyManager.batchCalls(() => {
       notified = true;

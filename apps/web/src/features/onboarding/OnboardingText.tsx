@@ -62,10 +62,9 @@ export function OnboardingText(props: OnboardingTextProps = {}) {
 
         {/* RIGHT: Kitchen Map hero — the showpiece, wider than the conversation */}
         <section
-          className="relative hidden flex-col overflow-hidden bg-surface md:flex md:w-[55%]"
+          className="relative hidden flex-col overflow-hidden bg-bg md:flex md:w-[55%]"
           aria-label="Your Kitchen Profile"
         >
-          <div className="pointer-events-none absolute inset-0 bg-gradient-to-br from-surface to-bg opacity-50" />
           <div className="relative z-10 flex flex-1 flex-col overflow-hidden">{hero}</div>
         </section>
       </div>

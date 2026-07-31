@@ -363,7 +363,15 @@ export function PlanTile({
                   e.stopPropagation();
                   onVariantChoice?.(variantProposal.id, 'try_variant');
                 }}
-                className="rounded-full border border-amber-warm bg-amber-warm/10 px-3 py-1 font-sans text-[13px] text-fg hover:bg-amber-warm/20 transition-colors motion-reduce:transition-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-warm"
+                // D-14S3-CR4: was border/bg amber-warm with an amber hover — the
+                // /alpha tints generated no CSS at all, and amber-on-hover breaks
+                // the Honey rule. DESIGN.md §141: proposal = lumi-terracotta
+                // border, hover fills lumi-terracotta-warmed.
+                // Text stays `fg` on hover: DESIGN.md §141 prescribes
+                // warm-neutral-950/900, but 950 does not exist and 900 measures
+                // 4.25:1 on the warmed fill in light theme — under AA. `fg` is
+                // 5.34/5.19 across both themes.
+                className="rounded-full border-[1.5px] border-lumi-terracotta bg-transparent px-3 py-1 font-sans text-[13px] text-fg transition-colors hover:bg-lumi-terracotta-warmed motion-reduce:transition-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-lumi-terracotta"
               >
                 Try the variant
               </button>

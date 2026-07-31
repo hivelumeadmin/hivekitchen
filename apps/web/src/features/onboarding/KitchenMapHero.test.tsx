@@ -36,11 +36,24 @@ function makeMap(overrides: Partial<KitchenMap>): KitchenMap {
 describe('KitchenMapHero', () => {
   afterEach(cleanup);
 
-  it('always shows the live "Building as we talk…" line and the deferred bag ghost', () => {
+  it('always shows the live "Building as we talk…" line', () => {
     render(
       <KitchenMapHero kitchenMap={null} momentKey={null} mapPending={false} householdDisplayName={null} />,
     );
     expect(screen.getByText(/building as we talk/i)).toBeDefined();
+  });
+
+  // 14-s3b AC9 — the deferred-bag section is now progressively revealed rather
+  // than always-on, matching the mockup. Both halves of that are asserted.
+  it('reveals the deferred bag section only once M3 is reached', () => {
+    const { rerender } = render(
+      <KitchenMapHero kitchenMap={null} momentKey={null} mapPending={false} householdDisplayName={null} />,
+    );
+    expect(screen.queryByText(/lumi learns these as you cook the first week/i)).toBeNull();
+
+    rerender(
+      <KitchenMapHero kitchenMap={null} momentKey="m3_taste" mapPending={false} householdDisplayName={null} />,
+    );
     expect(screen.getByText(/lumi learns these as you cook the first week/i)).toBeDefined();
   });
 
@@ -74,7 +87,11 @@ describe('KitchenMapHero', () => {
     render(
       <KitchenMapHero kitchenMap={map} momentKey="m2_safe" mapPending={false} householdDisplayName={null} />,
     );
-    expect(screen.getByText(/Maya · Child/)).toBeDefined();
+    // 14-s3b AC4 — the flat "Maya · Child" pill became an avatar row: initial,
+    // name, and the age band as a separate caption. Same three facts, three nodes.
+    expect(screen.getByText('Maya')).toBeDefined();
+    expect(screen.getByText('Child')).toBeDefined();
+    expect(screen.getByText('M')).toBeDefined();
   });
 
   it('renders per-child allergen safety pills once M2 is reached', () => {
@@ -98,7 +115,8 @@ describe('KitchenMapHero', () => {
       <KitchenMapHero kitchenMap={map} momentKey="m2_safe" mapPending={false} householdDisplayName={null} />,
     );
     expect(screen.getByTestId('m2-safety-card')).toBeDefined();
-    expect(screen.getByText('Peanut')).toBeDefined();
+    // 14-s3b AC5 — negated phrasing; the allergen keeps its vocabulary casing.
+    expect(screen.getByText(/✓ No Peanut/)).toBeDefined();
   });
 
   it('shows "All clear" only after advancing past M2 with no allergens', () => {
@@ -140,7 +158,7 @@ describe('KitchenMapHero', () => {
     render(
       <KitchenMapHero kitchenMap={map} momentKey="m2_safe" mapPending={false} householdDisplayName={null} />,
     );
-    expect(screen.getByText('Sesame')).toBeDefined();
+    expect(screen.getByText(/✓ No Sesame/)).toBeDefined();
     expect(screen.queryByText(/dead/)).toBeNull();
   });
 
