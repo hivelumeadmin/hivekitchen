@@ -66,7 +66,7 @@ function StepIndicator({
   readonly label: string;
 }>) {
   return (
-    <div className="flex items-center gap-4 text-xs uppercase tracking-widest text-fg-muted/60">
+    <div className="flex items-center gap-4 text-xs uppercase tracking-widest text-fg-muted">
       {dots.map((state, i) => (
         <span key={i} className={state === 'active' ? 'text-amber-warm' : ''}>
           {state === 'active' ? '●' : '○'}

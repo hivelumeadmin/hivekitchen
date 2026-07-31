@@ -48,7 +48,7 @@ export function OnboardingResume({
   return (
     <section className="flex flex-1 items-center justify-center px-8 py-16">
       <div className="flex w-full max-w-md flex-col items-center gap-8 text-center">
-        <p className="text-xs uppercase tracking-widest text-fg-muted/80">
+        <p className="text-xs uppercase tracking-widest text-fg-muted">
           {firstName ? `Welcome back, ${firstName}` : 'Welcome back'}
         </p>
         <h1 className="font-serif text-2xl text-fg sm:text-3xl">

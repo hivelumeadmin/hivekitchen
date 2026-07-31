@@ -21,7 +21,7 @@ const tabs: ReadonlyArray<{ readonly mode: MediaMode; readonly label: string }> 
 
 export function MediaTabs({ active, onChange }: MediaTabsProps) {
   return (
-    <div className="relative z-30 w-full border-b border-border/20 bg-bg">
+    <div className="relative z-30 w-full border-b border-border bg-bg">
       <div className="mx-auto flex max-w-[720px]">
         {tabs.map((tab) => (
           <MediaTabButton
@@ -49,8 +49,8 @@ function MediaTabButton({
   readonly onClick: () => void;
 }>) {
   const stateClass = active
-    ? 'border-amber-warm text-amber-warm bg-amber-warm/5'
-    : 'border-transparent text-fg-muted hover:bg-surface/50 hover:text-fg';
+    ? 'border-amber-warm text-amber-warm bg-honey-amber-50'
+    : 'border-transparent text-fg-muted hover:bg-surface-2 hover:text-fg';
   return (
     <button
       type="button"

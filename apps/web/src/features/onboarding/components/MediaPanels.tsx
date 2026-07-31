@@ -11,15 +11,15 @@ export type VideoPanelProps = Readonly<Readonly_VideoPanelProps>;
 
 export function VideoPanel({ imageSrc, imageAlt }: VideoPanelProps) {
   return (
-    <div className="group relative aspect-video w-full cursor-pointer overflow-hidden rounded-2xl border border-border/20 bg-surface shadow-2xl shadow-black/50">
+    <div className="group relative aspect-video w-full cursor-pointer overflow-hidden rounded-2xl border border-border bg-surface shadow-2xl shadow-black/50">
       <img
         src={imageSrc}
         alt={imageAlt}
         className="h-full w-full object-cover opacity-60 transition-transform duration-700 ease-out group-hover:scale-105"
       />
-      <div className="absolute inset-0 bg-bg/30 transition-colors duration-500 group-hover:bg-bg/10" />
+      <div className="absolute inset-0 bg-bg transition-colors duration-500 group-hover:bg-surface" />
       <div className="absolute inset-0 flex items-center justify-center">
-        <div className="flex h-20 w-20 items-center justify-center rounded-full border border-amber-warm/30 bg-amber-warm/20 backdrop-blur-md transition-all duration-300 group-hover:scale-110 group-hover:bg-amber-warm/30">
+        <div className="flex h-20 w-20 items-center justify-center rounded-full border border-amber-warm bg-honey-amber-100 backdrop-blur-md transition-all duration-300 group-hover:scale-110 group-hover:bg-honey-amber-200">
           <PlayArrowIcon className="ms-1 h-10 w-10 text-amber-warm" />
         </div>
       </div>
@@ -275,25 +275,25 @@ export function AudioPanel({ caption, text }: AudioPanelProps) {
   })();
 
   return (
-    <div className="flex w-full flex-col items-center justify-center space-y-8 rounded-2xl border border-border/20 bg-surface p-12 shadow-xl">
+    <div className="flex w-full flex-col items-center justify-center space-y-8 rounded-2xl border border-border bg-surface p-12 shadow-xl">
       <div
         className="flex h-16 items-center justify-center gap-1.5"
         aria-hidden="true"
       >
         <span
-          className={`h-6 w-1.5 rounded-full bg-lumi-terracotta/40 [animation-delay:100ms] [animation-duration:1s] ${isPlaying ? 'animate-bounce' : ''}`}
+          className={`h-6 w-1.5 rounded-full bg-lumi-terracotta-warmed [animation-delay:100ms] [animation-duration:1s] ${isPlaying ? 'animate-bounce' : ''}`}
         />
         <span
-          className={`h-12 w-1.5 rounded-full bg-lumi-terracotta/70 [animation-delay:200ms] [animation-duration:1.2s] ${isPlaying ? 'animate-bounce' : ''}`}
+          className={`h-12 w-1.5 rounded-full bg-lumi-terracotta [animation-delay:200ms] [animation-duration:1.2s] ${isPlaying ? 'animate-bounce' : ''}`}
         />
         <span
           className={`h-16 w-1.5 rounded-full bg-lumi-terracotta [animation-delay:300ms] [animation-duration:0.8s] ${isPlaying ? 'animate-bounce' : ''}`}
         />
         <span
-          className={`h-10 w-1.5 rounded-full bg-lumi-terracotta/70 [animation-delay:400ms] [animation-duration:1.1s] ${isPlaying ? 'animate-bounce' : ''}`}
+          className={`h-10 w-1.5 rounded-full bg-lumi-terracotta [animation-delay:400ms] [animation-duration:1.1s] ${isPlaying ? 'animate-bounce' : ''}`}
         />
         <span
-          className={`h-8 w-1.5 rounded-full bg-lumi-terracotta/40 [animation-delay:500ms] [animation-duration:0.9s] ${isPlaying ? 'animate-bounce' : ''}`}
+          className={`h-8 w-1.5 rounded-full bg-lumi-terracotta-warmed [animation-delay:500ms] [animation-duration:0.9s] ${isPlaying ? 'animate-bounce' : ''}`}
         />
       </div>
 
@@ -302,7 +302,7 @@ export function AudioPanel({ caption, text }: AudioPanelProps) {
         onClick={onToggle}
         disabled={isConnecting}
         aria-label={isPlaying ? 'Pause Lumi' : 'Listen to Lumi'}
-        className="flex h-16 w-16 items-center justify-center rounded-full border border-amber-warm/30 bg-amber-warm/20 text-amber-warm transition-all duration-300 hover:scale-110 hover:bg-amber-warm/30 disabled:opacity-50 disabled:cursor-wait"
+        className="flex h-16 w-16 items-center justify-center rounded-full border border-amber-warm bg-honey-amber-100 text-amber-warm transition-all duration-300 hover:scale-110 hover:bg-honey-amber-200 disabled:opacity-50 disabled:cursor-wait"
       >
         {isPlaying ? (
           <PauseCircleIcon className="h-8 w-8" />
@@ -314,7 +314,7 @@ export function AudioPanel({ caption, text }: AudioPanelProps) {
       <div className="space-y-3 text-center">
         <p className="font-serif text-2xl font-light italic text-fg">{caption}</p>
         <p
-          className="text-sm uppercase tracking-widest text-fg-muted/60"
+          className="text-sm uppercase tracking-widest text-fg-muted"
           role="status"
           aria-live="polite"
         >
@@ -337,7 +337,7 @@ export function TextPanel({ paragraphs }: TextPanelProps) {
       {paragraphs.map((p, i) => (
         <div key={i} className="space-y-10">
           <p className="text-[15px] leading-relaxed text-fg-muted">{p}</p>
-          {i < paragraphs.length - 1 ? <hr className="border-t border-border/20" /> : null}
+          {i < paragraphs.length - 1 ? <hr className="border-t border-border" /> : null}
         </div>
       ))}
     </div>

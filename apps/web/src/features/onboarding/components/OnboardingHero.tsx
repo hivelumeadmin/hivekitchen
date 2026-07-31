@@ -22,7 +22,7 @@ export function OnboardingHero({
         alt={imageAlt}
         className="absolute inset-0 h-full w-full object-cover object-[center_20%] brightness-[0.85] grayscale-[0.1]"
       />
-      <div className="absolute inset-0 bg-gradient-to-r from-bg via-bg/70 to-transparent" />
+      <div className="absolute inset-0 bg-gradient-to-r from-bg via-bg to-transparent" />
       <div className="relative z-10 flex h-full items-center px-8 md:px-16 lg:px-24">
         <div className="max-w-2xl space-y-3">
           <p className="text-xs font-semibold uppercase tracking-[0.15em] text-amber-warm">

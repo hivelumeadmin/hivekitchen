@@ -22,7 +22,7 @@ export function PreviewTiles({ tiles }: PreviewTilesProps) {
 function PreviewTile({ tile }: Readonly<{ readonly tile: OnboardingPreviewTile }>) {
   return (
     <div className="flex flex-col items-center space-y-4 text-center">
-      <div className="h-16 w-16 overflow-hidden rounded-full border border-border/30">
+      <div className="h-16 w-16 overflow-hidden rounded-full border border-border">
         {tile.imageSrc ? (
           <img
             src={tile.imageSrc}
@@ -31,7 +31,7 @@ function PreviewTile({ tile }: Readonly<{ readonly tile: OnboardingPreviewTile }
           />
         ) : (
           <div className="flex h-full w-full items-center justify-center bg-surface">
-            <WaveformIcon className="h-6 w-6 text-amber-warm/40" />
+            <WaveformIcon className="h-6 w-6 text-amber-warm" />
           </div>
         )}
       </div>

@@ -39,7 +39,7 @@ export function RecognitionEnding({
     <div className="shrink-0 px-6 pb-8 pt-4 md:px-8">
       <div
         data-testid="recognition-ending"
-        className="mx-auto flex max-w-xl flex-col items-center gap-5 rounded-3xl border border-honey-amber-200/40 bg-surface px-6 py-7 text-center animate-[hk-glow_1.4s_ease-out_forwards] motion-reduce:animate-none"
+        className="mx-auto flex max-w-xl flex-col items-center gap-5 rounded-3xl border border-honey-amber-200 bg-surface px-6 py-7 text-center animate-[hk-glow_1.4s_ease-out_forwards] motion-reduce:animate-none"
       >
         <h2 className="font-serif text-xl leading-snug text-fg md:text-2xl">
           {ready ? "Here's the kitchen I've come to know" : "Here's the kitchen so far"}
@@ -79,7 +79,7 @@ export function RecognitionEnding({
                     type="button"
                     data-testid={`gap-jump-${momentKey}`}
                     onClick={() => onJumpToMoment(momentKey)}
-                    className="inline-flex items-center gap-1.5 rounded-full border border-honey-amber-300/50 px-4 py-2 font-sans text-sm text-amber transition-colors hover:bg-honey-amber-50/40"
+                    className="inline-flex items-center gap-1.5 rounded-full border border-honey-amber-300 px-4 py-2 font-sans text-sm text-amber transition-colors hover:bg-honey-amber-50"
                   >
                     {info.moment > 0 ? `Back to Moment ${info.moment} · ${info.label}` : info.label}
                   </button>

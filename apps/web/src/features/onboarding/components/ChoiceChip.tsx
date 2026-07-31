@@ -41,7 +41,7 @@ export function ChoiceChip({
 
   const stateClass = (() => {
     if (disabled) {
-      return 'cursor-not-allowed border-border/40 bg-surface/40 text-fg-muted/60';
+      return 'cursor-not-allowed border-border bg-surface text-fg-muted';
     }
     if (isSkip) {
       // Skip chip — outlined only, never fills. One-shot action, not a content choice.
@@ -54,7 +54,7 @@ export function ChoiceChip({
       // Foliage = confirmation channel. Calmer than honey/amber, on-doctrine.
       return 'border-foliage bg-foliage-soft text-fg hover:bg-foliage-soft';
     }
-    return 'border-border bg-bg text-fg hover:border-foliage/60 hover:bg-warm-neutral-50';
+    return 'border-border bg-bg text-fg hover:border-foliage hover:bg-warm-neutral-50';
   })();
 
   return (

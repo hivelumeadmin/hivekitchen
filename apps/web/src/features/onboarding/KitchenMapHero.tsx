@@ -146,7 +146,7 @@ export function KitchenMapHero({
                     {childAllergens.map(({ childName, allergen }) => (
                       <div key={(childName ?? '') + allergen} className="flex items-center gap-1.5">
                         {childName !== null && (
-                          <span className="font-sans text-[10px] font-semibold text-fg-muted/60">
+                          <span className="font-sans text-[10px] font-semibold text-fg-muted">
                             {childName}
                           </span>
                         )}
@@ -203,9 +203,9 @@ export function KitchenMapHero({
         )}
 
         {/* Deferred — Lumi learns the rest during the first week (no interview wall) */}
-        <div className="rounded-xl border border-dashed border-border/50 px-5 py-4">
+        <div className="rounded-xl border border-dashed border-border px-5 py-4">
           <h3 className="mb-1 font-serif text-base text-fg-muted">The bag &amp; your week</h3>
-          <p className="font-sans text-xs italic text-fg-muted/70">
+          <p className="font-sans text-xs italic text-fg-muted">
             Lumi learns these as you cook the first week — no interview wall.
           </p>
         </div>
@@ -236,13 +236,13 @@ function Ghost({ label, pending }: { label: string; pending: boolean }) {
     <div className="flex items-center gap-3.5 rounded-xl bg-surface p-4">
       <span
         className={[
-          'h-8 w-8 shrink-0 rounded-full bg-amber/10',
+          'h-8 w-8 shrink-0 rounded-full bg-honey-amber-100',
           pending ? 'motion-safe:animate-pulse motion-reduce:animate-none' : '',
         ].join(' ')}
       />
       <div>
-        <p className="font-sans text-sm font-medium text-fg/55">{label}</p>
-        <p className="mt-0.5 font-sans text-[11px] text-fg-muted/40">Still listening…</p>
+        <p className="font-sans text-sm font-medium text-fg-muted">{label}</p>
+        <p className="mt-0.5 font-sans text-[11px] text-fg-muted">Still listening…</p>
       </div>
     </div>
   );
