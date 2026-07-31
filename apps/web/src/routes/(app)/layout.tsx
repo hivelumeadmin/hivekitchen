@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Outlet, useMatch } from 'react-router-dom';
 import { useScope } from '@hivekitchen/ui';
-import { AppFooter } from '@/components/AppFooter.js';
+import { AppFooter } from '@hivekitchen/ui';
 import { AppHeader } from '@/components/AppHeader.js';
 import { AppSidebar } from '@/components/AppSidebar.js';
 import { LumiPresence } from '@/components/LumiPresence.js';

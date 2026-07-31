@@ -1,7 +1,7 @@
 import {
   ShoppingBasketIcon,
   StorefrontIcon,
-} from '../../../components/icons.js';
+} from '@hivekitchen/ui';
 import type { Store, StoreAccent, StoreIcon } from '../data/mockData.js';
 import { GroceryItemRow } from './GroceryItemRow.js';
 

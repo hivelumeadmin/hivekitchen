@@ -5,9 +5,9 @@ import {
   EyeOffIcon,
   LockIcon,
   MailIcon,
-} from '../../../components/icons.js';
-import { PrimaryButton } from '../../../components/PrimaryButton.js';
-import { TextField } from '../../../components/TextField.js';
+} from '@hivekitchen/ui';
+import { PrimaryButton } from '@hivekitchen/ui';
+import { TextField } from '@hivekitchen/ui';
 import { loginCopyMock } from '../data/mockData.js';
 import { GoogleButton } from './GoogleButton.js';
 import { OrDivider } from './OrDivider.js';

@@ -1,5 +1,5 @@
 import { useThemeStore } from '../stores/theme.store.js';
-import { MoonIcon, SunIcon } from './icons.js';
+import { MoonIcon, SunIcon } from '@hivekitchen/ui';
 
 /**
  * Switches between dark and light themes. The selection persists to

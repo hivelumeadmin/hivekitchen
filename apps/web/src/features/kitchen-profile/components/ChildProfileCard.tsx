@@ -1,6 +1,6 @@
 import { COMMON_ALLERGENS, ALLERGEN_LABELS } from '@hivekitchen/contracts';
 import type { AllergenKey } from '@hivekitchen/types';
-import { ShieldIcon } from '../../../components/icons.js';
+import { ShieldIcon } from '@hivekitchen/ui';
 import type { Allergen, ChildProfile } from '../data/mockData.js';
 import {
   ChildEditConversation,

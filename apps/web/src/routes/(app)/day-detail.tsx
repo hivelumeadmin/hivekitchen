@@ -1,5 +1,5 @@
 import { useNavigate, useParams } from 'react-router-dom';
-import { DetailHeader } from '@/components/DetailHeader.js';
+import { DetailHeader } from '@hivekitchen/ui';
 import { useAuthStore } from '@/stores/auth.store.js';
 import { useLumiStore } from '@/stores/lumi.store.js';
 import {

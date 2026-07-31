@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { ShieldIcon } from '../../../components/icons.js';
+import { ShieldIcon } from '@hivekitchen/ui';
 import type { Allergen, ChildProfile } from '../data/mockData.js';
 import { AddableChip, RemovableChip } from './EditChips.js';
 import { EditConversation } from './EditConversation.js';

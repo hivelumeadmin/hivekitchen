@@ -1,4 +1,4 @@
-import { LightbulbIcon } from '../../../components/icons.js';
+import { LightbulbIcon } from '@hivekitchen/ui';
 
 interface Readonly_MorningNotesCardProps {
   readonly note: string;

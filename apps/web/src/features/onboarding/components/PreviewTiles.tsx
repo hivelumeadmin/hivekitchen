@@ -1,4 +1,4 @@
-import { WaveformIcon } from '../../../components/icons.js';
+import { WaveformIcon } from '@hivekitchen/ui';
 import type { OnboardingPreviewTile } from '../data/mockData.js';
 
 interface Readonly_PreviewTilesProps {

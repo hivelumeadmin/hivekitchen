@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { PauseCircleIcon } from '../../../components/icons.js';
+import { PauseCircleIcon } from '@hivekitchen/ui';
 import type {
   ChildPerson,
   CookingMode,

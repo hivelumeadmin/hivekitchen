@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { AddCircleIcon } from '../../../components/icons.js';
+import { AddCircleIcon } from '@hivekitchen/ui';
 
 interface Readonly_AddItemComposerProps {
   readonly placeholder: string;

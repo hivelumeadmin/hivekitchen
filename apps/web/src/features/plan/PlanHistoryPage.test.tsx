@@ -13,7 +13,8 @@ import type {
 
 // Hoisted mocks must precede the imports that use them. vi.mock is hoisted
 // automatically so this works for both ESM-only modules.
-vi.mock('@hivekitchen/ui', () => ({
+vi.mock('@hivekitchen/ui', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
   useScope: vi.fn(),
 }));
 

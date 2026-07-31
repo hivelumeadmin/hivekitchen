@@ -1,4 +1,4 @@
-import { ForumIcon } from '../../../components/icons.js';
+import { ForumIcon } from '@hivekitchen/ui';
 
 interface Readonly_LumiHintProps {
   readonly text: string;

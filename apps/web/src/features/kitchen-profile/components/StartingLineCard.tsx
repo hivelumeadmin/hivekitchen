@@ -1,4 +1,4 @@
-import { EditIcon } from '../../../components/icons.js';
+import { EditIcon } from '@hivekitchen/ui';
 import type { StartingLine } from '../data/mockData.js';
 import { EmptyMomentPlaceholder } from './EmptyMomentPlaceholder.js';
 import { StartingLineEditConversation } from './StartingLineEditConversation.js';

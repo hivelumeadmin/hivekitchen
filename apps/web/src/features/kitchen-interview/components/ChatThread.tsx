@@ -1,4 +1,4 @@
-import { SparkleIcon } from '../../../components/icons.js';
+import { SparkleIcon } from '@hivekitchen/ui';
 import type { InterviewTurn, MessagePart } from '../data/mockData.js';
 import { InterviewMessage } from './InterviewMessage.js';
 

@@ -1,4 +1,4 @@
-import { CheckIcon } from '../../../components/icons.js';
+import { CheckIcon } from '@hivekitchen/ui';
 
 interface LunchSummaryData {
   readonly eyebrow: string;

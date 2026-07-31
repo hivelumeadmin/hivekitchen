@@ -2,7 +2,7 @@ import {
   ArticleIcon,
   PlayCircleIcon,
   WaveformIcon,
-} from '../../../components/icons.js';
+} from '@hivekitchen/ui';
 
 export type MediaMode = 'video' | 'audio' | 'text';
 

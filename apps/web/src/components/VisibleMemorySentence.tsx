@@ -4,7 +4,7 @@ import { EditMemoryResponseSchema, ForgetMemoryResponseSchema } from '@hivekitch
 import type { MemoryNode } from '@hivekitchen/types';
 import { hkFetch } from '@/lib/fetch.js';
 import { ProvenancePopover } from './ProvenancePopover.js';
-import { TextField } from './TextField.js';
+import { TextField } from '@hivekitchen/ui';
 
 interface Props {
   node: MemoryNode;

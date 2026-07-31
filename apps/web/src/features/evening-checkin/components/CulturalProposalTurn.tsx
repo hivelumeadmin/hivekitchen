@@ -1,4 +1,4 @@
-import { SparkleIcon } from '../../../components/icons.js';
+import { SparkleIcon } from '@hivekitchen/ui';
 
 interface Readonly_CulturalProposalTurnProps {
   readonly label: string;

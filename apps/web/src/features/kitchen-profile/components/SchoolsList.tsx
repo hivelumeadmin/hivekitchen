@@ -1,4 +1,4 @@
-import { ChevronRightIcon, EditIcon, PlusIcon } from '../../../components/icons.js';
+import { ChevronRightIcon, EditIcon, PlusIcon } from '@hivekitchen/ui';
 import {
   type School,
   SchoolsEditConversation,

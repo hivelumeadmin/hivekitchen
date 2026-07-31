@@ -4,7 +4,7 @@ import {
   MinusIcon,
   PlusIcon,
   TrashIcon,
-} from '../../../components/icons.js';
+} from '@hivekitchen/ui';
 import type { GroceryItem } from '../data/mockData.js';
 
 interface Readonly_GroceryItemRowProps {

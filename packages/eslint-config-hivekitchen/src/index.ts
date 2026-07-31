@@ -89,38 +89,55 @@ export function baseConfig(): Linter.Config[] {
   ) as Linter.Config[];
 }
 
+function reactTsxConfig(extraRules: Linter.RulesRecord = {}): Linter.Config {
+  return {
+    files: ['**/*.{jsx,tsx}'],
+    plugins: {
+      react: reactPlugin as unknown as NonNullable<Linter.Config['plugins']>[string],
+      'react-hooks': reactHooks as unknown as NonNullable<Linter.Config['plugins']>[string],
+      'jsx-a11y': jsxA11y as unknown as NonNullable<Linter.Config['plugins']>[string],
+      hivekitchen: hivekitchenPlugin as unknown as NonNullable<Linter.Config['plugins']>[string],
+    },
+    languageOptions: {
+      parserOptions: {
+        ecmaFeatures: { jsx: true },
+      },
+    },
+    settings: {
+      react: { version: 'detect' },
+    },
+    rules: {
+      ...(reactPlugin.configs?.recommended?.rules ?? {}),
+      ...(reactHooks.configs?.recommended?.rules ?? {}),
+      ...(jsxA11y.flatConfigs?.strict?.rules ?? jsxA11y.configs?.strict?.rules ?? {}),
+      'react/react-in-jsx-scope': 'off',
+      'react/prop-types': 'off',
+      ...extraRules,
+    } as Linter.RulesRecord,
+  };
+}
+
+/**
+ * Config for `packages/ui` — the locked-primitive component library.
+ *
+ * Identical to {@link webConfig} minus the two app-scoped rules
+ * (`no-cross-scope-component`, `no-dialog-outside-allowlist`), which key off
+ * `apps/web` feature paths that do not exist inside the package.
+ */
+export function uiConfig(): Linter.Config[] {
+  return [...baseConfig(), reactTsxConfig()];
+}
+
 export function webConfig(opts: WebConfigOptions): Linter.Config[] {
   const scopeAllowlist = opts.scopeAllowlist;
   const dialogAllowlist = opts.dialogAllowlist ?? DEFAULT_DIALOG_ALLOWLIST;
 
   return [
     ...baseConfig(),
-    {
-      files: ['**/*.{jsx,tsx}'],
-      plugins: {
-        react: reactPlugin as unknown as NonNullable<Linter.Config['plugins']>[string],
-        'react-hooks': reactHooks as unknown as NonNullable<Linter.Config['plugins']>[string],
-        'jsx-a11y': jsxA11y as unknown as NonNullable<Linter.Config['plugins']>[string],
-        hivekitchen: hivekitchenPlugin as unknown as NonNullable<Linter.Config['plugins']>[string],
-      },
-      languageOptions: {
-        parserOptions: {
-          ecmaFeatures: { jsx: true },
-        },
-      },
-      settings: {
-        react: { version: 'detect' },
-      },
-      rules: {
-        ...(reactPlugin.configs?.recommended?.rules ?? {}),
-        ...(reactHooks.configs?.recommended?.rules ?? {}),
-        ...(jsxA11y.flatConfigs?.strict?.rules ?? jsxA11y.configs?.strict?.rules ?? {}),
-        'react/react-in-jsx-scope': 'off',
-        'react/prop-types': 'off',
-        'hivekitchen/no-cross-scope-component': ['error', { scopeAllowlist }],
-        'hivekitchen/no-dialog-outside-allowlist': ['error', { allowlist: dialogAllowlist }],
-      },
-    },
+    reactTsxConfig({
+      'hivekitchen/no-cross-scope-component': ['error', { scopeAllowlist }],
+      'hivekitchen/no-dialog-outside-allowlist': ['error', { allowlist: dialogAllowlist }],
+    }),
   ];
 }
 

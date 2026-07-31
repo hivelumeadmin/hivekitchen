@@ -2,8 +2,8 @@ import {
   NutritionIcon,
   PackageIcon,
   StarFilledIcon,
-} from '../../../components/icons.js';
-import { RailCard } from '../../../components/RailCard.js';
+} from '@hivekitchen/ui';
+import { RailCard } from '@hivekitchen/ui';
 import type { WhyReason, WhyReasonIcon } from '../data/mockData.js';
 
 interface Readonly_WhyLumiChoseCardProps {

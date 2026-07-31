@@ -1,4 +1,4 @@
-import { AppFooter } from '../components/AppFooter.js';
+import { AppFooter } from '@hivekitchen/ui';
 import { AppHeader } from '../components/AppHeader.js';
 import { FeedbackBlock } from '../features/lunch-link/components/FeedbackBlock.js';
 import { HeartNoteCard } from '../features/lunch-link/components/HeartNoteCard.js';

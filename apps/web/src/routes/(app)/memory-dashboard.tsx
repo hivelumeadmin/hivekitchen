@@ -5,7 +5,7 @@ import type { MemorySourceCounts, ParentalDashboardResponse } from '@hivekitchen
 import { hkFetch, HkApiError } from '@/lib/fetch.js';
 import { useLumiContext } from '@/hooks/useLumiContext.js';
 import { useAuthStore } from '@/stores/auth.store.js';
-import { RailCard } from '@/components/RailCard.js';
+import { RailCard } from '@hivekitchen/ui';
 
 type LoadState = 'loading' | 'ready' | 'error';
 

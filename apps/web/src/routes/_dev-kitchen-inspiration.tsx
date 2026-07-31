@@ -1,4 +1,4 @@
-import { AppFooter } from '../components/AppFooter.js';
+import { AppFooter } from '@hivekitchen/ui';
 import { AppHeader } from '../components/AppHeader.js';
 import { InspirationActions } from '../features/kitchen-inspiration/components/InspirationActions.js';
 import { InspirationHeader } from '../features/kitchen-inspiration/components/InspirationHeader.js';

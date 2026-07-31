@@ -1,4 +1,4 @@
-import { AppleLogoIcon } from '../../../components/icons.js';
+import { AppleLogoIcon } from '@hivekitchen/ui';
 
 interface Readonly_AppleButtonProps {
   readonly label: string;

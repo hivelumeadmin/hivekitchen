@@ -1,4 +1,4 @@
-import { RailCard } from '../../../components/RailCard.js';
+import { RailCard } from '@hivekitchen/ui';
 import type { Allergen } from '../data/mockData.js';
 
 interface Readonly_AllergenScanCardProps {

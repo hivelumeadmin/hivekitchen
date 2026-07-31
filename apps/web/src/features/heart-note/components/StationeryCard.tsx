@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { AlertTriangleIcon, CheckCircleIcon, ClockIcon } from '../../../components/icons.js';
+import { AlertTriangleIcon, CheckCircleIcon, ClockIcon } from '@hivekitchen/ui';
 
 interface Envelope {
   readonly toLabel: string;

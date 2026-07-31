@@ -1,9 +1,9 @@
-import { AppFooter } from '../components/AppFooter.js';
+import { AppFooter } from '@hivekitchen/ui';
 import {
   ChevronLeftIcon,
   MoonIcon,
   SunIcon,
-} from '../components/icons.js';
+} from '@hivekitchen/ui';
 import { PageHeader } from '../components/PageHeader.js';
 import { WallCardSwipeStack } from '../features/day-detail/components/WallCardSwipeStack.js';
 import { exampleWeek } from '../features/day-detail/data/multiChildMockData.js';

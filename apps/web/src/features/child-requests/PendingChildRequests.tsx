@@ -3,8 +3,8 @@ import { PendingChildRequestsResponseSchema } from '@hivekitchen/contracts';
 import type { PendingChildRequestsResponse } from '@hivekitchen/types';
 import { hkFetch } from '@/lib/fetch.js';
 import { QueryKeys } from '@/lib/realtime';
-import { PrimaryButton } from '@/components/PrimaryButton.js';
-import { CheckCircleIcon } from '@/components/icons.js';
+import { PrimaryButton } from '@hivekitchen/ui';
+import { CheckCircleIcon } from '@hivekitchen/ui';
 
 interface PendingChildRequestsProps {
   readonly householdId: string;

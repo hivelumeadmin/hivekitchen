@@ -1,4 +1,4 @@
-import { CheckCircleIcon, SyncAltIcon } from '../../../components/icons.js';
+import { CheckCircleIcon, SyncAltIcon } from '@hivekitchen/ui';
 
 interface Readonly_PlanUpdateDiffProps {
   readonly previous: string;

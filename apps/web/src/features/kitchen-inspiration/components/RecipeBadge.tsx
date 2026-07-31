@@ -4,7 +4,7 @@ import {
   ShieldIcon,
   StarFilledIcon,
   SunIcon,
-} from '../../../components/icons.js';
+} from '@hivekitchen/ui';
 import type { BadgeColor, BadgeIcon, RecipeBadge as BadgeData } from '../data/mockData.js';
 
 interface Readonly_RecipeBadgeProps {

@@ -1,7 +1,7 @@
 import { useRef, useState } from 'react';
 import type { KeyboardEvent as ReactKeyboardEvent } from 'react';
 import type { PlanTileSummary, VariantProposal } from '@hivekitchen/types';
-import { PauseCircleIcon } from '@/components/icons.js';
+import { PauseCircleIcon } from '@hivekitchen/ui';
 import { TrustChip, type TrustChipVariant } from './TrustChip.js';
 
 export type PlanTileState =

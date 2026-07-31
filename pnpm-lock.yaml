@@ -204,6 +204,9 @@ importers:
       '@hivekitchen/types':
         specifier: workspace:*
         version: link:../../packages/types
+      '@hivekitchen/ui':
+        specifier: workspace:*
+        version: link:../../packages/ui
       '@ricky0123/vad-react':
         specifier: ^0.0.36
         version: 0.0.36(react-dom@19.2.5(react@19.2.5))(react@19.2.5)
@@ -247,9 +250,6 @@ importers:
       '@hivekitchen/tsconfig':
         specifier: workspace:*
         version: link:../../packages/tsconfig
-      '@hivekitchen/ui':
-        specifier: workspace:*
-        version: link:../../packages/ui
       '@playwright/test':
         specifier: ^1.59.1
         version: 1.59.1
@@ -385,15 +385,36 @@ importers:
         specifier: workspace:*
         version: link:../design-system
     devDependencies:
+      '@hivekitchen/eslint-config':
+        specifier: workspace:*
+        version: link:../eslint-config-hivekitchen
       '@hivekitchen/tsconfig':
         specifier: workspace:*
         version: link:../tsconfig
+      '@testing-library/react':
+        specifier: ^16.0.0
+        version: 16.3.2(@testing-library/dom@10.4.1)(@types/react-dom@19.2.3(@types/react@19.2.14))(@types/react@19.2.14)(react-dom@19.2.5(react@19.2.5))(react@19.2.5)
       '@types/react':
         specifier: ^19.0.0
         version: 19.2.14
+      '@types/react-dom':
+        specifier: ^19.0.0
+        version: 19.2.3(@types/react@19.2.14)
+      '@vitejs/plugin-react':
+        specifier: ^4.3.0
+        version: 4.7.0(vite@7.3.2(@types/node@22.19.17)(jiti@2.7.0)(terser@5.48.0)(tsx@4.21.0)(yaml@2.9.0))
+      eslint:
+        specifier: ^9.0.0
+        version: 9.39.4(jiti@2.7.0)
+      jsdom:
+        specifier: ^26.0.0
+        version: 26.1.0
       react:
         specifier: ^19.0.0
         version: 19.2.5
+      react-dom:
+        specifier: ^19.0.0
+        version: 19.2.5(react@19.2.5)
       tailwindcss:
         specifier: ^3.4.0
         version: 3.4.19(tsx@4.21.0)(yaml@2.9.0)
@@ -10569,6 +10590,18 @@ snapshots:
       '@types/babel__core': 7.20.5
       react-refresh: 0.17.0
       vite: 6.4.2(@types/node@22.19.17)(jiti@2.7.0)(terser@5.48.0)(tsx@4.21.0)(yaml@2.9.0)
+    transitivePeerDependencies:
+      - supports-color
+
+  '@vitejs/plugin-react@4.7.0(vite@7.3.2(@types/node@22.19.17)(jiti@2.7.0)(terser@5.48.0)(tsx@4.21.0)(yaml@2.9.0))':
+    dependencies:
+      '@babel/core': 7.29.0
+      '@babel/plugin-transform-react-jsx-self': 7.27.1(@babel/core@7.29.0)
+      '@babel/plugin-transform-react-jsx-source': 7.27.1(@babel/core@7.29.0)
+      '@rolldown/pluginutils': 1.0.0-beta.27
+      '@types/babel__core': 7.20.5
+      react-refresh: 0.17.0
+      vite: 7.3.2(@types/node@22.19.17)(jiti@2.7.0)(terser@5.48.0)(tsx@4.21.0)(yaml@2.9.0)
     transitivePeerDependencies:
       - supports-color
 

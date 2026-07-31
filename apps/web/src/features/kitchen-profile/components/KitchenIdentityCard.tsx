@@ -1,4 +1,4 @@
-import { EditIcon, GlobeIcon, UtensilsIcon } from '../../../components/icons.js';
+import { EditIcon, GlobeIcon, UtensilsIcon } from '@hivekitchen/ui';
 import type { EnforcedChip, Enforcement } from '../data/mockData.js';
 import {
   IdentityEditConversation,

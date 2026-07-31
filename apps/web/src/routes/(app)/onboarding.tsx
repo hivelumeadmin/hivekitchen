@@ -7,7 +7,7 @@ import {
 } from '@hivekitchen/contracts';
 import { useAuthStore } from '@/stores/auth.store.js';
 import { hkFetch } from '@/lib/fetch.js';
-import { AppFooter } from '@/components/AppFooter.js';
+import { AppFooter } from '@hivekitchen/ui';
 import { AppHeader } from '@/components/AppHeader.js';
 import { OnboardingVoice } from '@/features/onboarding/OnboardingVoice.js';
 import { OnboardingText } from '@/features/onboarding/OnboardingText.js';

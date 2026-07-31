@@ -1,4 +1,4 @@
-import { CalendarIcon, EditIcon } from '../../../components/icons.js';
+import { CalendarIcon, EditIcon } from '@hivekitchen/ui';
 import {
   CalendarEditConversation,
   type CalendarValue,

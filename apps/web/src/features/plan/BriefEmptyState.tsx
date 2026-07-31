@@ -2,8 +2,8 @@ import { useEffect, useState } from 'react';
 import { hkFetch } from '@/lib/fetch.js';
 import { usePlanProgressStore, planProgressLabel } from '@/stores/plan-progress.store.js';
 import { useGenerateOnDemandMutation } from './mutations.js';
-import { PrimaryButton } from '@/components/PrimaryButton.js';
-import { SparkleIcon } from '@/components/icons.js';
+import { PrimaryButton } from '@hivekitchen/ui';
+import { SparkleIcon } from '@hivekitchen/ui';
 
 function DevTriggerButton() {
   const [status, setStatus] = useState<'idle' | 'loading' | 'done' | 'error'>('idle');

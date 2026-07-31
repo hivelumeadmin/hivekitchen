@@ -3,7 +3,7 @@ import {
   CalendarIcon,
   ImageIcon,
   MicIcon,
-} from '../../../components/icons.js';
+} from '@hivekitchen/ui';
 
 interface Readonly_MessageComposerProps {
   readonly placeholder: string;

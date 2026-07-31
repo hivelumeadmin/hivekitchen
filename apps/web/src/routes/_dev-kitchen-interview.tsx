@@ -1,4 +1,4 @@
-import { AppFooter } from '../components/AppFooter.js';
+import { AppFooter } from '@hivekitchen/ui';
 import { AppHeader } from '../components/AppHeader.js';
 import { ChatThread } from '../features/kitchen-interview/components/ChatThread.js';
 import { HoldToTalkButton } from '../features/kitchen-interview/components/HoldToTalkButton.js';

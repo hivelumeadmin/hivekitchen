@@ -12,7 +12,8 @@ vi.mock('@/lib/fetch.js', () => ({
   HkApiError: class HkApiError extends Error {},
 }));
 
-vi.mock('@hivekitchen/ui', () => ({
+vi.mock('@hivekitchen/ui', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
   useScope: vi.fn(),
 }));
 

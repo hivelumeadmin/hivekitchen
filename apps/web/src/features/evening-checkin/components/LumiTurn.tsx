@@ -1,4 +1,4 @@
-import { TimerIcon } from '../../../components/icons.js';
+import { TimerIcon } from '@hivekitchen/ui';
 import type { MessagePart, Proposal } from '../data/mockData.js';
 
 interface Readonly_LumiTurnProps {

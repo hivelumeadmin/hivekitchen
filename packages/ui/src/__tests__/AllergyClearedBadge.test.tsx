@@ -1,6 +1,6 @@
 import { describe, it, expect, afterEach } from 'vitest';
 import { render, screen, fireEvent, cleanup } from '@testing-library/react';
-import { AllergyClearedBadge } from './AllergyClearedBadge.js';
+import { AllergyClearedBadge } from '../AllergyClearedBadge.js';
 
 afterEach(() => {
   cleanup();

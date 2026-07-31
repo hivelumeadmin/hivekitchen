@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { PauseCircleIcon, PlayArrowIcon } from '../../../components/icons.js';
+import { PauseCircleIcon, PlayArrowIcon } from '@hivekitchen/ui';
 import { hkFetch } from '../../../lib/fetch.js';
 
 interface Readonly_VideoPanelProps {

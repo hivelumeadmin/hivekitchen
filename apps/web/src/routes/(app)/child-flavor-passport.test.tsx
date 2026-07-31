@@ -20,7 +20,8 @@ vi.mock('@/hooks/useLumiContext.js', () => ({
   useLumiContext: vi.fn(),
 }));
 
-vi.mock('@hivekitchen/ui', () => ({
+vi.mock('@hivekitchen/ui', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
   useScope: vi.fn(),
 }));
 

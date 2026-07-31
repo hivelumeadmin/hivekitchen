@@ -1,4 +1,4 @@
-import { AppFooter } from '../components/AppFooter.js';
+import { AppFooter } from '@hivekitchen/ui';
 import { AppHeader } from '../components/AppHeader.js';
 import { AddItemComposer } from '../features/grocery-list/components/AddItemComposer.js';
 import { GroceryHero } from '../features/grocery-list/components/GroceryHero.js';

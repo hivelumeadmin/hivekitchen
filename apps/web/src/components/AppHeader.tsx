@@ -1,6 +1,6 @@
 import { useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { BellIcon, MenuIcon, UserCircleIcon } from './icons.js';
+import { BellIcon, MenuIcon, UserCircleIcon } from '@hivekitchen/ui';
 import { ThemeToggle } from './ThemeToggle.js';
 import { useAuthStore } from '@/stores/auth.store.js';
 import { useClickOutside } from '@/hooks/useClickOutside.js';
