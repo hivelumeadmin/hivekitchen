@@ -19,8 +19,13 @@ interface PickerProposeSwapProps {
 }
 
 // Slice 5-S12 — conversational swap proposal. State is panel-local: the shell
-// clears its shared error both when routing in and when routing out, so this
-// flow's input and error never crossed the level boundary.
+// cleared its shared error both when routing in and when routing out, so the
+// error never crossed the level boundary.
+//
+// Behaviour change (14-s6, accepted): the typed proposal used to live in the
+// shell, so Back → L1 → "Swap Main" restored it. It is now discarded on Back,
+// which matches every other panel in the picker — none of them preserve a
+// half-typed input across a level change.
 export function PickerProposeSwap({
   pickerId,
   day,

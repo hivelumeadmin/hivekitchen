@@ -23,7 +23,23 @@ export function DeleteAccountPanel({ householdId }: DeleteAccountPanelProps) {
   const [deleteSucceeded, setDeleteSucceeded] = useState(false);
 
   const householdName = useHouseholdNameQuery(householdId, showDeleteDialog);
-  const deleteAccount = useDeleteAccountMutation(householdId);
+  // Logout + redirect live in the mutation's own options, NOT in a
+  // mutate()-scoped callback: React Query skips mutate-scoped callbacks when
+  // the observer has no listeners, so an unmount mid-flight would delete the
+  // household server-side and leave this client holding a live session.
+  const deleteAccount = useDeleteAccountMutation(householdId, {
+    onSuccess: async () => {
+      setDeleteSucceeded(true);
+      await new Promise((resolve) => setTimeout(resolve, LOGOUT_DELAY_MS));
+      await useAuthStore.getState().logout();
+      navigate('/auth/login', { replace: true });
+    },
+    onError: (err) => {
+      if (err instanceof HkApiError && err.status === 401) {
+        navigate('/auth/login?next=/account', { replace: true });
+      }
+    },
+  });
 
   const householdDisplayName = householdName.data ?? null;
   const isPending = deleteAccount.isPending;
@@ -39,22 +55,7 @@ export function DeleteAccountPanel({ householdId }: DeleteAccountPanelProps) {
 
   function handleDeleteAccount() {
     if (householdId === null || householdDisplayName === null) return;
-    deleteAccount.mutate(
-      { confirmation_name: deleteConfirmInput },
-      {
-        onSuccess: async () => {
-          setDeleteSucceeded(true);
-          await new Promise((resolve) => setTimeout(resolve, LOGOUT_DELAY_MS));
-          await useAuthStore.getState().logout();
-          navigate('/auth/login', { replace: true });
-        },
-        onError: (err) => {
-          if (err instanceof HkApiError && err.status === 401) {
-            navigate('/auth/login?next=/account', { replace: true });
-          }
-        },
-      },
-    );
+    deleteAccount.mutate({ confirmation_name: deleteConfirmInput });
   }
 
   return (

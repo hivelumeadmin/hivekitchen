@@ -29,7 +29,11 @@ export function useWeekSwap(planId: string | null) {
   // captures the focused element (the button the user activated), so Escape /
   // Cancel returns focus where it came from instead of dropping it to <body>.
   const setActiveSwapDay = (day: PlanTileSummary['day'] | null) => {
-    if (day !== null) {
+    // Only capture when opening from a closed picker. Retargeting to another
+    // day happens while focus is INSIDE the open picker, and `key={activeSwapDay}`
+    // destroys that node immediately — capturing it would hand dismiss a
+    // detached element and drop focus to <body>, the very failure this fixes.
+    if (day !== null && activeSwapDay === null) {
       const active = document.activeElement;
       swapTriggerRef.current =
         active instanceof HTMLElement && active !== document.body ? active : null;
@@ -41,7 +45,10 @@ export function useWeekSwap(planId: string | null) {
     setActiveSwapDayState(null);
     const trigger = swapTriggerRef.current;
     swapTriggerRef.current = null;
-    trigger?.focus();
+    // The trigger can be unmounted while the picker is open (an SSE
+    // plan.updated that clears canSwap removes the "Swap a day" button), and
+    // focusing a detached node silently drops focus to <body>.
+    if (trigger !== null && trigger.isConnected) trigger.focus();
   };
 
   // Slice 5-S12 — capture the parent's free-text swap intent as a proposal turn

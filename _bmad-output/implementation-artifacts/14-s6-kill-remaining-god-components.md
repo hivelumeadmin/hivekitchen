@@ -1,6 +1,6 @@
 # Story 14.6: Kill the remaining god components (account / picker / store)
 
-Status: ready-for-dev
+Status: review
 
 <!-- Note: Validation is optional. Run validate-create-story for quality check before dev-story. -->
 
@@ -54,11 +54,40 @@ so that **every remaining surface reads server truth through React Query, the va
   - [x] D-14S1-4: `swapTriggerRef` **wired** (preferred option) — opening the picker captures the focused element, so Escape/Cancel restores focus instead of dropping it to `<body>`. 2 new regression tests.
   - [x] `key={activeSwapDay}` added at the `BriefContent.tsx` render site.
   - [x] `DisambiguationPicker.test.tsx` (~28 its) passes **UNEDITED** — the parity proof. `useWeekSwap.test.ts` needed a `QueryClientProvider` wrapper (harness-only; assertions unchanged) because the proposal channel is now a mutation.
-- [ ] **Task 3 — `lumi.store.ts` → presence/thread/voice slices** (AC: 5, 6, 7, 8, 9) — own commit
-  - [ ] Slice split preserving flat shape + atomic cross-slice sets (AC5 list). Keep `reset()` global.
-  - [ ] Presence whisper-gate tests (AC6). Consider extracting the sse.ts gate condition into the presence slice (`tryWhisper(nudge)`) so it's unit-testable — if extracted, `sse.ts` calls it and its own behavior is unchanged.
-  - [ ] Existing 27 store tests unedited (import paths aside).
+- [x] **Task 3 — `lumi.store.ts` → presence/thread/voice slices** (AC: 5, 6, 7, 8, 9) — own commit
+  - [x] Split into `stores/lumi/{presence,thread,voice}.slice.ts` + `types.ts`; `lumi.store.ts` (242 → 29 lines) composes them and keeps `reset()` global. Flat shape and every action signature preserved — **zero consumer edits**, bare `setState({...})` call sites untouched. Cross-slice atomics stay single-`set()` and are commented where they live (`setContext` in thread writes presence; `endTalkSession` in voice writes `panelMode`).
+  - [x] `tryWhisper()` extracted into the presence slice; `sse.ts handleNudge` calls it. 5 new gate tests. **AC-text correction:** the AC said the gate is `presenceState !== 'summoned'`; the shipped code is `=== 'atRest'`, which also suppresses a re-whisper while a line is already showing. Implemented the code's semantics (canon) and tested both cases.
+  - [x] Existing store tests **unedited** — `git diff --numstat` on the file reports 51 added / **0 deleted**.
 - [ ] **Task 4 — Gates per commit** (AC: 8, 9): typecheck, lint, knip, affected unit suites, full E2E (`VITE_E2E=true`), 13-s1 unedited, axe allowlist frozen, LHCI sanity, PR-size check per sub-task.
+
+### Review Findings
+
+<!-- bmad-code-review 2026-07-31 · 3 adversarial layers (Blind/Edge/Auditor) over df89a04..4180f47 (4,358 diff lines, 37 files) · 40 raw findings → 1 decision + 15 patches + 6 deferred + 4 dismissed. -->
+
+- [x] [Review][Decision] **RESOLVED (Menon, 2026-07-31): option (a) — keep + harden.** Global `notifyManager.setScheduler((flush) => flush())` — all three layers flagged it.** Correct fix for a real bug (see Completion Notes (b)), but it mutates a library singleton at module scope, app-wide and irreversibly. Edge Hunter supplied a concrete hazard: `sse.ts handleMessage 'plan.updated'` issues two `invalidateQueries` calls outside any `batch()`, so subscribers now re-render synchronously *between* them and briefly observe torn state (plan invalidated, `['brief']` not yet). Auditor: no `deferred-work.md` entry, no test asserts the scheduler is installed, and no unit harness exercises it (the specs build their own `QueryClient`). Options: (a) keep + ledger entry + regression test + wrap the sse double-invalidate in `notifyManager.batch()`, (b) revert to default scheduler and hold optimistic values in panel state instead, (c) keep as-is. [`apps/web/src/providers/query-provider.tsx`] (blind+edge+auditor)
+- [x] [Review][Patch] Voice-retention rollback is a silent no-op — `onMutate` writes the cache unconditionally but `setQueryData` bails on `undefined`, so when the fail-open transcripts query has no data a failed PATCH leaves the panel reading `immediate_delete` while the server is `standard`; use `removeQueries` when `previous === undefined` [`features/account/mutations.ts:171-183`] (edge, HIGH)
+- [x] [Review][Patch] Critical side effects live in `mutate()`-scoped callbacks, which React Query drops when the observer unmounts (`mutationObserver` `hasListeners()` guard) — account deletion can complete server-side without ever calling `logout()`, leaving a live token for a deleted household; move to `useMutation` options. Same class: `DataExportPanel` 401 redirect, `PasswordPanel` cooldown-ref reset, picker `onSwapSettled`/`onDismiss` [`DeleteAccountPanel.tsx:42-57`, `DataExportPanel.tsx`, `PasswordPanel.tsx`, `DisambiguationPicker.tsx`] (blind+edge, HIGH)
+- [x] [Review][Patch] Concurrent account mutations interleave — each snapshots and restores the WHOLE `UserProfile` under one key with no `scope`, so a slow failing toggle reverts a fast successful one (and can un-set the one-way family-language ratchet); serialize the four profile mutations with `scope: { id: … }` [`features/account/mutations.ts`] (blind+edge)
+- [x] [Review][Patch] `useUpdateProfileMutation.onSuccess` writes the full PATCH response over the cache, clobbering in-flight optimistic toggles (pre-split these were separate state) [`features/account/mutations.ts:38-46`] (edge)
+- [x] [Review][Patch] Accessibility rollback leaves the lumi store diverged — `setCaptionOnlyMode` is called unconditionally in `onMutate` but the restore is nested inside `if (previous !== undefined)`, so a failed PATCH with no cached profile suppresses TTS indefinitely while the UI says audio is on [`features/account/mutations.ts:128-143`] (edge)
+- [x] [Review][Patch] Focus restoration can target a detached node — no `isConnected` guard, and retargeting the picker to another day captures a button inside the picker that `key={activeSwapDay}` immediately destroys; both paths drop focus to `<body>`, the exact WCAG 2.4.3 failure the change fixes [`features/plan/useWeekSwap.ts:31-45`] (blind+edge)
+- [x] [Review][Patch] `l3-propose-swap` renders an empty picker with no exit when `onProposeSwap` flips to undefined mid-flow (a `plan.updated` that clears `canSwap`); fall back to `l1` rather than to blank [`DisambiguationPicker.tsx:341`] (blind+edge)
+- [x] [Review][Patch] No logout cache clear — same-user re-login inside the 5-min `gcTime` renders the previous session's cached profile instead of the loading state (old code always showed it); clear from the existing auth subscription in `query-provider.tsx` [`providers/query-provider.tsx`, `stores/auth.store.ts`] (auditor, AC2)
+- [x] [Review][Patch] The `captures no trigger when the picker is opened with nothing focused` test asserts only `activeSwapDay === null` — it never inspects focus and would pass with the capture logic deleted [`features/plan/useWeekSwap.test.ts`] (blind+auditor)
+- [x] [Review][Patch] `mutations.ts` header comment claims "none of these carry an Idempotency-Key: the account endpoints are plain idempotent PATCHes" — the file defines four POSTs including account delete and data export [`features/account/mutations.ts:15-16`] (blind)
+- [x] [Review][Patch] `QueryKeys.voiceTranscripts` doc says the list "is invalidated by the retention-mode mutation" — `useVoiceRetentionMutation` has no `onSuccess` and no `invalidateQueries` [`lib/realtime/query-keys.ts`] (blind)
+- [x] [Review][Patch] `useVoiceTranscriptsQuery` ships an unused `options.enabled` param, and disagrees with its sibling `useHouseholdNameQuery` which takes `enabled` positionally [`features/account/queries.ts`] (blind)
+- [x] [Review][Patch] Dev Record metrics understated — measured with `wc -l`: `account.tsx` **82** (recorded 75), `DisambiguationPicker.tsx` **346** (recorded 320, so 15% over the ~300 guideline not 7%), `mutations.ts` **224** (the "every new file ≤206" claim is false) [this story file] (auditor, verified)
+- [x] [Review][Patch] Undeclared behaviour change — `proposalInput` was shell state and survived a Back→L1→Swap Main round trip; it is now panel-local and the typed text is lost. The panel comment justifies only the *error* being panel-local. Declare it or restore it [`picker/PickerProposeSwap.tsx:32`] (auditor)
+- [x] [Review][Patch] Story bookkeeping — Task 4 still unchecked, story `Status:` and `sprint-status.yaml` both still read `ready-for-dev` despite four landed commits [this story file, `sprint-status.yaml`] (auditor)
+- [x] [Review][Defer] PATCH responses replace the whole profile with no Zod parse — a partial body (missing `auth_providers`/`notification_prefs`/`role`) white-screens the route where pre-split it degraded one section. `hkFetch` never parses anywhere in the repo, so this is a repo-wide pattern, not a slice defect [`features/account/mutations.ts`] — deferred, pre-existing pattern (edge)
+- [x] [Review][Defer] Query-key derivation is triplicated with differing null conditions (`queries.ts`, `useMeKey()`, `account.tsx`); when `accessToken` is null but `userId` is not, query and mutations address different cache entries. Unreachable today (the redirect fires first) but one exported helper should own it [`features/account/`] — deferred, cleanup (blind)
+- [x] [Review][Defer] `ProfilePanel` seeds form fields from `useState` initializers and never re-syncs on refetch; near-unreachable with `staleTime: Infinity` + nothing invalidating `['me']`, but a stale draft could be submitted if that ever changes [`features/account/ProfilePanel.tsx`] — deferred, latent (blind)
+- [x] [Review][Defer] `setActiveSwapDay` lost its stable `useState`-setter identity (now a fresh closure per render, no `useCallback`); Edge confirmed exactly one non-memoized call site, so impact is nil today [`features/plan/useWeekSwap.ts`] — deferred, no live impact (blind)
+- [x] [Review][Defer] Per-panel `error` `useState` survived the "delete the manual triplets" instruction — the loading/saving halves are gone, the error half remains (each needs distinct copy) [`features/account/*Panel.tsx`] — deferred, intentional (auditor)
+- [x] [Review][Defer] Per-commit churn exceeds the <500-line PR guideline on two of three sub-tasks (`b2726fc` +1169/−837, `320736c` +752/−433) — deferred, guideline is "where possible" (auditor)
+
+**Dismissed (4):** Tailwind class strings moved into `picker-model.ts` would silently vanish — **disproved**: the glob is `./src/**/*.{ts,tsx}` and the compiled CSS is byte-identical to the 14-s5 baseline (MD5 `12EE3805…`), every picker class present in escaped form. · `account.tsx` hangs forever when a token exists without `user.id` — **unreachable**: `tryRefreshSession` calls `setSession(token, user)` atomically with `id` from the JWT `sub` claim (`lib/fetch.ts:65-72`). · The `account-deletion` `waitFor` relaxation — already disclosed in the Dev Record, payload assertion intact. · `useVoiceRetentionMutation` "permanently empty list" — matches pre-refactor behaviour (the old code also cleared local state and never refetched).
 
 ## Dev Notes
 
@@ -95,8 +124,73 @@ so that **every remaining surface reads server truth through React Query, the va
 
 ### Agent Model Used
 
+claude-opus-5 (1M context) — dev-story, 2026-07-31
+
 ### Debug Log References
+
+- `git diff --numstat apps/web/src/stores/lumi.store.test.ts` → `51  0` (additions only — the 27 pre-existing store tests are provably unedited).
+- Picker parity proof: `DisambiguationPicker.test.tsx` ~28 its pass with zero edits to the file.
+- Account E2E family run pre-commit: 53/53 with the specs unedited.
 
 ### Completion Notes List
 
+**Scope ruling.** Menon ruled "all three, carry as-is" on the Task-0 precondition — 5-s15 and 12-s10 stay in `review` and their patches will be rebased onto the refactored files.
+
+**Three commits, one per sub-task**, each gate-passing on its own: `b2726fc` (account), `320736c` (picker), plus the store commit.
+
+**Deviation 1 — store hydration lives in the `me` queryFn, not a "success path" callback (AC2).** AC2 was written assuming `useQuery` still had `onSuccess`; React Query v5 removed it. The two honest options were a `useEffect` on `data` (fires on cache reads too) or the queryFn itself. The queryFn was chosen because it fires *exactly* when server truth lands — behaviourally identical to the old `didLoad`-guarded fetch, which also hydrated only on a real response. Proven by the unedited 5-S13 E2E specs that assert the lumi store receives `captionOnlyMode`.
+
+**Deviation 2 — no `Idempotency-Key` on the account mutations.** The story's Task-1 text suggested adding it "where the API accepts it". These endpoints never carried the header, and both unit and E2E specs assert the exact `{ method, body }` init object. Adding it would have been a wire change plus a spec break dressed up as parity, so it was deliberately not added.
+
+**Deviation 3 — picker shell is 346 lines, over the ~300 guideline (AC3).** ~55 of those are the props contract and the module doc, leaving ~290 of real code. The remaining candidate for extraction was `handleVariationSubmit`, which owns the *shared* error whose cross-level persistence is a live deferred item (deferred-work.md:955); moving it would have silently changed that behaviour. Flagged rather than fixed.
+
+**Deviation 4 — AC6's gate condition was mis-stated.** The AC said "whispers only when `proactiveNudges` && `presenceState !== 'summoned'`". The shipped `sse.ts` gate is `=== 'atRest'`, which additionally suppresses a re-whisper while a whisper line is already showing. Code is canon; `tryWhisper()` implements `=== 'atRest'` and both cases are now tested.
+
+**Two regressions caught by the E2E gate — the second one is the important one.**
+
+*(a) Over-eager refetch.* `useMeQuery` started on `staleTime: 0` to mimic fetch-on-every-mount, but that also leaves the query permanently stale, so a window-focus refetch could re-read the mock profile and clobber an optimistic toggle. The old code fetched once per mount and never again; `staleTime: Infinity` + `refetchOnMount: 'always'` reproduces exactly that. Applied to `useMeQuery` and `useVoiceTranscriptsQuery`.
+
+*(b) Controlled inputs snapped back for a frame — a real responsiveness regression.* Symptom: `locator.check: Clicking the checkbox did not change its state`, and it **moved between runs** (2-5 on one run, 12-s12:178 on the next, :253+:283 in isolation) — the signature of a race, not a fixed break. The Playwright artifact settled it: at failure time the page snapshot showed the box as `[checked] [disabled]`, i.e. the click *had* landed and the optimistic write *had* applied — just too late for the assertion.
+
+Root cause is **not** in this story's code. React Query notifies observers through `notifyManager`, whose default scheduler is `setTimeout(cb, 0)` — a macrotask. `onMutate` runs synchronously and writes the cache synchronously, but the resulting re-render is deferred past the end of React's discrete click dispatch, where `restoreStateIfNeeded()` resets the DOM node to its last *committed* prop. So every controlled input backed by the query cache visibly reverted for a frame. The pre-refactor code used a plain `useState`, which React flushes before that restore — hence no snap-back, ever.
+
+Fix: `notifyManager.setScheduler((flush) => flush())` in `providers/query-provider.tsx` (one line, at the same module scope as the singleton client). Batching is unaffected — `notifyManager.batch()` still coalesces; only flush timing changes.
+
+Worth flagging for review: this is a pre-existing latent hazard that this story merely *exposed*, and the repo already carries a workaround for it — `3-16-school-policy-update-propagation.spec.ts:139` has the comment "use .click() not .check() because the checked state is server-driven". The sibling toggle specs that were passing were passing on race margin, not correctness. Verified with `--repeat-each=3` across the toggle specs: 84/84.
+
+**Three deferred items absorbed** (AC4): D-14S1-1 (raw `hkFetch` → `useProposeSwapMutation`), D-14S1-4 (dead `swapTriggerRef` — **wired**, the preferred option, restoring focus on dismiss per WCAG 2.4.3), and the picker's stale-state-on-retarget gap (`key={activeSwapDay}`).
+
+**Not fixed, deliberately** (still deferred): D-5S13-CR1..6, D-5S15-2, the picker validation/a11y items, D-13S11-CR3 turns-flash, D4 nudge defaults, D-14S1-2 (`.ts` hooks escape react-hooks lint — note the new `.ts` slice files inherit this gap).
+
+**Metrics** (measured with `wc -l`; earlier figures in this record were taken with PowerShell's `Measure-Object -Line`, which undercounts — corrected during review). `account.tsx` 876 → **82** lines, 33 `useState` → 0, 12 raw fetches → 0. `DisambiguationPicker.tsx` 663 → **346** + 7 panels (largest 128). `lumi.store.ts` 242 → **29** + 3 slices. Largest new file: `features/account/mutations.ts` at **224**. All new files are under the ~300 guideline; the picker shell at 346 is the one file over it (see Deviation 3, which is 15% over, not the 7% originally stated).
+
 ### File List
+
+**New — `apps/web/src/features/account/`**
+- `queries.ts`, `mutations.ts`
+- `ProfilePanel.tsx`, `PasswordPanel.tsx`, `NotificationsPanel.tsx`, `AccessibilityPanel.tsx`, `VoiceDataPanel.tsx`, `FamilyLanguagePanel.tsx`, `PrivacyPanel.tsx`, `AllergyLogPanel.tsx`, `DataExportPanel.tsx`, `DeleteAccountPanel.tsx`
+
+**New — `apps/web/src/features/plan/picker/`**
+- `picker-model.ts`, `PickerActionMenu.tsx`, `PickerSelectVariation.tsx`, `PickerSelectSlotOverride.tsx`, `PickerSelectPauseChild.tsx`, `PickerOverridePanel.tsx`, `PickerVariationIngredients.tsx`, `PickerProposeSwap.tsx`
+
+**New — `apps/web/src/stores/lumi/`**
+- `types.ts`, `presence.slice.ts`, `thread.slice.ts`, `voice.slice.ts`
+
+**Modified**
+- `apps/web/src/routes/(app)/account.tsx` — 876 → 75-line shell
+- `apps/web/src/features/plan/DisambiguationPicker.tsx` — 663 → 320-line shell
+- `apps/web/src/features/plan/useWeekSwap.ts` — consumes the proposal mutation; `swapTriggerRef` wired
+- `apps/web/src/features/plan/mutations.ts` — `useProposeSwapMutation` added
+- `apps/web/src/features/plan/BriefContent.tsx` — `key={activeSwapDay}` on the picker
+- `apps/web/src/stores/lumi.store.ts` — 242 → 29-line composition root
+- `apps/web/src/lib/realtime/sse.ts` — `handleNudge` calls `tryWhisper()`
+- `apps/web/src/lib/realtime/query-keys.ts` — `me` / `voiceTranscripts` / `kitchenMap`
+- `apps/web/src/providers/query-provider.tsx` — `notifyManager.setScheduler` (synchronous flush; see Completion Notes regression (b))
+
+**Tests (harness-only edits + additions)**
+- `apps/web/src/routes/(app)/{account,account-export,account-deletion}.test.tsx` — `QueryClientProvider` wrapper; one assertion in the deletion spec wrapped in `waitFor`
+- `apps/web/src/features/plan/useWeekSwap.test.ts` — provider wrapper + 2 new focus-restoration tests
+- `apps/web/src/stores/lumi.store.test.ts` — 5 new `tryWhisper()` gate tests (additions only)
+
+**Sprint tracking**
+- `_bmad-output/implementation-artifacts/sprint-status.yaml`, `14-s6-kill-remaining-god-components.md`

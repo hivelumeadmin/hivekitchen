@@ -331,6 +331,28 @@ export function DisambiguationPicker({
         />
       )}
 
+      {/* onProposeSwap can disappear mid-flow (a plan.updated that clears
+          canSwap). Falling back to L1 keeps a visible exit — rendering nothing
+          would leave the picker with no Back and no Cancel. */}
+      {level === 'l3-propose-swap' && onProposeSwap === undefined && (
+        <PickerActionMenu
+          day={day}
+          error={error}
+          isPending={isPending}
+          sickDayDisabled={sickDayDisabled}
+          showSwapMain={false}
+          showPauseChild={childIds.length > 1}
+          showRegenDay={onRegenDay !== undefined}
+          onSickDay={handleSickDayIntent}
+          onChangeItem={handleChangeItem}
+          onSwapMain={() => { /* unreachable: showSwapMain is false */ }}
+          onOverride={handleOverrideIntent}
+          onPauseChild={handlePauseChildIntent}
+          onRegenDay={(d) => onRegenDay?.(d)}
+          onDismiss={onDismiss}
+        />
+      )}
+
       {level === 'l3-propose-swap' && onProposeSwap !== undefined && (
         <PickerProposeSwap
           pickerId={pickerId}

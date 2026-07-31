@@ -12,14 +12,25 @@ import { useAuthStore } from '@/stores/auth.store.js';
 import { useLumiStore } from '@/stores/lumi.store.js';
 import type { VoiceTranscriptsResponse } from './queries.js';
 
-// None of these carry an Idempotency-Key: the account endpoints are plain
-// idempotent PATCHes and the header is not part of their wire contract.
+// None of these send an Idempotency-Key: the PATCH endpoints are idempotent by
+// shape, and the four POSTs (password-reset, transparency-log, export, delete)
+// have never carried the header — it is not part of their wire contract. The
+// export and delete POSTs are the ones where a duplicate submit would matter;
+// both are guarded in the UI instead (a pending mutation disables the trigger,
+// and delete additionally requires a typed confirmation).
 //
 // OPTIMISTIC TOGGLES: `onMutate` writes the cache without awaiting
 // cancelQueries, so the write itself is synchronous with the click. Getting
 // that write onto the SCREEN synchronously additionally requires the
 // notifyManager scheduler override in providers/query-provider.tsx — see the
 // comment there.
+//
+// The four profile mutations share a mutation `scope`, which makes React Query
+// run them one at a time. Without it they interleave, and because each one
+// snapshots and restores the WHOLE profile, a slow failing toggle would roll
+// back a fast successful one — including un-setting the one-way family-language
+// ratchet.
+const ACCOUNT_PROFILE_SCOPE = { id: 'account-profile' } as const;
 
 type MeKey = readonly unknown[];
 type ProfileSnapshot = { key: MeKey; previous: UserProfile | undefined };
@@ -34,9 +45,22 @@ export function useUpdateProfileMutation() {
   const queryClient = useQueryClient();
   const key = useMeKey();
   return useMutation<UserProfile, Error, UpdateProfileRequest>({
+    scope: ACCOUNT_PROFILE_SCOPE,
     mutationFn: (body) => hkFetch<UserProfile>('/v1/users/me', { method: 'PATCH', body }),
     onSuccess: (updated) => {
-      queryClient.setQueryData(key, updated);
+      // Merge, don't replace: this response carries the server's pre-toggle
+      // notification_prefs / caption_only_mode / cultural_language, and writing
+      // it wholesale would revert a toggle that is still settling.
+      queryClient.setQueryData<UserProfile>(key, (current) =>
+        current === undefined
+          ? updated
+          : {
+              ...updated,
+              notification_prefs: current.notification_prefs,
+              caption_only_mode: current.caption_only_mode,
+              cultural_language: current.cultural_language,
+            },
+      );
       useAuthStore.getState().updateUser({
         display_name: updated.display_name,
         email: updated.email,
@@ -62,6 +86,7 @@ export function useNotificationPrefsMutation() {
     { field: keyof NotificationPrefs; checked: boolean },
     ProfileSnapshot
   >({
+    scope: ACCOUNT_PROFILE_SCOPE,
     mutationFn: ({ field, checked }) =>
       hkFetch<UserProfile>('/v1/users/me/notifications', {
         method: 'PATCH',
@@ -94,6 +119,7 @@ export function useCulturalLanguageMutation() {
   const queryClient = useQueryClient();
   const key = useMeKey();
   return useMutation<UserProfile, Error, CulturalLanguagePreference, ProfileSnapshot>({
+    scope: ACCOUNT_PROFILE_SCOPE,
     mutationFn: (cultural_language) =>
       hkFetch<UserProfile>('/v1/users/me/preferences', {
         method: 'PATCH',
@@ -119,7 +145,13 @@ export function useCulturalLanguageMutation() {
 export function useAccessibilityMutation() {
   const queryClient = useQueryClient();
   const key = useMeKey();
-  return useMutation<UserProfile, Error, boolean, ProfileSnapshot>({
+  return useMutation<
+    UserProfile,
+    Error,
+    boolean,
+    ProfileSnapshot & { previousStoreValue: boolean }
+  >({
+    scope: ACCOUNT_PROFILE_SCOPE,
     mutationFn: (caption_only_mode) =>
       hkFetch<UserProfile>('/v1/users/me/accessibility', {
         method: 'PATCH',
@@ -128,18 +160,21 @@ export function useAccessibilityMutation() {
     onMutate: (caption_only_mode) => {
       void queryClient.cancelQueries({ queryKey: key });
       const previous = queryClient.getQueryData<UserProfile>(key);
+      // Captured from the store, not from `previous` — the store is written
+      // unconditionally below, so the revert must be unconditional too or a
+      // failed PATCH with no cached profile leaves TTS suppressed while the UI
+      // says audio is on.
+      const previousStoreValue = useLumiStore.getState().captionOnlyMode;
       if (previous !== undefined) {
         queryClient.setQueryData<UserProfile>(key, { ...previous, caption_only_mode });
       }
       useLumiStore.getState().setCaptionOnlyMode(caption_only_mode);
-      return { key, previous };
+      return { key, previous, previousStoreValue };
     },
     onError: (_err, _vars, context) => {
       if (context !== undefined) {
         queryClient.setQueryData(context.key, context.previous);
-        if (context.previous !== undefined) {
-          useLumiStore.getState().setCaptionOnlyMode(context.previous.caption_only_mode);
-        }
+        useLumiStore.getState().setCaptionOnlyMode(context.previousStoreValue);
       }
     },
     onSuccess: (updated) => {
@@ -179,7 +214,15 @@ export function useVoiceRetentionMutation() {
       return { key, previous };
     },
     onError: (_err, _vars, context) => {
-      if (context !== undefined) queryClient.setQueryData(context.key, context.previous);
+      if (context === undefined) return;
+      // setQueryData bails on undefined, so restoring "no data" has to remove
+      // the entry — otherwise a failed PATCH leaves this privacy control
+      // showing immediate_delete while the server is still standard.
+      if (context.previous === undefined) {
+        queryClient.removeQueries({ queryKey: context.key });
+      } else {
+        queryClient.setQueryData(context.key, context.previous);
+      }
     },
   });
 }
@@ -208,17 +251,32 @@ export function useAllergyLogDownloadMutation() {
 
 // POST /v1/households/:id/export — Slice 7-S10. 202: the snapshot is composed
 // asynchronously and emailed as a signed link. No polling, no redirect.
-export function useExportMutation(householdId: string | null) {
+//
+// Callbacks are accepted here rather than at the mutate() call site: React
+// Query drops mutate-scoped callbacks once the observer has no listeners, so a
+// panel that unmounts mid-flight would silently skip its 401 redirect.
+export function useExportMutation(
+  householdId: string | null,
+  callbacks?: { onError?: (err: Error) => void },
+) {
   return useMutation<unknown, Error, void>({
     mutationFn: () =>
       hkFetch<unknown>(`/v1/households/${householdId ?? ''}/export`, { method: 'POST' }),
+    onError: callbacks?.onError,
   });
 }
 
-// POST /v1/households/:id/delete — Slice 7-S11.
-export function useDeleteAccountMutation(householdId: string | null) {
+// POST /v1/households/:id/delete — Slice 7-S11. Same rule as the export above,
+// and it matters far more here: the success path logs the user out, and losing
+// it would leave a live session against a deleted household.
+export function useDeleteAccountMutation(
+  householdId: string | null,
+  callbacks?: { onSuccess?: () => Promise<void> | void; onError?: (err: Error) => void },
+) {
   return useMutation<unknown, Error, { confirmation_name: string }>({
     mutationFn: (body) =>
       hkFetch<unknown>(`/v1/households/${householdId ?? ''}/delete`, { method: 'POST', body }),
+    onSuccess: callbacks?.onSuccess,
+    onError: callbacks?.onError,
   });
 }

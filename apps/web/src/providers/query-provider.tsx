@@ -65,7 +65,13 @@ export function QueryProvider({ children }: QueryProviderProps) {
     let prevToken = useAuthStore.getState().accessToken;
     const unsubscribe = useAuthStore.subscribe((state) => {
       if (state.accessToken !== prevToken) {
+        const wasSignedIn = prevToken !== null;
         prevToken = state.accessToken;
+        // Drop every cached response on sign-out. Without this a same-user
+        // re-login inside gcTime renders the previous session's cached data
+        // instead of the loading state, and a different user could briefly be
+        // served the last one's entries.
+        if (wasSignedIn && state.accessToken === null) queryClient.clear();
         bridge.connect();
       }
     });

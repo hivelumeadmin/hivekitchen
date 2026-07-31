@@ -56,7 +56,7 @@ export function useMeQuery(userId: string | null) {
 // Slice 5-S15 — fail-open by design: on failure `data` stays undefined and the
 // Voice Data panel falls back to the profile's mode with an empty list, which
 // is what the previous swallowed-catch did. No retry, no surfaced error.
-export function useVoiceTranscriptsQuery(userId: string | null, options?: { enabled?: boolean }) {
+export function useVoiceTranscriptsQuery(userId: string | null) {
   return useQuery({
     queryKey: userId !== null ? QueryKeys.voiceTranscripts(userId) : ['voice-transcripts', null],
     queryFn: ({ signal }) =>
@@ -67,7 +67,7 @@ export function useVoiceTranscriptsQuery(userId: string | null, options?: { enab
     staleTime: Infinity,
     refetchOnMount: 'always',
     retry: false,
-    enabled: userId !== null && (options?.enabled ?? true),
+    enabled: userId !== null,
   });
 }
 

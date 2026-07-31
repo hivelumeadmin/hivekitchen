@@ -34,8 +34,14 @@ export function PasswordPanel({ profile }: PasswordPanelProps) {
           }, PASSWORD_RESET_COOLDOWN_MS);
         },
         onError: () => {
-          resetInProgress.current = false;
           setResetError('Could not send reset email. Please try again later.');
+        },
+        // Clearing the guard here rather than in onError: mutate()-scoped
+        // callbacks are skipped once the observer unmounts, and onSettled at
+        // least keeps the success and failure paths symmetric. The ref is
+        // component-scoped, so an unmount discards it anyway.
+        onSettled: (_data, error) => {
+          if (error !== null) resetInProgress.current = false;
         },
       },
     );

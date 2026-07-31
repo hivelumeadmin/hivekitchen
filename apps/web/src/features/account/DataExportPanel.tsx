@@ -11,16 +11,18 @@ interface DataExportPanelProps {
 // success copy replaces the button. No polling, no redirect.
 export function DataExportPanel({ householdId }: DataExportPanelProps) {
   const navigate = useNavigate();
-  const exportData = useExportMutation(householdId);
+  // Mutation-level, not mutate()-scoped: React Query drops mutate-scoped
+  // callbacks when the observer unmounts, which would swallow this redirect.
+  const exportData = useExportMutation(householdId, {
+    onError: (err) => {
+      if (err instanceof HkApiError && err.status === 401) {
+        navigate('/auth/login?next=/account', { replace: true });
+      }
+    },
+  });
 
   function handleExport() {
-    exportData.mutate(undefined, {
-      onError: (err) => {
-        if (err instanceof HkApiError && err.status === 401) {
-          navigate('/auth/login?next=/account', { replace: true });
-        }
-      },
-    });
+    exportData.mutate();
   }
 
   // A 401 redirects instead of surfacing an error line.

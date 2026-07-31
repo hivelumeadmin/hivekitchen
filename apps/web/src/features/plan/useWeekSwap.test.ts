@@ -100,12 +100,56 @@ describe('useWeekSwap', () => {
     trigger.remove();
   });
 
-  it('captures no trigger when the picker is opened with nothing focused', () => {
-    const { result } = renderHook(() => useWeekSwap(PLAN_ID), { wrapper: makeWrapper() });
+  it('does not steal focus when the picker is opened with nothing focused', () => {
+    const other = document.createElement('button');
+    document.body.appendChild(other);
 
-    act(() => result.current.setActiveSwapDay('monday'));
+    const { result } = renderHook(() => useWeekSwap(PLAN_ID), { wrapper: makeWrapper() });
+    act(() => result.current.setActiveSwapDay('monday')); // nothing focused → nothing captured
+
+    other.focus();
     act(() => result.current.dismissPicker());
 
+    // No trigger was captured, so dismiss must leave focus exactly where it is
+    // rather than yanking it to <body>.
+    expect(document.activeElement).toBe(other);
+
+    other.remove();
+  });
+
+  it('keeps the original trigger when the picker is retargeted to another day', () => {
+    const trigger = document.createElement('button');
+    const insidePicker = document.createElement('button');
+    document.body.append(trigger, insidePicker);
+    trigger.focus();
+
+    const { result } = renderHook(() => useWeekSwap(PLAN_ID), { wrapper: makeWrapper() });
+    act(() => result.current.setActiveSwapDay('monday'));
+
+    // Retargeting happens while focus sits inside the open picker; that node is
+    // destroyed by key={activeSwapDay}, so it must not become the trigger.
+    insidePicker.focus();
+    act(() => result.current.setActiveSwapDay('tuesday'));
+    insidePicker.remove();
+
+    act(() => result.current.dismissPicker());
+    expect(document.activeElement).toBe(trigger);
+
+    trigger.remove();
+  });
+
+  it('does not focus a trigger that was unmounted while the picker was open', () => {
+    const trigger = document.createElement('button');
+    document.body.appendChild(trigger);
+    trigger.focus();
+
+    const { result } = renderHook(() => useWeekSwap(PLAN_ID), { wrapper: makeWrapper() });
+    act(() => result.current.setActiveSwapDay('monday'));
+
+    // e.g. an SSE plan.updated clears canSwap and removes the "Swap a day" button.
+    trigger.remove();
+
+    expect(() => act(() => result.current.dismissPicker())).not.toThrow();
     expect(result.current.activeSwapDay).toBeNull();
   });
 

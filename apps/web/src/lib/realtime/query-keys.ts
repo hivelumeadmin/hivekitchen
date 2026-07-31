@@ -79,8 +79,10 @@ export const QueryKeys = {
 
   /**
    * Slice 14-s6 — the user's retained voice transcripts (5-S15). Separate key
-   * from `me` because the list is invalidated by the retention-mode mutation
-   * while the profile is not.
+   * from `me` because the retention-mode mutation writes this list optimistically
+   * (clearing it on immediate-delete) without touching the profile. Neither key
+   * is invalidated by that mutation: it reconciles by optimistic write + rollback,
+   * matching the pre-refactor behaviour, which also never re-fetched the list.
    * @example QueryKeys.voiceTranscripts('user-uuid') → ['voice-transcripts', 'user-uuid']
    */
   voiceTranscripts: (userId: string): ['voice-transcripts', string] =>
