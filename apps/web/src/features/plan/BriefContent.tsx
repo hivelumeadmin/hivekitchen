@@ -260,6 +260,10 @@ export function BriefContent({
             }
             return (
               <DisambiguationPicker
+                // Retargeting to another day must start at L1 with empty inputs;
+                // without the key React reuses the instance and carries the
+                // previous day's level / typed text / error across.
+                key={activeSwapDay}
                 planId={planId}
                 day={activeSwapDay}
                 dayView={activeDayView}

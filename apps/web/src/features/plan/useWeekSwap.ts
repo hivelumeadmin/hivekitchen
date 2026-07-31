@@ -1,14 +1,14 @@
 import { useRef, useState } from 'react';
-import type { PlanTileSummary, ProposeSwapResponse, Weekday } from '@hivekitchen/types';
-import { hkFetch } from '@/lib/fetch.js';
+import type { PlanTileSummary, Weekday } from '@hivekitchen/types';
+import { useProposeSwapMutation } from './mutations.js';
 
 // Story 14-s1 — the Brief's swap/picker interaction state, extracted verbatim
 // from BriefCanvas. Owns the DisambiguationPicker lifecycle (which day is open,
 // which item is swapping), the conversational proposal channel, and the
-// focus-restoration ref. No visual/behaviour change.
+// focus-restoration ref.
 export function useWeekSwap(planId: string | null) {
   // Story 3.12 — picker / swap-in-progress UI state.
-  const [activeSwapDay, setActiveSwapDay] = useState<PlanTileSummary['day'] | null>(null);
+  const [activeSwapDay, setActiveSwapDayState] = useState<PlanTileSummary['day'] | null>(null);
   const [swappingItemId, setSwappingItemId] = useState<string | null>(null);
   // Slice 5-S12 — tracks an in-flight conversational swap proposal; the matching
   // tile pulses (sacred-plum) until Lumi resolves it. The day is captured here
@@ -22,8 +22,23 @@ export function useWeekSwap(planId: string | null) {
   // to it (WCAG 2.4.3 Focus Order). Cleared on dismiss to avoid stale targets.
   const swapTriggerRef = useRef<HTMLElement | null>(null);
 
+  const proposeSwap = useProposeSwapMutation();
+
+  // Story 14-s6 (D-14S1-4) — the ref used to be assigned `null` on every path,
+  // making the focus restore below a permanent no-op. Opening the picker now
+  // captures the focused element (the button the user activated), so Escape /
+  // Cancel returns focus where it came from instead of dropping it to <body>.
+  const setActiveSwapDay = (day: PlanTileSummary['day'] | null) => {
+    if (day !== null) {
+      const active = document.activeElement;
+      swapTriggerRef.current =
+        active instanceof HTMLElement && active !== document.body ? active : null;
+    }
+    setActiveSwapDayState(day);
+  };
+
   const dismissPicker = () => {
-    setActiveSwapDay(null);
+    setActiveSwapDayState(null);
     const trigger = swapTriggerRef.current;
     swapTriggerRef.current = null;
     trigger?.focus();
@@ -35,14 +50,7 @@ export function useWeekSwap(planId: string | null) {
   // this id is a proposal (pulse the tile) rather than a variation (spinner).
   async function handleProposeSwap(day: Weekday, content: string): Promise<string> {
     if (planId === null) throw new Error('No plan');
-    const res = await hkFetch<ProposeSwapResponse>(
-      `/v1/plans/${planId}/swap-proposals`,
-      {
-        method: 'POST',
-        body: { day, content },
-        headers: { 'Idempotency-Key': crypto.randomUUID() },
-      },
-    );
+    const res = await proposeSwap.mutateAsync({ planId, day, content });
     lastProposalRef.current = { id: res.proposal_id, day };
     return res.proposal_id;
   }
@@ -55,12 +63,12 @@ export function useWeekSwap(planId: string | null) {
       setPendingProposal(lastProposalRef.current);
       lastProposalRef.current = null;
       swapTriggerRef.current = null;
-      setActiveSwapDay(null);
+      setActiveSwapDayState(null);
       return;
     }
     setSwappingItemId(id);
     swapTriggerRef.current = null;
-    setActiveSwapDay(null);
+    setActiveSwapDayState(null);
   }
 
   function onSwapSettled() {

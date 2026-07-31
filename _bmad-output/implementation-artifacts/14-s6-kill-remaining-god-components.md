@@ -48,12 +48,12 @@ so that **every remaining surface reads server truth through React Query, the va
   - [x] Store hydration lives in the `me` queryFn (see Completion Notes deviation #1 — React Query v5 removed `useQuery.onSuccess`; the queryFn is the true success path and matches the old `didLoad`-guarded semantics exactly). D-5S13-CR1 NOT fixed — parity only.
   - [x] Split into 10 panels along the existing `<section>` boundaries; `account.tsx` 876 → **75 lines**, 33 useState → **0**, 12 raw fetches → **0**; god-effect + `didLoad` + all loading/error/saving triplets deleted.
   - [x] 3 unit files wrapped in `QueryClientProvider` (harness-only); one lockstep assertion made async (see Completion Notes).
-- [ ] **Task 2 — `DisambiguationPicker` → shell + sub-panels** (AC: 3, 4, 7, 8, 9) — own commit; no precondition, can go first
-  - [ ] Extract sub-panels per the seven-level union; shell keeps routing/focus/Escape/error region.
-  - [ ] D-14S1-1: `useProposeSwapMutation` in `mutations.ts`; `useWeekSwap.ts` consumes it (its 83 lines shrink; keep its test).
-  - [ ] D-14S1-4: wire `swapTriggerRef` to the real trigger (preferred) or delete the no-op.
-  - [ ] `key={activeSwapDay}` at the `BriefContent.tsx:262` render site.
-  - [ ] Split `DisambiguationPicker.test.tsx` alongside if it aids clarity — but assertion set stays intact.
+- [x] **Task 2 — `DisambiguationPicker` → shell + sub-panels** (AC: 3, 4, 7, 8, 9) — own commit; no precondition, can go first
+  - [x] 7 sub-panels under `features/plan/picker/` + `picker-model.ts` (level union, tree walkers, allergen heuristic, date math, shared class strings). Shell keeps routing/focus/Escape/shared-error. **Shell is 320 lines, ~55 of which are the props contract + module doc** — over the ~300 guideline; splitting further would have meant moving `handleVariationSubmit` out, which owns the *shared* error whose cross-level persistence is a live deferred item (deferred-work.md:955). Flagged rather than silently changed.
+  - [x] D-14S1-1: `useProposeSwapMutation` added to `features/plan/mutations.ts`; `useWeekSwap` consumes it — zero raw `hkFetch` left in the hook.
+  - [x] D-14S1-4: `swapTriggerRef` **wired** (preferred option) — opening the picker captures the focused element, so Escape/Cancel restores focus instead of dropping it to `<body>`. 2 new regression tests.
+  - [x] `key={activeSwapDay}` added at the `BriefContent.tsx` render site.
+  - [x] `DisambiguationPicker.test.tsx` (~28 its) passes **UNEDITED** — the parity proof. `useWeekSwap.test.ts` needed a `QueryClientProvider` wrapper (harness-only; assertions unchanged) because the proposal channel is now a mutation.
 - [ ] **Task 3 — `lumi.store.ts` → presence/thread/voice slices** (AC: 5, 6, 7, 8, 9) — own commit
   - [ ] Slice split preserving flat shape + atomic cross-slice sets (AC5 list). Keep `reset()` global.
   - [ ] Presence whisper-gate tests (AC6). Consider extracting the sse.ts gate condition into the presence slice (`tryWhisper(nudge)`) so it's unit-testable — if extracted, `sse.ts` calls it and its own behavior is unchanged.

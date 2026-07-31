@@ -8,6 +8,7 @@ import type {
   PlanEditInput,
   PlanEditResponse,
   PauseReason,
+  ProposeSwapResponse,
   RegeneratePlanResponse,
   SetPlanDayContextInput,
   SetPlanDayContextResponse,
@@ -17,6 +18,7 @@ import type {
   UpdateVariationResponse,
   UpdateSovereigntyModeInput,
   UpdateSovereigntyModeResponse,
+  Weekday,
 } from '@hivekitchen/types';
 
 // Exposed so PlanEditPanel can mint an Idempotency-Key for the confirm-then-fire
@@ -171,6 +173,22 @@ export function usePauseChildOnDayMutation() {
       void queryClient.invalidateQueries({ queryKey: ['brief'] });
       void queryClient.invalidateQueries({ queryKey: ['plan'] });
     },
+  });
+}
+
+// POST /v1/plans/:planId/swap-proposals — Slice 5-S12, captures the parent's
+// free-text swap intent as a proposal turn in the family thread. Story 14-s6
+// (D-14S1-1) moved it off the raw hkFetch call that lived in useWeekSwap.
+// No cache invalidation: the proposal resolves asynchronously through Lumi and
+// lands via the plan.updated SSE event.
+export function useProposeSwapMutation() {
+  return useMutation<ProposeSwapResponse, Error, { planId: string; day: Weekday; content: string }>({
+    mutationFn: ({ planId, day, content }) =>
+      hkFetch<ProposeSwapResponse>(`/v1/plans/${planId}/swap-proposals`, {
+        method: 'POST',
+        body: { day, content },
+        headers: { 'Idempotency-Key': safeRandomUuid() },
+      }),
   });
 }
 
