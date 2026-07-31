@@ -1,6 +1,6 @@
 # Story 14.6: Kill the remaining god components (account / picker / store)
 
-Status: review
+Status: done
 
 <!-- Note: Validation is optional. Run validate-create-story for quality check before dev-story. -->
 
