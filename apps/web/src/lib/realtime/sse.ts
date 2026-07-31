@@ -310,9 +310,9 @@ export function createSseBridge(queryClient: QueryClient): SseBridge {
     if (store.presenceState === 'summoned' && store.surface === parsed.data.surface) {
       store.appendTurn(parsed.data.turn);
     }
-    if (store.proactiveNudges && store.presenceState === 'atRest') {
-      store.whisper();
-    }
+    // The opted-in / at-rest gate lives in the presence slice (14-s6) so it is
+    // testable without an EventSource.
+    store.tryWhisper();
   }
 
   function openConnection(): void {

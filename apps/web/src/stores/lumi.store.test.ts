@@ -310,3 +310,54 @@ describe('useLumiStore', () => {
     expect(s.presenceState).toBe('atRest');
   });
 });
+
+// Story 14-s6 — the atRest→whisper trigger gate, lifted out of the SSE
+// dispatcher (sse.ts handleNudge) into the presence slice so the conditions are
+// testable without an EventSource.
+describe('useLumiStore — tryWhisper() gate', () => {
+  beforeEach(() => {
+    useLumiStore.getState().reset();
+  });
+
+  it('whispers from atRest when nudges are opted in', () => {
+    const fired = useLumiStore.getState().tryWhisper();
+
+    expect(fired).toBe(true);
+    expect(useLumiStore.getState().presenceState).toBe('whisper');
+  });
+
+  it('stays silent when the parent opted out of proactive nudges', () => {
+    useLumiStore.getState().setProactiveNudges(false);
+
+    const fired = useLumiStore.getState().tryWhisper();
+
+    expect(fired).toBe(false);
+    expect(useLumiStore.getState().presenceState).toBe('atRest');
+  });
+
+  it('does not interrupt an open sheet — no whisper while summoned', () => {
+    useLumiStore.getState().summon();
+
+    const fired = useLumiStore.getState().tryWhisper();
+
+    expect(fired).toBe(false);
+    expect(useLumiStore.getState().presenceState).toBe('summoned');
+  });
+
+  it('does not re-whisper when a line is already showing', () => {
+    useLumiStore.getState().whisper();
+
+    const fired = useLumiStore.getState().tryWhisper();
+
+    expect(fired).toBe(false);
+    expect(useLumiStore.getState().presenceState).toBe('whisper');
+  });
+
+  it('leaves an already-set pendingNudge untouched — the gate only moves presence', () => {
+    useLumiStore.getState().setNudge(turn('n1'));
+
+    useLumiStore.getState().tryWhisper();
+
+    expect(useLumiStore.getState().pendingNudge).not.toBeNull();
+  });
+});
