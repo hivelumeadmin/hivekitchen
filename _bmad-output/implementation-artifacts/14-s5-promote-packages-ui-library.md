@@ -1,6 +1,6 @@
 # Story 14.5: Make `packages/ui` a real component library
 
-Status: review
+Status: done
 
 ## Story
 
@@ -48,9 +48,26 @@ so that **the design system (button taxonomy, Honey rule, required-leading-icon 
   - [x] `PrimaryButton`, `SecondaryButton`, `TalkToLumiButton`, `StickyBottomBar`, `TextField`, `RailCard`, `DetailHeader`, `AppFooter` from `components/`; `AllergyClearedBadge`(+test), `FreshnessState`(+test) from `features/plan/`.
   - [x] Internal imports → `.js`-relative inside the package; `index.ts` exports each + `formatEstimatedRecovery`.
   - [x] Flip ~69 consumer import sites to `@hivekitchen/ui` (watch the odd ones: `VisibleMemorySentence.tsx` → `./TextField.js`; `features/plan` siblings → `./FreshnessState.js` / `./AllergyClearedBadge.js`).
-- [x] **Task 4 — Tailwind content glob + compiled-CSS proof** (AC3): add the packages/ui glob; build; grep `dist/assets/*.css` for a moved-component class; manual before/after screenshot spot-check on one surface per moved component family (Brief action bar, a form, day-detail header). — *screenshot spot-check substituted with a stronger byte-level proof; see Completion Notes.*
+- [x] **Task 4 — Tailwind content glob + compiled-CSS proof** (AC3): add the packages/ui glob; build; grep `dist/assets/*.css` for a moved-component class; manual before/after screenshot spot-check on one surface per moved component family (Brief action bar, a form, day-detail header). — *screenshot spot-check substituted with a stronger byte-level proof (byte-identical compiled CSS + 100%-similarity renames + 425 live E2E/axe assertions); see Completion Notes. Substitution reviewed and ACCEPTED by Menon in code review 2026-07-30.*
 - [x] **Task 5 — Test-harness + dependency repair** (AC6, AC7): partial-ize the 6 factory mocks; flip `@hivekitchen/ui` to web dependencies.
 - [x] **Task 6 — Gates** (AC8, AC9): knip; typecheck/lint all; full web unit unedited; ui unit; full E2E (`VITE_E2E=true`, from `apps/web`); 13-s1 untouched; LHCI sanity.
+
+### Review Findings
+
+<!-- bmad-code-review 2026-07-30 · 3 adversarial layers (Blind Hunter / Edge Case Hunter / Acceptance Auditor) · 21 raw findings → 1 decision + 6 patches + 5 deferred + 5 dismissed. Notable false positive killed: Blind's HIGH "uiConfig dist/ missing from commit" — dist/ is gitignored and turbo lint/test/typecheck all dependsOn ^build (verified), so the rebuild is ordered before any consumer. -->
+
+- [x] [Review][Decision] Task-4 manual screenshot spot-check was not performed as written — substituted with byte-identical compiled CSS (same hash 12ee3805) + 100%-similarity renames + 425 live E2E/axe assertions. Deviation honestly flagged in Completion Notes, but the task checkbox is checked while the task text was not executed. **RESOLVED (Menon, 2026-07-30): substitution accepted; Task-4 text amended to record it.** (auditor+blind)
+- [x] [Review][Patch] `hivekitchen/no-dialog-outside-allowlist` silently lost for promoted primitives — webConfig applies it, `uiConfig()` does not, so a Radix/vaul/cmdk dialog added inside `packages/ui` would ship into child-scope routes with zero lint signal; the rule matches allowlist substrings, so enabling it in `uiConfig()` correctly forbids dialogs package-wide (jsdoc rationale claiming it can't apply is wrong) [`packages/eslint-config-hivekitchen/src/index.ts:120-140`] (edge, MED)
+- [x] [Review][Patch] New Tailwind content glob is cwd-relative — Tailwind v3 resolves `'../../packages/ui/src/**'` against `process.cwd()`, not the config file; any build with cwd ≠ `apps/web` silently drops every moved primitive's classes (the exact 14-s4 class-death mode this slice guards against). Fix: `content: { relative: true }` (or config-file-derived absolute paths) + re-run the compiled-CSS probe [`apps/web/tailwind.config.ts:10`] (blind+edge)
+- [x] [Review][Patch] Import flip left stacked duplicate `from '@hivekitchen/ui'` statements — up to 5 consecutive identical specifiers (BottomActionBar, HeartNoteActions, PlanActionBar, LoginForm, login/reset-password routes, layout, PendingChildRequests, HeartNoteComposer, _dev-day-detail-multi-child); consolidate each file's stack into one import [~10 files in `apps/web/src`] (blind)
+- [x] [Review][Patch] Six partial-mock factories type `importOriginal<object>()` — erases the barrel's type contract, so a removed/renamed `@hivekitchen/ui` export no longer type-errors in the factories; fixed as top-level `import type * as UiModule` + `importOriginal<typeof UiModule>()` (the inline `typeof import(...)` form violates `consistent-type-imports`) [6 test files, e.g. `apps/web/src/features/plan/PlanHistoryPage.test.tsx`] (blind)
+- [x] [Review][Patch] Story-doc corrections — File List claims `AppHeader.tsx` "Untouched (verified)" but it carries a (Task-2-mandated) icons-import flip; Project Structure Notes say "5 test-mock factories" vs 6 everywhere else; `sprint-status.yaml` modified but absent from File List [this story file] (auditor+blind)
+- [x] [Review][Patch] No `exports` field on `@hivekitchen/ui` — deep imports (`@hivekitchen/ui/src/…`) resolve in Vite/vitest/bundler-resolution, bypassing the barrel that is the slice's stated enforced-by-construction boundary; `packages/design-system` already declares `exports` (precedent) [`packages/ui/package.json:6-7`] (edge)
+- [x] [Review][Defer] `typescript-eslint` imported by `packages/ui/eslint.config.mjs` but undeclared — resolves via `@hivekitchen/eslint-config`'s peer + pnpm auto-install; identical pre-existing pattern in `apps/web` (also undeclared there), so the fix is a repo-wide sweep, not a one-package patch [`packages/ui/eslint.config.mjs:2`] — deferred, pre-existing convention (blind+auditor)
+- [x] [Review][Defer] `@vitejs/plugin-react` peer `vite` not declared in `packages/ui` — satisfied transitively via vitest's own vite (7.3.2); standard shape for vitest-only packages but an invisible version coupling [`packages/ui/package.json:27`] — deferred, works by design of vitest (blind)
+- [x] [Review][Defer] react-hooks rules never lint `packages/ui`'s only hooks — `use-scope.ts`/`use-scope-guard.ts` are `.ts`, react config object targets `**/*.{jsx,tsx}` only; already tracked as D-14S1-2, new `uiConfig()` inherits the same gap [`packages/eslint-config-hivekitchen/src/index.ts:94`] — deferred, pre-existing (edge)
+- [x] [Review][Defer] `@hivekitchen/design-system` runtime dep of `packages/ui` is imported by nothing in the package — dependency graph lies to turbo ordering and readers; knip default config doesn't flag it [`packages/ui/package.json`] — deferred, pre-existing line (edge)
+- [x] [Review][Defer] `packages/ui` keeps a `clean` script deleting a `dist/` it never produces (+ new eslint config ignores `dist/**`) — dead build plumbing carried into the promoted library [`packages/ui/package.json` scripts] — deferred, pre-existing (blind)
 
 ## Dev Notes
 
@@ -69,7 +86,7 @@ so that **the design system (button taxonomy, Honey rule, required-leading-icon 
 ### Project Structure Notes
 
 - New: `packages/ui/src/{icons.tsx,PrimaryButton.tsx,SecondaryButton.tsx,TalkToLumiButton.tsx,StickyBottomBar.tsx,TextField.tsx,RailCard.tsx,DetailHeader.tsx,AppFooter.tsx,AllergyClearedBadge.tsx,FreshnessState.tsx}` (+2 moved tests under `src/` or `src/__tests__/` — match the existing `__tests__/` convention), `packages/ui/vitest.config.ts`, `packages/ui/eslint.config.mjs`.
-- Modified: `packages/ui/src/index.ts`, `packages/ui/package.json`, `apps/web/tailwind.config.ts`, `apps/web/package.json`, ~121 import lines across `apps/web/src`, 5 test-mock factories, possibly `packages/eslint-config-hivekitchen` (+dist rebuild), possibly root `knip.json`.
+- Modified: `packages/ui/src/index.ts`, `packages/ui/package.json`, `apps/web/tailwind.config.ts`, `apps/web/package.json`, ~121 import lines across `apps/web/src`, 6 test-mock factories, possibly `packages/eslint-config-hivekitchen` (+dist rebuild), possibly root `knip.json`.
 - Deleted from web: the 11 moved files + 2 moved tests.
 - Untouched: `AppHeader.tsx`(+test), `ThemeToggle.tsx`, `hooks/useClickOutside.ts`, all feature surfaces/chips, `scope-allowlist.*`, `use-scope*.ts`, DESIGN.md tokens.
 
@@ -142,12 +159,13 @@ claude-opus-5[1m] (dev-story), 2026-07-30
 - `apps/web/tailwind.config.ts` — `content` gains `'../../packages/ui/src/**/*.{ts,tsx}'`
 - `apps/web/package.json` — `@hivekitchen/ui` devDependencies → dependencies
 - `pnpm-lock.yaml`
-- 69 files under `apps/web/src` — 103 import lines flipped to `@hivekitchen/ui`
+- 69 files under `apps/web/src` — 103 import lines flipped to `@hivekitchen/ui` (includes `AppHeader.tsx`'s `./icons.js` flip — Task-2-mandated)
+- `_bmad-output/implementation-artifacts/sprint-status.yaml` — epic-14 status bookkeeping
 - 6 test harness files (mock partial-isation only): `features/plan/PlanHistoryPage.test.tsx`, `routes/(app)/{account,account-deletion,account-export,child-flavor-passport,kitchen-profile}.test.tsx`
 
 **Deleted from `apps/web`:** the 11 moved source files + 2 moved tests (all as renames)
 
-**Untouched (verified):** `apps/web/test/**` (entire E2E dir), `AppHeader.tsx`(+test), `ThemeToggle.tsx` body, `hooks/useClickOutside.ts`, `scope-allowlist.*`, `use-scope*.ts`, all feature surfaces/chips, DESIGN.md, `knip.json`
+**Untouched (verified):** `apps/web/test/**` (entire E2E dir), `AppHeader.tsx` body (icons-import line flipped only) + its test, `ThemeToggle.tsx` body, `hooks/useClickOutside.ts`, `scope-allowlist.*`, `use-scope*.ts`, all feature surfaces/chips, DESIGN.md, `knip.json`
 
 ## Change Log
 

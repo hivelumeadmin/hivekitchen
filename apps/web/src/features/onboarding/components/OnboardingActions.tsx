@@ -1,5 +1,4 @@
-import { ArrowRightIcon } from '@hivekitchen/ui';
-import { PrimaryButton } from '@hivekitchen/ui';
+import { ArrowRightIcon, PrimaryButton } from '@hivekitchen/ui';
 import { onboardingMock } from '../data/mockData.js';
 
 interface Readonly_OnboardingActionsProps {

@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
-import { CheckCircleIcon } from '@hivekitchen/ui';
-import { PrimaryButton } from '@hivekitchen/ui';
+import { CheckCircleIcon, PrimaryButton } from '@hivekitchen/ui';
 import type {
   ChildPerson,
   CookingMode,

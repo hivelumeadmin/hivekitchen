@@ -1,8 +1,6 @@
 import { useState } from 'react';
 import type { OnboardingStateResponse } from '@hivekitchen/contracts';
-import { ArrowRightIcon, RefreshIcon } from '@hivekitchen/ui';
-import { PrimaryButton } from '@hivekitchen/ui';
-import { SecondaryButton } from '@hivekitchen/ui';
+import { ArrowRightIcon, RefreshIcon, PrimaryButton, SecondaryButton } from '@hivekitchen/ui';
 
 interface Readonly_OnboardingResumeProps {
   /**

@@ -120,12 +120,19 @@ function reactTsxConfig(extraRules: Linter.RulesRecord = {}): Linter.Config {
 /**
  * Config for `packages/ui` — the locked-primitive component library.
  *
- * Identical to {@link webConfig} minus the two app-scoped rules
- * (`no-cross-scope-component`, `no-dialog-outside-allowlist`), which key off
- * `apps/web` feature paths that do not exist inside the package.
+ * Identical to {@link webConfig} minus `no-cross-scope-component`, which keys
+ * off `apps/web` feature paths that do not exist inside the package.
+ * `no-dialog-outside-allowlist` runs with an empty allowlist: no primitive in
+ * the library may import a dialog/modal, or every consumer (including
+ * child-scope routes) would transitively ship one.
  */
 export function uiConfig(): Linter.Config[] {
-  return [...baseConfig(), reactTsxConfig()];
+  return [
+    ...baseConfig(),
+    reactTsxConfig({
+      'hivekitchen/no-dialog-outside-allowlist': ['error', { allowlist: [] }],
+    }),
+  ];
 }
 
 export function webConfig(opts: WebConfigOptions): Linter.Config[] {

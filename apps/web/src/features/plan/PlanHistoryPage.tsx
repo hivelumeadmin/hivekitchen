@@ -1,11 +1,10 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link, Navigate, useParams } from 'react-router-dom';
-import { useScope } from '@hivekitchen/ui';
+import { useScope, FreshnessState } from '@hivekitchen/ui';
 import { useLumiContext } from '@/hooks/useLumiContext.js';
 import { HkApiError } from '@/lib/fetch.js';
 import { deriveWeekId, getCurrentWeekMonday } from '@/lib/derive-week-id.js';
 import { PageHeader } from '@/components/PageHeader.js';
-import { FreshnessState } from '@hivekitchen/ui';
 import { PlanTile } from './PlanTile.js';
 import { SwapHistoryPopover } from './SwapHistoryPopover.js';
 import { usePlanHistoryQuery } from './queries.js';

@@ -1,3 +1,4 @@
+import type * as UiModule from '@hivekitchen/ui';
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { render, screen, cleanup, fireEvent, waitFor } from '@testing-library/react';
 import { MemoryRouter, Routes, Route } from 'react-router-dom';
@@ -14,7 +15,7 @@ import type {
 // Hoisted mocks must precede the imports that use them. vi.mock is hoisted
 // automatically so this works for both ESM-only modules.
 vi.mock('@hivekitchen/ui', async (importOriginal) => ({
-  ...(await importOriginal<object>()),
+  ...(await importOriginal<typeof UiModule>()),
   useScope: vi.fn(),
 }));
 

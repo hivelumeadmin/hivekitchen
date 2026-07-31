@@ -1,14 +1,13 @@
 import { useState, useEffect } from 'react';
 import { useForm } from 'react-hook-form';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { useScope } from '@hivekitchen/ui';
+import { useScope, AppFooter, PrimaryButton, TextField } from '@hivekitchen/ui';
 import { LoginRequestSchema } from '@hivekitchen/contracts';
 import type { LoginRequest, LoginResponse } from '@hivekitchen/types';
 import { zodResolver } from '@/lib/zod-resolver.js';
 import { hkFetch, HkApiError } from '@/lib/fetch.js';
 import { useAuthStore } from '@/stores/auth.store.js';
 import { supabase } from '@/lib/supabase-client.js';
-import { AppFooter } from '@hivekitchen/ui';
 import { AppHeader } from '@/components/AppHeader.js';
 import {
   ArrowRightIcon,
@@ -17,8 +16,6 @@ import {
   LockIcon,
   MailIcon,
 } from '@hivekitchen/ui';
-import { PrimaryButton } from '@hivekitchen/ui';
-import { TextField } from '@hivekitchen/ui';
 import { AppleButton } from '@/features/login/components/AppleButton.js';
 import { GoogleButton } from '@/features/login/components/GoogleButton.js';
 import { LoginHero } from '@/features/login/components/LoginHero.js';

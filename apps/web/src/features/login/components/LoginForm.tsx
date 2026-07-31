@@ -6,8 +6,7 @@ import {
   LockIcon,
   MailIcon,
 } from '@hivekitchen/ui';
-import { PrimaryButton } from '@hivekitchen/ui';
-import { TextField } from '@hivekitchen/ui';
+import { PrimaryButton, TextField } from '@hivekitchen/ui';
 import { loginCopyMock } from '../data/mockData.js';
 import { GoogleButton } from './GoogleButton.js';
 import { OrDivider } from './OrDivider.js';

@@ -1,8 +1,4 @@
-import { ArrowRightIcon, SendIcon } from '@hivekitchen/ui';
-import { PrimaryButton } from '@hivekitchen/ui';
-import { SecondaryButton } from '@hivekitchen/ui';
-import { StickyBottomBar } from '@hivekitchen/ui';
-import { TalkToLumiButton } from '@hivekitchen/ui';
+import { ArrowRightIcon, SendIcon, PrimaryButton, SecondaryButton, StickyBottomBar, TalkToLumiButton } from '@hivekitchen/ui';
 
 interface Readonly_HeartNoteActionsProps {
   readonly onSave?: () => void;

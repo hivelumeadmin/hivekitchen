@@ -1,5 +1,4 @@
-import { CheckCircleIcon } from '@hivekitchen/ui';
-import { RailCard } from '@hivekitchen/ui';
+import { CheckCircleIcon, RailCard } from '@hivekitchen/ui';
 import type { SafetySection } from '../data/mockData.js';
 
 interface Readonly_SafetyCardProps {
