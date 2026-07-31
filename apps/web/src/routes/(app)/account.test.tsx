@@ -2,6 +2,7 @@ import type * as UiModule from '@hivekitchen/ui';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, waitFor, cleanup } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type * as reactRouterDom from 'react-router-dom';
 import type { UserProfile } from '@hivekitchen/types';
 
@@ -75,10 +76,15 @@ function setAuthenticated(role: Role) {
 }
 
 function renderRoute() {
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
   render(
-    <MemoryRouter initialEntries={['/app/account']}>
-      <AccountPage />
-    </MemoryRouter>,
+    <QueryClientProvider client={queryClient}>
+      <MemoryRouter initialEntries={['/app/account']}>
+        <AccountPage />
+      </MemoryRouter>
+    </QueryClientProvider>,
   );
 }
 
