@@ -17,7 +17,7 @@ export function VideoPanel({ imageSrc, imageAlt }: VideoPanelProps) {
         alt={imageAlt}
         className="h-full w-full object-cover opacity-60 transition-transform duration-700 ease-out group-hover:scale-105"
       />
-      <div className="absolute inset-0 bg-bg transition-colors duration-500 group-hover:bg-surface" />
+      <div className="absolute inset-0 bg-[color-mix(in_srgb,var(--bg)_30%,transparent)] transition-colors duration-500 group-hover:bg-[color-mix(in_srgb,var(--bg)_10%,transparent)]" />
       <div className="absolute inset-0 flex items-center justify-center">
         <div className="flex h-20 w-20 items-center justify-center rounded-full border border-amber-warm bg-honey-amber-100 backdrop-blur-md transition-all duration-300 group-hover:scale-110 group-hover:bg-honey-amber-200">
           <PlayArrowIcon className="ms-1 h-10 w-10 text-amber-warm" />

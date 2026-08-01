@@ -64,7 +64,7 @@ export function StatusLine({
   if (currentMomentKey === 'm5_starting_line' && coldStartMode) {
     if (coldStartDishCount === 0) {
       return (
-        <p data-testid="cold-start-gate-line" className="mt-2 text-center font-sans text-xs italic text-amber">
+        <p data-testid="cold-start-gate-line" className="mt-2 text-center font-sans text-xs italic text-fg-muted">
           Tell Lumi three dishes your family eats most weeks.
         </p>
       );

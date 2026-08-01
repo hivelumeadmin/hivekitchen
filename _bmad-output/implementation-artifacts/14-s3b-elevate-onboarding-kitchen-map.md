@@ -1,6 +1,6 @@
 # Story 14.3b: Elevate the onboarding Kitchen-Map to the mockup
 
-Status: review
+Status: done
 
 <!-- Note: Validation is optional. Run validate-create-story for quality check before dev-story. -->
 
@@ -61,6 +61,43 @@ so that **onboarding ends with the same "your kitchen is ready" payoff the Brief
 - [x] **Task 5 — Recognition glow** (AC7): new keyframe on the panel gated on `momentKey === 'summary'`; reconcile with `RecognitionEnding`'s existing bloom; `motion-reduce` safe.
 - [x] **Task 6 — Absorb deferred debt** (AC10): fix `D-13S6-CR1`'s dropped-column read; annotate `D-14S4-5`.
 - [x] **Task 7 — Prove the CSS + gates** (AC11, AC12): compiled-bundle grep with negative control; update `KitchenMapHero.test.tsx`; full gate set.
+
+### Review Findings
+
+<!-- bmad-code-review 2026-07-31 · 3 adversarial layers (Blind/Edge/Auditor) over 01fd4f4..HEAD (878 lines, 17 code files — deliberately widened to include 209324d, the previously-unreviewed CSS sweep) · 38 raw findings → 0 decisions + 18 patches + 5 deferred + 4 dismissed. -->
+
+**The headline: the CSS sweep in `209324d` was systematically wrong, and this review caught it.** I had treated every dead `/alpha` class as a decorative tint and substituted a solid token step. For overlays, gradient stops and faint tints the alpha was *load-bearing*, and because the original classes generated no CSS those elements had been rendering transparent — so the "fix" turned them opaque and made three surfaces **worse than the bug being repaired**. The correct mechanism is `color-mix(in srgb, var(--token) N%, transparent)`, already used in `globals.css`.
+
+- [x] [Review][Patch] **Video thumbnail was completely hidden** — `bg-bg/30` (dead ⇒ transparent) became opaque `bg-bg` on an `absolute inset-0` div over the `<img>`. Now a real 30% scrim via color-mix [`components/MediaPanels.tsx:20`] (blind+edge+auditor, HIGH)
+- [x] [Review][Patch] **Hero photo blanked across the copy area** — `via-bg/70` → `via-bg` made the first 50% of the gradient opaque. Restored to a 70% mid-stop [`components/OnboardingHero.tsx:25`] (blind+edge+auditor, HIGH)
+- [x] [Review][Patch] **Active media tab label at 2.09:1** — `text-amber-warm` on `bg-honey-amber-50`. The dead `bg-amber-warm/5` meant the label previously sat on `bg` and passed AA; my fill broke it. Now an 8% amber-warm wash [`components/MediaTabs.tsx:52`] (edge, HIGH)
+- [x] [Review][Patch] **Gap-jump hover at 2.90:1** — `text-amber` on `hover:bg-honey-amber-50`; hover-only, so a static axe scan cannot see it. Now a 10% amber wash [`RecognitionEnding.tsx:82`] (edge)
+- [x] [Review][Patch] **Cold-start / M2 status lines at 3.28:1** — `text-amber/80` (dead ⇒ inherited `fg`) → `text-amber` on `bg` for 12px italic text. Switched to `text-fg-muted` [`conversation-column-helpers.tsx:67,97`] (auditor)
+- [x] [Review][Patch] **Duplicate taste pills** — household tags keyed on the bare tag, prefs on `name::item`, so a household tag and a household-scoped preference with identical text both survived dedup. Both sides now build the same `scope::item` shape [`KitchenMapHero.tsx:122,127`] (blind+edge+auditor)
+- [x] [Review][Patch] **Same-named children lost a taste chip** — dedup keyed on `childName`; `children.name` has no UNIQUE constraint. Now keyed on `child_id`, matching what the allergen loop directly above already did [`KitchenMapHero.tsx:122`] (edge)
+- [x] [Review][Patch] **Avatar rendered U+FFFD for non-BMP names** — `charAt(0)` indexes UTF-16 code units, so emoji / CJK-Ext-B / Deseret initials produced a lone surrogate. Now iterates code points; an empty-after-trim name yields no initial [`KitchenMapHero.tsx` `avatarInitial`] (blind+edge)
+- [x] [Review][Patch] **Unknown `moment_key` collapsed the entire panel** — `indexOf` returns `-1`, failing every gate. `moment_key` is `z.string()`, not an enum, so a server-side rename reaches the client unvalidated; before this slice the bag block was unconditional so the panel always had a body. An unrecognised key is now treated as fully advanced [`KitchenMapHero.tsx` `currentIndex`] (edge)
+- [x] [Review][Patch] **Avatar colour was per-position, not per-child** — the comment promised stability across refetches but indexed on array position, so any non-append insert re-coloured every sibling. Now hashed on `child.id` [`KitchenMapHero.tsx` `avatarAccent`] (blind)
+- [x] [Review][Patch] **Section suffix polluted the heading's accessible name** — "✓ cleared on every plan" was nested *inside* the `<h3>`, so the screen-reader heading list read "Keeping safe ✓ cleared on every plan". The tell was in the markup: it carried `normal-case tracking-normal` to cancel the heading styling. Now a sibling [`KitchenMapHero.tsx` `Section`] (blind)
+- [x] [Review][Patch] **Heading level skipped h1 → h3** — AC3 correctly removed the visible "Your kitchen" label, which deleted the panel's only `<h2>`. Restored as `sr-only`, preserving both the mockup's look and the heading order [`KitchenMapHero.tsx:117`] (blind+auditor)
+- [x] [Review][Patch] **AC7 was rationalised, not coordinated** — `RecognitionEnding` fires `hk-glow` on the *same* `summary` condition, so both amber glows bloomed together for 1.4s. The map glow is now delayed by 1.4s: the card announces, then the map takes over [`KitchenMapHero.tsx:132`] (auditor)
+- [x] [Review][Patch] **Disabled chip lost every inert cue** — the solid swap restored border, fill and label to full strength, leaving only `cursor-not-allowed` (invisible until hover, absent on touch). Added `opacity-60`, a real utility rather than a colour alpha [`components/ChoiceChip.tsx:44`] (blind)
+- [x] [Review][Patch] **Faint placeholder glyph became full-strength brand amber** — the empty-state icon now out-competed the real thumbnails beside it [`components/PreviewTiles.tsx:34`] (blind)
+- [x] [Review][Patch] **`backdrop-blur` orphaned behind opaque surfaces** — unobservable, but still forces a compositing layer and a backdrop snapshot [`ConversationColumn.tsx:75,172`] (blind)
+- [x] [Review][Patch] **Ghost two-line hierarchy flattened** — both lines had collapsed to one token; primary restored to `text-fg` [`KitchenMapHero.tsx` `Ghost`] (blind)
+- [x] [Review][Patch] **Avatar test weakened, and zero coverage for the slice's headline behaviours** — three free-floating `getByText` calls replaced one associative match and would pass even if the un-nesting scattered them; now scoped to the row. Added 5 regression tests (non-BMP initial, household/preference duplicate, same-named children, unknown moment key, glow gating). **Negative-controlled: reintroducing the two dedup bugs fails exactly the two new tests.** [`KitchenMapHero.test.tsx`] (blind+edge+auditor)
+- [x] [Review][Defer] Glow halo clipped by the scroll container — `overflow-y-auto` forces a non-visible `overflow-x`, so roughly half the 50px halo is cut at the 20px gutter. Needs a layout change to fix properly [`KitchenMapHero.tsx:127`] — deferred (blind+auditor)
+- [x] [Review][Defer] `PlanTile` proposal pill's *base* text colour still deviates from DESIGN.md §141 (`text-fg` vs `--lumi-terracotta`) — pre-existing, and Deviation 2 covered only the hover colour — deferred (auditor)
+- [x] [Review][Defer] `✓ cleared on every plan` suffix is gated on `hasAllergenData`, an unstated narrowing of AC5 (arguably better than showing it beside "All clear") — deferred, intentional (auditor)
+- [x] [Review][Defer] Waveform bars' five-step depth gradient collapsed to two tones by the sweep [`components/MediaPanels.tsx:284-296`] — deferred, cosmetic (blind)
+- [x] [Review][Defer] `dir="auto"` added to child names and taste chips here, but the wider onboarding surface still lacks it — deferred, partial (edge)
+
+**Dismissed (4):** the `query-provider` probe called tautological by the Blind Hunter — **disproved**: the Edge Hunter independently confirmed ES hoisting runs the module before the test body, and a negative control (restoring the default scheduler) makes it fail. · `AVATAR_ACCENTS[...] ?? [0]!` called dead code — it satisfies `noUncheckedIndexedAccess` and the assertion is sound. · Panel could render as an empty bordered box — the kitchen-name branch always emits a name or a Ghost in every state combination. · `&` entity in a JSX attribute — verified correctly decoded in the bundle (`title:"The bag & your week"`).
+
+**The Auditor confirmed both of my contested calls.** D-13S6-CR1 *is* a false positive (repository `:331`/`:400` populate the field; removing the read would have dropped household-wide allergens from the recognition prose), and all three contrast computations recompute correctly from `colors.css` (9.465 / 11.428, 5.342 / 5.190, 4.245), with `warm-neutral-950` genuinely absent from the scale.
+
+**Gate results (the Auditor correctly flagged that the original Dev Record never recorded these):** typecheck clean · lint clean · knip exit 0 · turbo lint+typecheck+test 20/20 across 9 packages · web unit **727/727** · full E2E **425 pass / 13 skip / 0 fail** · `apps/web/test/**` untouched across the whole range, so 13-s1 is provably unedited and the axe allowlist provably unchanged · all 5 `color-mix` utilities verified emitting real rules in the compiled bundle, with a two-way sanity control.
+
 
 ## Dev Notes
 

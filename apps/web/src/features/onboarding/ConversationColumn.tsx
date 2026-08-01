@@ -72,7 +72,7 @@ export function ConversationColumn({
 
   return (
     <section className="relative flex flex-1 flex-col bg-bg md:w-[45%] md:flex-none">
-      <header className="flex shrink-0 items-center justify-between bg-bg px-6 py-5 backdrop-blur-sm md:px-8">
+      <header className="flex shrink-0 items-center justify-between bg-bg px-6 py-5 md:px-8">
         <div className="flex flex-col gap-1">
           <h1 className="font-serif text-xl font-medium tracking-tight text-amber">HiveKitchen</h1>
           <span className="font-sans text-[11px] font-medium uppercase tracking-widest text-fg-muted">
@@ -169,7 +169,7 @@ export function ConversationColumn({
         <label htmlFor="onboarding-message" className="sr-only">
           Your message to Lumi
         </label>
-        <div className="flex items-center gap-2 rounded-2xl border border-border bg-surface px-2 py-1.5 shadow-lg backdrop-blur-md transition-colors focus-within:border-amber">
+        <div className="flex items-center gap-2 rounded-2xl border border-border bg-surface px-2 py-1.5 shadow-lg transition-colors focus-within:border-amber">
           <textarea
             id="onboarding-message"
             value={draft}

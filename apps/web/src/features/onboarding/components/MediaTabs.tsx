@@ -49,7 +49,7 @@ function MediaTabButton({
   readonly onClick: () => void;
 }>) {
   const stateClass = active
-    ? 'border-amber-warm text-amber-warm bg-honey-amber-50'
+    ? 'border-amber-warm text-amber-warm bg-[color-mix(in_srgb,var(--amber-warm)_8%,transparent)]'
     : 'border-transparent text-fg-muted hover:bg-surface-2 hover:text-fg';
   return (
     <button

@@ -41,7 +41,10 @@ export function ChoiceChip({
 
   const stateClass = (() => {
     if (disabled) {
-      return 'cursor-not-allowed border-border bg-surface text-fg-muted';
+      // opacity-* is a real utility (it is not a colour alpha), so unlike the
+      // previous border/bg/text alpha modifiers it actually renders. Without it
+      // the disabled chip differed from the resting chip by one surface step.
+      return 'cursor-not-allowed border-border bg-surface text-fg-muted opacity-60';
     }
     if (isSkip) {
       // Skip chip — outlined only, never fills. One-shot action, not a content choice.

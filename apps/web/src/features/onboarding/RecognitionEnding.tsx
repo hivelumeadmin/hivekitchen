@@ -79,7 +79,7 @@ export function RecognitionEnding({
                     type="button"
                     data-testid={`gap-jump-${momentKey}`}
                     onClick={() => onJumpToMoment(momentKey)}
-                    className="inline-flex items-center gap-1.5 rounded-full border border-honey-amber-300 px-4 py-2 font-sans text-sm text-amber transition-colors hover:bg-honey-amber-50"
+                    className="inline-flex items-center gap-1.5 rounded-full border border-honey-amber-300 px-4 py-2 font-sans text-sm text-amber transition-colors hover:bg-[color-mix(in_srgb,var(--amber)_10%,transparent)]"
                   >
                     {info.moment > 0 ? `Back to Moment ${info.moment} · ${info.label}` : info.label}
                   </button>

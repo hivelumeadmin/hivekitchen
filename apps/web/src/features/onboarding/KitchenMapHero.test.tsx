@@ -87,11 +87,92 @@ describe('KitchenMapHero', () => {
     render(
       <KitchenMapHero kitchenMap={map} momentKey="m2_safe" mapPending={false} householdDisplayName={null} />,
     );
-    // 14-s3b AC4 — the flat "Maya · Child" pill became an avatar row: initial,
-    // name, and the age band as a separate caption. Same three facts, three nodes.
-    expect(screen.getByText('Maya')).toBeDefined();
-    expect(screen.getByText('Child')).toBeDefined();
-    expect(screen.getByText('M')).toBeDefined();
+    // 14-s3b AC4 — the flat "Maya · Child" pill became an avatar row. Scoped to
+    // the row so this still proves the three facts belong to the SAME child,
+    // which is what the old single-string match guaranteed.
+    const row = screen.getByText('Maya').closest('div');
+    expect(row).not.toBeNull();
+    expect(row?.textContent).toContain('M');
+    expect(row?.textContent).toContain('Maya');
+    expect(row?.textContent).toContain('Child');
+  });
+
+  // Regression: charAt(0) returns a lone surrogate for non-BMP names and paints
+  // U+FFFD. Iterating code points is the fix.
+  it('renders a whole code point as the avatar initial for a non-BMP name', () => {
+    const map = makeMap({
+      children: [
+        { id: '00000000-0000-4000-8000-0000000000c9', name: '𐐷ase', age_band: 'child',
+          declared_allergens: [], cultural_identifiers: [], dietary_preferences: [],
+          bag_composition: {}, bag_composition_pattern: null, school_policies: [],
+          extra_rules: { pinned: [], banned: [] } },
+      ] as unknown as KitchenMap['children'],
+    });
+    render(
+      <KitchenMapHero kitchenMap={map} momentKey="m2_safe" mapPending={false} householdDisplayName={null} />,
+    );
+    expect(screen.queryByText('�')).toBeNull();
+    expect(screen.getByText('𐐷'.toUpperCase())).toBeDefined();
+  });
+
+  // Regression (AC6): household tags and prefs keyed on different shapes meant a
+  // household-scoped pref with matching text rendered a duplicate pill.
+  it('does not duplicate a household tag that also exists as a household-scoped preference', () => {
+    const base = makeMap({});
+    const map = makeMap({
+      household: { ...base.household, dietary_preferences: ['Halal'] },
+      food_preferences: [
+        { child_id: null, item: 'Halal', valence: 'likes' },
+      ] as unknown as KitchenMap['food_preferences'],
+    });
+    render(
+      <KitchenMapHero kitchenMap={map} momentKey="m3_taste" mapPending={false} householdDisplayName={null} />,
+    );
+    expect(screen.getAllByText('Halal')).toHaveLength(1);
+  });
+
+  // Regression (AC6): keying dedup on the child's NAME dropped a chip when two
+  // children share one. children.name has no UNIQUE constraint.
+  it('keeps both chips when two children share a name and the same preference', () => {
+    const kids = ['00000000-0000-4000-8000-0000000000a1', '00000000-0000-4000-8000-0000000000a2'];
+    const map = makeMap({
+      children: kids.map((id) => ({
+        id, name: 'Alex', age_band: 'child', declared_allergens: [], cultural_identifiers: [],
+        dietary_preferences: [], bag_composition: {}, bag_composition_pattern: null,
+        school_policies: [], extra_rules: { pinned: [], banned: [] },
+      })) as unknown as KitchenMap['children'],
+      food_preferences: kids.map((id) => ({
+        child_id: id, item: 'pasta', valence: 'loves',
+      })) as unknown as KitchenMap['food_preferences'],
+    });
+    render(
+      <KitchenMapHero kitchenMap={map} momentKey="m3_taste" mapPending={false} householdDisplayName={null} />,
+    );
+    expect(screen.getAllByText('Alex · pasta')).toHaveLength(2);
+  });
+
+  // Regression: an unrecognised moment_key made indexOf return -1, which failed
+  // every gate and left the panel with no body.
+  it('does not collapse every section when the server sends an unknown moment key', () => {
+    const map = makeMap({});
+    render(
+      <KitchenMapHero kitchenMap={map} momentKey="m9_brand_new" mapPending={false} householdDisplayName={null} />,
+    );
+    expect(screen.getByTestId('m2-safety-card')).toBeDefined();
+    expect(screen.getByText(/lumi learns these as you cook the first week/i)).toBeDefined();
+  });
+
+  it('glows the panel only once recognition is reached (AC7)', () => {
+    const map = makeMap({});
+    const { rerender } = render(
+      <KitchenMapHero kitchenMap={map} momentKey="m3_taste" mapPending={false} householdDisplayName={null} />,
+    );
+    expect(screen.getByTestId('kitchen-map-panel').className).not.toContain('hk-map-glow');
+
+    rerender(
+      <KitchenMapHero kitchenMap={map} momentKey="summary" mapPending={false} householdDisplayName={null} />,
+    );
+    expect(screen.getByTestId('kitchen-map-panel').className).toContain('hk-map-glow');
   });
 
   it('renders per-child allergen safety pills once M2 is reached', () => {

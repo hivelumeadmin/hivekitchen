@@ -31,7 +31,7 @@ function PreviewTile({ tile }: Readonly<{ readonly tile: OnboardingPreviewTile }
           />
         ) : (
           <div className="flex h-full w-full items-center justify-center bg-surface">
-            <WaveformIcon className="h-6 w-6 text-amber-warm" />
+            <WaveformIcon className="h-6 w-6 text-fg-muted" />
           </div>
         )}
       </div>
