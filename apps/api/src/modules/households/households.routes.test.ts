@@ -12,6 +12,7 @@ import {
   DataExportResponseSchema,
   DeleteHouseholdResponseSchema,
   ParentalDashboardResponseSchema,
+  FamilyCalendarResponseSchema,
 } from '@hivekitchen/contracts';
 
 const SAMPLE_USER_ID = '11111111-1111-4111-8111-111111111111';
@@ -38,10 +39,41 @@ interface HouseholdMockRow {
   auto_compose_enabled: boolean;
 }
 
+// Story 15-s1 — Family Calendar rows. Kept as flat arrays: the routes only
+// insert, list by household, and delete by (id, household_id).
+interface CalendarTermMockRow {
+  id: string;
+  household_id: string;
+  child_id: string | null;
+  label: string;
+  start_date: string;
+  end_date: string;
+  weekdays: number[];
+  source: string;
+  created_at: string;
+}
+
+interface CalendarExceptionMockRow {
+  id: string;
+  household_id: string;
+  child_id: string | null;
+  on_date: string;
+  kind: string;
+  note: string | null;
+  source: string;
+  created_at: string;
+}
+
 interface MockState {
   audit: AuditRow[];
   // Maps householdId → row.
   households: Map<string, HouseholdMockRow>;
+  calendarTerms: CalendarTermMockRow[];
+  calendarExceptions: CalendarExceptionMockRow[];
+  // Audit contexts set by routes that defer the write to the audit hook (which
+  // this harness does not register). Captured in onSend so assertions are
+  // deterministic — the hook's own write is fire-and-forget after the response.
+  auditContexts: { event_type: string; metadata: Record<string, unknown> }[];
 }
 
 // Targeted in-memory Supabase mock — only models the audit_log + households
@@ -54,6 +86,12 @@ function buildMockSupabase(state: MockState) {
     from(table: string) {
       if (table === 'audit_log') return auditTable(state);
       if (table === 'households') return householdsTable(state);
+      if (table === 'calendar_terms') {
+        return calendarTable(state.calendarTerms, 'start_date');
+      }
+      if (table === 'calendar_exceptions') {
+        return calendarTable(state.calendarExceptions, 'on_date');
+      }
       throw new Error(`unexpected table: ${table}`);
     },
   };
@@ -195,6 +233,80 @@ function householdsTable(state: MockState) {
   };
 }
 
+// Story 15-s1 — models exactly the chains FamilyCalendarRepository calls:
+// insert().select().single(), select().eq().order(), and
+// delete().eq().eq().select().maybeSingle().
+function calendarTable<T extends { id: string; household_id: string }>(
+  rows: T[],
+  orderColumn: string,
+) {
+  return {
+    insert(payload: Record<string, unknown>) {
+      const stored = {
+        id: randomUUID(),
+        created_at: new Date().toISOString(),
+        ...payload,
+      } as unknown as T;
+      rows.push(stored);
+      return {
+        select(_cols: string) {
+          return { single: async () => ({ data: stored, error: null }) };
+        },
+      };
+    },
+    select(_cols: string) {
+      const filters: Record<string, unknown> = {};
+      const chain = {
+        eq(column: string, value: unknown) {
+          filters[column] = value;
+          return chain;
+        },
+        order(column: string, _opts: { ascending: boolean }) {
+          const matched = rows
+            .filter((r) =>
+              Object.entries(filters).every(
+                ([col, val]) => (r as unknown as Record<string, unknown>)[col] === val,
+              ),
+            )
+            .slice()
+            .sort((a, b) =>
+              String((a as unknown as Record<string, unknown>)[column]).localeCompare(
+                String((b as unknown as Record<string, unknown>)[column]),
+              ),
+            );
+          expect(column).toBe(orderColumn);
+          return Promise.resolve({ data: matched, error: null });
+        },
+      };
+      return chain;
+    },
+    delete() {
+      const filters: Record<string, unknown> = {};
+      const chain = {
+        eq(column: string, value: unknown) {
+          filters[column] = value;
+          return chain;
+        },
+        select(_cols: string) {
+          return {
+            maybeSingle: async () => {
+              const index = rows.findIndex((r) =>
+                Object.entries(filters).every(
+                  ([col, val]) => (r as unknown as Record<string, unknown>)[col] === val,
+                ),
+              );
+              if (index === -1) return { data: null, error: null };
+              const [removed] = rows.splice(index, 1);
+              return { data: { id: removed.id }, error: null };
+            },
+          };
+        },
+      };
+      return chain;
+    },
+  };
+}
+
 interface BuildAppOpts {
   state: MockState;
   plansService?: Partial<FastifyInstance['plansService']>;
@@ -216,6 +328,20 @@ async function buildTestApp(opts: BuildAppOpts): Promise<FastifyInstance> {
 
   await app.register(jwt, { secret: JWT_SECRET, sign: { expiresIn: '15m' } });
   await app.register(authenticateHook);
+
+  // Routes that defer their audit write to the audit hook (not registered in
+  // this harness) only set request.auditContext. Capture it in onSend so
+  // assertions stay deterministic - the real hook writes fire-and-forget from
+  // onResponse, after inject() has already resolved.
+  app.addHook('onSend', async (request) => {
+    const ctx = request.auditContext;
+    if (ctx) {
+      opts.state.auditContexts.push({
+        event_type: ctx.event_type,
+        metadata: (ctx.metadata as Record<string, unknown> | undefined) ?? {},
+      });
+    }
+  });
 
   app.setErrorHandler((err, request, reply) => {
     if (isDomainError(err)) {
@@ -277,6 +403,9 @@ function freshState(
   const ageMs = opts.householdAgeMs ?? 1000 * 60 * 60; // 1h old by default
   return {
     audit: [],
+    calendarTerms: [],
+    calendarExceptions: [],
+    auditContexts: [],
     households: new Map([
       [
         SAMPLE_HOUSEHOLD_ID,
@@ -3466,5 +3595,290 @@ describe('PATCH /v1/households/:id/auto-compose', () => {
     });
 
     expect(res.statusCode).toBe(403);
+  });
+});
+
+// ---- Story 15-s1: Family Calendar (terms + exceptions) ----
+
+describe('family calendar routes', () => {
+  let app: FastifyInstance;
+
+  afterEach(async () => {
+    await app.close();
+  });
+
+  const OTHER_HOUSEHOLD = '99999999-9999-4999-8999-999999999999';
+  const UNKNOWN_ID = '88888888-8888-4888-8888-888888888888';
+  const TERM_BODY = {
+    label: 'Autumn Term',
+    start_date: '2026-09-01',
+    end_date: '2026-12-18',
+  };
+
+  it('GET returns an empty calendar for a household with no rows', async () => {
+    app = await buildTestApp({ state: freshState() });
+    const token = signPrimary(app);
+
+    const res = await app.inject({
+      method: 'GET',
+      url: `/v1/households/${SAMPLE_HOUSEHOLD_ID}/calendar`,
+      headers: { authorization: `Bearer ${token}` },
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(FamilyCalendarResponseSchema.parse(res.json())).toEqual({
+      terms: [],
+      exceptions: [],
+    });
+  });
+
+  it('POST creates a term, defaults weekdays to Mon-Fri, and audits without the label', async () => {
+    const state = freshState();
+    app = await buildTestApp({ state });
+    const token = signPrimary(app);
+
+    const res = await app.inject({
+      method: 'POST',
+      url: `/v1/households/${SAMPLE_HOUSEHOLD_ID}/calendar/terms`,
+      headers: { authorization: `Bearer ${token}` },
+      payload: TERM_BODY,
+    });
+
+    expect(res.statusCode).toBe(201);
+    const body = res.json() as { term: { weekdays: number[]; child_id: string | null } };
+    expect(body.term.weekdays).toEqual([1, 2, 3, 4, 5]);
+    expect(body.term.child_id).toBeNull();
+
+    const entry = state.auditContexts.find(
+      (a) => a.event_type === 'household.calendar_updated',
+    );
+    expect(entry?.metadata.action).toBe('term_created');
+    expect(JSON.stringify(entry?.metadata)).not.toContain('Autumn Term');
+  });
+
+  it('POST accepts a saturday-inclusive term', async () => {
+    app = await buildTestApp({ state: freshState() });
+    const token = signPrimary(app);
+
+    const res = await app.inject({
+      method: 'POST',
+      url: `/v1/households/${SAMPLE_HOUSEHOLD_ID}/calendar/terms`,
+      headers: { authorization: `Bearer ${token}` },
+      payload: { ...TERM_BODY, weekdays: [1, 2, 3, 4, 5, 6] },
+    });
+
+    expect(res.statusCode).toBe(201);
+    expect((res.json() as { term: { weekdays: number[] } }).term.weekdays).toContain(6);
+  });
+
+  it('POST rejects a term whose end_date precedes start_date', async () => {
+    app = await buildTestApp({ state: freshState() });
+    const token = signPrimary(app);
+
+    const res = await app.inject({
+      method: 'POST',
+      url: `/v1/households/${SAMPLE_HOUSEHOLD_ID}/calendar/terms`,
+      headers: { authorization: `Bearer ${token}` },
+      payload: { label: 'Backwards', start_date: '2026-12-18', end_date: '2026-09-01' },
+    });
+
+    expect(res.statusCode).toBe(400);
+  });
+
+  it('POST creates an exception and keeps the note out of the audit row', async () => {
+    const state = freshState();
+    app = await buildTestApp({ state });
+    const token = signPrimary(app);
+
+    const res = await app.inject({
+      method: 'POST',
+      url: `/v1/households/${SAMPLE_HOUSEHOLD_ID}/calendar/exceptions`,
+      headers: { authorization: `Bearer ${token}` },
+      payload: { on_date: '2026-10-26', kind: 'no_lunch', note: 'Half term at Grandma house' },
+    });
+
+    expect(res.statusCode).toBe(201);
+    const entry = state.auditContexts.find(
+      (a) => a.event_type === 'household.calendar_updated',
+    );
+    expect(entry?.metadata.action).toBe('exception_created');
+    expect(entry?.metadata.kind).toBe('no_lunch');
+    expect(JSON.stringify(entry?.metadata)).not.toContain('Grandma');
+  });
+
+  it('GET returns created terms and exceptions', async () => {
+    const state = freshState();
+    app = await buildTestApp({ state });
+    const token = signPrimary(app);
+    const auth = { authorization: `Bearer ${token}` };
+
+    await app.inject({
+      method: 'POST',
+      url: `/v1/households/${SAMPLE_HOUSEHOLD_ID}/calendar/terms`,
+      headers: auth,
+      payload: TERM_BODY,
+    });
+    await app.inject({
+      method: 'POST',
+      url: `/v1/households/${SAMPLE_HOUSEHOLD_ID}/calendar/exceptions`,
+      headers: auth,
+      payload: { on_date: '2026-10-26', kind: 'no_lunch' },
+    });
+
+    const res = await app.inject({
+      method: 'GET',
+      url: `/v1/households/${SAMPLE_HOUSEHOLD_ID}/calendar`,
+      headers: auth,
+    });
+
+    const parsed = FamilyCalendarResponseSchema.parse(res.json());
+    expect(parsed.terms).toHaveLength(1);
+    expect(parsed.exceptions).toHaveLength(1);
+  });
+
+  it('secondary_caregiver may write a term', async () => {
+    app = await buildTestApp({ state: freshState() });
+    const token = signSecondary(app);
+
+    const res = await app.inject({
+      method: 'POST',
+      url: `/v1/households/${SAMPLE_HOUSEHOLD_ID}/calendar/terms`,
+      headers: { authorization: `Bearer ${token}` },
+      payload: TERM_BODY,
+    });
+
+    expect(res.statusCode).toBe(201);
+  });
+
+  it('guest_author may not write a term', async () => {
+    app = await buildTestApp({ state: freshState() });
+    const token = signPatchToken(app, { role: 'guest_author' });
+
+    const res = await app.inject({
+      method: 'POST',
+      url: `/v1/households/${SAMPLE_HOUSEHOLD_ID}/calendar/terms`,
+      headers: { authorization: `Bearer ${token}` },
+      payload: TERM_BODY,
+    });
+
+    expect(res.statusCode).toBe(403);
+  });
+
+  it('GET 403s across households', async () => {
+    app = await buildTestApp({ state: freshState() });
+    const token = signPrimary(app, SAMPLE_HOUSEHOLD_ID);
+
+    const res = await app.inject({
+      method: 'GET',
+      url: `/v1/households/${OTHER_HOUSEHOLD}/calendar`,
+      headers: { authorization: `Bearer ${token}` },
+    });
+
+    expect(res.statusCode).toBe(403);
+  });
+
+  it('POST 403s across households', async () => {
+    app = await buildTestApp({ state: freshState() });
+    const token = signPrimary(app, SAMPLE_HOUSEHOLD_ID);
+
+    const res = await app.inject({
+      method: 'POST',
+      url: `/v1/households/${OTHER_HOUSEHOLD}/calendar/terms`,
+      headers: { authorization: `Bearer ${token}` },
+      payload: TERM_BODY,
+    });
+
+    expect(res.statusCode).toBe(403);
+  });
+
+  it('DELETE removes a term and returns 204', async () => {
+    const state = freshState();
+    app = await buildTestApp({ state });
+    const token = signPrimary(app);
+    const auth = { authorization: `Bearer ${token}` };
+
+    const created = await app.inject({
+      method: 'POST',
+      url: `/v1/households/${SAMPLE_HOUSEHOLD_ID}/calendar/terms`,
+      headers: auth,
+      payload: TERM_BODY,
+    });
+    const termId = (created.json() as { term: { id: string } }).term.id;
+
+    const res = await app.inject({
+      method: 'DELETE',
+      url: `/v1/households/${SAMPLE_HOUSEHOLD_ID}/calendar/terms/${termId}`,
+      headers: auth,
+    });
+
+    expect(res.statusCode).toBe(204);
+    expect(state.calendarTerms).toHaveLength(0);
+    expect(state.auditContexts.filter((a) => a.metadata.action === 'term_deleted')).toHaveLength(
+      1,
+    );
+  });
+
+  it('DELETE removes an exception and returns 204', async () => {
+    const state = freshState();
+    app = await buildTestApp({ state });
+    const token = signPrimary(app);
+    const auth = { authorization: `Bearer ${token}` };
+
+    const created = await app.inject({
+      method: 'POST',
+      url: `/v1/households/${SAMPLE_HOUSEHOLD_ID}/calendar/exceptions`,
+      headers: auth,
+      payload: { on_date: '2026-10-26', kind: 'trip' },
+    });
+    const exceptionId = (created.json() as { exception: { id: string } }).exception.id;
+
+    const res = await app.inject({
+      method: 'DELETE',
+      url: `/v1/households/${SAMPLE_HOUSEHOLD_ID}/calendar/exceptions/${exceptionId}`,
+      headers: auth,
+    });
+
+    expect(res.statusCode).toBe(204);
+    expect(state.calendarExceptions).toHaveLength(0);
+  });
+
+  it('DELETE 404s for an unknown term', async () => {
+    app = await buildTestApp({ state: freshState() });
+    const token = signPrimary(app);
+
+    const res = await app.inject({
+      method: 'DELETE',
+      url: `/v1/households/${SAMPLE_HOUSEHOLD_ID}/calendar/terms/${UNKNOWN_ID}`,
+      headers: { authorization: `Bearer ${token}` },
+    });
+
+    expect(res.statusCode).toBe(404);
+  });
+
+  it('DELETE cannot reach another household row', async () => {
+    const state = freshState();
+    app = await buildTestApp({ state });
+    const token = signPrimary(app);
+
+    state.calendarTerms.push({
+      id: '55555555-5555-4555-8555-555555555555',
+      household_id: OTHER_HOUSEHOLD,
+      child_id: null,
+      label: 'Someone else term',
+      start_date: '2026-09-01',
+      end_date: '2026-12-18',
+      weekdays: [1, 2, 3, 4, 5],
+      source: 'manual',
+      created_at: new Date().toISOString(),
+    });
+
+    const res = await app.inject({
+      method: 'DELETE',
+      url: `/v1/households/${SAMPLE_HOUSEHOLD_ID}/calendar/terms/55555555-5555-4555-8555-555555555555`,
+      headers: { authorization: `Bearer ${token}` },
+    });
+
+    expect(res.statusCode).toBe(404);
+    expect(state.calendarTerms).toHaveLength(1);
   });
 });

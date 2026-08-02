@@ -318,6 +318,14 @@ import {
   DayAssignmentsResponseSchema,
   AssignPackerRequestSchema,
   AssignPackerResponseSchema,
+  // Story 15-s1 — Family Calendar (terms + exceptions)
+  CalendarSourceSchema,
+  CalendarExceptionKindSchema,
+  CalendarTermSchema,
+  CalendarExceptionSchema,
+  CreateCalendarTermInputSchema,
+  CreateCalendarExceptionInputSchema,
+  FamilyCalendarResponseSchema,
   // Story 7-S14 — Kitchen Profile parent-deterministic safety edits
   AllergenKeySchema,
   AddChildAllergenRequestSchema,
@@ -807,6 +815,15 @@ export type DayAssignment = z.infer<typeof DayAssignmentSchema>;
 export type DayAssignmentsResponse = z.infer<typeof DayAssignmentsResponseSchema>;
 export type AssignPackerRequest = z.infer<typeof AssignPackerRequestSchema>;
 export type AssignPackerResponse = z.infer<typeof AssignPackerResponseSchema>;
+
+// Story 15-s1 — Family Calendar (calendar_terms + calendar_exceptions)
+export type CalendarSource = z.infer<typeof CalendarSourceSchema>;
+export type CalendarExceptionKind = z.infer<typeof CalendarExceptionKindSchema>;
+export type CalendarTerm = z.infer<typeof CalendarTermSchema>;
+export type CalendarException = z.infer<typeof CalendarExceptionSchema>;
+export type CreateCalendarTermInput = z.infer<typeof CreateCalendarTermInputSchema>;
+export type CreateCalendarExceptionInput = z.infer<typeof CreateCalendarExceptionInputSchema>;
+export type FamilyCalendarResponse = z.infer<typeof FamilyCalendarResponseSchema>;
 
 // Story 7-S14 — Kitchen Profile parent-deterministic safety edits (Phase 1)
 export type AllergenKey = z.infer<typeof AllergenKeySchema>;

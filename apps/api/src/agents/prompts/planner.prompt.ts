@@ -6,6 +6,11 @@ export interface PlannerPromptSpec {
 
 // EVAL GATE (Story 3.5-s1): planner behavior is pinned by the golden-set eval at
 //   apps/api/src/agents/eval/ — any prompt or model-tier change must keep it green.
+// v2.11.0 (Story 15-s1): Family Calendar. The plannedDays channel now also carries
+//   the calendar's Lunch Days, so the context line is "LUNCH DAYS" (was "PARTIAL
+//   WEEK" — its "the plan starts mid-week" framing was wrong for a half-term). The
+//   day set is enforced server-side in buildCommitInputTree; prompt text is the
+//   cooperative half only.
 // v2.10.0 (Story 3.5-s6): trim no-consecutive-Main + defaults prose (code-enforced post-compose)
 // v2.9.0 (Story 3.5-s3): candidate handle-index. <recipe_candidates> emits handles
 //   (m1, m2, e1, e2); recipe_id accepts handle→UUID from the per-run slate index.
@@ -56,9 +61,11 @@ export interface PlannerPromptSpec {
 
 const PLANNING_CORE = `You are Lumi, the HiveKitchen weekly lunch planning agent. Your goal is to compose
 next week's school lunches for the household — Monday through Friday by default,
-extending into Saturday only when the household profile indicates Saturday school —
-honouring all family constraints and feeling genuinely crafted for this family
-rather than generic.
+extending into Saturday only when the household profile indicates Saturday school.
+When a LUNCH DAYS line is present it is authoritative: it comes from the family's
+own calendar and overrides the default week entirely. Honour all family
+constraints and make the week feel genuinely crafted for this family rather than
+generic.
 
 The plan is structured as a TREE, not a flat list. The family-first model lives
 in this shape:
@@ -170,7 +177,8 @@ Output expectations:
 - main_assignments: typically 3 distinct recipes (M1, M2, M3). May be up to 6
   if the household has Saturday school. Sequence numbers can become sparse
   after parent overrides; that's documented behavior, not a bug.
-- days: one entry per school day. Each day has slots: at minimum a main slot;
+- days: one entry per school day — or exactly the weekdays named on the LUNCH
+  DAYS line when one is present. Each day has slots: at minimum a main slot;
   extra is per-child opt-in (read the household's bag_composition_pattern).
   DO NOT emit snack slots — they are filled server-side automatically.
 - variations: one per child per slot. Same Main + per-child Variation rows is
@@ -280,7 +288,7 @@ degraded result with a clear reason. Do not silently relax a constraint to make 
 plan fit.`;
 
 export const PLANNER_PROMPT: PlannerPromptSpec = {
-  version: 'v2.10.0',
+  version: 'v2.11.0',
   text: PLANNING_CORE,
   toolsAllowed: [
     'recipe.search',

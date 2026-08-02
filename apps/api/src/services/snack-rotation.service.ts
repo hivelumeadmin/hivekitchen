@@ -8,8 +8,20 @@ export interface SnackSlotAssignment {
   child_ids: readonly string[]; // children who have snack=ON this day
 }
 
-// Ordered school weekdays for deterministic iteration.
+// Ordered school weekdays for deterministic iteration — the default week when
+// no explicit day set is supplied.
 const SCHOOL_DAYS = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday'] as const;
+
+// Every weekday a plan may carry, in calendar order. Saturday is plan-legal
+// (the weekday enum admits it) and reachable via a Saturday-school calendar term.
+const WEEKDAY_ORDER = [
+  'monday',
+  'tuesday',
+  'wednesday',
+  'thursday',
+  'friday',
+  'saturday',
+] as const;
 
 // Normalize category vocab: extra_rules bans use 'veggie'; snack_skus.category
 // uses 'vegetable'. Map both directions so bans never silently no-op.
@@ -164,10 +176,13 @@ export function assignSnackRotation(opts: {
   // Sort SKUs by id for a stable base ordering.
   const sortedSkus = [...safeSkus].sort((a, b) => a.id.localeCompare(b.id));
 
-  // Determine which days to cover.
+  // Determine which days to cover. Story 15-s1: an explicit day set is honoured
+  // verbatim (ordered by WEEKDAY_ORDER) rather than intersected with SCHOOL_DAYS
+  // — intersecting silently dropped saturday, so a Saturday-school household got
+  // a Main with no snack beside it. SCHOOL_DAYS remains the no-input default.
   const days: string[] =
     plannedDays && plannedDays.length > 0
-      ? SCHOOL_DAYS.filter((d) => plannedDays.includes(d))
+      ? WEEKDAY_ORDER.filter((d) => plannedDays.includes(d))
       : [...SCHOOL_DAYS];
 
   const assignments: SnackSlotAssignment[] = [];

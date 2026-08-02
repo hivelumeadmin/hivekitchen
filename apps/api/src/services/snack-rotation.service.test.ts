@@ -94,6 +94,31 @@ describe('assignSnackRotation', () => {
     expect(result.map((r) => r.day)).toEqual(['monday', 'wednesday', 'friday']);
   });
 
+  // Story 15-s1 — a Saturday-school calendar term produces a saturday plan day.
+  // The old implementation intersected plannedDays with a Mon-Fri constant, so
+  // saturday was silently dropped and the Main arrived with no snack beside it.
+  it('covers saturday when the day set includes it', () => {
+    const result = assignSnackRotation({
+      bagCompositions: [{ child_id: CHILD_A, child_name: 'Aarav', snack: true, extra: false }],
+      extraRules: [],
+      activeSkus: [FRUIT_SKU, VEG_SKU],
+      weekOf: '2026-10-13',
+      plannedDays: ['friday', 'saturday'],
+    });
+    expect(result.map((r) => r.day)).toEqual(['friday', 'saturday']);
+  });
+
+  it('orders the day set by calendar order, not caller order', () => {
+    const result = assignSnackRotation({
+      bagCompositions: [{ child_id: CHILD_A, child_name: 'Aarav', snack: true, extra: false }],
+      extraRules: [],
+      activeSkus: [FRUIT_SKU, VEG_SKU],
+      weekOf: '2026-10-13',
+      plannedDays: ['wednesday', 'monday'],
+    });
+    expect(result.map((r) => r.day)).toEqual(['monday', 'wednesday']);
+  });
+
   it('honours category ban from extra_rules (veggie → vegetable normalization)', () => {
     const result = assignSnackRotation({
       bagCompositions: [{ child_id: CHILD_A, child_name: 'Aarav', snack: true, extra: false }],

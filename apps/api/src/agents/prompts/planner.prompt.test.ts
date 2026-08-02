@@ -52,8 +52,8 @@ describe('PLANNER_PROMPT', () => {
     expect(PLANNER_PROMPT.text).toContain('FALLBACK ONLY');
   });
 
-  it('is at version v2.10.0', () => {
-    expect(PLANNER_PROMPT.version).toBe('v2.10.0');
+  it('is at version v2.11.0', () => {
+    expect(PLANNER_PROMPT.version).toBe('v2.11.0');
   });
 
   // Story 3.5-s6 — the no-consecutive-Main prose is trimmed to a code-enforced

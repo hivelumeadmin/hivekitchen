@@ -35,6 +35,14 @@ import {
   UpdateSnackSkuInputSchema,
   ListSnackSkusResponseSchema,
   SnackShelfHouseholdIdParamSchema,
+  FamilyCalendarResponseSchema,
+  CreateCalendarTermInputSchema,
+  CreateCalendarTermResponseSchema,
+  CreateCalendarExceptionInputSchema,
+  CreateCalendarExceptionResponseSchema,
+  CalendarHouseholdIdParamSchema,
+  CalendarTermIdParamSchema,
+  CalendarExceptionIdParamSchema,
 } from '@hivekitchen/contracts';
 import type {
   TileRetryRequest,
@@ -49,6 +57,8 @@ import type {
   CreateSnackSkuInput,
   UpdateSnackSkuInput,
   SnackSku,
+  CreateCalendarTermInput,
+  CreateCalendarExceptionInput,
 } from '@hivekitchen/types';
 import { AuditRepository } from '../../audit/audit.repository.js';
 import { AuditService } from '../../audit/audit.service.js';
@@ -57,6 +67,7 @@ import { authorize } from '../../middleware/authorize.hook.js';
 import { HouseholdsRepository } from './households.repository.js';
 import { HouseholdsService } from './households.service.js';
 import { ExtraLibraryRepository } from './extra-library.repository.js';
+import { FamilyCalendarRepository } from './family-calendar.repository.js';
 import {
   SnackSkuRepository,
   type SnackSkuRow,
@@ -101,6 +112,8 @@ const householdsRoutesPlugin: FastifyPluginAsync = async (fastify) => {
   const userRepository = new UserRepository(fastify.supabase);
   // Slice 5-S3 — PackerOfTheDay assignments + lazy coordination thread.
   const dayAssignmentsRepo = new DayAssignmentsRepository(fastify.supabase);
+  // Story 15-s1 — Family Calendar terms + exceptions.
+  const familyCalendarRepository = new FamilyCalendarRepository(fastify.supabase);
   const threadRepository = new ThreadRepository(fastify.supabase);
 
   // Story 7-S8 — parental review dashboard service. Composes four existing
@@ -752,6 +765,173 @@ const householdsRoutesPlugin: FastifyPluginAsync = async (fastify) => {
         metadata: { item_id: itemId },
       };
 
+      return reply.code(204).send();
+    },
+  );
+
+  // Story 15-s1 — the Family Calendar. Terms carry the recurring rhythm,
+  // exceptions the one-off overrides; the planner derives the week's Lunch Days
+  // from both (family-calendar.resolver.ts) before composing.
+  //
+  // Writes are open to both caregivers: term dates and no-lunch days are shared
+  // day-logistics, the same class of decision as PackerOfTheDay, not a
+  // household-level food policy like the Extra library (primary parent only).
+  fastify.get(
+    '/v1/households/:id/calendar',
+    {
+      preHandler: requireMember,
+      schema: {
+        params: CalendarHouseholdIdParamSchema,
+        response: { 200: FamilyCalendarResponseSchema },
+      },
+    },
+    async (request, reply) => {
+      const { id: householdId } = request.params as { id: string };
+      if (householdId !== request.user.household_id) {
+        throw new ForbiddenError("Cannot access another household's calendar");
+      }
+      const calendar = await familyCalendarRepository.findByHousehold(householdId);
+      return reply.status(200).send(calendar);
+    },
+  );
+
+  fastify.post(
+    '/v1/households/:id/calendar/terms',
+    {
+      preHandler: requireParentOrCaregiver,
+      schema: {
+        params: CalendarHouseholdIdParamSchema,
+        body: CreateCalendarTermInputSchema,
+        response: { 201: CreateCalendarTermResponseSchema },
+      },
+    },
+    async (request, reply) => {
+      const { id: householdId } = request.params as { id: string };
+      if (householdId !== request.user.household_id) {
+        throw new ForbiddenError("Cannot write to another household's calendar");
+      }
+      const body = request.body as CreateCalendarTermInput;
+      const term = await familyCalendarRepository.createTerm({
+        householdId,
+        childId: body.child_id,
+        label: body.label,
+        startDate: body.start_date,
+        endDate: body.end_date,
+        weekdays: body.weekdays,
+        source: body.source,
+      });
+
+      // PII-free metadata: ids and the action only. The parent-authored `label`
+      // can carry a school or child name, so it is not copied into the audit row.
+      request.auditContext = {
+        event_type: 'household.calendar_updated',
+        user_id: request.user.id,
+        household_id: householdId,
+        correlation_id: request.id,
+        request_id: request.id,
+        metadata: { action: 'term_created', term_id: term.id },
+      };
+      return reply.status(201).send({ term });
+    },
+  );
+
+  fastify.delete(
+    '/v1/households/:id/calendar/terms/:termId',
+    {
+      preHandler: requireParentOrCaregiver,
+      schema: { params: CalendarTermIdParamSchema },
+    },
+    async (request, reply) => {
+      const { id: householdId, termId } = request.params as { id: string; termId: string };
+      if (householdId !== request.user.household_id) {
+        throw new ForbiddenError("Cannot delete another household's calendar term");
+      }
+      const deleted = await familyCalendarRepository.deleteTerm(termId, householdId);
+      if (!deleted) {
+        throw new NotFoundError(`calendar term not found: ${termId}`);
+      }
+
+      request.auditContext = {
+        event_type: 'household.calendar_updated',
+        user_id: request.user.id,
+        household_id: householdId,
+        correlation_id: request.id,
+        request_id: request.id,
+        metadata: { action: 'term_deleted', term_id: termId },
+      };
+      return reply.code(204).send();
+    },
+  );
+
+  fastify.post(
+    '/v1/households/:id/calendar/exceptions',
+    {
+      preHandler: requireParentOrCaregiver,
+      schema: {
+        params: CalendarHouseholdIdParamSchema,
+        body: CreateCalendarExceptionInputSchema,
+        response: { 201: CreateCalendarExceptionResponseSchema },
+      },
+    },
+    async (request, reply) => {
+      const { id: householdId } = request.params as { id: string };
+      if (householdId !== request.user.household_id) {
+        throw new ForbiddenError("Cannot write to another household's calendar");
+      }
+      const body = request.body as CreateCalendarExceptionInput;
+      const exception = await familyCalendarRepository.createException({
+        householdId,
+        childId: body.child_id,
+        onDate: body.on_date,
+        kind: body.kind,
+        note: body.note,
+        source: body.source,
+      });
+
+      // `note` is free text and stays out of the audit row.
+      request.auditContext = {
+        event_type: 'household.calendar_updated',
+        user_id: request.user.id,
+        household_id: householdId,
+        correlation_id: request.id,
+        request_id: request.id,
+        metadata: {
+          action: 'exception_created',
+          exception_id: exception.id,
+          kind: exception.kind,
+        },
+      };
+      return reply.status(201).send({ exception });
+    },
+  );
+
+  fastify.delete(
+    '/v1/households/:id/calendar/exceptions/:exceptionId',
+    {
+      preHandler: requireParentOrCaregiver,
+      schema: { params: CalendarExceptionIdParamSchema },
+    },
+    async (request, reply) => {
+      const { id: householdId, exceptionId } = request.params as {
+        id: string;
+        exceptionId: string;
+      };
+      if (householdId !== request.user.household_id) {
+        throw new ForbiddenError("Cannot delete another household's calendar exception");
+      }
+      const deleted = await familyCalendarRepository.deleteException(exceptionId, householdId);
+      if (!deleted) {
+        throw new NotFoundError(`calendar exception not found: ${exceptionId}`);
+      }
+
+      request.auditContext = {
+        event_type: 'household.calendar_updated',
+        user_id: request.user.id,
+        household_id: householdId,
+        correlation_id: request.id,
+        request_id: request.id,
+        metadata: { action: 'exception_deleted', exception_id: exceptionId },
+      };
       return reply.code(204).send();
     },
   );

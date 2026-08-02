@@ -457,3 +457,46 @@ describe('planned_days threading (AC 8 — Story 3-S34)', () => {
     expect(planWeek.mock.calls[0]?.[0]).toHaveProperty('plannedDays', undefined);
   });
 });
+
+// Story 15-s1 — the Family Calendar makes the day set server-authoritative.
+describe('buildCommitInputTree — effectiveDays filter (Story 15-s1)', () => {
+  it('keeps every composed day when no day set is supplied', () => {
+    const input = buildCommitInputTree(buildOutput(), REQUEST_ID);
+
+    expect(input.days.map((d) => d.day)).toEqual(['monday', 'wednesday']);
+  });
+
+  it('drops a day the calendar excluded even though the model composed it', () => {
+    const input = buildCommitInputTree(buildOutput(), REQUEST_ID, [], ['monday']);
+
+    expect(input.days.map((d) => d.day)).toEqual(['monday']);
+  });
+
+  it('keeps days that are in the day set', () => {
+    const input = buildCommitInputTree(buildOutput(), REQUEST_ID, [], [
+      'monday',
+      'wednesday',
+      'friday',
+    ]);
+
+    expect(input.days.map((d) => d.day)).toEqual(['monday', 'wednesday']);
+  });
+
+  it('still injects the deterministic snack on a surviving day', () => {
+    const input = buildCommitInputTree(
+      buildOutput(),
+      REQUEST_ID,
+      [{ day: 'monday', snack_sku_id: SNACK_SKU_ID, child_ids: [CHILD_A] }],
+      ['monday'],
+    );
+
+    const snack = input.days[0]?.slots.find((s) => s.slot_kind === 'snack');
+    expect(snack?.snack_sku_id).toBe(SNACK_SKU_ID);
+  });
+
+  it('produces an empty day list when the day set excludes everything composed', () => {
+    const input = buildCommitInputTree(buildOutput(), REQUEST_ID, [], ['friday']);
+
+    expect(input.days).toEqual([]);
+  });
+});

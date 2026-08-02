@@ -957,7 +957,7 @@ describe('DomainOrchestrator', () => {
       return orchestrator;
     }
 
-    it('prepends the PARTIAL WEEK line as the first context line when plannedDays is present', async () => {
+    it('prepends the LUNCH DAYS line as the first context line when plannedDays is present', async () => {
       const capture: { content?: string } = {};
       const orchestrator = buildCapturingOrchestrator(capture);
 
@@ -969,14 +969,48 @@ describe('DomainOrchestrator', () => {
       });
 
       expect(capture.content).toBeDefined();
-      expect(capture.content!.startsWith('PARTIAL WEEK:')).toBe(true);
+      expect(capture.content!.startsWith('LUNCH DAYS:')).toBe(true);
       expect(capture.content).toContain(
         'Compose plan_days entries for ONLY these weekdays: wednesday, thursday, friday.',
       );
-      expect(capture.content).toContain('the plan starts mid-week');
     });
 
-    it('renders no PARTIAL WEEK line when plannedDays is absent', async () => {
+    // Story 15-s1 — the same channel now carries the Family Calendar's Lunch
+    // Days, so the line may no longer claim the omitted days are a mid-week
+    // start: they are just as often a half-term or a school trip.
+    it('does not attribute omitted days to a mid-week start', async () => {
+      const capture: { content?: string } = {};
+      const orchestrator = buildCapturingOrchestrator(capture);
+
+      await orchestrator.planWeek({
+        householdId: HOUSEHOLD_ID,
+        weekOf: '2026-11-02',
+        requestId: 'req-pw-4',
+        plannedDays: ['monday', 'tuesday'],
+      });
+
+      expect(capture.content).toContain('the omitted days need no lunch');
+      expect(capture.content).toContain('the family calendar marks them as days off');
+      expect(capture.content).not.toMatch(/omitted days are intentionally left empty/);
+    });
+
+    it('names exactly the supplied weekdays', async () => {
+      const capture: { content?: string } = {};
+      const orchestrator = buildCapturingOrchestrator(capture);
+
+      await orchestrator.planWeek({
+        householdId: HOUSEHOLD_ID,
+        weekOf: '2026-11-02',
+        requestId: 'req-pw-5',
+        plannedDays: ['monday', 'tuesday', 'thursday', 'friday', 'saturday'],
+      });
+
+      const line = capture.content!.split('\n')[0] ?? '';
+      expect(line).toContain('monday, tuesday, thursday, friday, saturday');
+      expect(line).not.toContain('wednesday');
+    });
+
+    it('renders no LUNCH DAYS line when plannedDays is absent', async () => {
       const capture: { content?: string } = {};
       const orchestrator = buildCapturingOrchestrator(capture);
 
@@ -987,10 +1021,10 @@ describe('DomainOrchestrator', () => {
       });
 
       expect(capture.content).toBeDefined();
-      expect(capture.content).not.toContain('PARTIAL WEEK:');
+      expect(capture.content).not.toContain('LUNCH DAYS:');
     });
 
-    it('renders no PARTIAL WEEK line when plannedDays is empty', async () => {
+    it('renders no LUNCH DAYS line when plannedDays is empty', async () => {
       const capture: { content?: string } = {};
       const orchestrator = buildCapturingOrchestrator(capture);
 
@@ -1002,7 +1036,7 @@ describe('DomainOrchestrator', () => {
       });
 
       expect(capture.content).toBeDefined();
-      expect(capture.content).not.toContain('PARTIAL WEEK:');
+      expect(capture.content).not.toContain('LUNCH DAYS:');
     });
 
     it('appends adjacent Mains to the day-scope line when adjacentMains is present', async () => {

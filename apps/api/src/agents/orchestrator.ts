@@ -459,11 +459,15 @@ export class DomainOrchestrator {
     // Story 3-S33 — partial-week composition. The day window is the primary
     // framing for a mid-week plan, so it sits at position 0 (above slot/uncertain
     // scope). No-op when the caller wants the full default week.
+    // Story 15-s1 — the same channel now also carries the Family Calendar's
+    // Lunch Days, so the wording no longer claims a mid-week start: a day can be
+    // omitted because the plan starts late OR because the calendar says no lunch
+    // is needed (half-term, school trip, school-provided meal).
     if (plannedDays !== undefined && plannedDays.length > 0) {
       contextLines.unshift(
-        `PARTIAL WEEK: Compose plan_days entries for ONLY these weekdays: ${plannedDays.join(
+        `LUNCH DAYS: Compose plan_days entries for ONLY these weekdays: ${plannedDays.join(
           ', ',
-        )}. Do NOT emit any plan_days entry for any other weekday — the omitted days are intentionally left empty (the plan starts mid-week).`,
+        )}. Do NOT emit any plan_days entry for any other weekday — the omitted days need no lunch (the plan starts mid-week, or the family calendar marks them as days off).`,
       );
     }
 

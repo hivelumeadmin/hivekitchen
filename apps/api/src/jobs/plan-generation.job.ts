@@ -21,6 +21,12 @@ import { CulturalCalendarService } from '../services/cultural-calendar.service.j
 import { MemoryContextService } from '../services/memory-context.service.js';
 import { ExtraRulesRepository } from '../modules/children/extra-rules.repository.js';
 import { ExtraLibraryRepository } from '../modules/households/extra-library.repository.js';
+import { FamilyCalendarRepository } from '../modules/households/family-calendar.repository.js';
+import {
+  addDaysIso,
+  intersectDaySets,
+  resolveLunchDays,
+} from '../modules/households/family-calendar.resolver.js';
 import { PlanDayContextRepository } from '../modules/plans/plan-day-context.repository.js';
 import { RecipesRepository } from '../modules/recipe/recipes.repository.js';
 import { SnackSkuRepository } from '../modules/recipe/snack-sku.repository.js';
@@ -110,15 +116,25 @@ export function getLocalSixPmUtcMs(timezone: string, referenceDate: Date): numbe
 // rows DB-side.
 // Story 3-S40 — snack slots are server-assigned (not emitted by the LLM).
 // Inject them into each day's slots before passing to commit_plan() RPC.
+// Story 15-s1 — `effectiveDays` makes the day set server-authoritative. The
+// PARTIAL WEEK prompt line asks the model to skip days, but nothing forced it
+// to comply, so a school holiday could still come back with a lunch on it. When
+// a day set is defined, days outside it are dropped here rather than trusted
+// away.
 export function buildCommitInputTree(
   output: PlanComposeTreeOutput,
   requestId: string,
   snackSlots: readonly SnackSlotAssignment[] = [],
+  effectiveDays?: readonly Weekday[],
 ): CommitPlanTreeInput {
   const snackByDay = new Map<string, SnackSlotAssignment>(
     snackSlots.map((s) => [s.day, s]),
   );
-  const days = output.days.map((d) => {
+  const composedDays =
+    effectiveDays === undefined
+      ? output.days
+      : output.days.filter((d) => effectiveDays.includes(d.day));
+  const days = composedDays.map((d) => {
     // Snacks are strictly server-assigned (Story 3-S40). The planner prompt
     // (v2.8.0) tells the model NOT to emit snack slots, but it occasionally
     // does anyway — those slots carry no snack_sku_id and would either render
@@ -265,6 +281,9 @@ const planGenerationPlugin: FastifyPluginAsync = async (fastify) => {
   // Story 3.21 — Extra slot pin/ban rules + household custom Extra library.
   const extraRulesRepository = new ExtraRulesRepository(fastify.supabase);
   const extraLibraryRepository = new ExtraLibraryRepository(fastify.supabase);
+  // Story 15-s1 — Family Calendar. Terms + exceptions decide which days need a
+  // lunch before the planner composes anything.
+  const familyCalendarRepository = new FamilyCalendarRepository(fastify.supabase);
   // Story 3.22 — high-activity Extra proposals (FR119) read active
   // plan_day_context rows and pair them with bag-composition data to surface
   // sport_practice/field_trip days for children whose Extra slot is OFF.
@@ -448,6 +467,45 @@ const planGenerationPlugin: FastifyPluginAsync = async (fastify) => {
         ),
       ]);
 
+      // Story 15-s1 — the Family Calendar decides which days need a lunch, before
+      // anything is composed. resolveLunchDays returns undefined when the
+      // household has no term covering this week, which leaves the day set
+      // exactly as it was (the planner's implicit default). An empty array means
+      // the calendar covers the week and every day is excepted — a holiday week.
+      const calendarWeek = await familyCalendarRepository
+        .findForWeek(household_id, week_of, addDaysIso(week_of, 5))
+        .catch((err: unknown) => {
+          fastify.log.warn(
+            { err, household_id, week_of },
+            'family-calendar load failed — composing the default week',
+          );
+          return undefined;
+        });
+      const lunchDays =
+        calendarWeek === undefined
+          ? undefined
+          : resolveLunchDays({
+              terms: calendarWeek.terms,
+              exceptions: calendarWeek.exceptions,
+              weekOf: week_of,
+            });
+      // The on-demand ("compose now") path already narrows to the rest of the
+      // week; the calendar intersects with that window rather than replacing it.
+      const effectiveDays = intersectDaySets(lunchDays, planned_days);
+
+      if (effectiveDays !== undefined && effectiveDays.length === 0) {
+        fastify.log.info(
+          {
+            household_id,
+            week_of,
+            module: 'plan-generation',
+            action: 'calendar_no_lunch_days',
+          },
+          'family calendar leaves no lunch days this week — nothing to compose',
+        );
+        return;
+      }
+
       // Story 3-S40 — deterministic snack slot assignment. Pre-computed once per
       // job so both the initial commit and any guardrail-retry regen share the
       // same snack assignments (snacks are static for the week, never regenerated).
@@ -492,7 +550,7 @@ const planGenerationPlugin: FastifyPluginAsync = async (fastify) => {
         extraRules,
         activeSkus: activeSnackSkus,
         weekOf: week_of,
-        plannedDays: planned_days,
+        plannedDays: effectiveDays,
         declaredAllergensByChildId,
       });
 
@@ -558,7 +616,7 @@ const planGenerationPlugin: FastifyPluginAsync = async (fastify) => {
         variantEligibleChildren,
         sovereigntyMode,
         kitchenMap,
-        plannedDays: planned_days,
+        plannedDays: effectiveDays,
         childSignals,
         pantrySnapshot,
         recipeCandidates,
@@ -569,7 +627,7 @@ const planGenerationPlugin: FastifyPluginAsync = async (fastify) => {
         'message',
         JSON.stringify(buildPlanProgressPayload(weekId, 'guardrail')),
       );
-      const commitInput = buildCommitInputTree(composeOutput, request_id, snackSlots);
+      const commitInput = buildCommitInputTree(composeOutput, request_id, snackSlots, effectiveDays);
 
       // Allergy guardrail + brief_state refresh are wired inside
       // PlansService.commit(). The regenerate callback first tries the
@@ -648,12 +706,12 @@ const planGenerationPlugin: FastifyPluginAsync = async (fastify) => {
             variantEligibleChildren,
             sovereigntyMode,
             kitchenMap,
-            plannedDays: planned_days,
+            plannedDays: effectiveDays,
             childSignals,
             pantrySnapshot,
             recipeCandidates,
           });
-          const retryCommit = buildCommitInputTree(retryOutput, request_id, snackSlots);
+          const retryCommit = buildCommitInputTree(retryOutput, request_id, snackSlots, effectiveDays);
           lastAttemptCommit = retryCommit;
           lastAttemptComposeOutput = retryOutput;
           return retryCommit;
