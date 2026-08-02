@@ -9,6 +9,7 @@ import {
 } from './extra-removal-signal.service.js';
 import type { ExtraRulesRepository } from '../children/extra-rules.repository.js';
 import type { AuditService } from '../../audit/audit.service.js';
+import { SignalsService } from '../signals/signals.service.js';
 
 const HOUSEHOLD_ID = '11111111-1111-4111-8111-111111111111';
 const CHILD_ID = '22222222-2222-4222-8222-222222222222';
@@ -155,6 +156,82 @@ describe('ExtraRemovalSignalService.recordRemoval', () => {
       component_type: COMPONENT_TYPE,
       plan_item_id: PLAN_ITEM_ID,
     });
+  });
+
+  // ---- Story 15-s2: signals-log dual-write ----
+
+  it('dual-writes an extra_removal signal (Story 15-s2)', async () => {
+    const mock = buildClient({ countResult: { count: 1, error: null } });
+    const record = vi.fn().mockResolvedValue(undefined);
+    const service = new ExtraRemovalSignalService({
+      client: mock.client,
+      extraRulesRepo: buildExtraRulesRepo(),
+      auditService: buildAudit(),
+      logger: buildLogger(),
+      signalsService: { record },
+    });
+
+    await service.recordRemoval(baseInput);
+
+    expect(record).toHaveBeenCalledTimes(1);
+    expect(record.mock.calls[0]?.[0]).toMatchObject({
+      household_id: HOUSEHOLD_ID,
+      child_id: CHILD_ID,
+      subject_ref: { plan_item_id: PLAN_ITEM_ID },
+      payload: { kind: 'extra_removal', component_type: 'sweet treat' },
+      source: 'app',
+    });
+  });
+
+  it('still dual-writes the signal when the legacy insert fails (log ⊇ stores — 15-s2 review doctrine)', async () => {
+    const mock = buildClient({
+      insertResult: { error: { message: 'insert failed' } },
+      countResult: { count: 1, error: null },
+    });
+    const record = vi.fn().mockResolvedValue(undefined);
+    const service = new ExtraRemovalSignalService({
+      client: mock.client,
+      extraRulesRepo: buildExtraRulesRepo(),
+      auditService: buildAudit(),
+      logger: buildLogger(),
+      signalsService: { record },
+    });
+
+    await service.recordRemoval(baseInput);
+
+    // The signal records the removal EVENT, not the store update — a legacy
+    // failure must not lose it.
+    expect(record).toHaveBeenCalledTimes(1);
+  });
+
+  it('legacy insert + bias flow still run when the signals write FAILS through the real SignalsService (AC #9)', async () => {
+    const legacy = buildClient({ countResult: { count: 1, error: null } });
+    const legacyFrom = (legacy.client as unknown as { from: (t: string) => unknown }).from;
+    // Route 'signals' to a failing insert chain; everything else to the legacy builder.
+    const failingSignalsChain = {
+      insert: () => ({
+        select: () => ({
+          single: async () => ({ data: null, error: { code: '57014', message: 'insert failed' } }),
+        }),
+      }),
+    };
+    const client = {
+      from: (table: string) => (table === 'signals' ? failingSignalsChain : legacyFrom(table)),
+    } as unknown as SupabaseClient;
+    const warn = vi.fn();
+    const service = new ExtraRemovalSignalService({
+      client,
+      extraRulesRepo: buildExtraRulesRepo(),
+      auditService: buildAudit(),
+      logger: buildLogger(),
+      signalsService: new SignalsService(client, null, { warn }),
+    });
+
+    await expect(service.recordRemoval(baseInput)).resolves.toBeUndefined();
+
+    // record() swallowed the insert failure (warn) and the primary path ran.
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(legacy.insertCalls).toHaveLength(1);
   });
 
   it('does NOT apply bias when count is below threshold', async () => {

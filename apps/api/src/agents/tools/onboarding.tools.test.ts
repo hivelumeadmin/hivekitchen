@@ -1,5 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { FastifyBaseLogger } from 'fastify';
+import type { SupabaseClient } from '@supabase/supabase-js';
+import { SignalsService } from '../../modules/signals/signals.service.js';
 import {
   createAllergenDeclareToolSpec,
   createChildUpsertToolSpec,
@@ -1025,6 +1027,83 @@ describe('createFoodPreferenceDeclareToolSpec (2.5-s7 wired)', () => {
   it('rejects unknown valence at the schema layer', async () => {
     const spec = createFoodPreferenceDeclareToolSpec(makeCtx(), makeDeps());
     await expect(spec.fn({ item: 'cilantro', valence: 'hates' })).rejects.toThrow();
+  });
+
+  // ---- Story 15-s2: signals-log dual-write ----
+
+  it('dual-writes a preference_edit signal with household scope when unscoped', async () => {
+    const record = vi.fn().mockResolvedValue(undefined);
+    const deps = makeDeps({ signalsService: { record } });
+    const spec = createFoodPreferenceDeclareToolSpec(makeCtx(), deps);
+
+    await spec.fn({ item: 'cilantro', valence: 'refuses' });
+
+    expect(record).toHaveBeenCalledTimes(1);
+    expect(record.mock.calls[0]?.[0]).toMatchObject({
+      household_id: HOUSEHOLD_ID,
+      child_id: null,
+      payload: {
+        kind: 'preference_edit',
+        item: 'cilantro',
+        valence: 'refuses',
+        enforcement: 'soft',
+        scope: 'household',
+      },
+      source: 'app',
+    });
+  });
+
+  it('dual-writes with child scope when child_id resolves', async () => {
+    const record = vi.fn().mockResolvedValue(undefined);
+    const deps = makeDeps({ signalsService: { record } });
+    const spec = createFoodPreferenceDeclareToolSpec(makeCtx(), deps);
+
+    await spec.fn({ child_id: CHILD_ID, item: 'mushrooms', valence: 'dislikes' });
+
+    expect(record.mock.calls[0]?.[0]).toMatchObject({
+      child_id: CHILD_ID,
+      payload: { kind: 'preference_edit', scope: 'child' },
+    });
+  });
+
+  it('declares fine when no signalsService is wired (optional dep)', async () => {
+    const deps = makeDeps();
+    const spec = createFoodPreferenceDeclareToolSpec(makeCtx(), deps);
+
+    const result = (await spec.fn({ item: 'cilantro', valence: 'refuses' })) as {
+      food_preference_id: string;
+    };
+
+    expect(result.food_preference_id).toBe(FOOD_PREF_ROW_ID);
+  });
+
+  it('still declares when the signals write FAILS through the real SignalsService (AC #9)', async () => {
+    // A REAL SignalsService whose insert always fails — proves the seam
+    // survives a failing signals WRITE, not just an unwired dep (15-s2 review).
+    const warn = vi.fn();
+    const failingClient = {
+      from: (table: string) => {
+        if (table !== 'signals') throw new Error(`unexpected table: ${table}`);
+        return {
+          insert: () => ({
+            select: () => ({
+              single: async () => ({ data: null, error: { code: '57014', message: 'insert failed' } }),
+            }),
+          }),
+        };
+      },
+    } as unknown as SupabaseClient;
+    const deps = makeDeps({
+      signalsService: new SignalsService(failingClient, null, { warn }),
+    });
+    const spec = createFoodPreferenceDeclareToolSpec(makeCtx(), deps);
+
+    const result = (await spec.fn({ item: 'cilantro', valence: 'refuses' })) as {
+      food_preference_id: string;
+    };
+
+    expect(result.food_preference_id).toBe(FOOD_PREF_ROW_ID);
+    expect(warn).toHaveBeenCalledTimes(1);
   });
 });
 

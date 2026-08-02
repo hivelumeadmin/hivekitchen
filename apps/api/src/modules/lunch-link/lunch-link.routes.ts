@@ -33,6 +33,7 @@ import { FoodPreferencesRepository } from '../food-preferences/food-preferences.
 import { ThreadRepository } from '../threads/thread.repository.js';
 import { ChildRequestRepository } from '../child-requests/child-request.repository.js';
 import { ChildRequestService } from '../child-requests/child-request.service.js';
+import { SignalsService } from '../signals/signals.service.js';
 import { NotFoundError } from '../../common/errors.js';
 
 const lunchLinkRoutesPlugin: FastifyPluginAsync = async (fastify) => {
@@ -47,12 +48,16 @@ const lunchLinkRoutesPlugin: FastifyPluginAsync = async (fastify) => {
     fastify.env.WEB_BASE_URL,
   );
 
+  // Story 15-s2 — append-only signals log write boundary (dual-write).
+  const signalsService = new SignalsService(fastify.supabase, kek, fastify.log);
+
   // Slice 4-S11 — Layer 2 signal write. Constructed here so the rate route can
   // fire-and-forget child_preferences signals after the rating is persisted.
   const childPrefsService = new ChildPreferencesService(
     new ChildPreferencesRepository(fastify.supabase),
     new PlansRepository(fastify.supabase),
     fastify.log,
+    signalsService,
   );
 
   // Slice 4-S12 — FlavorPassport read service for the public child endpoint.
@@ -68,6 +73,7 @@ const lunchLinkRoutesPlugin: FastifyPluginAsync = async (fastify) => {
     new FoodPreferencesRepository(fastify.supabase, kek),
     new ThreadRepository(fastify.supabase),
     fastify.log,
+    signalsService,
   );
 
   const requireMember = authorize(['primary_parent', 'secondary_caregiver']);

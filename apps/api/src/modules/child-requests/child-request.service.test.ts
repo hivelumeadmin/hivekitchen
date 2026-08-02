@@ -5,6 +5,27 @@ import type { ChildRequestRepository } from './child-request.repository.js';
 import type { FoodPreferencesRepository } from '../food-preferences/food-preferences.repository.js';
 import type { ThreadRepository } from '../threads/thread.repository.js';
 import type { FastifyBaseLogger } from 'fastify';
+import type { SupabaseClient } from '@supabase/supabase-js';
+import { SignalsService } from '../signals/signals.service.js';
+
+// AC #9 (15-s2 review patch): a REAL SignalsService whose insert always fails —
+// proves the seam survives a failing signals WRITE (not just an unwired dep).
+function failingSignalsService() {
+  const warn = vi.fn();
+  const client = {
+    from: (table: string) => {
+      if (table !== 'signals') throw new Error(`unexpected table: ${table}`);
+      return {
+        insert: () => ({
+          select: () => ({
+            single: async () => ({ data: null, error: { code: '57014', message: 'insert failed' } }),
+          }),
+        }),
+      };
+    },
+  } as unknown as SupabaseClient;
+  return { signalsService: new SignalsService(client, null, { warn }), warn };
+}
 
 const HOUSEHOLD_ID = '11111111-1111-4111-8111-111111111111';
 const CHILD_ID = '22222222-2222-4222-8222-222222222222';
@@ -35,7 +56,12 @@ function makeService(overrides?: {
     ...overrides?.threads,
   } as unknown as ThreadRepository;
   const logger = { warn: vi.fn(), info: vi.fn(), error: vi.fn() } as unknown as FastifyBaseLogger;
-  return { service: new ChildRequestService(repo, foodPrefs, threads, logger), repo, foodPrefs, threads, logger };
+  // Story 15-s2 — signals dual-write seam; record() never throws by contract.
+  const signals = { record: vi.fn().mockResolvedValue(undefined) };
+  return {
+    service: new ChildRequestService(repo, foodPrefs, threads, logger, signals),
+    repo, foodPrefs, threads, logger, signals,
+  };
 }
 
 describe('ChildRequestService.submitRequest', () => {
@@ -81,6 +107,77 @@ describe('ChildRequestService.submitRequest', () => {
       body: { type: 'message', content: 'Layla asked: "tacos!"' },
       modality: 'text',
     });
+  });
+
+  it('dual-writes a lunch_request signal with the verbatim text (Story 15-s2)', async () => {
+    const { service, signals } = makeService({
+      repo: { create: vi.fn().mockResolvedValue({ id: REQUEST_ID }) },
+    });
+
+    await service.submitRequest(
+      { childId: CHILD_ID, householdId: HOUSEHOLD_ID, sessionId: SESSION_ID },
+      'salmon please',
+    );
+
+    expect(signals.record).toHaveBeenCalledTimes(1);
+    expect(signals.record.mock.calls[0]?.[0]).toMatchObject({
+      household_id: HOUSEHOLD_ID,
+      child_id: CHILD_ID,
+      subject_ref: { request_id: REQUEST_ID, session_id: SESSION_ID },
+      payload: { kind: 'lunch_request', text: 'salmon please' },
+      source: 'lunch_link',
+    });
+  });
+
+  it('submits fine when no signals service is wired (optional dep)', async () => {
+    const repo = {
+      create: vi.fn().mockResolvedValue({ id: REQUEST_ID }),
+      findChildName: vi.fn().mockResolvedValue('Layla'),
+    } as unknown as ChildRequestRepository;
+    const threads = {
+      findActiveThreadByHousehold: vi.fn().mockResolvedValue(null),
+    } as unknown as ThreadRepository;
+    const logger = { warn: vi.fn() } as unknown as FastifyBaseLogger;
+    const service = new ChildRequestService(
+      repo,
+      {} as unknown as FoodPreferencesRepository,
+      threads,
+      logger,
+    );
+
+    await expect(
+      service.submitRequest(
+        { childId: CHILD_ID, householdId: HOUSEHOLD_ID, sessionId: SESSION_ID },
+        'pizza',
+      ),
+    ).resolves.toEqual({ id: REQUEST_ID });
+  });
+
+  it('still submits when the signals write FAILS through the real SignalsService (AC #9)', async () => {
+    const { signalsService, warn } = failingSignalsService();
+    const repo = {
+      create: vi.fn().mockResolvedValue({ id: REQUEST_ID }),
+      findChildName: vi.fn().mockResolvedValue('Layla'),
+    } as unknown as ChildRequestRepository;
+    const threads = {
+      findActiveThreadByHousehold: vi.fn().mockResolvedValue(null),
+    } as unknown as ThreadRepository;
+    const logger = { warn: vi.fn() } as unknown as FastifyBaseLogger;
+    const service = new ChildRequestService(
+      repo,
+      {} as unknown as FoodPreferencesRepository,
+      threads,
+      logger,
+      signalsService,
+    );
+
+    await expect(
+      service.submitRequest(
+        { childId: CHILD_ID, householdId: HOUSEHOLD_ID, sessionId: SESSION_ID },
+        'pizza',
+      ),
+    ).resolves.toEqual({ id: REQUEST_ID });
+    expect(warn).toHaveBeenCalledTimes(1);
   });
 
   it('maps a unique-violation (23505) to ConflictError', async () => {
@@ -169,6 +266,77 @@ describe('ChildRequestService.approve', () => {
       'just_for_context',
       'child_request',
     );
+  });
+
+  it('dual-writes a preference_edit signal after the food_preferences mirror (Story 15-s2)', async () => {
+    await ctx.service.approve(REQUEST_ID, { resolvedByUserId: USER_ID, householdId: HOUSEHOLD_ID });
+
+    expect(ctx.signals.record).toHaveBeenCalledTimes(1);
+    expect(ctx.signals.record.mock.calls[0]?.[0]).toMatchObject({
+      household_id: HOUSEHOLD_ID,
+      child_id: CHILD_ID,
+      payload: {
+        kind: 'preference_edit',
+        item: 'pizza on Friday',
+        valence: 'likes',
+        enforcement: 'just_for_context',
+        scope: 'child',
+      },
+      source: 'app',
+    });
+  });
+
+  it('still writes the preference_edit signal when the food_preferences mirror fails (log ⊇ stores — 15-s2 review doctrine)', async () => {
+    ctx = makeService({
+      repo: {
+        findById: vi.fn().mockResolvedValue({
+          id: REQUEST_ID,
+          household_id: HOUSEHOLD_ID,
+          child_id: CHILD_ID,
+          request_text: 'pizza on Friday',
+          status: 'pending',
+        }),
+      },
+      foodPrefs: { declare: vi.fn().mockRejectedValue(new Error('db down')) },
+    });
+
+    await ctx.service.approve(REQUEST_ID, { resolvedByUserId: USER_ID, householdId: HOUSEHOLD_ID });
+
+    // The signal records the approval EVENT, not the store update — the failed
+    // mirror is warn-logged and the approval still succeeds.
+    expect(ctx.signals.record).toHaveBeenCalledTimes(1);
+    expect(ctx.logger.warn).toHaveBeenCalled();
+  });
+
+  it('still approves when the signals write FAILS through the real SignalsService (AC #9)', async () => {
+    const { signalsService, warn } = failingSignalsService();
+    const repo = {
+      findById: vi.fn().mockResolvedValue({
+        id: REQUEST_ID,
+        household_id: HOUSEHOLD_ID,
+        child_id: CHILD_ID,
+        request_text: 'pizza on Friday',
+        status: 'pending',
+      }),
+      resolve: vi.fn().mockResolvedValue(undefined),
+    } as unknown as ChildRequestRepository;
+    const foodPrefs = {
+      declare: vi.fn().mockResolvedValue({ food_preference_id: 'fp', was_existing: false }),
+    } as unknown as FoodPreferencesRepository;
+    const logger = { warn: vi.fn() } as unknown as FastifyBaseLogger;
+    const service = new ChildRequestService(
+      repo,
+      foodPrefs,
+      {} as unknown as ThreadRepository,
+      logger,
+      signalsService,
+    );
+
+    await expect(
+      service.approve(REQUEST_ID, { resolvedByUserId: USER_ID, householdId: HOUSEHOLD_ID }),
+    ).resolves.toBeUndefined();
+    expect(foodPrefs.declare).toHaveBeenCalledTimes(1);
+    expect(warn).toHaveBeenCalledTimes(1);
   });
 
   it('throws NotFoundError when the request is not in the household', async () => {

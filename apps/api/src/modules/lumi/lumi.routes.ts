@@ -12,6 +12,7 @@ import type { LumiTurnRequest } from '@hivekitchen/types';
 import { ChildAllergensRepository } from '../children/child-allergens.repository.js';
 import { ChildrenRepository } from '../children/children.repository.js';
 import { FoodPreferencesRepository } from '../food-preferences/food-preferences.repository.js';
+import { SignalsService } from '../signals/signals.service.js';
 import { HouseholdAllergensRepository } from '../households/household-allergens.repository.js';
 import { VoiceTranscriptRepository } from '../voice/voice-transcript.repository.js';
 import { VoiceUsageRepository } from '../voice/voice-usage.repository.js';
@@ -70,6 +71,8 @@ export const lumiRoutes: FastifyPluginAsync = async (fastify) => {
     memoryService: fastify.memoryService,
     familyLanguageRepository,
     foodPreferencesRepository,
+    // Story 15-s2 — shared-tastes declares dual-write a preference_edit signal.
+    signalsService: new SignalsService(fastify.supabase, kek, fastify.log),
   });
 
   fastify.get(

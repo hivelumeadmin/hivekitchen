@@ -13,6 +13,7 @@ vi.mock('../../agents/lumi.agent.js', () => ({
 }));
 
 import { LumiService, type LumiServiceDeps } from './lumi.service.js';
+import { SignalsService } from '../signals/signals.service.js';
 
 function buildDeps(overrides: {
   displayName?: string | null;
@@ -32,6 +33,8 @@ function buildDeps(overrides: {
   // 7-S15 — pass a mock foodPreferencesRepository to exercise the kitchen-profile
   // shared-tastes tool wiring. Omit it to mirror the nudge-job path (no tools).
   foodPreferencesRepository?: { declare: ReturnType<typeof vi.fn> };
+  // Story 15-s2 — signals dual-write beside the shared-tastes declare.
+  signalsService?: { record: ReturnType<typeof vi.fn> };
 } = {}) {
   const repository = {
     getHouseholdDisplayName: vi.fn().mockResolvedValue(overrides.displayName ?? null),
@@ -72,6 +75,7 @@ function buildDeps(overrides: {
     memoryService: overrides.memoryService,
     familyLanguageRepository: overrides.familyLanguageRepository,
     foodPreferencesRepository: overrides.foodPreferencesRepository,
+    signalsService: overrides.signalsService,
   } as unknown as LumiServiceDeps;
 
   const service = new LumiService(deps);
@@ -261,6 +265,117 @@ describe('LumiService.submitTextTurn — kitchen-profile shared-tastes tool (7-S
     });
     expect(JSON.parse(result)).toEqual({ declared: true });
     expect(declare).toHaveBeenCalledWith('hh1', null, 'chili', 'dislikes', 'strong', 'parent_edited');
+  });
+
+  it('dual-writes a household-scoped preference_edit signal after declare (Story 15-s2)', async () => {
+    const declare = vi.fn().mockResolvedValue({ food_preference_id: 'fp1', was_existing: false });
+    const record = vi.fn().mockResolvedValue(undefined);
+    const { service } = buildDeps({
+      activeThread: null,
+      foodPreferencesRepository: { declare },
+      signalsService: { record },
+    });
+
+    await service.submitTextTurn({
+      householdId: 'hh1',
+      message: '[Message]\nwe keep heat mild',
+      contextSignal: { surface: 'kitchen-profile' },
+    });
+    const arg = respondMock.mock.calls[0][0] as {
+      toolExecutor: (name: string, args: Record<string, unknown>) => Promise<string>;
+    };
+    await arg.toolExecutor('food_preference__declare', {
+      item: 'chili',
+      valence: 'dislikes',
+      enforcement: 'strong',
+    });
+
+    expect(record).toHaveBeenCalledTimes(1);
+    expect(record.mock.calls[0]?.[0]).toMatchObject({
+      household_id: 'hh1',
+      child_id: null,
+      payload: {
+        kind: 'preference_edit',
+        item: 'chili',
+        valence: 'dislikes',
+        enforcement: 'strong',
+        scope: 'household',
+      },
+      source: 'app',
+    });
+  });
+
+  it('writes NO signal when declare itself fails (Story 15-s2)', async () => {
+    const declare = vi.fn().mockRejectedValue(new Error('db down'));
+    const record = vi.fn().mockResolvedValue(undefined);
+    const { service } = buildDeps({
+      activeThread: null,
+      foodPreferencesRepository: { declare },
+      signalsService: { record },
+    });
+
+    await service.submitTextTurn({
+      householdId: 'hh1',
+      message: 'hi',
+      contextSignal: { surface: 'kitchen-profile' },
+    });
+    const arg = respondMock.mock.calls[0][0] as {
+      toolExecutor: (name: string, args: Record<string, unknown>) => Promise<string>;
+    };
+    const result = await arg.toolExecutor('food_preference__declare', {
+      item: 'chili',
+      valence: 'dislikes',
+      enforcement: 'strong',
+    });
+
+    expect(JSON.parse(result).error).toBeDefined();
+    expect(record).not.toHaveBeenCalled();
+  });
+
+  it('still declares when the signals write FAILS through the real SignalsService (AC #9)', async () => {
+    // A REAL SignalsService whose insert always fails — proves the seam
+    // survives a failing signals WRITE, not just an unwired dep (15-s2 review).
+    const warn = vi.fn();
+    const failingClient = {
+      from: (table: string) => {
+        if (table !== 'signals') throw new Error(`unexpected table: ${table}`);
+        return {
+          insert: () => ({
+            select: () => ({
+              single: async () => ({ data: null, error: { code: '57014', message: 'insert failed' } }),
+            }),
+          }),
+        };
+      },
+    };
+    const declare = vi.fn().mockResolvedValue({ food_preference_id: 'fp1', was_existing: false });
+    const { service } = buildDeps({
+      activeThread: null,
+      foodPreferencesRepository: { declare },
+      signalsService: new SignalsService(
+        failingClient as never,
+        null,
+        { warn },
+      ) as unknown as { record: ReturnType<typeof vi.fn> },
+    });
+
+    await service.submitTextTurn({
+      householdId: 'hh1',
+      message: 'hi',
+      contextSignal: { surface: 'kitchen-profile' },
+    });
+    const arg = respondMock.mock.calls[0][0] as {
+      toolExecutor: (name: string, args: Record<string, unknown>) => Promise<string>;
+    };
+    const result = await arg.toolExecutor('food_preference__declare', {
+      item: 'chili',
+      valence: 'dislikes',
+      enforcement: 'strong',
+    });
+
+    expect(JSON.parse(result)).toEqual({ declared: true });
+    expect(declare).toHaveBeenCalledTimes(1);
+    expect(warn).toHaveBeenCalledTimes(1);
   });
 
   it('the executor rejects invalid tool arguments without calling declare', async () => {

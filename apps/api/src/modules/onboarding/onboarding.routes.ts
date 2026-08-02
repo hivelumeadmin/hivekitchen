@@ -19,6 +19,7 @@ import { CulturalPriorRepository } from '../cultural-priors/cultural-prior.repos
 import { CulturalPriorService } from '../cultural-priors/cultural-prior.service.js';
 import { DietaryPreferencesRepository } from '../dietary-preferences/dietary-preferences.repository.js';
 import { FoodPreferencesRepository } from '../food-preferences/food-preferences.repository.js';
+import { SignalsService } from '../signals/signals.service.js';
 import { RecipesRepository } from '../recipe/recipes.repository.js';
 import { HouseholdRulesRepository } from '../household-rules/household-rules.repository.js';
 import { HouseholdsRepository } from '../households/households.repository.js';
@@ -146,6 +147,8 @@ const onboardingRoutesPlugin: FastifyPluginAsync = async (fastify) => {
     childAllergensRepository,
     dietaryPreferencesRepository,
     foodPreferencesRepository,
+    // Story 15-s2 — food_preference.declare dual-writes a preference_edit signal.
+    signalsService: new SignalsService(fastify.supabase, kek, fastify.log),
     householdRulesRepository,
     recipesRepository,
     curatedBaseline,

@@ -28,6 +28,7 @@ import type { CulturalPriorRepository } from '../cultural-priors/cultural-prior.
 import type { CulturalPriorService } from '../cultural-priors/cultural-prior.service.js';
 import type { DietaryPreferencesRepository } from '../dietary-preferences/dietary-preferences.repository.js';
 import type { FoodPreferencesRepository } from '../food-preferences/food-preferences.repository.js';
+import type { SignalsService } from '../signals/signals.service.js';
 import type { RecipesRepository } from '../recipe/recipes.repository.js';
 import type { HouseholdRulesRepository } from '../household-rules/household-rules.repository.js';
 import type { HouseholdsService } from '../households/households.service.js';
@@ -84,6 +85,8 @@ export interface OnboardingServiceDeps {
   // food_preference.declare / rule.set. Same optionality + run-time guarding
   // pattern as the 2.5-s6 deps above.
   foodPreferencesRepository?: FoodPreferencesRepository;
+  // Story 15-s2 — signals-log dual-write for food_preference.declare.
+  signalsService?: SignalsService;
   householdRulesRepository?: HouseholdRulesRepository;
   // Slice 2.6-s1 — replaces favoriteLunchesRepository (2.5-s9). The M5 hot
   // path now writes to the canonical recipes catalog via RecipesRepository
@@ -339,6 +342,7 @@ export class OnboardingService {
   private readonly dietaryPreferencesRepository?: DietaryPreferencesRepository;
   // Slice 2.5-s7
   private readonly foodPreferencesRepository?: FoodPreferencesRepository;
+  private readonly signalsService?: SignalsService;
   private readonly householdRulesRepository?: HouseholdRulesRepository;
   // Slice 2.6-s1 (replaces 2.5-s9 favoriteLunchesRepository)
   private readonly recipesRepository?: RecipesRepository;
@@ -374,6 +378,7 @@ export class OnboardingService {
     this.childAllergensRepository = deps.childAllergensRepository;
     this.dietaryPreferencesRepository = deps.dietaryPreferencesRepository;
     this.foodPreferencesRepository = deps.foodPreferencesRepository;
+    this.signalsService = deps.signalsService;
     this.householdRulesRepository = deps.householdRulesRepository;
     this.recipesRepository = deps.recipesRepository;
     this.curatedBaseline = deps.curatedBaseline;
@@ -394,6 +399,7 @@ export class OnboardingService {
       householdAllergensRepository: this.householdAllergensRepository,
       dietaryPreferencesRepository: this.dietaryPreferencesRepository,
       foodPreferencesRepository: this.foodPreferencesRepository,
+      signalsService: this.signalsService,
       householdRulesRepository: this.householdRulesRepository,
       recipesRepository: this.recipesRepository,
     });

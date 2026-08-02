@@ -29,6 +29,7 @@ import type { ChildrenService } from '../../modules/children/children.service.js
 import type { CulturalPriorRepository } from '../../modules/cultural-priors/cultural-prior.repository.js';
 import type { DietaryPreferencesRepository } from '../../modules/dietary-preferences/dietary-preferences.repository.js';
 import type { FoodPreferencesRepository } from '../../modules/food-preferences/food-preferences.repository.js';
+import type { SignalsService } from '../../modules/signals/signals.service.js';
 import type { RecipesRepository } from '../../modules/recipe/recipes.repository.js';
 import type { HouseholdRulesRepository, RuleType } from '../../modules/household-rules/household-rules.repository.js';
 import type { HouseholdsService } from '../../modules/households/households.service.js';
@@ -84,6 +85,9 @@ export interface OnboardingToolDeps {
   // food_preference.declare / rule.set. Cuisine.declare reuses
   // culturalPriorRepository (shared cultural_priors table).
   foodPreferencesRepository: FoodPreferencesRepository;
+  // Story 15-s2 — signals-log dual-write beside food_preference.declare.
+  // Optional (legacy test deps omit it); record() never throws.
+  signalsService?: Pick<SignalsService, 'record'>;
   householdRulesRepository: HouseholdRulesRepository;
   // Slice 2.6-s1 — replaced FavoriteLunchesRepository (2.5-s9). The M5 hot
   // path now writes to the canonical recipes catalog via RecipesRepository
@@ -786,6 +790,24 @@ export function createFoodPreferenceDeclareToolSpec(
         parsed.enforcement,
         parsed.source,
       );
+
+      // Story 15-s2 — dual-write to the append-only signals log. The service
+      // encrypts `item` before insert (mirrors food_preferences.item at-rest
+      // encryption) and never throws into the tool loop.
+      await deps.signalsService?.record({
+        household_id: ctx.householdId,
+        child_id: resolvedChildId,
+        subject_ref: null,
+        payload: {
+          kind: 'preference_edit',
+          item: parsed.item,
+          valence: parsed.valence,
+          enforcement: parsed.enforcement,
+          scope: resolvedChildId === null ? 'household' : 'child',
+        },
+        occurred_at: new Date().toISOString(),
+        source: 'app',
+      });
 
       // Guardrail — `item` is encrypted at rest under household DEK. The
       // plaintext item may be culturally specific; keep it out of Pino logs.

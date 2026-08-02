@@ -25,6 +25,7 @@ import type { CulturalPriorRepository } from '../cultural-priors/cultural-prior.
 import type { DietaryPreferencesRepository } from '../dietary-preferences/dietary-preferences.repository.js';
 import type { FoodPreferencesRepository } from '../food-preferences/food-preferences.repository.js';
 import type { RecipesRepository } from '../recipe/recipes.repository.js';
+import type { SignalsService } from '../signals/signals.service.js';
 import type { HouseholdRulesRepository } from '../household-rules/household-rules.repository.js';
 import type { HouseholdsService } from '../households/households.service.js';
 import type { HouseholdAllergensRepository } from '../households/household-allergens.repository.js';
@@ -67,6 +68,9 @@ export interface OnboardingTurnRunnerDeps {
   foodPreferencesRepository?: FoodPreferencesRepository;
   householdRulesRepository?: HouseholdRulesRepository;
   recipesRepository?: RecipesRepository;
+  // Story 15-s2 — signals-log dual-write for food_preference.declare. Optional:
+  // absent in legacy test deps; the tool simply skips the dual-write.
+  signalsService?: SignalsService;
 }
 
 export interface RunTurnInput {
@@ -200,6 +204,7 @@ export class OnboardingTurnRunner {
             foodPreferencesRepository: d.foodPreferencesRepository,
             householdRulesRepository: d.householdRulesRepository,
             recipesRepository: d.recipesRepository,
+            signalsService: d.signalsService,
           },
         );
         if (isPureChipTurn) {

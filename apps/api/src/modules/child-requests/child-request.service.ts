@@ -2,6 +2,7 @@ import type { FastifyBaseLogger } from 'fastify';
 import type { PendingChildRequestsResponse } from '@hivekitchen/types';
 import { ConflictError, NotFoundError } from '../../common/errors.js';
 import type { FoodPreferencesRepository } from '../food-preferences/food-preferences.repository.js';
+import type { SignalsService } from '../signals/signals.service.js';
 import type { ThreadRepository } from '../threads/thread.repository.js';
 import type { ChildRequestRepository } from './child-request.repository.js';
 
@@ -31,11 +32,14 @@ function isUniqueViolation(err: unknown): boolean {
 const FOOD_PREFERENCE_ITEM_MAX = 100;
 
 export class ChildRequestService {
+  // signalsService (Story 15-s2) is optional so existing constructions keep
+  // working; record() never throws, so no seam needs its own try/catch.
   constructor(
     private readonly repo: ChildRequestRepository,
     private readonly foodPreferencesRepo: FoodPreferencesRepository,
     private readonly threadRepo: ThreadRepository,
     private readonly logger: FastifyBaseLogger,
+    private readonly signalsService?: Pick<SignalsService, 'record'>,
   ) {}
 
   async submitRequest(
@@ -56,6 +60,18 @@ export class ChildRequestService {
       }
       throw err;
     }
+
+    // Story 15-s2 — the immutable record of what the child asked for. The
+    // mutable workflow object is the child_lunch_requests row above; the signal
+    // is the append-only fact (spec §4.9). Text is encrypted by SignalsService.
+    await this.signalsService?.record({
+      household_id: sessionVerification.householdId,
+      child_id: sessionVerification.childId,
+      subject_ref: { request_id: row.id, session_id: sessionVerification.sessionId },
+      payload: { kind: 'lunch_request', text: requestText },
+      occurred_at: new Date().toISOString(),
+      source: 'lunch_link',
+    });
 
     // Best-effort visibility in the parent's Lumi planning thread. Never blocks
     // or fails the submission.
@@ -112,8 +128,29 @@ export class ChildRequestService {
         'child_request',
       );
     } catch (err) {
-      this.logger.warn({ err, householdId }, 'child-request: food-preferences signal write failed');
+      this.logger.warn({ err, householdId }, 'child-request: food-preferences mirror failed');
     }
+
+    // Story 15-s2 — approval mirrors into food_preferences, so the same edit
+    // is dual-written as a preference_edit signal. OUTSIDE the try: the signal
+    // records that the parent approved the request — an event, not a store
+    // update — so a failed mirror must not lose it (log ⊇ stores; doctrine
+    // resolved in the 15-s2 code review). Item is encrypted by SignalsService
+    // (food_preferences.item is encrypted at rest too).
+    await this.signalsService?.record({
+      household_id: householdId,
+      child_id: request.child_id,
+      subject_ref: null,
+      payload: {
+        kind: 'preference_edit',
+        item: request.request_text.slice(0, FOOD_PREFERENCE_ITEM_MAX),
+        valence: 'likes',
+        enforcement: 'just_for_context',
+        scope: 'child',
+      },
+      occurred_at: new Date().toISOString(),
+      source: 'app',
+    });
   }
 
   async decline(

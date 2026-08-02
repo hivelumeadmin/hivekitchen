@@ -326,6 +326,16 @@ import {
   CreateCalendarTermInputSchema,
   CreateCalendarExceptionInputSchema,
   FamilyCalendarResponseSchema,
+  // Story 15-s2 — signals log (append-only learning inputs)
+  SignalKindSchema,
+  SignalSourceSchema,
+  SignalPayloadSchema,
+  LunchRatingSignalPayloadSchema,
+  LunchRequestSignalPayloadSchema,
+  ExtraRemovalSignalPayloadSchema,
+  PreferenceEditSignalPayloadSchema,
+  SignalRowSchema,
+  RecordSignalInputSchema,
   // Story 7-S14 — Kitchen Profile parent-deterministic safety edits
   AllergenKeySchema,
   AddChildAllergenRequestSchema,
@@ -824,6 +834,17 @@ export type CalendarException = z.infer<typeof CalendarExceptionSchema>;
 export type CreateCalendarTermInput = z.infer<typeof CreateCalendarTermInputSchema>;
 export type CreateCalendarExceptionInput = z.infer<typeof CreateCalendarExceptionInputSchema>;
 export type FamilyCalendarResponse = z.infer<typeof FamilyCalendarResponseSchema>;
+
+// Story 15-s2 — signals log (append-only learning inputs)
+export type SignalKind = z.infer<typeof SignalKindSchema>;
+export type SignalSource = z.infer<typeof SignalSourceSchema>;
+export type SignalPayload = z.infer<typeof SignalPayloadSchema>;
+export type LunchRatingSignalPayload = z.infer<typeof LunchRatingSignalPayloadSchema>;
+export type LunchRequestSignalPayload = z.infer<typeof LunchRequestSignalPayloadSchema>;
+export type ExtraRemovalSignalPayload = z.infer<typeof ExtraRemovalSignalPayloadSchema>;
+export type PreferenceEditSignalPayload = z.infer<typeof PreferenceEditSignalPayloadSchema>;
+export type SignalRow = z.infer<typeof SignalRowSchema>;
+export type RecordSignalInput = z.infer<typeof RecordSignalInputSchema>;
 
 // Story 7-S14 — Kitchen Profile parent-deterministic safety edits (Phase 1)
 export type AllergenKey = z.infer<typeof AllergenKeySchema>;

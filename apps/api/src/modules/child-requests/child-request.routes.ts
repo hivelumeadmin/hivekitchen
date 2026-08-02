@@ -6,6 +6,7 @@ import { PendingChildRequestsResponseSchema } from '@hivekitchen/contracts';
 import { authorize } from '../../middleware/authorize.hook.js';
 import { FoodPreferencesRepository } from '../food-preferences/food-preferences.repository.js';
 import { ThreadRepository } from '../threads/thread.repository.js';
+import { SignalsService } from '../signals/signals.service.js';
 import { ChildRequestRepository } from './child-request.repository.js';
 import { ChildRequestService } from './child-request.service.js';
 
@@ -25,6 +26,8 @@ const childRequestRoutesPlugin: FastifyPluginAsync = async (fastify) => {
     new FoodPreferencesRepository(fastify.supabase, kek),
     new ThreadRepository(fastify.supabase),
     fastify.log,
+    // Story 15-s2 — approve() dual-writes a preference_edit signal.
+    new SignalsService(fastify.supabase, kek, fastify.log),
   );
 
   const requireMember = authorize(['primary_parent', 'secondary_caregiver']);

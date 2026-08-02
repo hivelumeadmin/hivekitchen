@@ -10,6 +10,7 @@ import { getTimeOfDayBand } from '../../common/time-of-day.js';
 import { LumiAgent } from '../../agents/lumi.agent.js';
 import type { ChildrenRepository } from '../children/children.repository.js';
 import type { FoodPreferencesRepository } from '../food-preferences/food-preferences.repository.js';
+import type { SignalsService } from '../signals/signals.service.js';
 import type { HouseholdAllergensRepository } from '../households/household-allergens.repository.js';
 import type { MemoryService } from '../memory/memory.service.js';
 import type { VoiceTranscriptRepository } from '../voice/voice-transcript.repository.js';
@@ -34,6 +35,8 @@ export interface LumiServiceDeps {
   // nudge-job site omits it. When absent, the kitchen-profile tool path is
   // skipped and the turn behaves as a plain conversational reply.
   foodPreferencesRepository?: FoodPreferencesRepository;
+  // Story 15-s2 — signals-log dual-write beside the shared-tastes declare.
+  signalsService?: Pick<SignalsService, 'record'>;
 }
 
 export interface CreateTalkSessionInput {
@@ -144,6 +147,7 @@ export class LumiService {
   private readonly memoryService?: MemoryService;
   private readonly familyLanguageRepository?: FamilyLanguageRepository;
   private readonly foodPreferencesRepository?: FoodPreferencesRepository;
+  private readonly signalsService?: Pick<SignalsService, 'record'>;
 
   constructor(deps: LumiServiceDeps) {
     this.repository = deps.repository;
@@ -156,6 +160,7 @@ export class LumiService {
     this.memoryService = deps.memoryService;
     this.familyLanguageRepository = deps.familyLanguageRepository;
     this.foodPreferencesRepository = deps.foodPreferencesRepository;
+    this.signalsService = deps.signalsService;
   }
 
   async createTalkSession(input: CreateTalkSessionInput): Promise<CreateTalkSessionResult> {
@@ -436,6 +441,22 @@ export class LumiService {
           parsed.data.enforcement,
           'parent_edited',
         );
+        // Story 15-s2 — dual-write the edit to the append-only signals log.
+        // The service encrypts `item` before insert and never throws.
+        await this.signalsService?.record({
+          household_id: householdId,
+          child_id: null,
+          subject_ref: null,
+          payload: {
+            kind: 'preference_edit',
+            item: parsed.data.item,
+            valence: parsed.data.valence,
+            enforcement: parsed.data.enforcement,
+            scope: 'household',
+          },
+          occurred_at: new Date().toISOString(),
+          source: 'app',
+        });
         this.logger.info(
           {
             module: 'lumi',

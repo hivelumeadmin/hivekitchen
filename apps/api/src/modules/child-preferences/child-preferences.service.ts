@@ -2,6 +2,7 @@ import type { FastifyBaseLogger } from 'fastify';
 import type { Weekday } from '@hivekitchen/types';
 import { getCurrentWeekMonday } from '../../lib/derive-week-id.js';
 import type { PlansRepository } from '../plans/plans.repository.js';
+import type { SignalsService } from '../signals/signals.service.js';
 import type { ChildPreferencesRepository } from './child-preferences.repository.js';
 
 // 0=Sun..6=Sat → plan_days.day enum. Sunday has no plan_day (plans run Mon-Sat),
@@ -33,10 +34,16 @@ export interface RecordRatingSignalsOptions {
 // caught and logged, never propagated. "No committed plan for the week" is a
 // normal state (the plan may not be generated yet) and logs at debug.
 export class ChildPreferencesService {
+  // signalsService is optional so non-rating constructions stay untouched;
+  // when present, each per-slot upsert is dual-written to the append-only
+  // signals log (Story 15-s2). This seam — not the session-level route — is
+  // where signals are written because 15-s3's projection must reproduce
+  // child_preferences, which is per-slot.
   constructor(
     private readonly childPrefsRepo: ChildPreferencesRepository,
     private readonly plansRepo: PlansRepository,
     private readonly logger: FastifyBaseLogger,
+    private readonly signalsService?: Pick<SignalsService, 'record'>,
   ) {}
 
   async recordRatingSignals(opts: RecordRatingSignalsOptions): Promise<void> {
@@ -104,6 +111,18 @@ export class ChildPreferencesService {
             'child_preferences: upsertSignal failed for slot — continuing',
           );
         }
+
+        // Story 15-s2 — dual-write to the signals log. record() never throws;
+        // a re-rating APPENDS a new signal (append-only: a correction is a new
+        // row) even though upsertSignal above overwrites by dedup key.
+        await this.signalsService?.record({
+          household_id: opts.householdId,
+          child_id: opts.childId,
+          subject_ref: { recipe_id: recipeId, slot_kind: slot.slot_kind },
+          payload: { kind: 'lunch_rating', rating: opts.rating, date: opts.signalDate },
+          occurred_at: new Date().toISOString(),
+          source: 'lunch_link',
+        });
       }
     } catch (err) {
       this.logger.warn(
