@@ -86,7 +86,7 @@ export function StartingLineCard({
         {line.items.map((item) => (
           <span
             key={item}
-            className="rounded-md bg-warm-neutral-50 px-2.5 py-1 font-sans text-xs text-fg"
+            className="rounded-md bg-[color-mix(in_srgb,var(--fg-muted)_10%,transparent)] px-2.5 py-1 font-sans text-xs text-fg"
           >
             {item}
           </span>

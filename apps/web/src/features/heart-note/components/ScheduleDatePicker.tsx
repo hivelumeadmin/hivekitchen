@@ -23,13 +23,13 @@ export function ScheduleDatePicker({
         value={value ?? ''}
         min={isoToday()}
         onChange={(e) => onChange(e.target.value || null)}
-        className="rounded border border-[color-mix(in_srgb,var(--border)_30%,transparent)] bg-surface px-3 py-1.5 text-sm text-fg focus:outline-none focus:ring-1 focus:ring-honey disabled:cursor-not-allowed disabled:opacity-40"
+        className="rounded border border-[color-mix(in_srgb,var(--border)_30%,transparent)] bg-surface px-3 py-1.5 text-sm text-fg focus:outline-none focus:ring-1 focus:ring-amber-warm disabled:cursor-not-allowed disabled:opacity-40"
       />
       {value !== null && !disabled ? (
         <button
           type="button"
           onClick={() => onChange(null)}
-          className="text-xs text-fg-muted underline underline-offset-2 hover:text-fg-muted"
+          className="text-xs text-fg-muted underline underline-offset-2 hover:text-fg"
         >
           Clear
         </button>

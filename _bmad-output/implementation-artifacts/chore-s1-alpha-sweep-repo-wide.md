@@ -1,6 +1,6 @@
 # Chore S1: Finish the repo-wide dead-`/alpha` sweep
 
-Status: review
+Status: done
 
 <!-- Note: Validation is optional. Run validate-create-story for quality check before dev-story. -->
 
@@ -74,6 +74,21 @@ Split by area so each ships independently and stays near the <500-line PR guidel
 - [x] **Task 5 — `packages/ui` + shared components** (AC6): `RailCard` 7, `TextField`, `StickyBottomBar`, `AppFooter`, `LumiPresence`, `AppHeader`, `DevTools`.
 - [x] **Task 6 — remaining routes + features**: `kitchen-inspiration`, `evening-checkin`, `day-detail`, `memory-dashboard`, auth routes, `_dev-day-detail-multi-child`.
 - [x] **Task 7 — Gates + ledger** (AC5, AC7, AC8): final zero-dead-class proof with negative control; close D-14S4-5 and D-14S3B-CR4.
+
+### Review Findings
+
+<!-- bmad-code-review 2026-08-01 · 3 adversarial layers (Blind/Edge/Auditor) over fab9c5d (60 files, +237/−154) · 22 raw findings → 0 decisions + 6 patches + 0 deferred + 5 dismissed. Auditor independently recomputed 18 contrast figures — all reproduce to the third decimal; all 8 ACs verify. -->
+
+- [x] [Review][Patch] **`focus:ring-honey` resolves to no token — focus ring paints Tailwind default blue** — `honey` is not a token key (only `honey-amber`/`honey-accent`), so `focus:ring-1` fires with the stock blue ring colour: an off-palette focus indicator on a line this sweep edited. Same non-existent-key family as the StatusPill `honey`/`honey-dark` bug the story itself fixed. Convention per the locked TextField primitive is `focus:ring-amber-warm`. [`heart-note/components/ScheduleDatePicker.tsx:26`] (blind+edge)
+- [x] [Review][Patch] **Clear button: base equals hover — dead interaction** — `text-fg-muted/60 … hover:text-fg-muted` collapsed to `text-fg-muted … hover:text-fg-muted`. Restore the authored dim→full hierarchy as `text-fg-muted hover:text-fg` (both AA everywhere). [`heart-note/components/ScheduleDatePicker.tsx:32`] (blind+edge)
+- [x] [Review][Patch] **Cancel-note link: same base==hover collapse** — `text-safety-red/70 … hover:text-safety-red` became identical base and hover. No darker red exists (D-CS1-1), so hover feedback moves to the underline: `hover:decoration-2`. [`routes/(app)/heart-note.tsx:299`] (blind+edge)
+- [x] [Review][Patch] **WallCardPage comment mechanically corrupted into a falsehood** — the sweep substituted the class name *inside prose*, producing "`bg-honey-amber-300` did not: an alpha modifier … compiles to nothing" — false on both counts. The exact find-and-replace failure mode this story exists to prevent, surviving in a comment. Restore `bg-amber-warm/20`. [`day-detail/components/WallCardPage.tsx:165`] (blind+auditor)
+- [x] [Review][Patch] **Neutral chip fills are invisible in dark theme** — `bg-warm-neutral-50` (#2a2724) on `--surface` (#262420) is a ~2-point delta with no border on the default-tier chips, so the restored fill renders in light only. Swap the borderless neutral chips to `bg-[color-mix(in_srgb,var(--fg-muted)_10%,transparent)]` — adaptive in both themes, `fg-muted` text measures 6.574/5.555 AA on surface and 7.501/6.292 on bg. [`IdentityEditConversation.tsx:270,333`, `KitchenIdentityCard.tsx:240`, `StartingLineCard.tsx:89`, `StatusPill.tsx:26`] (edge)
+- [x] [Review][Patch] **Dev Record / ledger accuracy corrections (5 items, docs only)** — (1) "banners render exactly as today" is wrong for their *borders*: dead border = solid `currentColor` red, the restored 20–40% mix is visibly softer — fills unchanged, borders soften; (2) `household-settings` dev-reset hover is an undisclosed per-site judgment (`hover:bg-safety-red/5` → `hover:border-safety-red`), disclose it; (3) the deferred-work closure line "only remaining match repo-wide" dropped its "besides the 8 built-ins" qualifier; (4) File List omits `ChatThread.tsx`, `HeartNoteComposer.tsx`, `sprint-status.yaml`; (5) record why text alphas collapsed to one step while borders kept their hierarchy (text is AA-bound, a 1px border is not — /30–/50 text steps cannot legally render), and reconcile the kitchen-profile cluster count (11 files touched, story said 8). (blind+auditor)
+
+**Dismissed (5):** `hover:bg-neutral-400/10` "was alive and must not be touched" — **disproved**: it was in the dead-70 from the first survey (built-in palette name, but dead in this bundle; only the `border-neutral-400/20,30` pair is alive), verified again post-review with a fixed-string probe returning zero hits. · `sacred-*`/numbered steps "may not exist" — **refuted independently by two layers**: every step maps to a `colorScale()` key, exists in both theme blocks, and is present in the compiled bundle (all 49 color-mix + 22 numbered selectors checked individually). · "same class replaced differently with no rationale" — the bucket rule is per-occurrence by design; the Auditor judged both deviations justified with reproduced evidence. · "live `text-sacred`/`text-safety-cleared` rewritten outside mandate" — required consequence of making the fills real: `sacred-plum` on `sacred-plum-100` is 2.581 in dark (FAIL), so companion text had to move to `-800` when the wash became visible. · "PlanTile test repeats the failure mode" — jsdom cannot verify CSS emission for *any* class string; that gate lives in the build probe (AC5), and the assertion now points at a class the probe proves alive.
+
+**Auditor verdict:** all 8 ACs verify; 18/18 recomputed contrast figures match the Dev Record to the third decimal; both AC2 deviations judged justified, not rationalization; `packages/ui` tests 34/34.
 
 ## Dev Notes
 
@@ -154,11 +169,13 @@ Other Bucket-B measurements shipped (light / dark):
 - `lumi-terracotta-800` on 10% amber-warm over `surface` **10.317 / 8.349** — the child-quote block, which *also* fixes a pre-existing failure (`text-lumi-terracotta` on `surface` was 4.113 / 3.771).
 - `fg` on 5% / 10% amber over `surface` **13.889 / 13.460** and **13.211 / 12.290**; `fg-muted` on 5% terracotta over `surface` **7.214 / 6.263**.
 
-**`safety-red` — the one thing that could not be fixed.** No numbered scale, and it fails AA in dark on every available background (`bg` 4.112, `surface` 3.669, `warm-neutral-50` 3.517). With a wash, light drops to 4.085, below AA. There was no renderable option, so the intended fill was **dropped rather than restored**: those banners keep their red border and red text and render exactly as they do today. Nothing regressed; nothing improved. Deferred as **D-CS1-1**.
+**`safety-red` — the one thing that could not be fixed.** No numbered scale, and it fails AA in dark on every available background (`bg` 4.112, `surface` 3.669, `warm-neutral-50` 3.517). With a wash, light drops to 4.085, below AA. There was no renderable option, so the intended fill was **dropped rather than restored**: those banners keep their red border and red text. **[Review correction]** "Render exactly as today" is true for the *fills* only — the dead `border-safety-red/20–40` rendered as solid `currentColor` red, so the restored 20–40% mixes make the banner borders visibly softer (the authored weight, and the safe direction, but a visible change). One per-site judgment call: `household-settings.tsx`'s dev-reset button swapped its unrenderable `hover:bg-safety-red/5` for `hover:border-safety-red` — border darkening instead of a wash, since no red wash passes under red text; dev-only surface. Deferred as **D-CS1-1**.
 
 **Two bugs found on the way that were not `/alpha` at all.** `StatusPill.tsx:22` used `bg-honey/20 text-honey-dark border-honey/30` — `honey` is not a token key and `honey-dark` does not exist, so that pill had no background, no colour, and a `currentColor` border. And `PlanTile.test.tsx` asserted `toContain('bg-amber-warm/10')` on a class that never rendered, so it passed for the wrong reason; the assertions moved with the class.
 
 **Deviation from the story's bucket table.** Bucket C is specified as "solid token step". Borders were instead restored with `color-mix` at the original percentage: `--border` has no numbered scale, so every distinct alpha (5/10/15/20/30/40/50) would have collapsed onto the single `border-border` value, flattening a deliberate weight hierarchy. `color-mix` renders exactly what the author wrote. This is strictly safer than a solid — borders carry no text and nothing sits beneath a 1px line — and needed no judgment call per site. Also note `--border-subtle` does **not** exist; it was almost introduced by hand and caught against `colors.css` before use (AC5).
+
+**[Review addition] Why text collapsed to one step while borders kept their hierarchy.** The review correctly noted the asymmetry: seven border alphas were preserved via `color-mix`, but every `text-fg-muted/30–80` collapsed onto solid `text-fg-muted`. The difference is that text is AA-bound and a 1px border is not: `fg-muted` at 30–50% over any surface falls far below 4.5:1, so the authored text hierarchy *cannot legally render* — it never existed on screen (the dead classes inherited full-contrast parent colour) and restoring it would grow the axe allowlist (AC8). Solid `fg-muted` is the only step that is both muted and passing on every surface (8.842/7.448 on `bg`, 7.663/6.645 on `surface`, 6.402/5.905 on `surface-2`).
 
 **Verification (AC1/AC5).** Against `dist/assets/index-BmFrpNhP.css` with the twice-validated probe: **61/61 introduced utilities ALIVE, 0 dead**; the only `/alpha` utilities left in the two source trees are the **8 built-in-palette ones, all still ALIVE and unmodified**; the sole remaining match, `bg-amber-warm/15`, is comment prose (proven by showing the enclosing JSX comment and the element's actual `className`).
 
@@ -168,14 +185,16 @@ Other Bucket-B measurements shipped (light / dark):
 
 ### File List
 
-57 files across `apps/web/src` and `packages/ui/src` — class strings only; no files added, no contract, no migration, no API change. Notable:
+57 files across `apps/web/src` and `packages/ui/src` — class strings, plus the comment/test-title edits those strings dragged along (review: “class strings only” was imprecise); no files added, no contract, no migration, no API change. Notable:
 
 - `features/plan/{PackerAssignmentDialog,PlanTile,BriefSkeleton}.tsx`, `features/plan/PlanTile.test.tsx`
 - `features/login/components/LoginHero.tsx`, `components/LumiPresence.tsx`, `components/{AppHeader,DevTools}.tsx`
 - `features/onboarding/components/MediaPanels.tsx` (D-14S3B-CR4)
-- `features/kitchen-profile/components/*` (8 files — the largest cluster)
+- `features/kitchen-profile/components/*` (11 files — the largest cluster; the story's survey said "8 files … plus 4 singles", which was internally inconsistent: 6 named + 5 singles shipped)
 - `features/heart-note/components/{StatusPill,StationeryCard,ScheduleDatePicker,MealPreviewCard}.tsx`
 - `features/{lunch-link,grocery-list,kitchen-inspiration,evening-checkin,day-detail}/components/*`
+- `features/kitchen-interview/components/ChatThread.tsx`, `features/grandparent/HeartNoteComposer.tsx` *(review: were omitted from this list)*
+- `_bmad-output/implementation-artifacts/sprint-status.yaml` *(review: was omitted)*
 - `routes/auth/{login,reset-password}.tsx`, `routes/(app)/*`, `routes/_dev-day-detail-multi-child.tsx`
 - `packages/ui/src/{RailCard,TextField,StickyBottomBar,AppFooter}.tsx`
 - `_bmad-output/implementation-artifacts/deferred-work.md` (closes D-14S4-5, D-14S3B-CR4; opens D-CS1-1, D-CS1-2)
@@ -186,3 +205,4 @@ Other Bucket-B measurements shipped (light / dark):
 | --- | --- |
 | 2026-08-01 | Story authored (create-story, claude-fable-5). Closes retro action item 6. Survey verified same-day against the compiled bundle with a two-way probe control: 70 dead across 57 files, 8 alive built-in-palette utilities that must not be touched. Built around the classification rule, because the first sweep's mechanical solid-step substitution shipped two invisible surfaces and three AA failures. |
 | 2026-08-01 | Implemented (dev-story, claude-opus-5[1m]). All 70 dead classes replaced across 57 files, classified A/B/C/D before editing. Closes D-14S4-5 + D-14S3B-CR4; opens D-CS1-1 (safety-red has no numbered scale, fails AA in dark on every background) and D-CS1-2 (axe gate is light-theme only). Gates: 727/727 unit, 425/13/0 E2E, knip 0, turbo 20/20. |
+| 2026-08-01 | Code review (3 adversarial layers over fab9c5d): 22 raw findings, 6 patches applied, 5 dismissed. Auditor recomputed 18 contrast figures — all reproduce; 8/8 ACs verify. Patches: dead focus:ring-honey (default blue ring) -> ring-amber-warm; 2 base==hover collapses restored; WallCardPage comment corruption reverted; dark-invisible neutral chips -> adaptive fg-muted 10% wash; 5 Dev Record/ledger accuracy corrections. Post-patch gates: 727/727 unit, 425/13/0 E2E. Status -> done. |

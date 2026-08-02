@@ -162,7 +162,7 @@ export function WallCardPage({ day, kids, mode }: WallCardPageProps) {
                     className="flex items-start gap-4"
                   >
                     {/* The honey scale is theme-flipped, so this pairing reads
-                        in both modes. `bg-honey-amber-300` did not: an alpha
+                        in both modes. `bg-amber-warm/20` did not: an alpha
                         modifier on a hex-valued var token compiles to nothing. */}
                     <span className="mt-0.5 inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-honey-amber-100 text-xs font-semibold text-honey-amber-800 md:h-7 md:w-7 md:text-sm">
                       {i + 1}

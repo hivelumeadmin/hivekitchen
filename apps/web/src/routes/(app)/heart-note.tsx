@@ -296,7 +296,7 @@ export default function HeartNoteRoute() {
               <button
                 type="button"
                 onClick={handleCancel}
-                className="mt-2 self-start text-sm text-safety-red underline underline-offset-2 hover:text-safety-red"
+                className="mt-2 self-start text-sm text-safety-red underline underline-offset-2 hover:decoration-2"
               >
                 Cancel note
               </button>

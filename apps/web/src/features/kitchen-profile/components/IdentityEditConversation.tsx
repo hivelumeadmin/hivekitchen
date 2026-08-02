@@ -267,7 +267,7 @@ function SummaryChip({ chip }: { chip: EnforcedChip }) {
     );
   }
   return (
-    <span className="rounded-md bg-warm-neutral-50 px-2 py-0.5 font-sans text-[11px] italic text-fg-muted">
+    <span className="rounded-md bg-[color-mix(in_srgb,var(--fg-muted)_10%,transparent)] px-2 py-0.5 font-sans text-[11px] italic text-fg-muted">
       {chip.label}
     </span>
   );
@@ -330,7 +330,7 @@ function CurrentChip({ chip, stagedForRemoval, onToggle }: CurrentChipProps) {
     <button
       type="button"
       onClick={onToggle}
-      className="flex items-center gap-1.5 rounded-md bg-warm-neutral-50 px-2.5 py-1 font-sans text-xs italic text-fg-muted transition-opacity hover:opacity-80"
+      className="flex items-center gap-1.5 rounded-md bg-[color-mix(in_srgb,var(--fg-muted)_10%,transparent)] px-2.5 py-1 font-sans text-xs italic text-fg-muted transition-opacity hover:opacity-80"
       aria-label={`Drop ${chip.label}`}
     >
       {chip.label}

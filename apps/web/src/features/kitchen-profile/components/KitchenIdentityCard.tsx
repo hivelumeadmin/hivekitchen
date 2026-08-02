@@ -237,7 +237,7 @@ function EnforcementChip({ chip }: Readonly<{ readonly chip: EnforcedChip }>) {
     );
   }
   return (
-    <span className="rounded-md bg-warm-neutral-50 px-2.5 py-1 font-sans text-xs italic text-fg-muted">
+    <span className="rounded-md bg-[color-mix(in_srgb,var(--fg-muted)_10%,transparent)] px-2.5 py-1 font-sans text-xs italic text-fg-muted">
       {chip.label}
     </span>
   );
