@@ -107,7 +107,7 @@ function TurnBody({
     <div className="flex w-full flex-col gap-1 pt-2">
       <div className="flex items-baseline gap-3">
         <span className="text-xs text-fg-muted">{name}</span>
-        <span className="text-xs text-fg-muted/70">{timestamp}</span>
+        <span className="text-xs text-fg-muted">{timestamp}</span>
       </div>
       {children}
     </div>

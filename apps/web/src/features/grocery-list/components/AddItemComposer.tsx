@@ -21,7 +21,7 @@ export function AddItemComposer({
     setValue('');
   };
   return (
-    <div className="mb-10 flex items-center gap-1 rounded border border-border/30 bg-surface-2 p-1 shadow-sm">
+    <div className="mb-10 flex items-center gap-1 rounded border border-[color-mix(in_srgb,var(--border)_30%,transparent)] bg-surface-2 p-1 shadow-sm">
       <div className="flex min-w-0 flex-grow items-center px-2 sm:px-4">
         <AddCircleIcon className="me-2 h-5 w-5 flex-shrink-0 text-fg-muted sm:me-3" />
         <input
@@ -31,7 +31,7 @@ export function AddItemComposer({
           onKeyDown={(e) => e.key === 'Enter' && submit()}
           placeholder={placeholder}
           aria-label={placeholder}
-          className="w-full min-w-0 border-none bg-transparent text-fg placeholder:text-fg-muted/50 focus:outline-none focus:ring-0"
+          className="w-full min-w-0 border-none bg-transparent text-fg placeholder:text-fg-muted focus:outline-none focus:ring-0"
         />
       </div>
       <button

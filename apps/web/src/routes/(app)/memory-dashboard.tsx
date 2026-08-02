@@ -56,7 +56,7 @@ function Tags({ values }: { values: string[] }) {
       {values.map((v) => (
         <span
           key={v}
-          className="rounded-full border border-border/20 bg-bg/50 px-3 py-1 font-sans text-xs text-fg-muted"
+          className="rounded-full border border-[color-mix(in_srgb,var(--border)_20%,transparent)] bg-[color-mix(in_srgb,var(--bg)_50%,transparent)] px-3 py-1 font-sans text-xs text-fg-muted"
         >
           {v}
         </span>

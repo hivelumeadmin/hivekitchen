@@ -55,7 +55,7 @@ export function LumiPresence() {
           'fixed bottom-6 right-6 z-40',
           'h-9 w-9 rounded-full',
           'bg-lumi-terracotta text-white shadow-md',
-          'ring-1 ring-lumi-terracotta-700/20',
+          'ring-1 ring-[color-mix(in_srgb,var(--lumi-terracotta-700)_20%,transparent)]',
           'hover:bg-lumi-terracotta-warmed transition-colors motion-reduce:transition-none',
           'focus:outline-none focus:ring-2 focus:ring-foliage focus:ring-offset-2',
           restingBreath,
@@ -76,7 +76,7 @@ export function LumiPresence() {
           <span
             data-testid="lumi-thinking-pulse"
             aria-hidden="true"
-            className="absolute -inset-1 rounded-full bg-foliage/40 animate-pulse motion-reduce:animate-none"
+            className="absolute -inset-1 rounded-full bg-[color-mix(in_srgb,var(--foliage)_40%,transparent)] animate-pulse motion-reduce:animate-none"
           />
         )}
       </button>

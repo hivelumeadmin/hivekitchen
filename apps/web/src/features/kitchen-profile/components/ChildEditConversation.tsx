@@ -189,7 +189,7 @@ export function ChildEditConversation({
                 />
               ))}
             </div>
-            <p className="font-sans text-[10px] italic text-fg-muted/60">
+            <p className="font-sans text-[10px] italic text-fg-muted">
               <ShieldIcon className="-mt-0.5 me-1 inline h-3 w-3" />
               Type &quot;medical&quot; alongside an allergen to flag it.
             </p>

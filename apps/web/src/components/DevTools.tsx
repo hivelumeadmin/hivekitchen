@@ -44,8 +44,8 @@ export function DevTools() {
   return (
     <div className="fixed bottom-4 right-4 z-50 flex flex-col items-end gap-2">
       {open && (
-        <div className="w-56 rounded-lg border border-amber-warm/40 bg-surface shadow-lg text-xs font-mono">
-          <div className="border-b border-amber-warm/20 px-3 py-2 text-amber-warm font-semibold tracking-wide uppercase">
+        <div className="w-56 rounded-lg border border-[color-mix(in_srgb,var(--amber-warm)_40%,transparent)] bg-surface shadow-lg text-xs font-mono">
+          <div className="border-b border-[color-mix(in_srgb,var(--amber-warm)_20%,transparent)] px-3 py-2 text-amber-warm font-semibold tracking-wide uppercase">
             Dev Tools
           </div>
           <div className="p-2 space-y-1">
@@ -71,7 +71,7 @@ export function DevTools() {
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
-        className="flex h-8 w-8 items-center justify-center rounded-full border border-amber-warm/40 bg-surface text-xs font-bold text-amber-warm shadow-md hover:bg-surface-2 transition-colors"
+        className="flex h-8 w-8 items-center justify-center rounded-full border border-[color-mix(in_srgb,var(--amber-warm)_40%,transparent)] bg-surface text-xs font-bold text-amber-warm shadow-md hover:bg-surface-2 transition-colors"
         title="Dev tools"
       >
         {open ? '×' : '⚙'}

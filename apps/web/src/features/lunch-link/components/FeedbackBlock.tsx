@@ -47,7 +47,7 @@ export function FeedbackBlock({
           />
         ))}
       </div>
-      <p className="text-xs italic text-fg-muted/70">{hint}</p>
+      <p className="text-xs italic text-fg-muted">{hint}</p>
     </section>
   );
 }
@@ -65,7 +65,7 @@ function RatingButton({
 }>) {
   const circleClass = selected
     ? 'border-lumi-terracotta shadow-[0_0_20px_rgba(180,106,78,0.25)]'
-    : 'border-border/10 group-hover:border-lumi-terracotta/50 group-hover:shadow-[0_0_20px_rgba(180,106,78,0.15)]';
+    : 'border-[color-mix(in_srgb,var(--border)_10%,transparent)] group-hover:border-[color-mix(in_srgb,var(--lumi-terracotta)_50%,transparent)] group-hover:shadow-[0_0_20px_rgba(180,106,78,0.15)]';
   const labelClass = selected
     ? 'text-lumi-terracotta'
     : 'text-fg-muted group-hover:text-lumi-terracotta';

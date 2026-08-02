@@ -144,18 +144,18 @@ describe('PlanTile structure', () => {
 });
 
 describe('PlanTile variants', () => {
-  it('today + morning: applies bg-amber-warm/10 tint', () => {
+  it('today + morning: applies bg-[color-mix(in_srgb,var(--amber-warm)_10%,transparent)] tint', () => {
     vi.setSystemTime(MONDAY_MORNING);
     render(<PlanTile summary={makeSummary({ day: 'monday' })} />);
     const article = screen.getByLabelText('Monday');
-    expect(article.className).toContain('bg-amber-warm/10');
+    expect(article.className).toContain('bg-[color-mix(in_srgb,var(--amber-warm)_10%,transparent)]');
   });
 
   it('today + afternoon: omits the morning tint', () => {
     vi.setSystemTime(MONDAY_AFTERNOON);
     render(<PlanTile summary={makeSummary({ day: 'monday' })} />);
     const article = screen.getByLabelText('Monday');
-    expect(article.className).not.toContain('bg-amber-warm/10');
+    expect(article.className).not.toContain('bg-[color-mix(in_srgb,var(--amber-warm)_10%,transparent)]');
   });
 
   it('past variant: low-saturation classes and tabIndex=-1', () => {

@@ -71,7 +71,7 @@ export function PackerAssignmentDialog({
   if (!open) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-fg/20 px-4">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-[color-mix(in_srgb,var(--fg)_20%,transparent)] px-4">
       <div
         role="dialog"
         aria-modal="true"

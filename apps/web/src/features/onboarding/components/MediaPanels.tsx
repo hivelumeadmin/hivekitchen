@@ -280,20 +280,24 @@ export function AudioPanel({ caption, text }: AudioPanelProps) {
         className="flex h-16 items-center justify-center gap-1.5"
         aria-hidden="true"
       >
+        {/* D-14S3B-CR4 — five bars, five steps. The first sweep collapsed this to
+            two tones by swapping the dead alpha for solids. Depth tracks bar
+            height (tallest = deepest step); the lumi-terracotta scale is
+            theme-flipped, so the same ramp reads as depth in both modes. */}
         <span
-          className={`h-6 w-1.5 rounded-full bg-lumi-terracotta-warmed [animation-delay:100ms] [animation-duration:1s] ${isPlaying ? 'animate-bounce' : ''}`}
+          className={`h-6 w-1.5 rounded-full bg-lumi-terracotta-300 [animation-delay:100ms] [animation-duration:1s] ${isPlaying ? 'animate-bounce' : ''}`}
         />
         <span
-          className={`h-12 w-1.5 rounded-full bg-lumi-terracotta [animation-delay:200ms] [animation-duration:1.2s] ${isPlaying ? 'animate-bounce' : ''}`}
+          className={`h-12 w-1.5 rounded-full bg-lumi-terracotta-600 [animation-delay:200ms] [animation-duration:1.2s] ${isPlaying ? 'animate-bounce' : ''}`}
         />
         <span
-          className={`h-16 w-1.5 rounded-full bg-lumi-terracotta [animation-delay:300ms] [animation-duration:0.8s] ${isPlaying ? 'animate-bounce' : ''}`}
+          className={`h-16 w-1.5 rounded-full bg-lumi-terracotta-700 [animation-delay:300ms] [animation-duration:0.8s] ${isPlaying ? 'animate-bounce' : ''}`}
         />
         <span
-          className={`h-10 w-1.5 rounded-full bg-lumi-terracotta [animation-delay:400ms] [animation-duration:1.1s] ${isPlaying ? 'animate-bounce' : ''}`}
+          className={`h-10 w-1.5 rounded-full bg-lumi-terracotta-500 [animation-delay:400ms] [animation-duration:1.1s] ${isPlaying ? 'animate-bounce' : ''}`}
         />
         <span
-          className={`h-8 w-1.5 rounded-full bg-lumi-terracotta-warmed [animation-delay:500ms] [animation-duration:0.9s] ${isPlaying ? 'animate-bounce' : ''}`}
+          className={`h-8 w-1.5 rounded-full bg-lumi-terracotta-400 [animation-delay:500ms] [animation-duration:0.9s] ${isPlaying ? 'animate-bounce' : ''}`}
         />
       </div>
 

@@ -50,7 +50,7 @@ export function StartingLineCard({
 
   const isComplete = line.count >= line.target;
   return (
-    <div className="rounded-2xl border border-border/20 bg-surface p-8">
+    <div className="rounded-2xl border border-[color-mix(in_srgb,var(--border)_20%,transparent)] bg-surface p-8">
       <div className="mb-5 flex items-start justify-between gap-4">
         <p className="max-w-2xl text-sm leading-relaxed text-fg-muted">{description}</p>
         <button
@@ -86,7 +86,7 @@ export function StartingLineCard({
         {line.items.map((item) => (
           <span
             key={item}
-            className="rounded-md bg-warm-neutral-100/60 px-2.5 py-1 font-sans text-xs text-fg"
+            className="rounded-md bg-warm-neutral-50 px-2.5 py-1 font-sans text-xs text-fg"
           >
             {item}
           </span>

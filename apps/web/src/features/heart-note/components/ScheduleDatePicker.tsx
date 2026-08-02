@@ -13,7 +13,7 @@ export function ScheduleDatePicker({
 }: ScheduleDatePickerProps) {
   return (
     <div className="flex items-center gap-3 px-1 py-3">
-      <label className="text-sm text-fg-muted/70" htmlFor="heart-note-schedule-date">
+      <label className="text-sm text-fg-muted" htmlFor="heart-note-schedule-date">
         Schedule for
       </label>
       <input
@@ -23,13 +23,13 @@ export function ScheduleDatePicker({
         value={value ?? ''}
         min={isoToday()}
         onChange={(e) => onChange(e.target.value || null)}
-        className="rounded border border-border/30 bg-surface px-3 py-1.5 text-sm text-fg focus:outline-none focus:ring-1 focus:ring-honey disabled:cursor-not-allowed disabled:opacity-40"
+        className="rounded border border-[color-mix(in_srgb,var(--border)_30%,transparent)] bg-surface px-3 py-1.5 text-sm text-fg focus:outline-none focus:ring-1 focus:ring-honey disabled:cursor-not-allowed disabled:opacity-40"
       />
       {value !== null && !disabled ? (
         <button
           type="button"
           onClick={() => onChange(null)}
-          className="text-xs text-fg-muted/60 underline underline-offset-2 hover:text-fg-muted"
+          className="text-xs text-fg-muted underline underline-offset-2 hover:text-fg-muted"
         >
           Clear
         </button>

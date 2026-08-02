@@ -19,11 +19,11 @@ const STATUS_LABEL: Record<HeartNoteStatus, string | null> = {
 
 const STATUS_STYLE: Record<HeartNoteStatus, string> = {
   draft: '',
-  scheduled: 'bg-honey/20 text-honey-dark border-honey/30',
-  delivered: 'bg-safety-cleared/10 text-safety-cleared border-safety-cleared/30',
-  viewed: 'bg-safety-cleared/10 text-safety-cleared border-safety-cleared/30',
-  rated: 'bg-safety-cleared/10 text-safety-cleared border-safety-cleared/30',
-  cancelled: 'bg-fg-muted/10 text-fg-muted border-fg-muted/20',
+  scheduled: 'bg-honey-amber-100 text-honey-amber-800 border-honey-amber-300',
+  delivered: 'bg-safety-cleared-100 text-safety-cleared-800 border-safety-cleared-300',
+  viewed: 'bg-safety-cleared-100 text-safety-cleared-800 border-safety-cleared-300',
+  rated: 'bg-safety-cleared-100 text-safety-cleared-800 border-safety-cleared-300',
+  cancelled: 'bg-warm-neutral-50 text-fg-muted border-[color-mix(in_srgb,var(--fg-muted)_20%,transparent)]',
 };
 
 export function StatusPill({ status, scheduledFor, deliveredAt }: StatusPillProps) {

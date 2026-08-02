@@ -13,10 +13,10 @@ export function LunchImage({
 }: LunchImageProps) {
   return (
     <div className="space-y-4">
-      <div className="aspect-[4/3] overflow-hidden rounded-lg border border-border/20 bg-surface-2">
+      <div className="aspect-[4/3] overflow-hidden rounded-lg border border-[color-mix(in_srgb,var(--border)_20%,transparent)] bg-surface-2">
         <img src={imageSrc} alt={imageAlt} className="h-full w-full object-cover" />
       </div>
-      <p className="pe-2 text-right text-xs italic text-fg-muted/70">{servingNote}</p>
+      <p className="pe-2 text-right text-xs italic text-fg-muted">{servingNote}</p>
     </div>
   );
 }

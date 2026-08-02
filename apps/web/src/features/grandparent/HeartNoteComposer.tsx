@@ -134,7 +134,7 @@ export function HeartNoteComposer(props: HeartNoteComposerProps) {
         placeholder={`Write something for ${childName}…`}
         maxLength={280}
         dir="auto"
-        className="min-h-[220px] w-full resize-none border-none bg-transparent font-serif text-[26px] leading-relaxed text-fg placeholder:text-fg-muted/40 focus:outline-none focus:ring-0"
+        className="min-h-[220px] w-full resize-none border-none bg-transparent font-serif text-[26px] leading-relaxed text-fg placeholder:text-fg-muted focus:outline-none focus:ring-0"
         aria-label="Heart Note"
       />
 
@@ -142,7 +142,7 @@ export function HeartNoteComposer(props: HeartNoteComposerProps) {
         <span className={`text-[15px] ${isAtSoftCap ? 'text-amber' : 'text-fg-muted'}`}>
           Note {effectiveNotesUsed + 1} of {cap} this month
         </span>
-        <span className="text-[13px] text-fg-muted/60">{content.length} / 280</span>
+        <span className="text-[13px] text-fg-muted">{content.length} / 280</span>
       </div>
 
       <PrimaryButton

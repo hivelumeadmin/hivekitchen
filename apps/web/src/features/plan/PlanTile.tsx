@@ -260,7 +260,7 @@ export function PlanTile({
     'animate-[hk-row-settle_var(--motion-slow)_ease-out_backwards] motion-reduce:animate-none',
     'transition-[border-color,background-color,transform] duration-medium motion-reduce:transition-none',
     borderClass,
-    hasMorningTint && !isPaused ? 'bg-amber-warm/10' : 'bg-surface-2',
+    hasMorningTint && !isPaused ? 'bg-[color-mix(in_srgb,var(--amber-warm)_10%,transparent)]' : 'bg-surface-2',
     isPaused ? 'opacity-60 pointer-events-none' : '',
     isPast ? 'opacity-60 pointer-events-none' : '',
     // Honey rule (DESIGN.md): amber is recognition only and NEVER a hover — the
@@ -333,7 +333,7 @@ export function PlanTile({
             )}
           </p>
         ) : (
-          <p className="text-[15px] leading-[1.4] text-fg-muted/60">Plan pending</p>
+          <p className="text-[15px] leading-[1.4] text-fg-muted">Plan pending</p>
         )}
 
         {/* Story 13-s7 — focus-only slot breakdown. Only when there is more than
@@ -342,7 +342,7 @@ export function PlanTile({
           <div className="flex flex-col gap-1">
             {slotGroups.map(({ slot, label, line }) => (
               <div key={slot} className="flex items-baseline gap-2">
-                <span className="w-10 flex-shrink-0 text-[10px] font-medium uppercase tracking-wider text-fg-muted/70">
+                <span className="w-10 flex-shrink-0 text-[10px] font-medium uppercase tracking-wider text-fg-muted">
                   {label}
                 </span>
                 <span className="font-sans text-[13px] text-fg">{line}</span>
@@ -524,7 +524,7 @@ export function PlanTile({
         <span
           aria-busy="true"
           aria-label="Swap in progress"
-          className="absolute inset-0 rounded-lg bg-bg/70 flex items-center justify-center"
+          className="absolute inset-0 rounded-lg bg-[color-mix(in_srgb,var(--bg)_70%,transparent)] flex items-center justify-center"
         >
           <span className="h-4 w-4 rounded-full border-2 border-border border-t-amber-warm animate-spin" />
         </span>

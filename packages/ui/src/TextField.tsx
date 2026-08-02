@@ -95,7 +95,7 @@ export function TextField({
           maxLength={maxLength}
           aria-invalid={error ? true : undefined}
           aria-describedby={error ? `${id}-error` : undefined}
-          className={`w-full rounded-lg border bg-surface py-3 ${inputPadLeft} ${inputPadRight} text-[15px] text-fg placeholder:text-fg-muted/60 transition-colors focus:outline-none focus:ring-1 disabled:cursor-not-allowed disabled:opacity-50 ${
+          className={`w-full rounded-lg border bg-surface py-3 ${inputPadLeft} ${inputPadRight} text-[15px] text-fg placeholder:text-fg-muted transition-colors focus:outline-none focus:ring-1 disabled:cursor-not-allowed disabled:opacity-50 ${
             error
               ? 'border-safety-red focus:border-safety-red focus:ring-safety-red'
               : 'border-border focus:border-amber-warm focus:ring-amber-warm'

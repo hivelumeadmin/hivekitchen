@@ -78,7 +78,7 @@ export function KitchenIdentityCard({
     );
   }
   return (
-    <div className="overflow-hidden rounded-2xl border border-border/20 bg-surface p-8 md:p-12">
+    <div className="overflow-hidden rounded-2xl border border-[color-mix(in_srgb,var(--border)_20%,transparent)] bg-surface p-8 md:p-12">
       <blockquote className="mb-10 font-serif text-2xl italic leading-relaxed text-sacred md:text-3xl">
         {quote}
       </blockquote>
@@ -131,7 +131,7 @@ function CulturalPillar({
         </h3>
       </div>
       {items.length === 0 ? (
-        <p className="text-sm italic text-fg-muted/70">Nothing locked in yet.</p>
+        <p className="text-sm italic text-fg-muted">Nothing locked in yet.</p>
       ) : editable ? (
         <div className="space-y-3">
           {items.map((c) => (
@@ -179,7 +179,7 @@ function EnforcementSelector({
   readonly disabled?: boolean;
 }>) {
   return (
-    <div className="inline-flex overflow-hidden rounded-md border border-border/30">
+    <div className="inline-flex overflow-hidden rounded-md border border-[color-mix(in_srgb,var(--border)_30%,transparent)]">
       {ENFORCEMENT_TIERS.map(({ tier, label }) => (
         <button
           key={tier}
@@ -231,13 +231,13 @@ function EnforcementChip({ chip }: Readonly<{ readonly chip: EnforcedChip }>) {
   }
   if (chip.enforcement === 'prefer') {
     return (
-      <span className="rounded-md border border-foliage/60 bg-foliage-soft/50 px-2.5 py-1 font-sans text-xs text-fg">
+      <span className="rounded-md border border-[color-mix(in_srgb,var(--foliage)_60%,transparent)] bg-foliage-100 px-2.5 py-1 font-sans text-xs text-fg">
         {chip.label}
       </span>
     );
   }
   return (
-    <span className="rounded-md bg-warm-neutral-100/60 px-2.5 py-1 font-sans text-xs italic text-fg-muted">
+    <span className="rounded-md bg-warm-neutral-50 px-2.5 py-1 font-sans text-xs italic text-fg-muted">
       {chip.label}
     </span>
   );

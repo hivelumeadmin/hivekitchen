@@ -193,7 +193,7 @@ export default function SnackShelfRoute() {
               return (
                 <li
                   key={item.id}
-                  className="flex items-center justify-between gap-4 border-b border-border/20 pb-3"
+                  className="flex items-center justify-between gap-4 border-b border-[color-mix(in_srgb,var(--border)_20%,transparent)] pb-3"
                 >
                   <span className={item.in_stock ? undefined : 'opacity-50'}>
                     <span className="font-sans text-sm text-fg">{item.name}</span>

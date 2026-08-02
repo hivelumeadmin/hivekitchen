@@ -16,7 +16,7 @@ export function BriefSkeleton() {
       >
         <div className="h-3 w-1/3 bg-surface rounded" />
         <div className="h-12 w-2/3 bg-surface rounded" />
-        <div className="h-5 w-1/2 bg-surface/60 rounded" />
+        <div className="h-5 w-1/2 bg-[color-mix(in_srgb,var(--surface)_60%,transparent)] rounded" />
         <div className="grid grid-cols-2 md:grid-cols-5 gap-4 mt-4">
           {Array.from({ length: 5 }).map((_, i) => (
             <div key={i} className="h-32 bg-surface rounded-lg" />

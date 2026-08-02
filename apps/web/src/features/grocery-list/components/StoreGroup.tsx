@@ -17,8 +17,8 @@ const accentTextClass: Record<StoreAccent, string> = {
 };
 
 const accentBgClass: Record<StoreAccent, string> = {
-  'safety-cleared': 'bg-safety-cleared/10 text-safety-cleared',
-  amber: 'bg-amber-warm/10 text-amber-warm',
+  'safety-cleared': 'bg-safety-cleared-100 text-safety-cleared-800',
+  amber: 'bg-honey-amber-100 text-honey-amber-800',
 };
 
 export function StoreGroup({ store }: StoreGroupProps) {

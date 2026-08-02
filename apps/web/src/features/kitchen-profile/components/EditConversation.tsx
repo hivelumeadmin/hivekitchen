@@ -127,9 +127,9 @@ export function EditConversation({
   }
 
   return (
-    <div className="overflow-hidden rounded-2xl border border-amber/40 bg-surface shadow-lg">
+    <div className="overflow-hidden rounded-2xl border border-[color-mix(in_srgb,var(--amber)_40%,transparent)] bg-surface shadow-lg">
       {/* Header strip — section context + history toggle */}
-      <header className="flex items-start justify-between gap-4 border-b border-border/15 bg-amber/5 px-6 py-4 md:px-8">
+      <header className="flex items-start justify-between gap-4 border-b border-[color-mix(in_srgb,var(--border)_15%,transparent)] bg-[color-mix(in_srgb,var(--amber)_5%,transparent)] px-6 py-4 md:px-8">
         <div className="flex min-w-0 flex-col gap-1.5">
           <p className="font-sans text-[10px] font-medium uppercase tracking-[0.2em] text-amber-warm">
             {sectionLabel}
@@ -144,7 +144,7 @@ export function EditConversation({
           className={[
             'flex h-9 w-9 shrink-0 items-center justify-center rounded-full border transition-colors',
             showHistory
-              ? 'border-amber/40 text-amber'
+              ? 'border-[color-mix(in_srgb,var(--amber)_40%,transparent)] text-amber'
               : 'border-neutral-400/30 text-fg-muted hover:text-fg',
           ].join(' ')}
         >
@@ -160,7 +160,7 @@ export function EditConversation({
           </div>
         ) : (
           <div className="flex flex-col items-center gap-5 text-center">
-            <div className="flex h-12 w-12 items-center justify-center rounded-full border border-amber/20 bg-amber/10">
+            <div className="flex h-12 w-12 items-center justify-center rounded-full border border-[color-mix(in_srgb,var(--amber)_20%,transparent)] bg-[color-mix(in_srgb,var(--amber)_10%,transparent)]">
               <IcoWaveform className="h-6 w-6 animate-pulse text-amber" />
             </div>
             <p className="max-w-2xl font-serif text-xl leading-snug text-fg md:text-[22px]">
@@ -192,7 +192,7 @@ export function EditConversation({
           <label htmlFor="edit-message" className="sr-only">
             Talk to Lumi about this
           </label>
-          <div className="flex items-end gap-2 rounded-2xl border border-neutral-400/30 bg-surface-2/40 px-2 py-1.5 backdrop-blur-md focus-within:border-amber/50 transition-colors">
+          <div className="flex items-end gap-2 rounded-2xl border border-neutral-400/30 bg-[color-mix(in_srgb,var(--surface-2)_40%,transparent)] px-2 py-1.5 backdrop-blur-md focus-within:border-[color-mix(in_srgb,var(--amber)_50%,transparent)] transition-colors">
             <textarea
               ref={textareaRef}
               id="edit-message"
@@ -213,7 +213,7 @@ export function EditConversation({
               maxLength={400}
               placeholder={draftPlaceholder}
               style={{ maxHeight: '9.5rem' }}
-              className="flex-1 resize-none overflow-y-auto bg-transparent px-4 py-2 font-sans text-[16px] leading-snug text-fg placeholder:text-fg-muted/40 focus:outline-none transition-[height] duration-150 ease-out"
+              className="flex-1 resize-none overflow-y-auto bg-transparent px-4 py-2 font-sans text-[16px] leading-snug text-fg placeholder:text-fg-muted focus:outline-none transition-[height] duration-150 ease-out"
             />
             <button
               type="submit"
@@ -235,7 +235,7 @@ export function EditConversation({
           <button
             type="button"
             onClick={onDone}
-            className="inline-flex items-center gap-2 rounded-full border border-neutral-400/30 px-5 py-2.5 font-sans text-sm font-medium text-fg-muted transition-colors hover:border-amber/50 hover:text-fg"
+            className="inline-flex items-center gap-2 rounded-full border border-neutral-400/30 px-5 py-2.5 font-sans text-sm font-medium text-fg-muted transition-colors hover:border-[color-mix(in_srgb,var(--amber)_50%,transparent)] hover:text-fg"
           >
             I&apos;m done with my edit
           </button>

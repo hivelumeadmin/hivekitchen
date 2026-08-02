@@ -27,7 +27,7 @@ export function CulturalProposalTurn({
         </span>
         <SparkleIcon className="h-3.5 w-3.5 text-sacred" />
       </div>
-      <div className="rounded-xl border border-sacred/30 bg-sacred/10 p-6">
+      <div className="rounded-xl border border-sacred-300 bg-sacred-100 p-6">
         <p className="mb-6 font-serif text-[26px] italic leading-snug text-fg">
           {heartNote}
         </p>
@@ -35,7 +35,7 @@ export function CulturalProposalTurn({
           <button
             type="button"
             onClick={onPrimary}
-            className="rounded-full border border-sacred px-6 py-2 text-[11px] font-medium uppercase tracking-widest text-sacred transition-all hover:bg-sacred hover:text-white active:scale-95"
+            className="rounded-full border border-sacred-800 px-6 py-2 text-[11px] font-medium uppercase tracking-widest text-sacred-800 transition-all hover:bg-sacred hover:text-white active:scale-95"
           >
             {primaryLabel}
           </button>

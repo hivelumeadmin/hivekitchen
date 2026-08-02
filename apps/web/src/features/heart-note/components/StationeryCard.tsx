@@ -34,7 +34,7 @@ export function StationeryCard(props: StationeryCardProps) {
   const charCount = text.length;
 
   return (
-    <div className="overflow-hidden rounded-xl border border-border/30 bg-surface">
+    <div className="overflow-hidden rounded-xl border border-[color-mix(in_srgb,var(--border)_30%,transparent)] bg-surface">
       <StationeryHeader envelope={props.envelope} />
       <div className="relative p-8">
         <textarea
@@ -47,7 +47,7 @@ export function StationeryCard(props: StationeryCardProps) {
           placeholder={props.placeholder}
           maxLength={props.charCap}
           dir="auto"
-          className="min-h-[360px] w-full resize-none border-none bg-transparent font-serif text-[22px] italic leading-relaxed text-fg/90 placeholder:text-fg/20 focus:outline-none focus:ring-0"
+          className="min-h-[360px] w-full resize-none border-none bg-transparent font-serif text-[22px] italic leading-relaxed text-fg placeholder:text-fg-muted focus:outline-none focus:ring-0"
           aria-label="Heart Note"
         />
       </div>
@@ -63,8 +63,8 @@ export function StationeryCard(props: StationeryCardProps) {
 
 function StationeryHeader({ envelope }: Readonly<{ readonly envelope: Envelope }>) {
   return (
-    <div className="flex items-center justify-between border-b border-border/10 px-8 py-4">
-      <span className="text-xs font-medium tracking-wider text-fg-muted/70">
+    <div className="flex items-center justify-between border-b border-[color-mix(in_srgb,var(--border)_10%,transparent)] px-8 py-4">
+      <span className="text-xs font-medium tracking-wider text-fg-muted">
         TO <span className="text-sacred">{envelope.toLabel.toUpperCase()}</span> · DELIVERED{' '}
         {envelope.deliveryTime}
       </span>
@@ -90,8 +90,8 @@ function StationeryFooter({
   readonly saveError: boolean;
 }>) {
   return (
-    <div className="flex items-center justify-between border-t border-border/10 bg-bg/30 px-8 py-5">
-      <span className="text-[13px] text-fg-muted/60">
+    <div className="flex items-center justify-between border-t border-[color-mix(in_srgb,var(--border)_10%,transparent)] bg-[color-mix(in_srgb,var(--bg)_30%,transparent)] px-8 py-5">
+      <span className="text-[13px] text-fg-muted">
         {charCount} / {charCap} characters
       </span>
       {savedHint ? (

@@ -25,8 +25,8 @@ const accentBorderClass: Record<RailCardAccent, string> = {
 };
 
 const accentTintClass: Record<RailCardAccent, string> = {
-  sacred: 'border border-sacred/20 bg-sacred/10',
-  'lumi-terracotta': 'border border-lumi-terracotta/20 bg-lumi-terracotta/10',
+  sacred: 'border border-sacred-300 bg-sacred-100',
+  'lumi-terracotta': 'border border-lumi-terracotta-300 bg-lumi-terracotta-100',
 };
 
 const accentEyebrowClass: Record<RailCardAccent, string> = {
@@ -63,9 +63,9 @@ function chromeClass(variant: RailCardVariant, accent?: RailCardAccent): string 
     return `${accentTintClass[accent]} p-6`;
   }
   if (variant === 'muted') {
-    return 'border border-border/10 bg-bg/50 p-4 text-fg-muted/60';
+    return 'border border-[color-mix(in_srgb,var(--border)_10%,transparent)] bg-[color-mix(in_srgb,var(--bg)_50%,transparent)] p-4 text-fg-muted';
   }
   // bordered (default)
-  const accentBorder = accent ? accentBorderClass[accent] : 'border border-border/10';
+  const accentBorder = accent ? accentBorderClass[accent] : 'border border-[color-mix(in_srgb,var(--border)_10%,transparent)]';
   return `${accentBorder} bg-surface p-6`;
 }

@@ -1,6 +1,6 @@
 # Chore S1: Finish the repo-wide dead-`/alpha` sweep
 
-Status: ready-for-dev
+Status: review
 
 <!-- Note: Validation is optional. Run validate-create-story for quality check before dev-story. -->
 
@@ -67,13 +67,13 @@ Every dead class falls into exactly one bucket. **The bucket determines the fix 
 
 Split by area so each ships independently and stays near the <500-line PR guideline. Bucket-A work lands **first** in each area, since it is the only bucket that can hide content.
 
-- [ ] **Task 1 — Classify all 70** (AC2): produce the A/B/C/D table before editing anything. This is the deliverable that prevents a repeat of `209324d`.
-- [ ] **Task 2 — Bucket A first, repo-wide** (AC3): the three named traps plus any other overlay/gradient the classification surfaces.
-- [ ] **Task 3 — `kitchen-profile`** (43 classes, 8 files — the largest cluster: `IdentityEditConversation` 11, `ChildProfileCard` 10, `EditConversation` 8, `EditChips` 8, `KitchenIdentityCard` 6, `SchoolsList` 5, plus 4 singles).
-- [ ] **Task 4 — `heart-note` + `lunch-link` + `grocery-list`** (`StationeryCard` 7, `StatusPill` 6, `ScheduleDatePicker` 3, `LunchSummary` 3, `FeedbackBlock` 3, `HeartNoteCard` 2, and singles).
-- [ ] **Task 5 — `packages/ui` + shared components** (AC6): `RailCard` 7, `TextField`, `StickyBottomBar`, `AppFooter`, `LumiPresence`, `AppHeader`, `DevTools`.
-- [ ] **Task 6 — remaining routes + features**: `kitchen-inspiration`, `evening-checkin`, `day-detail`, `memory-dashboard`, auth routes, `_dev-day-detail-multi-child`.
-- [ ] **Task 7 — Gates + ledger** (AC5, AC7, AC8): final zero-dead-class proof with negative control; close D-14S4-5 and D-14S3B-CR4.
+- [x] **Task 1 — Classify all 70** (AC2): produce the A/B/C/D table before editing anything. This is the deliverable that prevents a repeat of `209324d`.
+- [x] **Task 2 — Bucket A first, repo-wide** (AC3): the three named traps plus any other overlay/gradient the classification surfaces.
+- [x] **Task 3 — `kitchen-profile`** (43 classes, 8 files — the largest cluster: `IdentityEditConversation` 11, `ChildProfileCard` 10, `EditConversation` 8, `EditChips` 8, `KitchenIdentityCard` 6, `SchoolsList` 5, plus 4 singles).
+- [x] **Task 4 — `heart-note` + `lunch-link` + `grocery-list`** (`StationeryCard` 7, `StatusPill` 6, `ScheduleDatePicker` 3, `LunchSummary` 3, `FeedbackBlock` 3, `HeartNoteCard` 2, and singles).
+- [x] **Task 5 — `packages/ui` + shared components** (AC6): `RailCard` 7, `TextField`, `StickyBottomBar`, `AppFooter`, `LumiPresence`, `AppHeader`, `DevTools`.
+- [x] **Task 6 — remaining routes + features**: `kitchen-inspiration`, `evening-checkin`, `day-detail`, `memory-dashboard`, auth routes, `_dev-day-detail-multi-child`.
+- [x] **Task 7 — Gates + ledger** (AC5, AC7, AC8): final zero-dead-class proof with negative control; close D-14S4-5 and D-14S3B-CR4.
 
 ## Dev Notes
 
@@ -101,14 +101,88 @@ Split by area so each ships independently and stays near the <500-line PR guidel
 
 ### Agent Model Used
 
+claude-opus-5[1m] (dev-story, 2026-08-01)
+
 ### Debug Log References
+
+**The probe lied three times. Every one was caught by a negative control, none by reading its output.**
+
+Reconciliation 6 warned that the grep is the hazard. It understated it:
+
+1. **Doubled backslash** — `sed 's|/|\\\\/|g'` inside a script file emits `\\/`, not `\/`. Reported the known-alive `bg-black/50` as DEAD. Caught because Reconciliation 1 gave 8 classes whose answer was known in advance.
+2. **No selector boundary** — `grep -F ".bg-honey"` matched `.bg-honey-amber-100`. Reported the non-existent `bg-honey` as ALIVE. Caught by probing a token key that does not exist.
+3. **`[` opens an ERE character class** — after adding a boundary check with `grep -E`, every `bg-[color-mix(...)]` class errored with `Invalid range end` and was reported DEAD. This produced a run claiming **50 of the 61 introduced classes were dead**. They were all present; a fixed-string grep found them immediately.
+
+Final probe is fixed-string end to end, escaping each special character individually — a sed bracket expression is *also* unsafe here, because `[...\]...]` closes early on the escaped `]` and silently matches nothing (failure mode 4, caught before use). Validated both directions before every run: fabricated classes DEAD, the 8 built-ins + `flex`/`sr-only` ALIVE, prefix trap DEAD.
+
+**The AC3 checker was wrong twice too**, in the same shape as the bug it was checking for: it parsed only `rgba()`, but Chromium returns `color(srgb r g b / a)` for `color-mix`, so it reported all three working overlays as opaque; and `via-` alone yields no `background-image`, so the gradient case needed its `from`/`to` companions.
+
+The recurring lesson is the story's own: a check that answers a *nearby* question ("is a rule emitted?", "is this rgba opaque?") reads as success and is worth nothing.
 
 ### Completion Notes List
 
+**Task 1 — classification (AC2).** All 70 classified before any edit. Survey reproduced the story's 70-dead/8-alive exactly. Two corrections to the survey: `MainGroupBadge.tsx:13` and `WallCardPage.tsx:165` are **comments** documenting this bug on already-fixed elements, not live classes, so the live site count is 180, not 182; and `bg-amber-warm/15` has no live site at all.
+
+The bucket rule was sharpened by what a dead declaration actually renders as, which differs by property and which the first sweep conflated:
+
+| Property | Dead ⇒ | Risk of a solid |
+|---|---|---|
+| `bg-*` | `background-color` unset ⇒ **transparent** | **hides content** — the `209324d` failure |
+| `text-*` | `color` unset ⇒ **inherits parent** (usually `--fg`) | **lowers contrast** — the 3.28:1 failure |
+| `border-*` | `border-color` unset ⇒ **`currentColor`** | low; any real token is *softer* than today |
+
+**Task 2 — Bucket A (AC3), 9 sites, `color-mix` at the original percentage.** The three named traps plus six the story did not enumerate: `_dev-day-detail-multi-child.tsx:41`, `MessageComposer.tsx:35` and `EditConversation.tsx:195` (all `backdrop-blur` surfaces whose blur was doing nothing), `LumiPresence.tsx:79` (the thinking-pulse halo, `absolute -inset-1` **over** the avatar), `HeartNoteCard.tsx:27` (`blur-xl` blob), `StationeryCard.tsx:93`. `StickyBottomBar.tsx:26` looks like Bucket A but is not — it has a solid `bg-bg`, so its `backdrop-blur` is already orphaned; border only.
+
+**Bucket B — the finding that changed the approach.** Restoring the *intended* alpha does not save the coloured chips. Measured from `colors.css`, light / dark:
+
+| Pair | Today (wash dead ⇒ text on bare parent) | Intended wash restored |
+|---|---|---|
+| `safety-cleared-teal` on `surface` | 4.708 AA / 4.841 AA | **4.155 FAIL / 4.206 FAIL** |
+| `safety-red` on `surface` | 4.667 AA / 3.669 FAIL | **4.085 FAIL** / 3.314 FAIL |
+| `amber-warm` on `surface` | 2.054 FAIL / 6.679 AA | 1.921 FAIL / 5.586 AA |
+| `sacred-plum` on `surface` | 5.930 AA / 2.922 FAIL | 5.167 AA / 2.663 FAIL |
+
+The same-hue-text-on-same-hue-wash design **never passed AA** — it only looked acceptable because the wash was dead. Faithful restoration would have grown the axe allowlist, which AC8 forbids.
+
+Fix follows precedent already in the repo (`contrast-audit.test.ts`'s canonical safety chip; 14-s3b's own `bg-honey-amber-100 text-honey-amber-800`): family scale `-100` fill / `-800` text. Measured, light / dark — teal **10.132 / 10.113**, plum **10.253 / 10.191**, honey **8.896 / 8.758**, foliage **9.895 / 10.017**, terracotta **9.387 / 9.082**; all AAA, because these scales are theme-flipped and invert together.
+
+Other Bucket-B measurements shipped (light / dark):
+- `honey-amber-700` on `bg` **6.743 / 6.644**, on `surface` **5.844 / 5.928** — replaces the dead `text-amber-warm/80` labels (a solid `text-amber-warm` would have been 2.370 / 7.486, i.e. a light-mode FAIL silently absorbed by the existing `amber-warm` allowlist entry).
+- `fg-muted` on `bg` **8.842 / 7.448**, on `surface` **7.663 / 6.645**, on `surface-2` **6.402 / 5.905** — all the `text-fg-muted/NN` sites.
+- `fg-muted` on `warm-neutral-50` **9.227 / 6.370** — the neutral chips. (`warm-neutral-100` was rejected: **4.496 dark**, just under AA.)
+- `fg` on 10% amber-warm over `bg` **15.467 / 13.726**; `fg-muted` on the same **8.161 / 6.292** — the PlanTile morning tint.
+- `lumi-terracotta-800` on 10% amber-warm over `surface` **10.317 / 8.349** — the child-quote block, which *also* fixes a pre-existing failure (`text-lumi-terracotta` on `surface` was 4.113 / 3.771).
+- `fg` on 5% / 10% amber over `surface` **13.889 / 13.460** and **13.211 / 12.290**; `fg-muted` on 5% terracotta over `surface` **7.214 / 6.263**.
+
+**`safety-red` — the one thing that could not be fixed.** No numbered scale, and it fails AA in dark on every available background (`bg` 4.112, `surface` 3.669, `warm-neutral-50` 3.517). With a wash, light drops to 4.085, below AA. There was no renderable option, so the intended fill was **dropped rather than restored**: those banners keep their red border and red text and render exactly as they do today. Nothing regressed; nothing improved. Deferred as **D-CS1-1**.
+
+**Two bugs found on the way that were not `/alpha` at all.** `StatusPill.tsx:22` used `bg-honey/20 text-honey-dark border-honey/30` — `honey` is not a token key and `honey-dark` does not exist, so that pill had no background, no colour, and a `currentColor` border. And `PlanTile.test.tsx` asserted `toContain('bg-amber-warm/10')` on a class that never rendered, so it passed for the wrong reason; the assertions moved with the class.
+
+**Deviation from the story's bucket table.** Bucket C is specified as "solid token step". Borders were instead restored with `color-mix` at the original percentage: `--border` has no numbered scale, so every distinct alpha (5/10/15/20/30/40/50) would have collapsed onto the single `border-border` value, flattening a deliberate weight hierarchy. `color-mix` renders exactly what the author wrote. This is strictly safer than a solid — borders carry no text and nothing sits beneath a 1px line — and needed no judgment call per site. Also note `--border-subtle` does **not** exist; it was almost introduced by hand and caught against `colors.css` before use (AC5).
+
+**Verification (AC1/AC5).** Against `dist/assets/index-BmFrpNhP.css` with the twice-validated probe: **61/61 introduced utilities ALIVE, 0 dead**; the only `/alpha` utilities left in the two source trees are the **8 built-in-palette ones, all still ALIVE and unmodified**; the sole remaining match, `bg-amber-warm/15`, is comment prose (proven by showing the enclosing JSX comment and the element's actual `className`).
+
+**AC3 rendered check.** Not a CSS grep — the three named traps were rendered in Chromium and their *computed* style read back, asserting alpha < 1, with a negative control proving a solid `bg-bg` reads opaque. Results: backdrop `color(srgb … / 0.2)`, busy overlay `… / 0.7`, gradient `linear-gradient(to top, rgb(247,242,233), color(srgb … / 0.8), rgba(0,0,0,0))`. The gradient's 0.8 mid-stop is exactly what `209324d` had turned opaque.
+
+**Gates (AC8).** typecheck clean · lint clean · knip exit 0 · turbo lint+typecheck+test **20/20 across 9 packages** · web unit **727/727** · full E2E **425 pass / 13 skip / 0 fail** · `git diff --stat -- apps/web/test packages/design-system` **empty**, so `13-s1` and the axe allowlist are provably unedited. Note the E2E axe gate runs light theme only, so every dark figure above rests on computation alone — deferred as **D-CS1-2**.
+
 ### File List
+
+57 files across `apps/web/src` and `packages/ui/src` — class strings only; no files added, no contract, no migration, no API change. Notable:
+
+- `features/plan/{PackerAssignmentDialog,PlanTile,BriefSkeleton}.tsx`, `features/plan/PlanTile.test.tsx`
+- `features/login/components/LoginHero.tsx`, `components/LumiPresence.tsx`, `components/{AppHeader,DevTools}.tsx`
+- `features/onboarding/components/MediaPanels.tsx` (D-14S3B-CR4)
+- `features/kitchen-profile/components/*` (8 files — the largest cluster)
+- `features/heart-note/components/{StatusPill,StationeryCard,ScheduleDatePicker,MealPreviewCard}.tsx`
+- `features/{lunch-link,grocery-list,kitchen-inspiration,evening-checkin,day-detail}/components/*`
+- `routes/auth/{login,reset-password}.tsx`, `routes/(app)/*`, `routes/_dev-day-detail-multi-child.tsx`
+- `packages/ui/src/{RailCard,TextField,StickyBottomBar,AppFooter}.tsx`
+- `_bmad-output/implementation-artifacts/deferred-work.md` (closes D-14S4-5, D-14S3B-CR4; opens D-CS1-1, D-CS1-2)
 
 ## Change Log
 
 | Date | Change |
 | --- | --- |
 | 2026-08-01 | Story authored (create-story, claude-fable-5). Closes retro action item 6. Survey verified same-day against the compiled bundle with a two-way probe control: 70 dead across 57 files, 8 alive built-in-palette utilities that must not be touched. Built around the classification rule, because the first sweep's mechanical solid-step substitution shipped two invisible surfaces and three AA failures. |
+| 2026-08-01 | Implemented (dev-story, claude-opus-5[1m]). All 70 dead classes replaced across 57 files, classified A/B/C/D before editing. Closes D-14S4-5 + D-14S3B-CR4; opens D-CS1-1 (safety-red has no numbered scale, fails AA in dark on every background) and D-CS1-2 (axe gate is light-theme only). Gates: 727/727 unit, 425/13/0 E2E, knip 0, turbo 20/20. |

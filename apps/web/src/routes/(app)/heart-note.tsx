@@ -264,7 +264,7 @@ export default function HeartNoteRoute() {
             {bootError !== null ? (
               <p
                 role="alert"
-                className="mb-4 rounded-md border border-safety-red/30 bg-safety-red/10 px-4 py-3 text-sm text-safety-red"
+                className="mb-4 rounded-md border border-[color-mix(in_srgb,var(--safety-red)_30%,transparent)] px-4 py-3 text-sm text-safety-red"
               >
                 {bootError}
               </p>
@@ -296,7 +296,7 @@ export default function HeartNoteRoute() {
               <button
                 type="button"
                 onClick={handleCancel}
-                className="mt-2 self-start text-sm text-safety-red/70 underline underline-offset-2 hover:text-safety-red"
+                className="mt-2 self-start text-sm text-safety-red underline underline-offset-2 hover:text-safety-red"
               >
                 Cancel note
               </button>

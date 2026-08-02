@@ -108,7 +108,7 @@ export default function LoginPage() {
             {apiError ? (
               <p
                 role="alert"
-                className="rounded-lg border border-safety-red/30 bg-safety-red/10 px-4 py-3 text-sm text-safety-red"
+                className="rounded-lg border border-[color-mix(in_srgb,var(--safety-red)_30%,transparent)] px-4 py-3 text-sm text-safety-red"
               >
                 {apiError}
               </p>
