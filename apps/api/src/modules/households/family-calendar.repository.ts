@@ -4,6 +4,8 @@ import type {
   CalendarSource,
   CalendarTerm,
 } from '@hivekitchen/types';
+import { ConflictError } from '../../common/errors.js';
+import { isUniqueViolation } from '../threads/thread.repository.js';
 import { BaseRepository } from '../../repository/base.repository.js';
 
 const TERM_COLUMNS =
@@ -72,8 +74,28 @@ export class FamilyCalendarRepository extends BaseRepository {
       })
       .select(EXCEPTION_COLUMNS)
       .single();
-    if (error) throw error;
+    // The COALESCE-sentinel unique index (scope + on_date) fires on a duplicate
+    // POST; map the raw 23505 to a clean 409 (compliance.repository precedent).
+    if (error) {
+      if (isUniqueViolation(error)) {
+        throw new ConflictError('a calendar exception already exists for this date and scope');
+      }
+      throw error;
+    }
     return data as CalendarException;
+  }
+
+  // Route-level ownership check for child-scoped rows: the tables' FK only
+  // guarantees the child EXISTS, not that it belongs to this household.
+  async childBelongsToHousehold(childId: string, householdId: string): Promise<boolean> {
+    const { data, error } = await this.client
+      .from('children')
+      .select('id')
+      .eq('id', childId)
+      .eq('household_id', householdId)
+      .maybeSingle();
+    if (error) throw error;
+    return data !== null;
   }
 
   async findByHousehold(householdId: string): Promise<FamilyCalendarWeek> {

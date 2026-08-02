@@ -1,5 +1,4 @@
-import type { CalendarException, CalendarTerm } from '@hivekitchen/types';
-import type { Weekday } from '@hivekitchen/types';
+import type { CalendarException, CalendarTerm, Weekday } from '@hivekitchen/types';
 
 // Story 15-s1 — derive the week's Lunch Days from the Family Calendar.
 //
@@ -81,9 +80,12 @@ export function resolveLunchDays(input: ResolveLunchDaysInput): Weekday[] | unde
       ),
     );
 
-  // No term reaches into this week at all — treat it as no calendar opinion
-  // rather than as a zero-lunch week, so an unrelated term for a future month
-  // cannot silently suppress composition.
+  // No term lands a weekday on any date of this week — treat it as no calendar
+  // opinion rather than as a zero-lunch week. findForWeek already excludes
+  // non-overlapping terms, so this is mostly the weekday-miss case (e.g. a
+  // Saturday-only term whose in-week range ends Thursday); erring toward
+  // undefined fails toward planning food, never toward silently skipping a week
+  // (review decision D3, 2026-08-02).
   if (covered.length === 0) return undefined;
 
   const removedDates = new Set(

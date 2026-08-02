@@ -75,6 +75,28 @@ export interface PlanGenerationJobData {
   // weekdays (mid-week / next-week-full window). The Friday cron leaves this
   // undefined → full default week (no behavior change).
   planned_days?: Weekday[];
+  // Story 15-s1 review D2 — which window rule produced planned_days. On
+  // 'next_week_full' the Mon–Fri planned_days means "the whole week", not a
+  // constraint: when the calendar has an opinion it defines the day set alone,
+  // so a Saturday-school term is not silently intersected away.
+  basis?: 'current_week_remaining' | 'next_week_full';
+}
+
+// Story 15-s1 — combine the calendar's lunch days with the on-demand compose
+// window. The mid-week window intersects (the calendar cannot re-add a day that
+// is already in the past); but a 'next_week_full' window's Mon–Fri planned_days
+// means "the whole week", not a constraint — when the calendar has an opinion
+// there, it defines the day set alone, so a Saturday-school term survives
+// (review D2, 2026-08-02). With no calendar opinion, planned_days passes
+// through unchanged and no-calendar households keep byte-identical behavior.
+export function resolveEffectiveDays(
+  lunchDays: readonly Weekday[] | undefined,
+  plannedDays: readonly Weekday[] | undefined,
+  basis: PlanGenerationJobData['basis'],
+): Weekday[] | undefined {
+  const windowDays =
+    basis === 'next_week_full' && lunchDays !== undefined ? undefined : plannedDays;
+  return intersectDaySets(lunchDays, windowDays);
 }
 
 // Given a Friday date at fan-out time, returns the ISO date of the following
@@ -134,6 +156,15 @@ export function buildCommitInputTree(
     effectiveDays === undefined
       ? output.days
       : output.days.filter((d) => effectiveDays.includes(d.day));
+  // A worker-level guard already skips composition when the effective set is
+  // empty, so an empty result here means the model composed ONLY excluded days.
+  // CommitPlanTree requires days.min(1) — fail loudly on the job's normal
+  // failure path instead of handing the RPC an empty tree.
+  if (effectiveDays !== undefined && composedDays.length === 0) {
+    throw new Error(
+      'model output contains no days inside the effective lunch-day set — nothing committable',
+    );
+  }
   const days = composedDays.map((d) => {
     // Snacks are strictly server-assigned (Story 3-S40). The planner prompt
     // (v2.8.0) tells the model NOT to emit snack slots, but it occasionally
@@ -168,7 +199,20 @@ export function buildCommitInputTree(
     // only appears on extra slot rows (mains use main_assignment.recipe_id
     // which is always a real catalog id).
     plan_build_id: requestId,
-    main_assignments: output.main_assignments,
+    // Day filtering can strand a Main referenced by zero surviving days (e.g.
+    // M2 lived only on a holiday) — drop those so the RPC never inserts an
+    // assignment the UI would render as appearing on no day. Pass-through 1:1
+    // when no day set is defined.
+    main_assignments:
+      effectiveDays === undefined
+        ? output.main_assignments
+        : output.main_assignments.filter((a) =>
+            days.some((d) =>
+              d.slots.some(
+                (s) => s.slot_kind === 'main' && s.main_assignment_sequence === a.sequence,
+              ),
+            ),
+          ),
     days,
   };
 }
@@ -409,7 +453,7 @@ const planGenerationPlugin: FastifyPluginAsync = async (fastify) => {
   const generationWorker = fastify.bullmq.getWorker(
     GENERATE_QUEUE,
     async (job: Job<PlanGenerationJobData>) => {
-      const { household_id, week_of, request_id, planned_days } = job.data;
+      const { household_id, week_of, request_id, planned_days, basis } = job.data;
       const weekId = deriveWeekId(week_of);
 
       fastify.log.info(
@@ -425,7 +469,7 @@ const planGenerationPlugin: FastifyPluginAsync = async (fastify) => {
       );
 
       const householdsRepoForRun = new HouseholdsRepository(fastify.supabase, null);
-      const [culturalContext, bagCompositions, extraLibraryItems, variantEligibleChildren, sovereigntyMode, childSignals, pantrySnapshot] = await Promise.all([
+      const [culturalContext, bagCompositions, extraLibraryItems, variantEligibleChildren, sovereigntyMode, childSignals, pantrySnapshot, calendarWeek] = await Promise.all([
         loadCulturalContextForHousehold(household_id, week_of, culturalPriorRepository, culturalCalendarService, memoryContextService),
         loadBagCompositionsForHousehold(household_id, childrenRepository),
         loadExtraLibraryForHousehold(household_id, extraLibraryRepository),
@@ -452,6 +496,17 @@ const planGenerationPlugin: FastifyPluginAsync = async (fastify) => {
           return undefined;
         }),
         loadPantrySnapshotForHousehold(household_id, pantryService),
+        // Story 15-s1 — the Family Calendar decides which days need a lunch.
+        // Failure → undefined + warn, never fails the job (loader convention).
+        familyCalendarRepository
+          .findForWeek(household_id, week_of, addDaysIso(week_of, 5))
+          .catch((err: unknown) => {
+            fastify.log.warn(
+              { err, household_id, week_of },
+              'family-calendar load failed — composing the default week',
+            );
+            return undefined;
+          }),
       ]);
       // extra_rules read fans out per-child; depends on bagCompositions for
       // {child_id, child_name} pairs, so it's sequenced after the parallel batch.
@@ -472,15 +527,6 @@ const planGenerationPlugin: FastifyPluginAsync = async (fastify) => {
       // household has no term covering this week, which leaves the day set
       // exactly as it was (the planner's implicit default). An empty array means
       // the calendar covers the week and every day is excepted — a holiday week.
-      const calendarWeek = await familyCalendarRepository
-        .findForWeek(household_id, week_of, addDaysIso(week_of, 5))
-        .catch((err: unknown) => {
-          fastify.log.warn(
-            { err, household_id, week_of },
-            'family-calendar load failed — composing the default week',
-          );
-          return undefined;
-        });
       const lunchDays =
         calendarWeek === undefined
           ? undefined
@@ -489,9 +535,7 @@ const planGenerationPlugin: FastifyPluginAsync = async (fastify) => {
               exceptions: calendarWeek.exceptions,
               weekOf: week_of,
             });
-      // The on-demand ("compose now") path already narrows to the rest of the
-      // week; the calendar intersects with that window rather than replacing it.
-      const effectiveDays = intersectDaySets(lunchDays, planned_days);
+      const effectiveDays = resolveEffectiveDays(lunchDays, planned_days, basis);
 
       if (effectiveDays !== undefined && effectiveDays.length === 0) {
         fastify.log.info(

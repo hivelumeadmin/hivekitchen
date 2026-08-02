@@ -70,6 +70,8 @@ interface MockState {
   households: Map<string, HouseholdMockRow>;
   calendarTerms: CalendarTermMockRow[];
   calendarExceptions: CalendarExceptionMockRow[];
+  // Story 15-s1 review — childBelongsToHousehold() ownership check.
+  children: { id: string; household_id: string }[];
   // Audit contexts set by routes that defer the write to the audit hook (which
   // this harness does not register). Captured in onSend so assertions are
   // deterministic — the hook's own write is fire-and-forget after the response.
@@ -90,8 +92,15 @@ function buildMockSupabase(state: MockState) {
         return calendarTable(state.calendarTerms, 'start_date');
       }
       if (table === 'calendar_exceptions') {
-        return calendarTable(state.calendarExceptions, 'on_date');
+        // Mirrors the COALESCE-sentinel unique index: one exception per
+        // (household, child-scope, date) — a duplicate insert yields 23505.
+        return calendarTable(state.calendarExceptions, 'on_date', [
+          'household_id',
+          'child_id',
+          'on_date',
+        ]);
       }
+      if (table === 'children') return childrenTable(state);
       throw new Error(`unexpected table: ${table}`);
     },
   };
@@ -233,15 +242,64 @@ function householdsTable(state: MockState) {
   };
 }
 
+// Story 15-s1 review — models only the ownership-check chain
+// (select('id').eq('id').eq('household_id').maybeSingle()).
+function childrenTable(state: MockState) {
+  return {
+    select(_cols: string) {
+      const filters: Record<string, unknown> = {};
+      const chain = {
+        eq(column: string, value: unknown) {
+          filters[column] = value;
+          return chain;
+        },
+        maybeSingle: async () => {
+          const row = state.children.find((c) =>
+            Object.entries(filters).every(
+              ([col, val]) => (c as unknown as Record<string, unknown>)[col] === val,
+            ),
+          );
+          return { data: row ? { id: row.id } : null, error: null };
+        },
+      };
+      return chain;
+    },
+  };
+}
+
 // Story 15-s1 — models exactly the chains FamilyCalendarRepository calls:
 // insert().select().single(), select().eq().order(), and
 // delete().eq().eq().select().maybeSingle().
 function calendarTable<T extends { id: string; household_id: string }>(
   rows: T[],
   orderColumn: string,
+  uniqueColumns?: string[],
 ) {
   return {
     insert(payload: Record<string, unknown>) {
+      // Story 15-s1 review — model the scope+date unique index so the route
+      // test can prove the repository maps 23505 → 409 ConflictError.
+      const duplicate =
+        uniqueColumns !== undefined &&
+        rows.some((r) =>
+          uniqueColumns.every(
+            (col) =>
+              ((r as unknown as Record<string, unknown>)[col] ?? null) ===
+              (payload[col] ?? null),
+          ),
+        );
+      if (duplicate) {
+        return {
+          select(_cols: string) {
+            return {
+              single: async () => ({
+                data: null,
+                error: { code: '23505', message: 'duplicate key value' },
+              }),
+            };
+          },
+        };
+      }
       const stored = {
         id: randomUUID(),
         created_at: new Date().toISOString(),
@@ -405,6 +463,7 @@ function freshState(
     audit: [],
     calendarTerms: [],
     calendarExceptions: [],
+    children: [],
     auditContexts: [],
     households: new Map([
       [
@@ -3704,6 +3763,101 @@ describe('family calendar routes', () => {
     expect(entry?.metadata.action).toBe('exception_created');
     expect(entry?.metadata.kind).toBe('no_lunch');
     expect(JSON.stringify(entry?.metadata)).not.toContain('Grandma');
+  });
+
+  // ---- 2026-08-02 review patches ----
+
+  it('POST term with a child_id from another household → 404, nothing stored', async () => {
+    const state = freshState();
+    const foreignChild = '77777777-7777-4777-8777-777777777777';
+    state.children.push({ id: foreignChild, household_id: OTHER_HOUSEHOLD });
+    app = await buildTestApp({ state });
+    const token = signPrimary(app);
+
+    const res = await app.inject({
+      method: 'POST',
+      url: `/v1/households/${SAMPLE_HOUSEHOLD_ID}/calendar/terms`,
+      headers: { authorization: `Bearer ${token}` },
+      payload: { ...TERM_BODY, child_id: foreignChild },
+    });
+
+    expect(res.statusCode).toBe(404);
+    expect(state.calendarTerms).toHaveLength(0);
+  });
+
+  it('POST exception with a nonexistent child_id → 404 (not a raw FK 500)', async () => {
+    const state = freshState();
+    app = await buildTestApp({ state });
+    const token = signPrimary(app);
+
+    const res = await app.inject({
+      method: 'POST',
+      url: `/v1/households/${SAMPLE_HOUSEHOLD_ID}/calendar/exceptions`,
+      headers: { authorization: `Bearer ${token}` },
+      payload: { on_date: '2026-10-26', kind: 'no_lunch', child_id: UNKNOWN_ID },
+    });
+
+    expect(res.statusCode).toBe(404);
+    expect(state.calendarExceptions).toHaveLength(0);
+  });
+
+  it('POST term with the household own child_id → 201', async () => {
+    const state = freshState();
+    const ownChild = '66666666-6666-4666-8666-666666666666';
+    state.children.push({ id: ownChild, household_id: SAMPLE_HOUSEHOLD_ID });
+    app = await buildTestApp({ state });
+    const token = signPrimary(app);
+
+    const res = await app.inject({
+      method: 'POST',
+      url: `/v1/households/${SAMPLE_HOUSEHOLD_ID}/calendar/terms`,
+      headers: { authorization: `Bearer ${token}` },
+      payload: { ...TERM_BODY, child_id: ownChild },
+    });
+
+    expect(res.statusCode).toBe(201);
+    expect((res.json() as { term: { child_id: string } }).term.child_id).toBe(ownChild);
+  });
+
+  it('POST duplicate exception for the same scope and date → 409', async () => {
+    const state = freshState();
+    app = await buildTestApp({ state });
+    const token = signPrimary(app);
+    const payload = { on_date: '2026-10-26', kind: 'no_lunch' };
+
+    const first = await app.inject({
+      method: 'POST',
+      url: `/v1/households/${SAMPLE_HOUSEHOLD_ID}/calendar/exceptions`,
+      headers: { authorization: `Bearer ${token}` },
+      payload,
+    });
+    const second = await app.inject({
+      method: 'POST',
+      url: `/v1/households/${SAMPLE_HOUSEHOLD_ID}/calendar/exceptions`,
+      headers: { authorization: `Bearer ${token}` },
+      payload,
+    });
+
+    expect(first.statusCode).toBe(201);
+    expect(second.statusCode).toBe(409);
+    expect(state.calendarExceptions).toHaveLength(1);
+  });
+
+  it('POST cannot forge source — a school_import claim is stored as manual', async () => {
+    const state = freshState();
+    app = await buildTestApp({ state });
+    const token = signPrimary(app);
+
+    const res = await app.inject({
+      method: 'POST',
+      url: `/v1/households/${SAMPLE_HOUSEHOLD_ID}/calendar/terms`,
+      headers: { authorization: `Bearer ${token}` },
+      payload: { ...TERM_BODY, source: 'school_import' },
+    });
+
+    expect(res.statusCode).toBe(201);
+    expect((res.json() as { term: { source: string } }).term.source).toBe('manual');
+    expect(state.calendarTerms[0]?.source).toBe('manual');
   });
 
   it('GET returns created terms and exceptions', async () => {

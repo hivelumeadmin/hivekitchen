@@ -811,6 +811,15 @@ const householdsRoutesPlugin: FastifyPluginAsync = async (fastify) => {
         throw new ForbiddenError("Cannot write to another household's calendar");
       }
       const body = request.body as CreateCalendarTermInput;
+      // The FK on child_id only proves the child exists — it does not scope it
+      // to this household, and a bare FK failure would surface as a 500.
+      if (body.child_id !== null) {
+        const owned = await familyCalendarRepository.childBelongsToHousehold(
+          body.child_id,
+          householdId,
+        );
+        if (!owned) throw new NotFoundError(`child not found: ${body.child_id}`);
+      }
       const term = await familyCalendarRepository.createTerm({
         householdId,
         childId: body.child_id,
@@ -818,7 +827,10 @@ const householdsRoutesPlugin: FastifyPluginAsync = async (fastify) => {
         startDate: body.start_date,
         endDate: body.end_date,
         weekdays: body.weekdays,
-        source: body.source,
+        // REST writes are always parent-authored; 'google_readonly' /
+        // 'school_import' provenance is reserved for the future ingestion
+        // slices, which write through the repository directly.
+        source: 'manual',
       });
 
       // PII-free metadata: ids and the action only. The parent-authored `label`
@@ -879,13 +891,22 @@ const householdsRoutesPlugin: FastifyPluginAsync = async (fastify) => {
         throw new ForbiddenError("Cannot write to another household's calendar");
       }
       const body = request.body as CreateCalendarExceptionInput;
+      // Same household-ownership check as the terms route (FK alone is not enough).
+      if (body.child_id !== null) {
+        const owned = await familyCalendarRepository.childBelongsToHousehold(
+          body.child_id,
+          householdId,
+        );
+        if (!owned) throw new NotFoundError(`child not found: ${body.child_id}`);
+      }
       const exception = await familyCalendarRepository.createException({
         householdId,
         childId: body.child_id,
         onDate: body.on_date,
         kind: body.kind,
         note: body.note,
-        source: body.source,
+        // Parent-authored REST writes are always 'manual' — see the terms route.
+        source: 'manual',
       });
 
       // `note` is free text and stays out of the audit row.

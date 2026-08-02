@@ -730,6 +730,9 @@ export class PlansService {
       week_of: weekOf,
       request_id: opts.requestId,
       planned_days: plannedDays,
+      // Story 15-s1 review D2 — lets the worker treat a next-week-full Mon–Fri
+      // window as "whole week" when the family calendar has an opinion.
+      basis,
     };
     const job = await this.generateQueue.add('generate-plan', jobData, {
       ...GENERATION_JOB_OPTS_BASE,

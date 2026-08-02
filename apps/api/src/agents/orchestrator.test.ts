@@ -978,7 +978,7 @@ describe('DomainOrchestrator', () => {
     // Story 15-s1 — the same channel now carries the Family Calendar's Lunch
     // Days, so the line may no longer claim the omitted days are a mid-week
     // start: they are just as often a half-term or a school trip.
-    it('does not attribute omitted days to a mid-week start', async () => {
+    it('frames omitted days as needing no lunch, with mid-week start as only one possible cause', async () => {
       const capture: { content?: string } = {};
       const orchestrator = buildCapturingOrchestrator(capture);
 
@@ -991,6 +991,9 @@ describe('DomainOrchestrator', () => {
 
       expect(capture.content).toContain('the omitted days need no lunch');
       expect(capture.content).toContain('the family calendar marks them as days off');
+      // Mid-week start may appear only as one alternative in the pair, never as
+      // the sole asserted cause (false framing on a half-term week).
+      expect(capture.content).toContain('the plan starts mid-week, or');
       expect(capture.content).not.toMatch(/omitted days are intentionally left empty/);
     });
 

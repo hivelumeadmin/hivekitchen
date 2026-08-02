@@ -53,8 +53,10 @@ CREATE TABLE IF NOT EXISTS calendar_terms (
   source       calendar_source NOT NULL DEFAULT 'manual',
   created_at   timestamptz NOT NULL DEFAULT now(),
   CONSTRAINT calendar_terms_date_order CHECK (end_date >= start_date),
+  -- cardinality, not array_length: array_length('{}', 1) is NULL, and a NULL
+  -- CHECK result passes — an empty weekdays array would slip through.
   CONSTRAINT calendar_terms_weekdays_valid CHECK (
-    array_length(weekdays, 1) >= 1
+    cardinality(weekdays) >= 1
     AND weekdays <@ ARRAY[1, 2, 3, 4, 5, 6]::smallint[]
   )
 );

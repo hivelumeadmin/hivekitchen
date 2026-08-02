@@ -3,6 +3,7 @@ import type { PlanComposeTreeOutput, KitchenMap } from '@hivekitchen/types';
 import { InvalidationEvent } from '@hivekitchen/contracts';
 import {
   buildCommitInputTree,
+  resolveEffectiveDays,
   buildPlanProgressPayload,
   buildPlanUpdatedPayload,
   deriveWeekId,
@@ -494,9 +495,69 @@ describe('buildCommitInputTree — effectiveDays filter (Story 15-s1)', () => {
     expect(snack?.snack_sku_id).toBe(SNACK_SKU_ID);
   });
 
-  it('produces an empty day list when the day set excludes everything composed', () => {
-    const input = buildCommitInputTree(buildOutput(), REQUEST_ID, [], ['friday']);
+  it('throws when the day set excludes everything composed (never hands the RPC an empty tree)', () => {
+    // The worker skips composition when the effective set is EMPTY, so reaching
+    // here with zero surviving days means the model ignored the LUNCH DAYS line
+    // entirely — fail loudly on the job's failure path (review patch, 2026-08-02).
+    expect(() => buildCommitInputTree(buildOutput(), REQUEST_ID, [], ['friday'])).toThrow(
+      /no days inside the effective lunch-day set/,
+    );
+  });
 
-    expect(input.days).toEqual([]);
+  it('drops main_assignments stranded by the day filter (review patch, 2026-08-02)', () => {
+    // buildOutput: sequence 1 lives on monday, sequence 2 only on wednesday.
+    // Filtering to monday must drop assignment 2, or the RPC inserts a Main
+    // that appears on zero days.
+    const input = buildCommitInputTree(buildOutput(), REQUEST_ID, [], ['monday']);
+
+    expect(input.days.map((d) => d.day)).toEqual(['monday']);
+    expect(input.main_assignments).toEqual([{ sequence: 1, recipe_id: RECIPE_M1 }]);
+  });
+});
+
+// Story 15-s1 review D2 — basis-aware combination of calendar lunch days with
+// the on-demand compose window.
+describe('resolveEffectiveDays', () => {
+  it('intersects a mid-week window with the calendar', () => {
+    expect(
+      resolveEffectiveDays(
+        ['monday', 'tuesday', 'wednesday', 'thursday', 'friday'],
+        ['wednesday', 'thursday', 'friday'],
+        'current_week_remaining',
+      ),
+    ).toEqual(['wednesday', 'thursday', 'friday']);
+  });
+
+  it('lets the calendar define the week on a next_week_full window — Saturday survives', () => {
+    // deriveCompositionWindow never emits saturday in planned_days; on a full
+    // next-week window that Mon–Fri set means "the whole week", so a
+    // Saturday-school term must not be intersected away.
+    expect(
+      resolveEffectiveDays(
+        ['monday', 'wednesday', 'saturday'],
+        ['monday', 'tuesday', 'wednesday', 'thursday', 'friday'],
+        'next_week_full',
+      ),
+    ).toEqual(['monday', 'wednesday', 'saturday']);
+  });
+
+  it('keeps planned_days unchanged on next_week_full when the calendar has no opinion', () => {
+    expect(
+      resolveEffectiveDays(
+        undefined,
+        ['monday', 'tuesday', 'wednesday', 'thursday', 'friday'],
+        'next_week_full',
+      ),
+    ).toEqual(['monday', 'tuesday', 'wednesday', 'thursday', 'friday']);
+  });
+
+  it('propagates a holiday week ([]) through a next_week_full window', () => {
+    expect(
+      resolveEffectiveDays([], ['monday', 'tuesday', 'wednesday', 'thursday', 'friday'], 'next_week_full'),
+    ).toEqual([]);
+  });
+
+  it('returns undefined when neither source has an opinion (cron path)', () => {
+    expect(resolveEffectiveDays(undefined, undefined, undefined)).toBeUndefined();
   });
 });

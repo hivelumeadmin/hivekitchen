@@ -1,6 +1,6 @@
 # Story 15.1: family-calendar-terms-exceptions
 
-Status: review
+Status: done
 
 <!-- Epic 15: Canonical Data Model v2. Source spec: _bmad-output/planning-artifacts/canonical-data-model-v2-spec.md §4.6 (Calendar), §3.3 (resolver), §7 (cross-cutting), §8 step 1 (additive, ships alone). -->
 
@@ -41,7 +41,8 @@ so that Lumi composes lunches only for the days that actually need one — inste
   - [x] 4.2 Unit tests (colocated): no-terms → undefined; term covering part of week; term boundary days (start/end date inclusive); weekday-subset term; saturday term; each exception kind (removing vs non-removing); child-scoped exception ignored; multi-term union; fully-excepted week → `[]` (empty array, NOT undefined — the caller distinguishes "no calendar" from "calendar says no lunch").
 - [x] Task 5 — Planner wiring (AC: #5, #6)
   - [x] 5.1 `plan-generation.job.ts`: load calendar via `FamilyCalendarRepository.findForWeek` in the existing context `Promise.all` block (~:409-449, `loadCulturalContextForHousehold` precedent — failure → undefined + warn log, never fails the job). Compute `lunchDays = resolveLunchDays(...)`. Effective set = `lunchDays` ∩ `planned_days` when both defined; whichever is defined otherwise; undefined when neither.
-  - [x] 5.2 Empty effective set → log `calendar_no_lunch_days`, return without composing (before any LLM call or snack rotation). Test this path.
+  - [x] 5.2 Empty effective set → log `calendar_no_lunch_days`, return without composing (before any LLM call or snack rotation). Test this path. <!-- REVIEW NOTE 2026-08-02: the early return itself was NOT tested (worker body, untestable in this repo's harness) — only its inputs are covered; disclosed in Completion Notes, checkbox originally overclaimed -->
+
   - [x] 5.3 Pass the effective set as `plannedDays` into `assignSnackRotation` (~:490-497) and BOTH `planWeek` calls (~:561 initial, ~:651 guardrail-retry regen). Do NOT touch `plan-regeneration.job.ts` (day-scoped regen) — `orchestrator.ts:301-303` throws on `plannedDays`+`dayScope` together; calendar applies to full-week composition only in this slice.
   - [x] 5.4 `buildCommitInputTree` (~:113-158): when an effective day set is defined, filter `output.days` to it before building the commit tree. Test: model emits a holiday day → committed tree lacks it.
   - [x] 5.5 Generalize the orchestrator context line (`orchestrator.ts:462-468`): the current text says "the plan starts mid-week", which is wrong framing for a term holiday. Reword to cover both (e.g. "the omitted days do not need a lunch (mid-week start or family-calendar day off)"). Update `planner.prompt.ts:57-61` + `:170-175` prose ("Monday through Friday by default…") to mention the family calendar as the authority when present; bump `PLANNER_PROMPT.version` per its header convention.
@@ -52,6 +53,30 @@ so that Lumi composes lunches only for the days that actually need one — inste
   - [x] 7.2 Full API suite: zero NEW failures vs the documented pre-existing baseline; audit parity test green.
   - [x] 7.3 Confirm zero `apps/web/src` + `apps/web/test` changes (`git diff --stat` empty for both); E2E therefore not re-gated — record this reasoning, run the full suite anyway if any shared package changed shape (contracts DID change → run it; expect 425/13/0).
   - [x] 7.4 Dev Record: files, decisions, deviations, baselines; update `sprint-status.yaml` note.
+
+### Review Findings
+
+<!-- Code review 2026-08-02 (bmad-code-review, claude-fable-5): 3-layer adversarial pass on commit cbdab05. 6 decision-needed (all resolved: 2 deferred, 1 dismissed-keep, 3 → patch), 9 patch, 4 defer, 5 dismissed. ALL 12 PATCHES APPLIED 2026-08-02: basis-aware resolveEffectiveDays (Saturday survives next_week_full), child ownership check + forced source='manual' on calendar writes, cardinality() weekdays CHECK, 23505→409, empty-commit-tree throw, orphan main_assignment filter, calendar load parallelized, imports merged, test/comment honesty fixes, Dev Notes/Record amendments. Gates post-patch: API 2450 passed / 0 failed / 39 skipped (+11 new tests), turbo typecheck+lint green, knip 0. -->
+
+- [x] [Review][Decision→Defer] Holiday-week skip is invisible to the client — `plan-generation.job.ts:496-507` returns before the first `plan_progress` publish and writes no plan/brief state, so an on-demand "compose now" during a fully-excepted week leaves the client polling forever ("Brief silently waits" failure class). RESOLVED: defer to the calendar-UI slice — unreachable until terms are creatable in the UI; the terminal SSE event + test ship with that slice.
+- [x] [Review][Patch] Saturday never survives the real compose path — every production compose goes through `plans.service.ts:703` → `deriveCompositionWindow`, whose `plannedDays` is always a Mon–Fri subset, so `intersectDaySets(lunchDays, planned_days)` at `plan-generation.job.ts:494` drops Saturday for every Saturday-school term; AC #7 holds only in unit tests. RESOLVED as patch: basis-aware intersect — pass `basis` through the job payload; when `basis === 'next_week_full'`, treat planned_days as no-opinion so the calendar defines the week; mid-week windows still intersect.
+- [x] [Review][Decision→Dismiss] Resolver returns `undefined` when a term overlaps the week but its weekdays cover zero in-range dates. RESOLVED: keep `undefined` (AC #4 letter; fails toward planning food, not skipping a week). The misleading "distant-term guard" comment is fixed under the comment/test-name patch.
+- [x] [Review][Decision→Defer] Exceptions with no covering term are silently ignored (`family-calendar.resolver.ts:71-87`) — a "no lunch Friday" exception with no term does nothing. RESOLVED: accept for v1 per AC #4's term-first resolver contract; revisit when the calendar UI teaches the term-first model.
+- [x] [Review][Patch] Audit metadata Dev-Notes lock amended — routes write `{ action, term_id }` / `{ action, exception_id, kind }` vs the locked "`{ action }` only". RESOLVED: bless the richer shape — amend the Dev Notes lock to `{ action, id, kind }` (doc-only; ids are PII-free and useful for tracing deletes).
+- [x] [Review][Patch] Client can forge `source` — create-input schemas accept `'google_readonly' | 'school_import'` from any REST caller. RESOLVED: routes hard-set `source: 'manual'` and ignore the client field; contract shape untouched; future ingestion writes via the repository directly. [apps/api/src/modules/households/households.routes.ts]
+- [x] [Review][Patch] `child_id` on term/exception create not validated against the household — cross-household child attach (no composite FK; resolver unions foreign child-scoped terms) + nonexistent uuid → raw FK violation → 500 [apps/api/src/modules/households/households.routes.ts (POST terms/exceptions handlers)]
+- [x] [Review][Patch] `calendar_terms_weekdays_valid` CHECK silently passes an empty array — `array_length('{}',1)` is NULL → NULL CHECK passes; use `cardinality(weekdays) >= 1` (migration not yet pushed — safe to edit in place) [supabase/migrations/20261035000000_create_family_calendar.sql:56-59]
+- [x] [Review][Patch] Duplicate exception POST → raw Postgres 23505 escapes as 500 — map to 409 ConflictError (precedent: compliance.repository.ts:86) [apps/api/src/modules/households/family-calendar.repository.ts:60-77]
+- [x] [Review][Patch] Model output disjoint from `effectiveDays` commits `days: []` — commit-tree day schemas are `.min(1)`, so a model that ignores the LUNCH DAYS line produces an opaque schema/RPC failure; guard with a clear error on the existing failure path [apps/api/src/jobs/plan-generation.job.ts:133-136]
+- [x] [Review][Patch] Orphan `main_assignments` survive day filtering — filtering `output.days` keeps assignments referenced by zero surviving days; filter to used sequences [apps/api/src/jobs/plan-generation.job.ts:171]
+- [x] [Review][Patch] Calendar load is a serial extra round-trip — Task 5.1 prescribed the context `Promise.all` block; `findForWeek` only needs `household_id`/`week_of`, move it into the parallel batch [apps/api/src/jobs/plan-generation.job.ts:475]
+- [x] [Review][Patch] Duplicate `import type ... from '@hivekitchen/types'` statements [apps/api/src/modules/households/family-calendar.resolver.ts:1-2]
+- [x] [Review][Patch] Test name overclaims — "does not attribute omitted days to a mid-week start" asserts new clauses are present but never asserts anything about the mid-week phrasing (still present in the line) [apps/api/src/agents/orchestrator.test.ts (~:969)]
+- [x] [Review][Patch] Dev Record honesty — record the two extra `child_id` partial indexes and the `findForWeek` 2-arg→3-arg deviation; annotate Task 5.2's checked-but-skipped "Test this path" (currently only disclosed as a coverage gap) [this story file]
+- [x] [Review][Defer] Saturday-school household with NO calendar term still gets a snack-less Saturday — `SCHOOL_DAYS` fallback path, pre-existing; AC #7 scoped to the calendar path [apps/api/src/services/snack-rotation.service.ts:177-181] — deferred, pre-existing
+- [x] [Review][Defer] No duplicate/overlap constraint on `calendar_terms` (double-tap POST grows identical rows; union semantics hide it) — authoritative DDL had none [supabase/migrations/20261035000000_create_family_calendar.sql] — deferred, spec-scoped
+- [x] [Review][Defer] Calendar audit writes untested end-to-end — route tests capture `request.auditContext` via a shim; nothing proves the production audit hook lands rows for these routes — repo-wide harness limitation [apps/api/src/modules/households/households.routes.test.ts] — deferred, pre-existing pattern
+- [x] [Review][Defer] Any calendar term flips the prompt to LUNCH DAYS framing even for a standard Mon–Fri week (prompt bytes change the moment a term exists) — consistent with calendar-authoritative doctrine; note for the calendar-UI slice [apps/api/src/agents/orchestrator.ts] — deferred, informational
 
 ## Dev Notes
 
@@ -152,7 +177,8 @@ No `updated_at` / `set_updated_at` trigger — v1 has no UPDATE operation (delet
 - **Union semantics for terms** (any child in school ⇒ lunch day); **household-wide-only exceptions** affect the set. Child-scoped rows are accepted and stored for forward-compat but inert in the resolver this slice — document this in the resolver's header comment.
 - **Non-removing kinds:** `early_release` (kid still eats lunch) and `other` (annotation) never remove a day.
 - **Auth split:** writes = `requireParentOrCaregiver` (packers/day-logistics precedent, NOT extra-library's primary-parent-only), reads = both roles. Guest authors: no access.
-- **Audit metadata:** `{ action }` only. `note` is potentially-PII free text — keep it out (precedent: `households.routes.ts:682-685`).
+- **Audit metadata:** `{ action, id, kind }` — the row id and (for exceptions) the kind enum are PII-free and useful for tracing deletes. `label` and `note` are parent-authored free text — keep them out (precedent: `households.routes.ts:682-685`). <!-- amended from "{ action } only" per review decision D5, 2026-08-02 -->
+
 
 ### Testing standards
 
@@ -208,6 +234,7 @@ claude-fable-5 (dev-story, 2026-08-02)
 6. **Snack rotation now honours a supplied day set verbatim** (ordered by a new `WEEKDAY_ORDER`) instead of intersecting with Mon–Fri `SCHOOL_DAYS`, which is retained as the no-input default. Without this AC #7 was unreachable: a Saturday-school household would have received a Main with no snack beside it.
 7. **Write auth = parent-or-caregiver** (packers/day-logistics precedent), not extra-library's primary-parent-only. Term dates and no-lunch days are shared logistics, not household food policy. Guest authors are excluded.
 8. **Audit metadata is PII-free**: `{ action, id, kind }` only. The parent-authored term `label` and exception `note` are deliberately excluded and asserted absent by two tests.
+9a. **Undisclosed deviations recorded post-review (2026-08-02):** (i) the migration adds two partial indexes not in the authoritative DDL — `calendar_terms_child_idx` and `calendar_exceptions_child_idx` on `child_id WHERE child_id IS NOT NULL`; (ii) `findForWeek` took a third `weekEnd` argument (caller computes `addDaysIso(week_of, 5)`) instead of the story's 2-arg signature; (iii) the calendar load originally ran serially after the context `Promise.all` block, contrary to Task 5.1 — fixed by a review patch (now inside the block).
 9. **Test-harness addition**: `households.routes.test.ts` never registered the audit hook (existing routes there write audit directly via `auditService`). Added an `onSend` capture of `request.auditContext` into a dedicated `auditContexts` array — deterministic, unlike the real hook which writes fire-and-forget from `onResponse` after `inject()` has already resolved. Kept separate from `state.audit` so no existing assertion changes meaning.
 
 **Known coverage gap (disclosed, not papered over):**
