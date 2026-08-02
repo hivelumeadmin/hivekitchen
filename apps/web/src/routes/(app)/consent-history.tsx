@@ -98,7 +98,7 @@ export default function ConsentHistoryRoute() {
       ) : (
         <ul className="mt-8 space-y-4">
           {events.map((event) => (
-            <li key={event.id} className="border-b border-border/20 pb-4">
+            <li key={event.id} className="border-b border-[color-mix(in_srgb,var(--border)_20%,transparent)] pb-4">
               <p className="font-sans text-sm text-fg">{eventLabel(event)}</p>
               <p className="mt-1 font-sans text-xs text-fg-muted">
                 {new Date(event.created_at).toLocaleDateString(undefined, {

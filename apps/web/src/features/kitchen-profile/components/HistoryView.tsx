@@ -44,7 +44,7 @@ export function HistoryView({ turns, emphasizeLatest = true }: HistoryViewProps)
                     'max-w-[85%] whitespace-pre-line rounded-2xl px-4 py-3 text-base leading-relaxed',
                     turn.role === 'lumi'
                       ? isLatestLumi
-                        ? 'rounded-tl-sm bg-surface-2 font-serif text-fg shadow-sm ring-1 ring-amber/30'
+                        ? 'rounded-tl-sm bg-surface-2 font-serif text-fg shadow-sm ring-1 ring-[color-mix(in_srgb,var(--amber)_30%,transparent)]'
                         : 'rounded-tl-sm bg-surface font-serif text-fg'
                       : 'rounded-tr-sm bg-surface-2 font-sans text-fg',
                   ].join(' ')}

@@ -1,6 +1,6 @@
 import { describe, it, expect, afterEach } from 'vitest';
 import { render, screen, cleanup } from '@testing-library/react';
-import { FreshnessState, formatEstimatedRecovery } from './FreshnessState.js';
+import { FreshnessState, formatEstimatedRecovery } from '../FreshnessState.js';
 
 afterEach(() => {
   cleanup();

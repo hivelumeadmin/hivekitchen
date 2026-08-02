@@ -1,5 +1,5 @@
 import { useRef, useState } from 'react';
-import { AppFooter } from '../components/AppFooter.js';
+import { AppFooter } from '@hivekitchen/ui';
 import { AppHeader } from '../components/AppHeader.js';
 import { type CalendarValue } from '../features/kitchen-profile/components/CalendarEditConversation.js';
 import { CalendarSummary } from '../features/kitchen-profile/components/CalendarSummary.js';

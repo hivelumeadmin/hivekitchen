@@ -1,4 +1,4 @@
-import { AppFooter } from '../components/AppFooter.js';
+import { AppFooter } from '@hivekitchen/ui';
 import { AppHeader } from '../components/AppHeader.js';
 import { LoginForm } from '../features/login/components/LoginForm.js';
 import { LoginHero } from '../features/login/components/LoginHero.js';

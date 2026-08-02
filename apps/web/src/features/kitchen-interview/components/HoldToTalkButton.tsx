@@ -1,4 +1,4 @@
-import { MicIcon } from '../../../components/icons.js';
+import { MicIcon } from '@hivekitchen/ui';
 
 interface Readonly_HoldToTalkButtonProps {
   readonly label: string;

@@ -4,7 +4,7 @@ import {
   ShieldIcon,
   StarFilledIcon,
   SunIcon,
-} from '../../../components/icons.js';
+} from '@hivekitchen/ui';
 import type { BadgeColor, BadgeIcon, RecipeBadge as BadgeData } from '../data/mockData.js';
 
 interface Readonly_RecipeBadgeProps {
@@ -14,9 +14,9 @@ interface Readonly_RecipeBadgeProps {
 export type RecipeBadgeProps = Readonly<Readonly_RecipeBadgeProps>;
 
 const colorClass: Record<BadgeColor, string> = {
-  sacred: 'bg-sacred/10 text-sacred border-sacred/20',
-  'safety-cleared': 'bg-safety-cleared/10 text-safety-cleared border-safety-cleared/20',
-  amber: 'bg-amber-warm/10 text-amber-warm border-amber-warm/20',
+  sacred: 'bg-sacred-100 text-sacred-800 border-sacred-300',
+  'safety-cleared': 'bg-safety-cleared-100 text-safety-cleared-800 border-safety-cleared-300',
+  amber: 'bg-honey-amber-100 text-honey-amber-800 border-honey-amber-300',
 };
 
 export function RecipeBadge({ badge }: RecipeBadgeProps) {

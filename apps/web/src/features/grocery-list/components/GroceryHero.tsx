@@ -1,4 +1,4 @@
-import { SyncIcon } from '../../../components/icons.js';
+import { SyncIcon } from '@hivekitchen/ui';
 
 interface Readonly_GroceryHeroProps {
   readonly eyebrow: string;

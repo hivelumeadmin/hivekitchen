@@ -253,7 +253,7 @@ export function IdentityEditConversation({
 function SummaryChip({ chip }: { chip: EnforcedChip }) {
   if (chip.enforcement === 'always') {
     return (
-      <span className="flex items-center gap-1 rounded-md border border-foliage/60 bg-foliage-soft px-2 py-0.5 font-sans text-[11px] font-medium text-fg">
+      <span className="flex items-center gap-1 rounded-md border border-[color-mix(in_srgb,var(--foliage)_60%,transparent)] bg-foliage-soft px-2 py-0.5 font-sans text-[11px] font-medium text-fg">
         {chip.label}
         <span className="text-[9px] uppercase tracking-wide text-foliage">· rule</span>
       </span>
@@ -261,13 +261,13 @@ function SummaryChip({ chip }: { chip: EnforcedChip }) {
   }
   if (chip.enforcement === 'prefer') {
     return (
-      <span className="rounded-md border border-foliage/40 bg-foliage-soft/40 px-2 py-0.5 font-sans text-[11px] text-fg">
+      <span className="rounded-md border border-[color-mix(in_srgb,var(--foliage)_40%,transparent)] bg-foliage-100 px-2 py-0.5 font-sans text-[11px] text-fg">
         {chip.label}
       </span>
     );
   }
   return (
-    <span className="rounded-md bg-warm-neutral-100/60 px-2 py-0.5 font-sans text-[11px] italic text-fg-muted">
+    <span className="rounded-md bg-[color-mix(in_srgb,var(--fg-muted)_10%,transparent)] px-2 py-0.5 font-sans text-[11px] italic text-fg-muted">
       {chip.label}
     </span>
   );
@@ -285,7 +285,7 @@ function CurrentChip({ chip, stagedForRemoval, onToggle }: CurrentChipProps) {
       <button
         type="button"
         onClick={onToggle}
-        className="flex items-center gap-1.5 rounded-md border border-dashed border-lumi-terracotta/60 bg-lumi-terracotta/5 px-2.5 py-1 font-sans text-xs text-fg-muted line-through transition-colors hover:bg-lumi-terracotta/10"
+        className="flex items-center gap-1.5 rounded-md border border-dashed border-[color-mix(in_srgb,var(--lumi-terracotta)_60%,transparent)] bg-[color-mix(in_srgb,var(--lumi-terracotta)_5%,transparent)] px-2.5 py-1 font-sans text-xs text-fg-muted line-through transition-colors hover:bg-[color-mix(in_srgb,var(--lumi-terracotta)_10%,transparent)]"
         aria-label={`Undo dropping ${chip.label}`}
       >
         {chip.label}
@@ -305,7 +305,7 @@ function CurrentChip({ chip, stagedForRemoval, onToggle }: CurrentChipProps) {
       >
         {chip.label}
         <span className="text-[10px] uppercase tracking-wide text-foliage">· rule</span>
-        <span className="ms-0.5 text-fg-muted/70" aria-hidden>
+        <span className="ms-0.5 text-fg-muted" aria-hidden>
           ×
         </span>
       </button>
@@ -316,11 +316,11 @@ function CurrentChip({ chip, stagedForRemoval, onToggle }: CurrentChipProps) {
       <button
         type="button"
         onClick={onToggle}
-        className="flex items-center gap-1.5 rounded-md border border-foliage/60 bg-foliage-soft/50 px-2.5 py-1 font-sans text-xs text-fg transition-opacity hover:opacity-80"
+        className="flex items-center gap-1.5 rounded-md border border-[color-mix(in_srgb,var(--foliage)_60%,transparent)] bg-foliage-100 px-2.5 py-1 font-sans text-xs text-fg transition-opacity hover:opacity-80"
         aria-label={`Drop ${chip.label}`}
       >
         {chip.label}
-        <span className="ms-0.5 text-fg-muted/70" aria-hidden>
+        <span className="ms-0.5 text-fg-muted" aria-hidden>
           ×
         </span>
       </button>
@@ -330,11 +330,11 @@ function CurrentChip({ chip, stagedForRemoval, onToggle }: CurrentChipProps) {
     <button
       type="button"
       onClick={onToggle}
-      className="flex items-center gap-1.5 rounded-md bg-warm-neutral-100/60 px-2.5 py-1 font-sans text-xs italic text-fg-muted transition-opacity hover:opacity-80"
+      className="flex items-center gap-1.5 rounded-md bg-[color-mix(in_srgb,var(--fg-muted)_10%,transparent)] px-2.5 py-1 font-sans text-xs italic text-fg-muted transition-opacity hover:opacity-80"
       aria-label={`Drop ${chip.label}`}
     >
       {chip.label}
-      <span className="ms-0.5 text-fg-muted/70 not-italic" aria-hidden>
+      <span className="ms-0.5 text-fg-muted not-italic" aria-hidden>
         ×
       </span>
     </button>
@@ -365,7 +365,7 @@ function AddChip({ chip, staged, onToggle }: AddChipProps) {
     <button
       type="button"
       onClick={onToggle}
-      className="flex items-center gap-1.5 rounded-md border border-dashed border-fg-muted/40 px-2.5 py-1 font-sans text-xs text-fg-muted transition-colors hover:border-amber/50 hover:text-fg"
+      className="flex items-center gap-1.5 rounded-md border border-dashed border-[color-mix(in_srgb,var(--fg-muted)_40%,transparent)] px-2.5 py-1 font-sans text-xs text-fg-muted transition-colors hover:border-[color-mix(in_srgb,var(--amber)_50%,transparent)] hover:text-fg"
       aria-label={`Add ${chip.label}`}
     >
       <span className="text-amber-warm" aria-hidden>

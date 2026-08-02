@@ -1,6 +1,6 @@
 // apps/web/src/providers/query-provider.tsx
 import { lazy, Suspense, useEffect, useRef } from 'react';
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { notifyManager, QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { createSseBridge } from '@/lib/realtime/index.js';
 import type { SseBridge } from '@/lib/realtime/index.js';
 import { useAuthStore } from '@/stores/auth.store.js';
@@ -12,6 +12,16 @@ const ReactQueryDevtools = import.meta.env.DEV
       import('@tanstack/react-query-devtools').then((m) => ({ default: m.ReactQueryDevtools })),
     )
   : null;
+
+// React Query notifies observers through notifyManager, whose default scheduler
+// is setTimeout(cb, 0) — a macrotask. That breaks controlled inputs backed by
+// the cache: an optimistic write made inside a change handler lands AFTER React
+// finishes the discrete click dispatch and restores the DOM node to its last
+// committed prop, so a checkbox visibly snaps back for a frame before the
+// re-render catches up. Flushing synchronously restores the behaviour a plain
+// setState had. Batching is unaffected — notifyManager.batch() still coalesces;
+// only the flush timing changes.
+notifyManager.setScheduler((flush) => flush());
 
 // Singleton QueryClient — created once for the app lifetime.
 // Not in useState (avoids recreation on HMR) and not in module scope (avoids leaking between tests).
@@ -55,7 +65,13 @@ export function QueryProvider({ children }: QueryProviderProps) {
     let prevToken = useAuthStore.getState().accessToken;
     const unsubscribe = useAuthStore.subscribe((state) => {
       if (state.accessToken !== prevToken) {
+        const wasSignedIn = prevToken !== null;
         prevToken = state.accessToken;
+        // Drop every cached response on sign-out. Without this a same-user
+        // re-login inside gcTime renders the previous session's cached data
+        // instead of the loading state, and a different user could briefly be
+        // served the last one's entries.
+        if (wasSignedIn && state.accessToken === null) queryClient.clear();
         bridge.connect();
       }
     });

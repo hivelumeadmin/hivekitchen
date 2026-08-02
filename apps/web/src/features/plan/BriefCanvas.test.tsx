@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, waitFor, cleanup, fireEvent } from '@testing-library/react';
+import { render as rtlRender, screen, waitFor, cleanup, fireEvent } from '@testing-library/react';
 import type { ReactNode } from 'react';
+import { MemoryRouter } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { BriefResponse, BriefStatePayload, BriefStateRow } from '@hivekitchen/types';
 import { useAuthStore } from '@/stores/auth.store.js';
@@ -26,6 +27,13 @@ function setUser() {
 
 function clearUser() {
   useAuthStore.getState().clearSession();
+}
+
+// 14-s4 review D2: WeekGrid's day rows now carry an "Open day" <Link>, so the
+// canvas needs a Router in the tree. Harness-only change — every assertion in
+// this file is untouched.
+function render(ui: ReactNode) {
+  return rtlRender(<MemoryRouter>{ui}</MemoryRouter>);
 }
 
 function renderWithClient(ui: ReactNode) {
@@ -691,6 +699,34 @@ describe('BriefCanvas — 13-s4 finished surface', () => {
     expect(screen.queryByRole('textbox')).toBeNull();
   });
 
+  it('renders the freshness line in the hero, between the Lumi note and the week', async () => {
+    const { hkFetch } = await import('@/lib/fetch.js');
+    vi.mocked(hkFetch).mockRejectedValue(new Error('Network error'));
+
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false, gcTime: 60_000, staleTime: 0 } },
+    });
+    client.setQueryData(
+      ['brief', HOUSEHOLD_ID],
+      { brief: makeBrief() } satisfies BriefResponse,
+      { updatedAt: Date.now() - 10 * 60_000 },
+    );
+
+    render(
+      <QueryClientProvider client={client}>
+        <BriefCanvas />
+      </QueryClientProvider>,
+    );
+
+    await waitFor(() => expect(screen.getByRole('status')).toBeDefined());
+    const lumiNote = screen.getByText('Tuesday flexes around your late meeting.');
+    const freshness = screen.getByRole('status');
+    const week = screen.getByLabelText('Weekly plan');
+    // Node.DOCUMENT_POSITION_FOLLOWING === 4 — note → freshness → week.
+    expect(lumiNote.compareDocumentPosition(freshness) & 4).toBe(4);
+    expect(freshness.compareDocumentPosition(week) & 4).toBe(4);
+  });
+
   it('renders no chat composer or message log on the finished surface', async () => {
     const { hkFetch } = await import('@/lib/fetch.js');
     vi.mocked(hkFetch).mockResolvedValue({ brief: makeBrief() } satisfies BriefResponse);
@@ -700,5 +736,149 @@ describe('BriefCanvas — 13-s4 finished surface', () => {
     await waitFor(() => expect(screen.getByLabelText('Weekly plan')).toBeDefined());
     expect(screen.queryByRole('textbox')).toBeNull();
     expect(screen.queryByRole('log')).toBeNull();
+  });
+});
+
+// Story 14-s3 — the week is an editorial day-row itinerary. The container label
+// and per-day <article> contract are unchanged (13-s1); these pin the new
+// itinerary affordances that are derived in WeekGrid.
+describe('BriefCanvas — 14-s3 editorial itinerary', () => {
+  const RECIPE_A = '77777777-7777-4777-8777-777777777771';
+  const RECIPE_B = '77777777-7777-4777-8777-777777777772';
+
+  function briefWithMains(recipeByDay: Record<string, string>) {
+    const brief = makeBrief();
+    brief.payload.tile_summaries = brief.payload.tile_summaries.map((t) => ({
+      ...t,
+      items: t.items.map((i) => ({ ...i, recipe_id: recipeByDay[t.day] })),
+    }));
+    return brief;
+  }
+
+  it('marks the later of two consecutive days sharing a main as a repeat', async () => {
+    const { hkFetch } = await import('@/lib/fetch.js');
+    vi.mocked(hkFetch).mockResolvedValue({
+      brief: briefWithMains({
+        monday: RECIPE_A,
+        tuesday: RECIPE_A,
+        wednesday: RECIPE_B,
+        thursday: RECIPE_B,
+        friday: RECIPE_A,
+      }),
+    } satisfies BriefResponse);
+
+    renderWithClient(<BriefCanvas />);
+
+    await waitFor(() => expect(screen.getByLabelText('Weekly plan')).toBeDefined());
+    // Tuesday repeats Monday; Thursday repeats Wednesday. Friday is A again but
+    // NOT consecutive with Thursday's B, so it carries full prominence.
+    expect(screen.getAllByText('again')).toHaveLength(2);
+    expect(screen.getByLabelText('Tuesday').textContent).toContain('again');
+    expect(screen.getByLabelText('Thursday').textContent).toContain('again');
+    expect(screen.getByLabelText('Friday').textContent).not.toContain('again');
+  });
+
+  it('marks no repeats when every day has a distinct main', async () => {
+    const { hkFetch } = await import('@/lib/fetch.js');
+    // Review P5 — distinct recipe_ids on every day, so this exercises the real
+    // distinct-mains path (the default fixture has no recipe_id at all, which
+    // made this assertion vacuous).
+    vi.mocked(hkFetch).mockResolvedValue({
+      brief: briefWithMains({
+        monday: '77777777-7777-4777-8777-777777777701',
+        tuesday: '77777777-7777-4777-8777-777777777702',
+        wednesday: '77777777-7777-4777-8777-777777777703',
+        thursday: '77777777-7777-4777-8777-777777777704',
+        friday: '77777777-7777-4777-8777-777777777705',
+      }),
+    } satisfies BriefResponse);
+
+    renderWithClient(<BriefCanvas />);
+
+    await waitFor(() => expect(screen.getByLabelText('Weekly plan')).toBeDefined());
+    expect(screen.queryByText('again')).toBeNull();
+  });
+
+  // Review P3 — "again" means CALENDAR-consecutive: a shared main across a
+  // missing day (the composer omits days with no tile items) is not a repeat.
+  it('does not mark a repeat across a missing day', async () => {
+    const { hkFetch } = await import('@/lib/fetch.js');
+    const brief = briefWithMains({
+      monday: RECIPE_A,
+      tuesday: RECIPE_A,
+      wednesday: RECIPE_B,
+      thursday: RECIPE_B,
+      friday: RECIPE_A,
+    });
+    // Drop Wednesday entirely: Tuesday(A) → [gap] → Thursday(B) → Friday... make
+    // Thursday share Tuesday's main so array-adjacency would flag it.
+    brief.payload.tile_summaries = brief.payload.tile_summaries
+      .filter((t) => t.day !== 'wednesday')
+      .map((t) =>
+        t.day === 'thursday'
+          ? { ...t, items: t.items.map((i) => ({ ...i, recipe_id: RECIPE_A })) }
+          : t,
+      );
+    vi.mocked(hkFetch).mockResolvedValue({ brief } satisfies BriefResponse);
+
+    renderWithClient(<BriefCanvas />);
+
+    await waitFor(() => expect(screen.getByLabelText('Weekly plan')).toBeDefined());
+    // Tuesday still repeats Monday (adjacent); Thursday must NOT repeat Tuesday
+    // across the missing Wednesday.
+    expect(screen.getByLabelText('Tuesday').textContent).toContain('again');
+    expect(screen.getByLabelText('Thursday').textContent).not.toContain('again');
+  });
+
+  // Review P2 — legacy pre-3.12 rows carry plan_item_id: null; with no swap in
+  // flight (swappingItemId null) they must render decided, not a stuck spinner.
+  it('does not render a phantom swap-in-progress overlay for null plan_item_id rows', async () => {
+    const { hkFetch } = await import('@/lib/fetch.js');
+    const brief = makeBrief();
+    brief.payload.tile_summaries = brief.payload.tile_summaries.map((t) => ({
+      ...t,
+      items: t.items.map((i) => ({ ...i, plan_item_id: null })),
+    }));
+    vi.mocked(hkFetch).mockResolvedValue({ brief } satisfies BriefResponse);
+
+    renderWithClient(<BriefCanvas />);
+
+    await waitFor(() => expect(screen.getByLabelText('Weekly plan')).toBeDefined());
+    expect(screen.queryByLabelText('Swap in progress')).toBeNull();
+  });
+
+  it('renders each day row with its calendar date', async () => {
+    const { hkFetch } = await import('@/lib/fetch.js');
+    vi.mocked(hkFetch).mockResolvedValue({ brief: makeBrief() } satisfies BriefResponse);
+
+    renderWithClient(<BriefCanvas />);
+
+    // MONDAY_MORNING is Mon 4 May 2026, so the week runs May 4 → May 8.
+    await waitFor(() => expect(screen.getByLabelText('Monday').textContent).toContain('May 4'));
+    expect(screen.getByLabelText('Friday').textContent).toContain('May 8');
+  });
+
+  it('prefers the resolved dish name over the ingredient fallback', async () => {
+    const { hkFetch } = await import('@/lib/fetch.js');
+    const brief = makeBrief();
+    brief.payload.tile_summaries[0] = {
+      ...brief.payload.tile_summaries[0]!,
+      items: [
+        {
+          ...brief.payload.tile_summaries[0]!.items[0]!,
+          name: 'Chicken Biriyani',
+        },
+      ],
+    };
+    vi.mocked(hkFetch).mockResolvedValue({ brief } satisfies BriefResponse);
+
+    renderWithClient(<BriefCanvas />);
+
+    await waitFor(() => expect(screen.getByLabelText('Weekly plan')).toBeDefined());
+    // The resolved name stands alone — ingredients are not appended to it.
+    expect(screen.getByText('Chicken Biriyani')).toBeDefined();
+    expect(screen.getByLabelText('Monday').textContent).not.toContain('rice');
+    // The older ingredient-only rows still render their derived line.
+    expect(screen.getByLabelText('Tuesday').textContent).toContain('noodles');
   });
 });

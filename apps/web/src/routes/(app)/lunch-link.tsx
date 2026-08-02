@@ -272,7 +272,7 @@ export default function LunchLinkRoute() {
       <div className="w-full max-w-md space-y-8">
         <MumNoteSalutation title="A note from Parent" date={dateLabel} />
         {lastSyncedAt !== null && !isOnline && (
-          <p className="text-center text-xs text-fg-muted/50">
+          <p className="text-center text-xs text-fg-muted">
             offline · last synced{' '}
             {new Date(lastSyncedAt).toLocaleTimeString(undefined, {
               hour: '2-digit',
@@ -340,7 +340,7 @@ export default function LunchLinkRoute() {
                 rows={3}
                 dir="auto"
                 placeholder="I'd love…"
-                className="min-h-[48px] w-full resize-none rounded-lg border border-fg-muted/20 bg-surface p-3 font-serif text-[22px] leading-relaxed text-fg placeholder:text-fg-muted/40 focus:outline-none"
+                className="min-h-[48px] w-full resize-none rounded-lg border border-[color-mix(in_srgb,var(--fg-muted)_20%,transparent)] bg-surface p-3 font-serif text-[22px] leading-relaxed text-fg placeholder:text-fg-muted focus:outline-none"
               />
               {requestText.length > 0 && (
                 <p aria-live="polite" className="text-right text-sm text-fg-muted">

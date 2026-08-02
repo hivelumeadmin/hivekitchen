@@ -406,12 +406,13 @@ export function buildSnackContextLoader(deps: {
   };
 }
 
-const SHORT_BY_DAY: Partial<Record<Weekday, 'mon' | 'tue' | 'wed' | 'thu' | 'fri'>> = {
+const SHORT_BY_DAY: Partial<Record<Weekday, 'mon' | 'tue' | 'wed' | 'thu' | 'fri' | 'sat'>> = {
   monday: 'mon',
   tuesday: 'tue',
   wednesday: 'wed',
   thursday: 'thu',
   friday: 'fri',
+  saturday: 'sat',
 };
 
 export interface PlanEditTurnDeps extends PlanEditExecutorDeps {

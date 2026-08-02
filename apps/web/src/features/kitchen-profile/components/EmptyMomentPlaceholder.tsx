@@ -20,7 +20,7 @@ export function EmptyMomentPlaceholder({
   onCta,
 }: EmptyMomentPlaceholderProps) {
   return (
-    <div className="flex flex-col gap-2 rounded-lg border border-amber-warm/30 bg-amber/5 px-4 py-3">
+    <div className="flex flex-col gap-2 rounded-lg border border-[color-mix(in_srgb,var(--amber-warm)_30%,transparent)] bg-[color-mix(in_srgb,var(--amber)_5%,transparent)] px-4 py-3">
       <span className="font-sans text-[12px] font-medium text-amber-warm">
         {label}
       </span>

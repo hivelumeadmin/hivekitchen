@@ -1,11 +1,10 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link, Navigate, useParams } from 'react-router-dom';
-import { useScope } from '@hivekitchen/ui';
+import { useScope, FreshnessState } from '@hivekitchen/ui';
 import { useLumiContext } from '@/hooks/useLumiContext.js';
 import { HkApiError } from '@/lib/fetch.js';
 import { deriveWeekId, getCurrentWeekMonday } from '@/lib/derive-week-id.js';
 import { PageHeader } from '@/components/PageHeader.js';
-import { FreshnessState } from './FreshnessState.js';
 import { PlanTile } from './PlanTile.js';
 import { SwapHistoryPopover } from './SwapHistoryPopover.js';
 import { usePlanHistoryQuery } from './queries.js';
@@ -108,7 +107,10 @@ export function PlanHistoryPage() {
             </p>
           ) : (
             <div
-              className="grid grid-cols-2 md:grid-cols-5 gap-4"
+              // Story 14-s3 — PlanTile is a full-width day row now, so the
+              // historical week stacks like the live itinerary instead of
+              // sitting in a five-column grid.
+              className="flex flex-col gap-3"
               aria-label="Historical weekly plan"
             >
               {summaries.map((summary) => {

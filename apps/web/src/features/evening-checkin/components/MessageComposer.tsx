@@ -3,7 +3,7 @@ import {
   CalendarIcon,
   ImageIcon,
   MicIcon,
-} from '../../../components/icons.js';
+} from '@hivekitchen/ui';
 
 interface Readonly_MessageComposerProps {
   readonly placeholder: string;
@@ -32,7 +32,7 @@ export function MessageComposer({
 }: MessageComposerProps) {
   const [text, setText] = useState('');
   return (
-    <div className="fixed bottom-0 left-0 z-40 w-full border-t border-border/30 bg-surface/95 backdrop-blur-md">
+    <div className="fixed bottom-0 left-0 z-40 w-full border-t border-[color-mix(in_srgb,var(--border)_30%,transparent)] bg-[color-mix(in_srgb,var(--surface)_95%,transparent)] backdrop-blur-md">
       <div className="mx-auto flex max-w-3xl items-end gap-3 p-4">
         <div className="flex flex-grow flex-col rounded-2xl border border-border bg-surface-2 p-1">
           <textarea
@@ -40,7 +40,7 @@ export function MessageComposer({
             onChange={(e) => setText(e.target.value)}
             placeholder={placeholder}
             maxLength={charCap}
-            className="h-12 min-h-[48px] w-full resize-none border-none bg-transparent p-3 text-fg placeholder:text-fg-muted/50 focus:outline-none focus:ring-0"
+            className="h-12 min-h-[48px] w-full resize-none border-none bg-transparent p-3 text-fg placeholder:text-fg-muted focus:outline-none focus:ring-0"
             aria-label="Message"
           />
           <div className="flex items-center justify-between px-3 pb-2">
@@ -62,7 +62,7 @@ export function MessageComposer({
                 <CalendarIcon className="h-5 w-5" />
               </button>
             </div>
-            <span className="text-xs text-fg-muted/30">
+            <span className="text-xs text-fg-muted">
               {text.length} / {charCap}
             </span>
           </div>

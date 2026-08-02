@@ -1,13 +1,12 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { useScope } from '@hivekitchen/ui';
+import { useScope, AppFooter } from '@hivekitchen/ui';
 import {
   OnboardingStateResponseSchema,
   type OnboardingStateResponse,
 } from '@hivekitchen/contracts';
 import { useAuthStore } from '@/stores/auth.store.js';
 import { hkFetch } from '@/lib/fetch.js';
-import { AppFooter } from '@/components/AppFooter.js';
 import { AppHeader } from '@/components/AppHeader.js';
 import { OnboardingVoice } from '@/features/onboarding/OnboardingVoice.js';
 import { OnboardingText } from '@/features/onboarding/OnboardingText.js';

@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { ShieldIcon } from '../../../components/icons.js';
+import { ShieldIcon } from '@hivekitchen/ui';
 import type { Allergen, ChildProfile } from '../data/mockData.js';
 import { AddableChip, RemovableChip } from './EditChips.js';
 import { EditConversation } from './EditConversation.js';
@@ -189,7 +189,7 @@ export function ChildEditConversation({
                 />
               ))}
             </div>
-            <p className="font-sans text-[10px] italic text-fg-muted/60">
+            <p className="font-sans text-[10px] italic text-fg-muted">
               <ShieldIcon className="-mt-0.5 me-1 inline h-3 w-3" />
               Type &quot;medical&quot; alongside an allergen to flag it.
             </p>

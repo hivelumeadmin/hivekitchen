@@ -80,7 +80,7 @@ See `ux-design-directions.html` for exact hexes per theme.
 
 **Headlines / brand:** Instrument Serif (v2.0 lockdown). Used for:
 - Section titles (40px)
-- Brief moment (34px)
+- Brief moment (56px — `PageHeader` `headlineSize="lg"`; corrected 2026-07-30, this doc previously said 34px while the shipped `PageHeader` has rendered 56px since the v2.0 lockdown. Ruled code-is-canon in the 14-s3 review.)
 - Heart Note Composer (26px, italic)
 - Page header (24px)
 
@@ -138,10 +138,17 @@ Identified primitives that should each become a standalone React component:
 | primary | `--fg` | none | `--bg` | `warm-neutral-300` |
 | secondary | `warm-neutral-700` | none | `--fg` | `warm-neutral-600` |
 | tertiary | transparent | none | `warm-neutral-300/400` | underline |
-| proposal | transparent | `1.5px --lumi-terracotta` | `--lumi-terracotta` | bg `--lumi-terracotta-warmed`, text `--warm-neutral-950/900` |
+| proposal | transparent | `1.5px --lumi-terracotta` | `--fg` | bg `--lumi-terracotta-warmed`, text stays `--fg` |
 | destructive | transparent | `1px warm-neutral-400` | `--fg` | bg `--surface-2` |
 
 > **Note:** v2.0's `destructive` variant is intentionally muted — red is reserved for `--safety-red` (allergen / safety-block states only), not destructive UI actions.
+
+> **Correction (2026-08-01, 14-s3b review).** The `proposal` row previously read text `--lumi-terracotta`, hover text `--warm-neutral-950/900`. Both were wrong and are corrected above:
+> - **`--warm-neutral-950` does not exist.** `colorScale()` in `packages/design-system/src/tokens/index.ts` emits 50–900 only, so anything following the old spec literally produced **no CSS rule at all** — the exact silent-failure mode that has bitten this repo repeatedly. (§222's migration table already noted 950 as "v2.0-only… no exact equivalent".)
+> - **`--warm-neutral-900` on `--lumi-terracotta-warmed` measures 4.25:1 in light theme** — below AA for the 13px pill label.
+> - **`--lumi-terracotta` as the base text measures 4.23:1 in dark theme** — AA-large only, so it fails AA at 13px.
+>
+> `--fg` measures 16.76 / 16.25 at rest and 5.34 / 5.19 on the warmed hover fill, clearing AA in both themes. The terracotta identity is carried by the 1.5px border and the hover fill, not by the label. Shipped in `PlanTile.tsx`.
 
 ---
 

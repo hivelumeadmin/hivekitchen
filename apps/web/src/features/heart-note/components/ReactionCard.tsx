@@ -1,4 +1,4 @@
-import { RailCard } from '../../../components/RailCard.js';
+import { RailCard } from '@hivekitchen/ui';
 
 interface ChildReaction {
   readonly emoji: string;

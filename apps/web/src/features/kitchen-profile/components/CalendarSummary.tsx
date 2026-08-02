@@ -1,4 +1,4 @@
-import { CalendarIcon, EditIcon } from '../../../components/icons.js';
+import { CalendarIcon, EditIcon } from '@hivekitchen/ui';
 import {
   CalendarEditConversation,
   type CalendarValue,
@@ -37,7 +37,7 @@ export function CalendarSummary({
     );
   }
   return (
-    <div className="flex flex-col items-start justify-between gap-6 rounded-lg border border-border/20 bg-surface p-6 md:flex-row md:items-center">
+    <div className="flex flex-col items-start justify-between gap-6 rounded-lg border border-[color-mix(in_srgb,var(--border)_20%,transparent)] bg-surface p-6 md:flex-row md:items-center">
       <div className="flex flex-wrap gap-8">
         <SummaryItem
           label={currentTerm.label}

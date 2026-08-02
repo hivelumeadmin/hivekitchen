@@ -1,4 +1,4 @@
-import { AppFooter } from '../components/AppFooter.js';
+import { AppFooter } from '@hivekitchen/ui';
 import { AppHeader } from '../components/AppHeader.js';
 import { MediaSection } from '../features/onboarding/components/MediaSection.js';
 import { OnboardingActions } from '../features/onboarding/components/OnboardingActions.js';

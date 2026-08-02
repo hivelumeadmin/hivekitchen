@@ -1,4 +1,4 @@
-import { ChevronRightIcon, EditIcon, PlusIcon } from '../../../components/icons.js';
+import { ChevronRightIcon, EditIcon, PlusIcon } from '@hivekitchen/ui';
 import {
   type School,
   SchoolsEditConversation,
@@ -38,14 +38,14 @@ export function SchoolsList({
   }
   return (
     <>
-      <div className="rounded-lg border border-border/20 bg-surface">
+      <div className="rounded-lg border border-[color-mix(in_srgb,var(--border)_20%,transparent)] bg-surface">
         {schools.map((school, i) => (
           <button
             key={school.name}
             type="button"
             onClick={() => onSelect?.(school.name)}
             className={`flex w-full items-center justify-between px-6 py-4 text-left transition-colors hover:bg-surface-2 ${
-              i < schools.length - 1 ? 'border-b border-border/10' : ''
+              i < schools.length - 1 ? 'border-b border-[color-mix(in_srgb,var(--border)_10%,transparent)]' : ''
             }`}
           >
             <span className="font-serif text-xl text-fg">{school.name}</span>
@@ -57,7 +57,7 @@ export function SchoolsList({
         <button
           type="button"
           onClick={onAdd}
-          className="flex flex-1 items-center justify-center gap-2 rounded-lg border border-dashed border-border/30 py-4 text-fg-muted transition-all hover:border-border/50 hover:text-fg"
+          className="flex flex-1 items-center justify-center gap-2 rounded-lg border border-dashed border-[color-mix(in_srgb,var(--border)_30%,transparent)] py-4 text-fg-muted transition-all hover:border-[color-mix(in_srgb,var(--border)_50%,transparent)] hover:text-fg"
         >
           <PlusIcon className="h-5 w-5" />
           <span className="font-medium">{addLabel}</span>

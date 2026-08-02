@@ -1,4 +1,4 @@
-import { GoogleLogoIcon } from '../../../components/icons.js';
+import { GoogleLogoIcon } from '@hivekitchen/ui';
 
 interface Readonly_GoogleButtonProps {
   readonly label: string;

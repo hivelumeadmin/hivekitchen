@@ -1,8 +1,4 @@
-import { CheckCircleIcon, RefreshIcon } from '@/components/icons.js';
-import { PrimaryButton } from '@/components/PrimaryButton.js';
-import { SecondaryButton } from '@/components/SecondaryButton.js';
-import { StickyBottomBar } from '@/components/StickyBottomBar.js';
-import { TalkToLumiButton } from '@/components/TalkToLumiButton.js';
+import { CheckCircleIcon, RefreshIcon, PrimaryButton, SecondaryButton, StickyBottomBar, TalkToLumiButton } from '@hivekitchen/ui';
 
 interface Readonly_PlanActionBarProps {
   readonly onConfirm?: () => void;

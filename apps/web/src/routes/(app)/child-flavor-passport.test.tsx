@@ -1,3 +1,4 @@
+import type * as UiModule from '@hivekitchen/ui';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, waitFor, cleanup, fireEvent } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
@@ -20,7 +21,8 @@ vi.mock('@/hooks/useLumiContext.js', () => ({
   useLumiContext: vi.fn(),
 }));
 
-vi.mock('@hivekitchen/ui', () => ({
+vi.mock('@hivekitchen/ui', async (importOriginal) => ({
+  ...(await importOriginal<typeof UiModule>()),
   useScope: vi.fn(),
 }));
 

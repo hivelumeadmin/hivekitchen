@@ -1,3 +1,4 @@
+import type * as UiModule from '@hivekitchen/ui';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, waitFor, cleanup, fireEvent, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
@@ -10,7 +11,8 @@ vi.mock('@/lib/fetch.js', () => ({
   HkApiError: class HkApiError extends Error {},
 }));
 
-vi.mock('@hivekitchen/ui', () => ({
+vi.mock('@hivekitchen/ui', async (importOriginal) => ({
+  ...(await importOriginal<typeof UiModule>()),
   useScope: vi.fn(),
 }));
 

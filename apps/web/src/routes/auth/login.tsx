@@ -1,14 +1,13 @@
 import { useState, useEffect } from 'react';
 import { useForm } from 'react-hook-form';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { useScope } from '@hivekitchen/ui';
+import { useScope, AppFooter, PrimaryButton, TextField } from '@hivekitchen/ui';
 import { LoginRequestSchema } from '@hivekitchen/contracts';
 import type { LoginRequest, LoginResponse } from '@hivekitchen/types';
 import { zodResolver } from '@/lib/zod-resolver.js';
 import { hkFetch, HkApiError } from '@/lib/fetch.js';
 import { useAuthStore } from '@/stores/auth.store.js';
 import { supabase } from '@/lib/supabase-client.js';
-import { AppFooter } from '@/components/AppFooter.js';
 import { AppHeader } from '@/components/AppHeader.js';
 import {
   ArrowRightIcon,
@@ -16,9 +15,7 @@ import {
   EyeOffIcon,
   LockIcon,
   MailIcon,
-} from '@/components/icons.js';
-import { PrimaryButton } from '@/components/PrimaryButton.js';
-import { TextField } from '@/components/TextField.js';
+} from '@hivekitchen/ui';
 import { AppleButton } from '@/features/login/components/AppleButton.js';
 import { GoogleButton } from '@/features/login/components/GoogleButton.js';
 import { LoginHero } from '@/features/login/components/LoginHero.js';
@@ -111,7 +108,7 @@ export default function LoginPage() {
             {apiError ? (
               <p
                 role="alert"
-                className="rounded-lg border border-safety-red/30 bg-safety-red/10 px-4 py-3 text-sm text-safety-red"
+                className="rounded-lg border border-[color-mix(in_srgb,var(--safety-red)_30%,transparent)] px-4 py-3 text-sm text-safety-red"
               >
                 {apiError}
               </p>

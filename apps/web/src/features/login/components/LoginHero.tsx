@@ -8,7 +8,7 @@ export function LoginHero() {
         alt={loginImageMock.alt}
         className="absolute inset-0 h-full w-full object-cover"
       />
-      <div className="absolute inset-0 bg-gradient-to-t from-bg via-bg/80 to-transparent md:bg-gradient-to-r" />
+      <div className="absolute inset-0 bg-gradient-to-t from-bg via-[color-mix(in_srgb,var(--bg)_80%,transparent)] to-transparent md:bg-gradient-to-r" />
     </div>
   );
 }

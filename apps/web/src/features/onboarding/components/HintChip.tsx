@@ -19,7 +19,7 @@ export function HintChip({ text }: HintChipProps) {
   return (
     <span
       className={
-        'inline-block rounded-md bg-warm-neutral-100/40 px-3 py-1.5 ' +
+        'inline-block rounded-md bg-warm-neutral-100 px-3 py-1.5 ' +
         'font-serif text-sm italic text-fg-muted'
       }
     >

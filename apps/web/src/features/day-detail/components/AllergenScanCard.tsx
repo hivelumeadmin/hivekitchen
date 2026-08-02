@@ -1,4 +1,4 @@
-import { RailCard } from '../../../components/RailCard.js';
+import { RailCard } from '@hivekitchen/ui';
 import type { Allergen } from '../data/mockData.js';
 
 interface Readonly_AllergenScanCardProps {
@@ -21,7 +21,7 @@ export function AllergenScanCard({ allergens }: AllergenScanCardProps) {
 
 function AllergenChip({ allergen }: Readonly<{ readonly allergen: Allergen }>) {
   return (
-    <span className="inline-flex items-center gap-2 rounded-full border border-border/20 bg-surface-2 px-3 py-1.5 text-xs text-fg">
+    <span className="inline-flex items-center gap-2 rounded-full border border-[color-mix(in_srgb,var(--border)_20%,transparent)] bg-surface-2 px-3 py-1.5 text-xs text-fg">
       {allergen.flagged ? (
         <span className="h-1.5 w-1.5 rounded-full bg-safety-red" aria-hidden />
       ) : null}

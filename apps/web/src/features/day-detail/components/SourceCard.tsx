@@ -1,5 +1,4 @@
-import { MenuBookIcon } from '../../../components/icons.js';
-import { RailCard } from '../../../components/RailCard.js';
+import { MenuBookIcon, RailCard } from '@hivekitchen/ui';
 import type { Source } from '../data/mockData.js';
 
 interface Readonly_SourceCardProps {

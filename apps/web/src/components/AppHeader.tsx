@@ -1,6 +1,6 @@
 import { useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { BellIcon, MenuIcon, UserCircleIcon } from './icons.js';
+import { BellIcon, MenuIcon, UserCircleIcon } from '@hivekitchen/ui';
 import { ThemeToggle } from './ThemeToggle.js';
 import { useAuthStore } from '@/stores/auth.store.js';
 import { useClickOutside } from '@/hooks/useClickOutside.js';
@@ -80,21 +80,21 @@ export function AppHeader({ onMenuToggle }: AppHeaderProps) {
                 <button
                   type="button"
                   onClick={() => goTo('/app/household/settings')}
-                  className="w-full px-4 py-2 text-left text-sm transition-colors hover:bg-neutral-400/10"
+                  className="w-full px-4 py-2 text-left text-sm transition-colors hover:bg-surface-2"
                 >
                   Settings
                 </button>
                 <button
                   type="button"
                   onClick={() => goTo('/account')}
-                  className="w-full px-4 py-2 text-left text-sm transition-colors hover:bg-neutral-400/10"
+                  className="w-full px-4 py-2 text-left text-sm transition-colors hover:bg-surface-2"
                 >
                   Account
                 </button>
                 <button
                   type="button"
                   onClick={() => void handleSignOut()}
-                  className="w-full border-t border-neutral-400/20 px-4 py-2 text-left text-sm transition-colors hover:bg-neutral-400/10"
+                  className="w-full border-t border-neutral-400/20 px-4 py-2 text-left text-sm transition-colors hover:bg-surface-2"
                 >
                   Sign out
                 </button>

@@ -1,6 +1,6 @@
 import { COMMON_ALLERGENS, ALLERGEN_LABELS } from '@hivekitchen/contracts';
 import type { AllergenKey } from '@hivekitchen/types';
-import { ShieldIcon } from '../../../components/icons.js';
+import { ShieldIcon } from '@hivekitchen/ui';
 import type { Allergen, ChildProfile } from '../data/mockData.js';
 import {
   ChildEditConversation,
@@ -67,8 +67,8 @@ export function ChildProfileCard({
     );
   }
   return (
-    <div className="relative overflow-hidden rounded-lg border border-border/20 bg-surface p-8">
-      <div className="absolute bottom-0 left-0 top-0 w-1 bg-amber-warm/20" />
+    <div className="relative overflow-hidden rounded-lg border border-[color-mix(in_srgb,var(--border)_20%,transparent)] bg-surface p-8">
+      <div className="absolute bottom-0 left-0 top-0 w-1 bg-honey-amber-300" />
       <div className="flex flex-col gap-8 md:flex-row">
         <ChildAvatar initial={child.initial} />
         <div className="flex-1 min-w-0">
@@ -89,7 +89,7 @@ export function ChildProfileCard({
               Edit
             </button>
           </div>
-          <div className="mb-4 flex flex-wrap gap-x-4 text-[11px] font-bold uppercase tracking-wider text-fg-muted/60">
+          <div className="mb-4 flex flex-wrap gap-x-4 text-[11px] font-bold uppercase tracking-wider text-fg-muted">
             {child.meta.map((label, i) => (
               <span key={i} className="flex items-center gap-4">
                 {i > 0 ? <span aria-hidden>•</span> : null}
@@ -126,7 +126,7 @@ export function ChildProfileCard({
 function ChildAvatar({ initial }: Readonly<{ readonly initial: string }>) {
   return (
     <div className="flex-shrink-0">
-      <div className="flex h-20 w-20 items-center justify-center rounded-full border-2 border-border/20 bg-surface-2">
+      <div className="flex h-20 w-20 items-center justify-center rounded-full border-2 border-[color-mix(in_srgb,var(--border)_20%,transparent)] bg-surface-2">
         <span className="font-serif text-4xl font-medium text-amber-warm">{initial}</span>
       </div>
     </div>
@@ -192,7 +192,7 @@ function SafetyAndBagColumn({
                   type="button"
                   disabled={allergenBusy}
                   onClick={() => onAddAllergen!(key)}
-                  className="rounded-md border border-foliage/40 bg-foliage-soft/40 px-2.5 py-1 font-sans text-xs text-fg transition-colors hover:border-foliage hover:bg-foliage-soft disabled:cursor-not-allowed disabled:opacity-50"
+                  className="rounded-md border border-[color-mix(in_srgb,var(--foliage)_40%,transparent)] bg-foliage-100 px-2.5 py-1 font-sans text-xs text-fg transition-colors hover:border-foliage hover:bg-foliage-soft disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   + {capitalize(ALLERGEN_LABELS[key])}
                 </button>
@@ -207,11 +207,11 @@ function SafetyAndBagColumn({
         )}
       </div>
       <div>
-        <p className="mb-3 text-xs font-bold uppercase tracking-wider text-amber-warm/80">
+        <p className="mb-3 text-xs font-bold uppercase tracking-wider text-honey-amber-700">
           Lunch bag
         </p>
         {bagComposition ? (
-          <span className="inline-block rounded-md border border-foliage/60 bg-foliage-soft px-3 py-1.5 font-sans text-sm text-fg">
+          <span className="inline-block rounded-md border border-[color-mix(in_srgb,var(--foliage)_60%,transparent)] bg-foliage-soft px-3 py-1.5 font-sans text-sm text-fg">
             {bagComposition}
           </span>
         ) : (
@@ -292,7 +292,7 @@ function ExtraRulesEditor({
 
   return (
     <div>
-      <p className="mb-3 text-xs font-bold uppercase tracking-wider text-amber-warm/80">
+      <p className="mb-3 text-xs font-bold uppercase tracking-wider text-honey-amber-700">
         Snack &amp; Extra preferences
       </p>
       <div className="space-y-1.5">
@@ -366,7 +366,7 @@ function ToggleChip({
       className={
         active
           ? 'rounded-md border border-foliage bg-foliage-soft px-2 py-0.5 font-sans text-[11px] font-medium text-fg transition-colors disabled:cursor-not-allowed disabled:opacity-50'
-          : 'rounded-md border border-border/30 bg-surface-2 px-2 py-0.5 font-sans text-[11px] text-fg-muted transition-colors hover:border-foliage/40 disabled:cursor-not-allowed disabled:opacity-50'
+          : 'rounded-md border border-[color-mix(in_srgb,var(--border)_30%,transparent)] bg-surface-2 px-2 py-0.5 font-sans text-[11px] text-fg-muted transition-colors hover:border-[color-mix(in_srgb,var(--foliage)_40%,transparent)] disabled:cursor-not-allowed disabled:opacity-50'
       }
     >
       {label}
@@ -401,7 +401,7 @@ function AllergenRow({
           disabled={disabled}
           onClick={onRemove}
           aria-label={`Remove ${allergen.name}`}
-          className="ms-1 text-fg-muted/60 transition-colors hover:text-safety-red disabled:cursor-not-allowed disabled:opacity-50"
+          className="ms-1 text-fg-muted transition-colors hover:text-safety-red disabled:cursor-not-allowed disabled:opacity-50"
         >
           ✕
         </button>
@@ -436,8 +436,8 @@ function LumiLearningColumn({
           <span className="text-fg">Avoids:</span> {avoids}
         </p>
         {quote ? (
-          <div className="mt-2 rounded-lg border border-amber-warm/20 bg-amber-warm/10 p-3">
-            <p className="text-xs italic text-lumi-terracotta">{quote}</p>
+          <div className="mt-2 rounded-lg border border-[color-mix(in_srgb,var(--amber-warm)_20%,transparent)] bg-[color-mix(in_srgb,var(--amber-warm)_10%,transparent)] p-3">
+            <p className="text-xs italic text-lumi-terracotta-800">{quote}</p>
           </div>
         ) : null}
       </div>

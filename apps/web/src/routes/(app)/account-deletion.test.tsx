@@ -1,6 +1,8 @@
+import type * as UiModule from '@hivekitchen/ui';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, waitFor, cleanup } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type * as ReactRouterDom from 'react-router-dom';
 import type { UserProfile } from '@hivekitchen/types';
 
@@ -16,7 +18,8 @@ vi.mock('@/lib/fetch.js', () => ({
   },
 }));
 
-vi.mock('@hivekitchen/ui', () => ({
+vi.mock('@hivekitchen/ui', async (importOriginal) => ({
+  ...(await importOriginal<typeof UiModule>()),
   useScope: vi.fn(),
 }));
 
@@ -79,10 +82,15 @@ function setAuthenticated() {
 }
 
 function renderRoute() {
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
   render(
-    <MemoryRouter initialEntries={['/app/account']}>
-      <AccountPage />
-    </MemoryRouter>,
+    <QueryClientProvider client={queryClient}>
+      <MemoryRouter initialEntries={['/app/account']}>
+        <AccountPage />
+      </MemoryRouter>
+    </QueryClientProvider>,
   );
 }
 
@@ -164,9 +172,11 @@ describe('AccountPage — Delete account section (7-S11)', () => {
     fireEvent.change(input, { target: { value: HOUSEHOLD_NAME } });
     fireEvent.click(screen.getByRole('button', { name: 'Delete forever' }));
 
-    expect(hkFetchMock).toHaveBeenCalledWith(DELETE_PATH, {
-      method: 'POST',
-      body: { confirmation_name: HOUSEHOLD_NAME },
+    await waitFor(() => {
+      expect(hkFetchMock).toHaveBeenCalledWith(DELETE_PATH, {
+        method: 'POST',
+        body: { confirmation_name: HOUSEHOLD_NAME },
+      });
     });
 
     await waitFor(

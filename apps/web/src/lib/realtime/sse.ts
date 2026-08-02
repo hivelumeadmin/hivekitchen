@@ -6,6 +6,7 @@ import {
   LumiThreadTurnsResponseSchema,
 } from '@hivekitchen/contracts';
 import type { Turn } from '@hivekitchen/types';
+import { notifyManager } from '@tanstack/react-query';
 import { useAuthStore } from '@/stores/auth.store.js';
 import { useLumiStore } from '@/stores/lumi.store.js';
 import { usePlanProgressStore } from '@/stores/plan-progress.store.js';
@@ -167,11 +168,17 @@ export function createSseBridge(queryClient: QueryClient): SseBridge {
     // Architecture §4.1: exhaustive switch; default branch narrows to never.
     switch (event.type) {
       case 'plan.updated':
-        void queryClient.invalidateQueries({ queryKey: QueryKeys.plan(event.week_id) });
-        // Story 3.10: refresh AllergyClearedBadge state. Wildcard ['brief']
-        // matches every ['brief', householdId] key — at most one is hot per
-        // session (one current_household_id), so this is safe.
-        void queryClient.invalidateQueries({ queryKey: ['brief'] });
+        // Batched so subscribers cannot observe a torn frame: notifications
+        // flush synchronously (see providers/query-provider.tsx), so without
+        // this a component would re-render between the two invalidations with
+        // the plan refreshed and ['brief'] still stale.
+        notifyManager.batch(() => {
+          void queryClient.invalidateQueries({ queryKey: QueryKeys.plan(event.week_id) });
+          // Story 3.10: refresh AllergyClearedBadge state. Wildcard ['brief']
+          // matches every ['brief', householdId] key — at most one is hot per
+          // session (one current_household_id), so this is safe.
+          void queryClient.invalidateQueries({ queryKey: ['brief'] });
+        });
         break;
 
       case 'plan.progress':
@@ -310,9 +317,9 @@ export function createSseBridge(queryClient: QueryClient): SseBridge {
     if (store.presenceState === 'summoned' && store.surface === parsed.data.surface) {
       store.appendTurn(parsed.data.turn);
     }
-    if (store.proactiveNudges && store.presenceState === 'atRest') {
-      store.whisper();
-    }
+    // The opted-in / at-rest gate lives in the presence slice (14-s6) so it is
+    // testable without an EventSource.
+    store.tryWhisper();
   }
 
   function openConnection(): void {

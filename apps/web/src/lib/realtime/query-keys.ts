@@ -68,4 +68,31 @@ export const QueryKeys = {
    */
   familyLanguage: (householdId: string): ['family-language', string] =>
     ['family-language', householdId],
+
+  /**
+   * Slice 14-s6 — the signed-in user's profile (`GET /v1/users/me`).
+   * Keyed by user id so a re-login as a different account cannot be served the
+   * previous user's cached profile.
+   * @example QueryKeys.me('user-uuid') → ['me', 'user-uuid']
+   */
+  me: (userId: string): ['me', string] => ['me', userId],
+
+  /**
+   * Slice 14-s6 — the user's retained voice transcripts (5-S15). Separate key
+   * from `me` because the retention-mode mutation writes this list optimistically
+   * (clearing it on immediate-delete) without touching the profile. Neither key
+   * is invalidated by that mutation: it reconciles by optimistic write + rollback,
+   * matching the pre-refactor behaviour, which also never re-fetched the list.
+   * @example QueryKeys.voiceTranscripts('user-uuid') → ['voice-transcripts', 'user-uuid']
+   */
+  voiceTranscripts: (userId: string): ['voice-transcripts', string] =>
+    ['voice-transcripts', userId],
+
+  /**
+   * Slice 14-s6 — the household kitchen-map projection, read lazily by the
+   * delete-account dialog for the household display name.
+   * @example QueryKeys.kitchenMap('household-uuid') → ['kitchen-map', 'household-uuid']
+   */
+  kitchenMap: (householdId: string): ['kitchen-map', string] =>
+    ['kitchen-map', householdId],
 } as const;

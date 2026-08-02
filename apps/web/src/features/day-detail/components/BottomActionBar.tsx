@@ -2,11 +2,8 @@ import {
   CalendarIcon,
   CheckCircleIcon,
   RefreshIcon,
-} from '../../../components/icons.js';
-import { PrimaryButton } from '../../../components/PrimaryButton.js';
-import { SecondaryButton } from '../../../components/SecondaryButton.js';
-import { StickyBottomBar } from '../../../components/StickyBottomBar.js';
-import { TalkToLumiButton } from '../../../components/TalkToLumiButton.js';
+} from '@hivekitchen/ui';
+import { PrimaryButton, SecondaryButton, StickyBottomBar, TalkToLumiButton } from '@hivekitchen/ui';
 
 interface Readonly_BottomActionBarProps {
   readonly footerHint: string;

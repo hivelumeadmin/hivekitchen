@@ -66,7 +66,7 @@ export default function HeartNotesRoute() {
                     <span className="text-sm font-medium text-fg">
                       Note for child {note.child_id.slice(0, 8)}…
                     </span>
-                    <span className="text-xs text-fg-muted/60">
+                    <span className="text-xs text-fg-muted">
                       {note.scheduled_for ?? note.created_at.slice(0, 10)}
                     </span>
                   </div>
@@ -80,7 +80,7 @@ export default function HeartNotesRoute() {
               return (
                 <li
                   key={note.id}
-                  className="rounded-xl border border-border/20 bg-surface px-5 py-4"
+                  className="rounded-xl border border-[color-mix(in_srgb,var(--border)_20%,transparent)] bg-surface px-5 py-4"
                 >
                   {isNavigable ? (
                     <Link

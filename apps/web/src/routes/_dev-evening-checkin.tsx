@@ -1,4 +1,4 @@
-import { AppFooter } from '../components/AppFooter.js';
+import { AppFooter } from '@hivekitchen/ui';
 import { AppHeader } from '../components/AppHeader.js';
 import { CheckinHeader } from '../features/evening-checkin/components/CheckinHeader.js';
 import { ConversationThread } from '../features/evening-checkin/components/ConversationThread.js';

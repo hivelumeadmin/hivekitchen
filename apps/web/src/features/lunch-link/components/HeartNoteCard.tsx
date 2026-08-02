@@ -14,7 +14,7 @@ export type HeartNoteCardProps = Readonly<Readonly_HeartNoteCardProps>;
 export function HeartNoteCard({ body, from }: HeartNoteCardProps) {
   return (
     <section className="relative">
-      <div className="flex min-h-[200px] flex-col justify-between rounded-lg border border-border/10 bg-surface-2 p-8 shadow-inner">
+      <div className="flex min-h-[200px] flex-col justify-between rounded-lg border border-[color-mix(in_srgb,var(--border)_10%,transparent)] bg-surface-2 p-8 shadow-inner">
         <p dir="auto" className="text-center font-serif text-[20px] italic leading-relaxed text-fg">
           {body}
         </p>
@@ -24,7 +24,7 @@ export function HeartNoteCard({ body, from }: HeartNoteCardProps) {
           </span>
         </div>
       </div>
-      <div className="absolute -bottom-2 -right-2 h-4 w-4 rounded-full bg-sacred/30 blur-xl" />
+      <div className="absolute -bottom-2 -right-2 h-4 w-4 rounded-full bg-[color-mix(in_srgb,var(--sacred-plum)_30%,transparent)] blur-xl" />
     </section>
   );
 }

@@ -266,3 +266,46 @@ export const RecipeDiscoverOutputSchema = RecipeSearchOutputSchema;
 export type RecipeDiscoverInput = z.infer<typeof RecipeDiscoverInputSchema>;
 export type RecipeDiscoverOutput = z.infer<typeof RecipeDiscoverOutputSchema>;
 export type RecipeDiscoverConstraints = z.infer<typeof RecipeDiscoverConstraintsSchema>;
+
+// ---- Day-view recipe read (Story 14-s4) -----------------------------------
+//
+// GET /v1/recipes/:recipeId — the day-detail Wall Card needs recipe CONTENT
+// (what to buy, how to make it), not the catalog row. This projection is
+// deliberately narrow: heavy tag arrays, community counters, and visibility
+// bookkeeping stay server-side.
+//
+// `ingredients` is a display-STRING array, not RecipeIngredientSchema[]:
+// catalog-seeded and legacy rows store plain strings in recipes.ingredients
+// while agent-fetched rows store objects, and the Wall Card renders one bullet
+// per line either way. The repository normalizes both shapes to display
+// strings, so a legacy row can never fail response serialization.
+
+// RESPONSE schemas: descriptive, not restrictive. Write-side schemas cap
+// cardinality/length (RecipeAgentExtractionSchema etc.), but legacy/backfilled
+// rows predate those caps (e.g. one recipe_steps row per instruction line) —
+// a stored row must ALWAYS serialize, never 500 the day-detail read.
+export const RecipeStepViewSchema = z.object({
+  sequence: z.number().int().min(0),
+  mode: StepModeSchema,
+  text: z.string(),
+});
+
+export const DayViewRecipeSchema = z.object({
+  id: z.string().uuid(),
+  canonical_name: z.string().min(1),
+  ingredients: z.array(z.string()),
+  prep_time_minutes: z.number().int().min(0).nullable(),
+  finish_time_minutes: z.number().int().min(0).nullable(),
+  source: RecipeSourceSchema,
+});
+
+export const GetRecipeResponseSchema = z.object({
+  recipe: DayViewRecipeSchema,
+  steps: z.array(RecipeStepViewSchema),
+});
+
+export const RecipeIdParamSchema = z.object({ recipeId: z.string().uuid() });
+
+export type RecipeStepView = z.infer<typeof RecipeStepViewSchema>;
+export type DayViewRecipe = z.infer<typeof DayViewRecipeSchema>;
+export type GetRecipeResponse = z.infer<typeof GetRecipeResponseSchema>;

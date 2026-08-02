@@ -23,7 +23,7 @@ export function StickyBottomBar({ children, ariaLabel }: StickyBottomBarProps) {
     <div
       role={ariaLabel !== undefined ? 'region' : undefined}
       aria-label={ariaLabel}
-      className="fixed bottom-0 left-0 right-0 z-40 border-t border-border/20 bg-bg px-8 py-6 backdrop-blur-md"
+      className="fixed bottom-0 left-0 right-0 z-40 border-t border-[color-mix(in_srgb,var(--border)_20%,transparent)] bg-bg px-8 py-6 backdrop-blur-md"
     >
       <div className="mx-auto flex max-w-7xl flex-col items-center justify-between gap-6 md:flex-row">
         {children}

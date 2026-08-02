@@ -29,6 +29,18 @@
   to   { opacity: 1; transform: translateY(0); }
 }
 
+/* Story 14-s3 — the Brief's day rows settle into place on first paint, staggered
+   by row (animation-delay is set per row at the call site). Deliberately
+   TRANSFORM-ONLY, no opacity: the dish text must be painted at full contrast
+   from the first frame, both so the reveal cannot dip below WCAG AA mid-flight
+   (the 13-s1 axe gate samples during animation) and so a fading LCP element
+   cannot delay the Brief's paint on the anchor device. transform is out of
+   layout flow, so nothing shifts once the row lands. */
+@keyframes hk-row-settle {
+  from { transform: translateY(0.5rem); }
+  to   { transform: translateY(0); }
+}
+
 /* Slice 5-S12 — sacred-plum proposal-pending pulse on PlanTile. Reduced-motion
    suppression is handled at the call site via Tailwind's motion-reduce variant
    (compiles to @media (prefers-reduced-motion: reduce)). */
@@ -49,5 +61,36 @@
   to {
     box-shadow: 0 0 28px 2px color-mix(in srgb, var(--honey-amber-500) 22%, transparent);
     background-color: color-mix(in srgb, var(--honey-amber-500) 7%, transparent);
+  }
+}
+
+/* Story 14-s3b — the Kitchen Map is the onboarding payoff, so once recognition
+   lands the panel breathes instead of sitting still. Distinct from hk-glow: that
+   one blooms ONCE on the left-column RecognitionEnding card and rests; this one
+   is the map's continuous ring+halo. They are deliberately different beats — the
+   card announces, the map keeps glowing — and never share an element.
+   Honey stays recognition-only (DESIGN.md Honey rule); this is never a hover. */
+@keyframes hk-map-glow {
+  0%,
+  100% {
+    box-shadow:
+      0 0 0 1px color-mix(in srgb, var(--amber) 34%, transparent),
+      0 0 30px -6px color-mix(in srgb, var(--amber) 26%, transparent);
+  }
+  50% {
+    box-shadow:
+      0 0 0 1px color-mix(in srgb, var(--amber) 52%, transparent),
+      0 0 50px -4px color-mix(in srgb, var(--amber) 40%, transparent);
+  }
+}
+
+/* Mockup's live-strip dot: a scale breathe, not an opacity pulse. */
+@keyframes hk-breathe {
+  0%,
+  100% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.07);
   }
 }

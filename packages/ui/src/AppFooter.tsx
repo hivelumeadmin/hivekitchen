@@ -20,7 +20,7 @@ export function AppFooter() {
             </a>
           ))}
         </nav>
-        <div className="text-xs uppercase tracking-widest text-fg-muted/60">
+        <div className="text-xs uppercase tracking-widest text-fg-muted">
           © 2026 HiveLume LLC — Lumi AI school-lunch companion.
         </div>
       </div>

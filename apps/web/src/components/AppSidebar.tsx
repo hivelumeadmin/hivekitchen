@@ -8,7 +8,7 @@ import {
   SparkleIcon,
   UtensilsIcon,
   XIcon,
-} from './icons.js';
+} from '@hivekitchen/ui';
 
 const COLLAPSED_KEY = 'hk_sidebar_collapsed';
 

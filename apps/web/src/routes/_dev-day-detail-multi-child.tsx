@@ -1,9 +1,9 @@
-import { AppFooter } from '../components/AppFooter.js';
+import { AppFooter } from '@hivekitchen/ui';
 import {
   ChevronLeftIcon,
   MoonIcon,
   SunIcon,
-} from '../components/icons.js';
+} from '@hivekitchen/ui';
 import { PageHeader } from '../components/PageHeader.js';
 import { WallCardSwipeStack } from '../features/day-detail/components/WallCardSwipeStack.js';
 import { exampleWeek } from '../features/day-detail/data/multiChildMockData.js';
@@ -38,7 +38,7 @@ function MockHeader() {
   const isDark = theme === 'dark';
 
   return (
-    <nav className="sticky top-0 z-50 w-full border-b border-border bg-bg/90 backdrop-blur-md">
+    <nav className="sticky top-0 z-50 w-full border-b border-border bg-[color-mix(in_srgb,var(--bg)_90%,transparent)] backdrop-blur-md">
       <div className="mx-auto flex w-full max-w-7xl items-center justify-between gap-4 px-6 py-4 md:px-10">
         <div className="flex items-center gap-4">
           <button
@@ -67,7 +67,7 @@ function MockHeader() {
               isDark ? 'Switch to light mode' : 'Switch to dark mode'
             }
             aria-pressed={isDark}
-            className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-border/40 bg-surface text-fg-muted transition-colors hover:border-amber-warm/40 hover:text-amber-warm"
+            className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-[color-mix(in_srgb,var(--border)_40%,transparent)] bg-surface text-fg-muted transition-colors hover:border-[color-mix(in_srgb,var(--amber-warm)_40%,transparent)] hover:text-amber-warm"
           >
             {isDark ? (
               <SunIcon className="h-4 w-4" />
@@ -77,7 +77,7 @@ function MockHeader() {
           </button>
           <div
             aria-label="User profile"
-            className="h-9 w-9 overflow-hidden rounded-full border border-border/30 bg-surface"
+            className="h-9 w-9 overflow-hidden rounded-full border border-[color-mix(in_srgb,var(--border)_30%,transparent)] bg-surface"
           />
         </div>
       </div>

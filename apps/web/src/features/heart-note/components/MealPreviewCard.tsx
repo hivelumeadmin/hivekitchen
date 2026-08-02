@@ -1,4 +1,4 @@
-import { RailCard } from '../../../components/RailCard.js';
+import { RailCard } from '@hivekitchen/ui';
 
 interface MealPreview {
   readonly name: string;
@@ -33,7 +33,7 @@ export function MealPreviewCard({ childName, meal }: MealPreviewCardProps) {
         {meal.allergens.map((label) => (
           <span
             key={label}
-            className="rounded border border-safety-red/20 bg-safety-red/10 px-2 py-0.5 text-[11px] font-bold uppercase text-safety-red"
+            className="rounded border border-[color-mix(in_srgb,var(--safety-red)_20%,transparent)] px-2 py-0.5 text-[11px] font-bold uppercase text-safety-red"
           >
             {label}
           </span>

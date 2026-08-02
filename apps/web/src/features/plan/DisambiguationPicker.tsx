@@ -1,19 +1,28 @@
 import { useState, useRef, useEffect, useId } from 'react';
 import type { KeyboardEvent as ReactKeyboardEvent } from 'react';
-import type {
-  ClearedAllergyEntry,
-  PauseReason,
-  PlanSlotVariationRow,
-  Weekday,
-} from '@hivekitchen/types';
+import type { ClearedAllergyEntry, Weekday } from '@hivekitchen/types';
 import { HkApiError } from '@/lib/fetch.js';
 import {
   usePauseDayMutation,
   usePauseChildOnDayMutation,
   useUpdateVariationMutation,
 } from './mutations.js';
-import { OverridePicker } from './OverridePicker.js';
 import type { DaySlotView, DayTreeView } from './tree-adapter.js';
+import {
+  DAY_LABEL,
+  DEFAULT_SICK_DAY_REASON,
+  collectVariations,
+  distinctChildIds,
+  isAllergenAffecting,
+} from './picker/picker-model.js';
+import type { PickerLevel, VariationWithSlot } from './picker/picker-model.js';
+import { PickerActionMenu } from './picker/PickerActionMenu.js';
+import { PickerSelectVariation } from './picker/PickerSelectVariation.js';
+import { PickerSelectSlotOverride } from './picker/PickerSelectSlotOverride.js';
+import { PickerSelectPauseChild } from './picker/PickerSelectPauseChild.js';
+import { PickerOverridePanel } from './picker/PickerOverridePanel.js';
+import { PickerVariationIngredients } from './picker/PickerVariationIngredients.js';
+import { PickerProposeSwap } from './picker/PickerProposeSwap.js';
 
 // Story 3-DM-C1 Phase 9b part 4 step 4 — picker decomposed for the canonical
 // model's tripartite swap surface.
@@ -22,27 +31,18 @@ import type { DaySlotView, DayTreeView } from './tree-adapter.js';
 // Instead it routes to one of three operations depending on the user's
 // intent + the slot they target:
 //
-//   • Main slot   → swap the M-assignment recipe (a follow-up slice ships the
-//                   recipe picker UI; for now the entry point is wired and
-//                   surfaces "coming soon" copy when no candidate recipe id
-//                   is available).
+//   • Main slot   → the conversational Swap Main proposal (5-S12).
 //   • Snack/Extra → swap the slot's recipe.
 //   • Per-child   → update a variation (the only place where the legacy
 //                   ingredient-edit flow maps cleanly: the user-typed
 //                   ingredient list lands in variation.add_ons).
 //
 // Sick day (full-day pause) and per-child pause are surfaced directly on L1.
-// The "this day is different" override flow is preserved verbatim, now scoped
-// to a slot (planSlotId param) per the route param swap.
-
-type PickerLevel =
-  | 'l1'
-  | 'l2-select-variation'   // pick which child's variation to edit
-  | 'l3-variation-ingredients'
-  | 'l2-select-slot-override' // pick which slot to override
-  | 'l4-override'
-  | 'l2-select-pause-child'
-  | 'l3-propose-swap';      // Slice 5-S12 — conversational swap proposal
+// The "this day is different" override flow is scoped to a slot (planSlotId).
+//
+// Story 14-s6 — this file is the shell: it owns level routing, the shared
+// error region, focus management and Escape, and dispatches to one per-level
+// panel under ./picker/.
 
 interface DisambiguationPickerProps {
   planId: string;
@@ -72,93 +72,6 @@ interface DisambiguationPickerProps {
   onProposeSwap?: (day: Weekday, content: string) => Promise<string>;
 }
 
-// Simple allergen check: does any new ingredient contain a declared allergen string?
-// False positives (e.g. "butter" matching "peanut butter") are safe — they just
-// send allergen-affecting variation edits through the pending (non-optimistic) path.
-function isAllergenAffecting(
-  childId: string,
-  newIngredients: string[],
-  clearedAllergens: ReadonlyArray<Pick<ClearedAllergyEntry, 'child_id' | 'allergen'>>,
-): boolean {
-  const childAllergens = clearedAllergens
-    .filter((a) => a.child_id === childId)
-    .map((a) => a.allergen.toLowerCase());
-  if (childAllergens.length === 0) return false;
-  return newIngredients.some((i) =>
-    childAllergens.some((a) => i.toLowerCase().includes(a)),
-  );
-}
-
-const DAY_LABEL: Record<Weekday, string> = {
-  monday: 'Monday',
-  tuesday: 'Tuesday',
-  wednesday: 'Wednesday',
-  thursday: 'Thursday',
-  friday: 'Friday',
-  saturday: 'Saturday',
-};
-
-const DAY_INDEX: Record<Weekday, number> = {
-  monday: 0,
-  tuesday: 1,
-  wednesday: 2,
-  thursday: 3,
-  friday: 4,
-  saturday: 5,
-};
-
-// Story 3.19 — derive the calendar date for a tile's weekday in the current
-// week using LOCAL time so the result matches the parent's wall-clock date
-// regardless of UTC offset (a UTC+10 parent at 11 PM Monday sees Monday, not
-// Tuesday).
-function deriveOverrideDate(day: Weekday): string {
-  const today = new Date();
-  const todayDow = today.getDay(); // local day-of-week: 0=Sun, 1=Mon … 6=Sat
-  const daysSinceMonday = todayDow === 0 ? -1 : todayDow - 1;
-  const monday = new Date(today);
-  monday.setDate(today.getDate() - daysSinceMonday);
-  const target = new Date(monday);
-  target.setDate(monday.getDate() + DAY_INDEX[day]);
-  const y = target.getFullYear();
-  const m = String(target.getMonth() + 1).padStart(2, '0');
-  const d = String(target.getDate()).padStart(2, '0');
-  return `${y}-${m}-${d}`;
-}
-
-// Default pause reason when the user hits "Sick day" without a follow-up
-// reason selector. The new wire enum is mandatory; the prior 'sick' value
-// maps to 'sick_day' under the six-value PauseReason set.
-const DEFAULT_SICK_DAY_REASON: PauseReason = 'sick_day';
-
-interface VariationWithSlot {
-  readonly slot: DaySlotView;
-  readonly variation: PlanSlotVariationRow;
-}
-
-function collectVariations(view: DayTreeView): VariationWithSlot[] {
-  const out: VariationWithSlot[] = [];
-  for (const slot of view.slots) {
-    for (const variation of slot.variations) {
-      out.push({ slot, variation });
-    }
-  }
-  return out;
-}
-
-function distinctChildIds(view: DayTreeView): string[] {
-  const seen = new Set<string>();
-  const order: string[] = [];
-  for (const slot of view.slots) {
-    for (const variation of slot.variations) {
-      if (!seen.has(variation.child_id)) {
-        seen.add(variation.child_id);
-        order.push(variation.child_id);
-      }
-    }
-  }
-  return order;
-}
-
 export function DisambiguationPicker({
   planId,
   day,
@@ -176,14 +89,6 @@ export function DisambiguationPicker({
   const [selectedOverrideSlot, setSelectedOverrideSlot] = useState<DaySlotView | null>(null);
   const [ingredientInput, setIngredientInput] = useState('');
   const [error, setError] = useState<string | null>(null);
-  // Slice 5-S12 — conversational swap proposal state.
-  const [proposalInput, setProposalInput] = useState('');
-  const [isProposing, setIsProposing] = useState(false);
-  const proposalRef = useRef<HTMLInputElement>(null);
-  // Synchronous guard: `isProposing` is async state, so a same-tick Enter + click
-  // (or double Enter) can both pass before the re-render lands. The ref blocks
-  // the second dispatch immediately, preventing duplicate proposal turns.
-  const isSubmittingProposalRef = useRef(false);
 
   const inputRef = useRef<HTMLInputElement>(null);
   const pickerId = useId();
@@ -198,14 +103,11 @@ export function DisambiguationPicker({
   const variations = collectVariations(dayView);
   const childIds = distinctChildIds(dayView);
 
-  // Focus the ingredient input when entering L3.
+  // Focus the ingredient input when entering L3. (The proposal panel focuses
+  // its own input on mount.)
   useEffect(() => {
     if (level === 'l3-variation-ingredients') {
       inputRef.current?.focus();
-    }
-    // Slice 5-S12 — focus the proposal input when entering the swap-proposal L3.
-    if (level === 'l3-propose-swap') {
-      proposalRef.current?.focus();
     }
   }, [level]);
 
@@ -332,24 +234,6 @@ export function DisambiguationPicker({
     }
   }
 
-  async function handleProposalSubmit() {
-    if (onProposeSwap === undefined || proposalInput.trim().length === 0) return;
-    if (isSubmittingProposalRef.current) return;
-    isSubmittingProposalRef.current = true;
-    setIsProposing(true);
-    setError(null);
-    try {
-      const proposalId = await onProposeSwap(day, proposalInput.trim());
-      onSwapStarted(proposalId);
-      onDismiss();
-    } catch {
-      setError('Could not send. Please try again.');
-    } finally {
-      setIsProposing(false);
-      isSubmittingProposalRef.current = false;
-    }
-  }
-
   const dayDisabled = dayView.paused;
   const sickDayDisabled = isPending || dayDisabled;
   // Slice 5-S12 — "Swap Main" is offered only when the day has a main slot with
@@ -357,6 +241,8 @@ export function DisambiguationPicker({
   const hasMainSlot = dayView.slots.some(
     (s) => s.slot_kind === 'main' && s.main_assignment_id !== null,
   );
+  const overrideBackLevel: PickerLevel =
+    dayView.slots.length > 1 ? 'l2-select-slot-override' : 'l1';
 
   return (
     // eslint-disable-next-line jsx-a11y/no-noninteractive-element-interactions
@@ -368,295 +254,114 @@ export function DisambiguationPicker({
       onKeyDown={handleKeyDown}
     >
       {level === 'l1' && (
-        <>
-          <p className="text-stone-500 text-[13px]">What would you like to do?</p>
-          <div className="flex flex-wrap gap-2">
-            <button
-              type="button"
-              onClick={handleSickDayIntent}
-              disabled={sickDayDisabled}
-              className="rounded-full border border-stone-300 px-3 py-1.5 text-[13px] text-stone-700 hover:bg-stone-50 transition-colors motion-reduce:transition-none disabled:opacity-50 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-stone-400"
-            >
-              Sick day
-            </button>
-            <button
-              type="button"
-              onClick={handleChangeItem}
-              disabled={isPending}
-              className="rounded-full border border-stone-300 px-3 py-1.5 text-[13px] text-stone-700 hover:bg-stone-50 transition-colors motion-reduce:transition-none disabled:opacity-50 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-stone-400"
-            >
-              Change an item
-            </button>
-            {hasMainSlot && onProposeSwap !== undefined && (
-              <button
-                type="button"
-                onClick={() => { setError(null); setLevel('l3-propose-swap'); }}
-                disabled={isPending}
-                className="rounded-full border border-stone-300 px-3 py-1.5 text-[13px] text-stone-700 hover:bg-stone-50 transition-colors motion-reduce:transition-none disabled:opacity-50 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-stone-400"
-              >
-                Swap Main
-              </button>
-            )}
-            <button
-              type="button"
-              onClick={handleOverrideIntent}
-              disabled={isPending}
-              className="rounded-full border border-stone-300 px-3 py-1.5 text-[13px] text-stone-700 hover:bg-stone-50 transition-colors motion-reduce:transition-none disabled:opacity-50 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-stone-400"
-            >
-              This day is different…
-            </button>
-            {childIds.length > 1 && (
-              <button
-                type="button"
-                onClick={handlePauseChildIntent}
-                disabled={isPending}
-                className="rounded-full border border-stone-300 px-3 py-1.5 text-[13px] text-stone-700 hover:bg-stone-50 transition-colors motion-reduce:transition-none disabled:opacity-50 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-stone-400"
-              >
-                Pause one child
-              </button>
-            )}
-            {onRegenDay !== undefined && (
-              <button
-                type="button"
-                onClick={() => { onRegenDay(day); }}
-                disabled={isPending}
-                className="rounded-full border border-stone-300 px-3 py-1.5 text-[13px] text-stone-700 hover:bg-stone-50 transition-colors motion-reduce:transition-none disabled:opacity-50 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-stone-400"
-              >
-                Ask Lumi to redo this day
-              </button>
-            )}
-          </div>
-          {error !== null && (
-            <p role="alert" className="text-[12px] text-red-600">
-              {error}
-            </p>
-          )}
-          <button
-            type="button"
-            onClick={onDismiss}
-            className="self-start text-[12px] text-stone-400 hover:text-stone-600 underline underline-offset-2 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-stone-300"
-          >
-            Cancel
-          </button>
-        </>
+        <PickerActionMenu
+          day={day}
+          error={error}
+          isPending={isPending}
+          sickDayDisabled={sickDayDisabled}
+          showSwapMain={hasMainSlot && onProposeSwap !== undefined}
+          showPauseChild={childIds.length > 1}
+          showRegenDay={onRegenDay !== undefined}
+          onSickDay={handleSickDayIntent}
+          onChangeItem={handleChangeItem}
+          onSwapMain={() => { setError(null); setLevel('l3-propose-swap'); }}
+          onOverride={handleOverrideIntent}
+          onPauseChild={handlePauseChildIntent}
+          onRegenDay={(d) => onRegenDay?.(d)}
+          onDismiss={onDismiss}
+        />
       )}
 
       {level === 'l2-select-variation' && (
-        <>
-          <p className="text-stone-500 text-[13px]">Which child / slot?</p>
-          <div className="flex flex-col gap-1.5">
-            {variations.map(({ slot, variation }) => {
-              const childLabel = childNames?.[variation.child_id] ?? variation.child_id.slice(0, 8);
-              return (
-                <button
-                  key={variation.id}
-                  type="button"
-                  onClick={() => {
-                    setSelectedVariation({ slot, variation });
-                    setLevel('l3-variation-ingredients');
-                  }}
-                  className="rounded-md border border-stone-200 px-3 py-2 text-start text-[13px] text-stone-700 hover:bg-stone-50 transition-colors motion-reduce:transition-none focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-stone-400"
-                >
-                  {slot.slot_kind} · {childLabel}
-                </button>
-              );
-            })}
-          </div>
-          <button
-            type="button"
-            onClick={() => setLevel('l1')}
-            className="self-start text-[12px] text-stone-400 hover:text-stone-600 underline underline-offset-2 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-stone-300"
-          >
-            Back
-          </button>
-        </>
+        <PickerSelectVariation
+          variations={variations}
+          childNames={childNames}
+          onSelect={(selected) => {
+            setSelectedVariation(selected);
+            setLevel('l3-variation-ingredients');
+          }}
+          onBack={() => setLevel('l1')}
+        />
       )}
 
       {level === 'l2-select-slot-override' && (
-        <>
-          <p className="text-stone-500 text-[13px]">Which slot is different today?</p>
-          <div className="flex flex-col gap-1.5">
-            {dayView.slots.map((slot) => (
-              <button
-                key={`override-${slot.plan_slot_id}`}
-                type="button"
-                onClick={() => {
-                  setSelectedOverrideSlot(slot);
-                  setLevel('l4-override');
-                }}
-                className="rounded-md border border-stone-200 px-3 py-2 text-start text-[13px] text-stone-700 hover:bg-stone-50 transition-colors motion-reduce:transition-none focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-stone-400"
-              >
-                {slot.slot_kind}
-                {slot.extra_kind !== null ? ` · ${slot.extra_kind}` : ''}
-              </button>
-            ))}
-          </div>
-          <button
-            type="button"
-            onClick={() => setLevel('l1')}
-            className="self-start text-[12px] text-stone-400 hover:text-stone-600 underline underline-offset-2 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-stone-300"
-          >
-            Back
-          </button>
-        </>
+        <PickerSelectSlotOverride
+          slots={dayView.slots}
+          onSelect={(slot) => {
+            setSelectedOverrideSlot(slot);
+            setLevel('l4-override');
+          }}
+          onBack={() => setLevel('l1')}
+        />
       )}
 
       {level === 'l2-select-pause-child' && (
-        <>
-          <p className="text-stone-500 text-[13px]">Pause which child for the day?</p>
-          <div className="flex flex-col gap-1.5">
-            {childIds.map((childId) => {
-              const childLabel = childNames?.[childId] ?? childId.slice(0, 8);
-              return (
-                <button
-                  key={`pause-child-${childId}`}
-                  type="button"
-                  onClick={() => handlePauseChildSelected(childId)}
-                  disabled={isPending}
-                  className="rounded-md border border-stone-200 px-3 py-2 text-start text-[13px] text-stone-700 hover:bg-stone-50 transition-colors motion-reduce:transition-none disabled:opacity-50 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-stone-400"
-                >
-                  {childLabel}
-                </button>
-              );
-            })}
-          </div>
-          <button
-            type="button"
-            onClick={() => setLevel('l1')}
-            className="self-start text-[12px] text-stone-400 hover:text-stone-600 underline underline-offset-2 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-stone-300"
-          >
-            Back
-          </button>
-        </>
+        <PickerSelectPauseChild
+          childIds={childIds}
+          childNames={childNames}
+          isPending={isPending}
+          onSelect={handlePauseChildSelected}
+          onBack={() => setLevel('l1')}
+        />
       )}
 
       {level === 'l4-override' && selectedOverrideSlot !== null && (
-        // The override picker is per (slot, child). We pick the first child
-        // variation under the selected slot as the override target; richer
-        // per-child override UX is a follow-up slice.
-        (() => {
-          const targetVariation = selectedOverrideSlot.variations[0];
-          if (targetVariation === undefined) {
-            return (
-              <>
-                <p role="alert" className="text-[12px] text-red-600">
-                  No variation to override on this slot.
-                </p>
-                <button
-                  type="button"
-                  onClick={() => setLevel(dayView.slots.length > 1 ? 'l2-select-slot-override' : 'l1')}
-                  className="self-start text-[12px] text-stone-400 hover:text-stone-600 underline underline-offset-2 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-stone-300"
-                >
-                  Back
-                </button>
-              </>
-            );
-          }
-          return (
-            <OverridePicker
-              planId={planId}
-              planSlotId={selectedOverrideSlot.plan_slot_id}
-              childId={targetVariation.child_id}
-              overrideDate={deriveOverrideDate(day)}
-              onConfirm={() => {
-                onSwapSettled();
-                onDismiss();
-              }}
-              onCancel={() => setLevel(dayView.slots.length > 1 ? 'l2-select-slot-override' : 'l1')}
-            />
-          );
-        })()
+        <PickerOverridePanel
+          planId={planId}
+          day={day}
+          slot={selectedOverrideSlot}
+          onConfirm={() => {
+            onSwapSettled();
+            onDismiss();
+          }}
+          onBack={() => setLevel(overrideBackLevel)}
+        />
       )}
 
       {level === 'l3-variation-ingredients' && (
-        <>
-          <label htmlFor={`${pickerId}-ingredients`} className="text-stone-500 text-[13px]">
-            What should it be instead?
-          </label>
-          <input
-            ref={inputRef}
-            id={`${pickerId}-ingredients`}
-            type="text"
-            value={ingredientInput}
-            onChange={(e) => setIngredientInput(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' && !isPending) { void handleVariationSubmit(); }
-            }}
-            placeholder="e.g. hummus, rice crackers, apple"
-            aria-describedby={error !== null ? `${pickerId}-error` : undefined}
-            className="w-full rounded-md border border-stone-300 px-3 py-2 text-[14px] text-stone-900 placeholder:text-stone-400 focus:outline-none focus:ring-1 focus:ring-stone-400"
-          />
-          {error !== null && (
-            <p id={`${pickerId}-error`} role="alert" className="text-[12px] text-red-600">
-              {error}
-            </p>
-          )}
-          <div className="flex gap-2">
-            <button
-              type="button"
-              onClick={() => { void handleVariationSubmit(); }}
-              disabled={isPending || ingredientInput.trim().length === 0}
-              className="rounded-full bg-stone-900 px-4 py-1.5 text-[13px] text-white hover:bg-stone-700 transition-colors motion-reduce:transition-none disabled:opacity-50 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-stone-400"
-            >
-              {isPending ? 'Checking…' : 'Swap'}
-            </button>
-            <button
-              type="button"
-              onClick={() => setLevel(variations.length > 1 ? 'l2-select-variation' : 'l1')}
-              disabled={isPending}
-              className="text-[12px] text-stone-400 hover:text-stone-600 underline underline-offset-2 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-stone-300"
-            >
-              Back
-            </button>
-          </div>
-        </>
+        <PickerVariationIngredients
+          pickerId={pickerId}
+          inputRef={inputRef}
+          value={ingredientInput}
+          error={error}
+          isPending={isPending}
+          onChange={setIngredientInput}
+          onSubmit={() => { void handleVariationSubmit(); }}
+          onBack={() => setLevel(variations.length > 1 ? 'l2-select-variation' : 'l1')}
+        />
       )}
 
-      {level === 'l3-propose-swap' && (
-        <>
-          <p className="text-[11px] text-stone-400 uppercase tracking-wide">
-            Continuing from {DAY_LABEL[day]}&rsquo;s dinner
-          </p>
-          <label htmlFor={`${pickerId}-propose`} className="text-stone-500 text-[13px]">
-            What should Lumi swap it for?
-          </label>
-          <input
-            ref={proposalRef}
-            id={`${pickerId}-propose`}
-            type="text"
-            value={proposalInput}
-            onChange={(e) => setProposalInput(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' && !isProposing) { void handleProposalSubmit(); }
-            }}
-            placeholder="e.g. something lighter, maybe a wrap"
-            aria-describedby={error !== null ? `${pickerId}-propose-error` : undefined}
-            className="w-full rounded-md border border-stone-300 px-3 py-2 text-[14px] text-stone-900 placeholder:text-stone-400 focus:outline-none focus:ring-1 focus:ring-stone-400"
-          />
-          {error !== null && (
-            <p id={`${pickerId}-propose-error`} role="alert" className="text-[12px] text-red-600">
-              {error}
-            </p>
-          )}
-          <div className="flex gap-2">
-            <button
-              type="button"
-              onClick={() => { void handleProposalSubmit(); }}
-              disabled={isProposing || proposalInput.trim().length === 0}
-              className="rounded-full bg-stone-900 px-4 py-1.5 text-[13px] text-white hover:bg-stone-700 transition-colors motion-reduce:transition-none disabled:opacity-50 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-stone-400"
-            >
-              {isProposing ? 'Sending…' : 'Ask Lumi'}
-            </button>
-            <button
-              type="button"
-              onClick={() => { setError(null); setLevel('l1'); }}
-              disabled={isProposing}
-              className="text-[12px] text-stone-400 hover:text-stone-600 underline underline-offset-2 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-stone-300"
-            >
-              Back
-            </button>
-          </div>
-        </>
+      {/* onProposeSwap can disappear mid-flow (a plan.updated that clears
+          canSwap). Falling back to L1 keeps a visible exit — rendering nothing
+          would leave the picker with no Back and no Cancel. */}
+      {level === 'l3-propose-swap' && onProposeSwap === undefined && (
+        <PickerActionMenu
+          day={day}
+          error={error}
+          isPending={isPending}
+          sickDayDisabled={sickDayDisabled}
+          showSwapMain={false}
+          showPauseChild={childIds.length > 1}
+          showRegenDay={onRegenDay !== undefined}
+          onSickDay={handleSickDayIntent}
+          onChangeItem={handleChangeItem}
+          onSwapMain={() => { /* unreachable: showSwapMain is false */ }}
+          onOverride={handleOverrideIntent}
+          onPauseChild={handlePauseChildIntent}
+          onRegenDay={(d) => onRegenDay?.(d)}
+          onDismiss={onDismiss}
+        />
+      )}
+
+      {level === 'l3-propose-swap' && onProposeSwap !== undefined && (
+        <PickerProposeSwap
+          pickerId={pickerId}
+          day={day}
+          onProposeSwap={onProposeSwap}
+          onSwapStarted={onSwapStarted}
+          onDismiss={onDismiss}
+          onBack={() => { setError(null); setLevel('l1'); }}
+        />
       )}
     </div>
   );

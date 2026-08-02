@@ -1,5 +1,5 @@
 import type { BriefStateRow } from '@hivekitchen/types';
-import { StarIcon, ShieldCheckIcon, LeafIcon } from '@/components/icons.js';
+import { StarIcon, ShieldCheckIcon, LeafIcon } from '@hivekitchen/ui';
 
 interface BriefWhyPanelProps {
   brief: BriefStateRow | null | undefined;

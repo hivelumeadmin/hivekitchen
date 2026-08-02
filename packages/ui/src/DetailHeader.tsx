@@ -31,9 +31,12 @@ export function DetailHeader({ contextLabel, currentLabel, onBack }: DetailHeade
         </div>
         <div className="flex items-center gap-4">
           <LumiPulse />
+          {/* Decorative avatar placeholder — a bare aria-label on a role-less
+              div is prohibited ARIA (axe aria-prohibited-attr) and named
+              nothing useful; it carries no information to announce. */}
           <div
-            aria-label="User profile"
-            className="h-10 w-10 overflow-hidden rounded-full border border-border/30 bg-surface"
+            aria-hidden="true"
+            className="h-10 w-10 overflow-hidden rounded-full border border-border bg-surface"
           />
         </div>
       </div>

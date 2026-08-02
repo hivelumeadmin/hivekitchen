@@ -64,7 +64,7 @@ export function StatusLine({
   if (currentMomentKey === 'm5_starting_line' && coldStartMode) {
     if (coldStartDishCount === 0) {
       return (
-        <p data-testid="cold-start-gate-line" className="mt-2 text-center font-sans text-xs italic text-amber/80">
+        <p data-testid="cold-start-gate-line" className="mt-2 text-center font-sans text-xs italic text-fg-muted">
           Tell Lumi three dishes your family eats most weeks.
         </p>
       );
@@ -94,7 +94,7 @@ export function StatusLine({
     const hasResponse = chipSelections.length > 0 || draft.trim().length > 0;
     if (!hasResponse) {
       return (
-        <p data-testid="m2-status-line" className="mt-2 text-center font-sans text-xs italic text-amber/80">
+        <p data-testid="m2-status-line" className="mt-2 text-center font-sans text-xs italic text-amber">
           Required — tap an allergen, describe in your own words, or pick &ldquo;No known allergens&rdquo;.
         </p>
       );

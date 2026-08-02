@@ -1,6 +1,8 @@
+import type * as UiModule from '@hivekitchen/ui';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, waitFor, cleanup } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type * as ReactRouterDom from 'react-router-dom';
 import type { UserProfile } from '@hivekitchen/types';
 
@@ -12,7 +14,8 @@ vi.mock('@/lib/fetch.js', () => ({
   HkApiError: class HkApiError extends Error {},
 }));
 
-vi.mock('@hivekitchen/ui', () => ({
+vi.mock('@hivekitchen/ui', async (importOriginal) => ({
+  ...(await importOriginal<typeof UiModule>()),
   useScope: vi.fn(),
 }));
 
@@ -70,10 +73,15 @@ function setAuthenticated() {
 }
 
 function renderRoute() {
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
   render(
-    <MemoryRouter initialEntries={['/app/account']}>
-      <AccountPage />
-    </MemoryRouter>,
+    <QueryClientProvider client={queryClient}>
+      <MemoryRouter initialEntries={['/app/account']}>
+        <AccountPage />
+      </MemoryRouter>
+    </QueryClientProvider>,
   );
 }
 

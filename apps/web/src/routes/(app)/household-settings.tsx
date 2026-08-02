@@ -297,7 +297,7 @@ export default function HouseholdSettingsRoute() {
         <>
           <ul className="mt-8 space-y-4">
             {members.map((member) => (
-              <li key={member.user_id} className="border-b border-border/20 pb-4">
+              <li key={member.user_id} className="border-b border-[color-mix(in_srgb,var(--border)_20%,transparent)] pb-4">
                 <p className="font-sans text-sm text-fg">{member.display_name ?? 'Unknown'}</p>
                 <p className="mt-1 font-sans text-xs text-fg-muted">{roleLabel(member.role)}</p>
               </li>
@@ -442,7 +442,7 @@ export default function HouseholdSettingsRoute() {
               type="button"
               onClick={() => void handleDevResetAll()}
               disabled={devResetAllState === 'running'}
-              className="rounded border border-safety-red/40 px-4 py-2 text-sm text-safety-red hover:bg-safety-red/5 disabled:opacity-50 transition-colors"
+              className="rounded border border-[color-mix(in_srgb,var(--safety-red)_40%,transparent)] px-4 py-2 text-sm text-safety-red hover:border-safety-red disabled:opacity-50 transition-colors"
             >
               {devResetAllState === 'running' && 'Resetting…'}
               {devResetAllState === 'error' && 'Error — try again'}

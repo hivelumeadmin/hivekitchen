@@ -2,21 +2,18 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { useNavigate } from 'react-router-dom';
 import { z } from 'zod';
-import { useScope } from '@hivekitchen/ui';
+import { useScope, AppFooter, PrimaryButton, TextField } from '@hivekitchen/ui';
 import { zodResolver } from '@/lib/zod-resolver.js';
 import type { LoginResponse } from '@hivekitchen/types';
 import { hkFetch, HkApiError } from '@/lib/fetch.js';
 import { useAuthStore } from '@/stores/auth.store.js';
-import { AppFooter } from '@/components/AppFooter.js';
 import { AppHeader } from '@/components/AppHeader.js';
 import {
   ArrowRightIcon,
   EyeIcon,
   EyeOffIcon,
   LockIcon,
-} from '@/components/icons.js';
-import { PrimaryButton } from '@/components/PrimaryButton.js';
-import { TextField } from '@/components/TextField.js';
+} from '@hivekitchen/ui';
 import { LoginHero } from '@/features/login/components/LoginHero.js';
 
 const ResetPasswordFormSchema = z.object({
@@ -143,7 +140,7 @@ export default function ResetPasswordPage() {
                 {apiError ? (
                   <p
                     role="alert"
-                    className="rounded-lg border border-safety-red/30 bg-safety-red/10 px-4 py-3 text-sm text-safety-red"
+                    className="rounded-lg border border-[color-mix(in_srgb,var(--safety-red)_30%,transparent)] px-4 py-3 text-sm text-safety-red"
                   >
                     {apiError}
                   </p>

@@ -3,7 +3,7 @@ import type {
   ChildPerson,
   OptionalExtra,
   OptionalExtraKind,
-} from '../data/multiChildMockData.js';
+} from '../day-view-model.js';
 
 const dotClass: Record<ChildDotColor, string> = {
   foliage: 'bg-foliage',
@@ -34,7 +34,7 @@ export function OptionalExtraBlock({ extra, kids }: OptionalExtraBlockProps) {
     (k) => extra.perChildAssignment[k.id] === 'included',
   );
   return (
-    <section className="space-y-3 border-t border-border/15 pt-6">
+    <section className="space-y-3 border-t border-border pt-6">
       <p className="text-[10px] font-medium uppercase tracking-[0.25em] text-fg-muted">
         Optional extra · {kindLabel[extra.kind]}
       </p>
@@ -47,7 +47,7 @@ export function OptionalExtraBlock({ extra, kids }: OptionalExtraBlockProps) {
           includedKids.map((k) => (
             <span
               key={k.id}
-              className="inline-flex items-center gap-1.5 rounded-full border border-border/30 bg-surface px-2 py-0.5"
+              className="inline-flex items-center gap-1.5 rounded-full border border-border bg-surface px-2 py-0.5"
             >
               <span
                 className={`h-1.5 w-1.5 rounded-full ${dotClass[k.color]}`}

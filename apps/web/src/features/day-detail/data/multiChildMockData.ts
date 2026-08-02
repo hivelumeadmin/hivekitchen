@@ -1,109 +1,8 @@
-export type ChildDotColor = 'foliage' | 'lumi-terracotta' | 'sacred';
+import type { ChildPerson, WeekPlan } from '../day-view-model.js';
 
-type AgeBand = 'toddler' | 'child' | 'preteen' | 'teen';
-
-export interface ChildPerson {
-  readonly id: string;
-  readonly name: string;
-  readonly color: ChildDotColor;
-  readonly ageBand: AgeBand;
-}
-
-export type CookingMode = 'prep' | 'finish';
-
-interface MethodStep {
-  readonly text: string;
-  readonly mode: CookingMode;
-}
-
-interface MainRecipe {
-  readonly id: string;
-  readonly title: string;
-  readonly ingredients: readonly string[];
-  readonly method: readonly MethodStep[];
-  readonly prepMinutes: number;
-  readonly finishMinutes: number;
-  readonly familiarityKnown: boolean;
-}
-
-type PortionSize = 'small' | 'regular' | 'large';
-type TextureLevel = 'soft' | 'normal' | 'diced' | 'finger';
-type SpiceLevel = 'mild' | 'regular' | 'spicy';
-
-export interface ChildVariation {
-  readonly childId: string;
-  readonly portionSize: PortionSize;
-  readonly texture: TextureLevel;
-  readonly spiceLevel: SpiceLevel;
-  readonly cuttingStyle?: string;
-  readonly container?: string;
-  readonly addOns: readonly string[];
-  readonly removals: readonly string[];
-  readonly notes?: string;
-}
-
-interface SnackEntry {
-  readonly title: string;
-  readonly ingredients: readonly string[];
-  readonly perChildVariation?: Readonly<Record<string, string>>;
-}
-
-export type OptionalExtraKind =
-  | 'drink'
-  | 'extra_snack'
-  | 'protein_boost'
-  | 'sports_add'
-  | 'sweet'
-  | 'toddler_safe'
-  | 'allergy_substitute'
-  | 'custom';
-
-export interface OptionalExtra {
-  readonly kind: OptionalExtraKind;
-  readonly title: string;
-  readonly perChildAssignment: Readonly<Record<string, 'included' | 'excluded'>>;
-}
-
-interface PrepInvestment {
-  readonly savedMinutes: number;
-  readonly label: string;
-}
-
-// Story 3-DM-A3: aligned mock-data DayName with PlanComposeDaySchema and the
-// SCHOOL_DAYS canonical enum. Mock surfaces still render Mon-Fri only; Saturday
-// is type-allowed for households whose school week declares it.
-type DayName = 'monday' | 'tuesday' | 'wednesday' | 'thursday' | 'friday' | 'saturday';
-
-export interface DayPlan {
-  readonly id: string;
-  readonly dayName: DayName;
-  readonly dateLabel: string;
-  readonly mainGroupId: string;
-  readonly mainGroupNote?: string;
-  readonly main: MainRecipe;
-  readonly variations: readonly ChildVariation[];
-  readonly snack: SnackEntry;
-  readonly optionalExtra?: OptionalExtra;
-  readonly prepInvestment?: PrepInvestment;
-}
-
-export interface WeekPlan {
-  readonly id: string;
-  readonly children: readonly ChildPerson[];
-  readonly days: readonly DayPlan[];
-}
-
-export function formatAttribution(kids: readonly ChildPerson[]): string {
-  if (kids.length === 0) return '';
-  if (kids.length === 1) return `For ${kids[0]!.name}`;
-  if (kids.length === 2) return `For ${kids[0]!.name} & ${kids[1]!.name}`;
-  const head = kids
-    .slice(0, -1)
-    .map((k) => k.name)
-    .join(', ');
-  const last = kids[kids.length - 1]!.name;
-  return `For ${head} & ${last}`;
-}
+// Story 14-s4 — the day-detail view model moved to ../day-view-model.ts so the
+// shipped Wall Card no longer depends on this dev-only fixture for its types.
+// This file is now purely the `_dev-day-detail-multi-child` sample week.
 
 const AARAV: ChildPerson = { id: 'c-1', name: 'Aarav', color: 'foliage', ageBand: 'toddler' };
 const MIRA: ChildPerson = { id: 'c-2', name: 'Mira', color: 'lumi-terracotta', ageBand: 'child' };
@@ -115,6 +14,7 @@ export const exampleWeek: WeekPlan = {
   days: [
     {
       id: 'day-mon',
+      paused: false,
       dayName: 'monday',
       dateLabel: '12 May',
       mainGroupId: 'M1',
@@ -182,6 +82,7 @@ export const exampleWeek: WeekPlan = {
     },
     {
       id: 'day-tue',
+      paused: false,
       dayName: 'tuesday',
       dateLabel: '13 May',
       mainGroupId: 'M1',
@@ -255,6 +156,7 @@ export const exampleWeek: WeekPlan = {
     },
     {
       id: 'day-wed',
+      paused: false,
       dayName: 'wednesday',
       dateLabel: '14 May',
       mainGroupId: 'M2',
@@ -319,6 +221,7 @@ export const exampleWeek: WeekPlan = {
     },
     {
       id: 'day-thu',
+      paused: false,
       dayName: 'thursday',
       dateLabel: '15 May',
       mainGroupId: 'M2',
@@ -382,6 +285,7 @@ export const exampleWeek: WeekPlan = {
     },
     {
       id: 'day-fri',
+      paused: false,
       dayName: 'friday',
       dateLabel: '16 May',
       mainGroupId: 'M3',

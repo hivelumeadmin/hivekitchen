@@ -1,5 +1,4 @@
-import { AppFooter } from '../components/AppFooter.js';
-import { DetailHeader } from '../components/DetailHeader.js';
+import { AppFooter, DetailHeader } from '@hivekitchen/ui';
 import { PageHeader } from '../components/PageHeader.js';
 import { AllergenScanCard } from '../features/day-detail/components/AllergenScanCard.js';
 import { BottomActionBar } from '../features/day-detail/components/BottomActionBar.js';

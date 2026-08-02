@@ -20,7 +20,7 @@ export function InspirationActions({
       <button
         type="button"
         onClick={onLoadMore}
-        className="rounded-xl border-2 border-lumi-terracotta px-8 py-4 text-[11px] font-medium uppercase tracking-widest text-fg transition-all hover:border-lumi-terracotta-warmed hover:bg-lumi-terracotta-warmed/10 active:scale-95"
+        className="rounded-xl border-2 border-lumi-terracotta px-8 py-4 text-[11px] font-medium uppercase tracking-widest text-fg transition-all hover:border-lumi-terracotta-warmed hover:bg-[color-mix(in_srgb,var(--lumi-terracotta-warmed)_10%,transparent)] active:scale-95"
       >
         {loadMoreLabel}
       </button>

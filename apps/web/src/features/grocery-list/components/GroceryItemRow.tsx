@@ -4,7 +4,7 @@ import {
   MinusIcon,
   PlusIcon,
   TrashIcon,
-} from '../../../components/icons.js';
+} from '@hivekitchen/ui';
 import type { GroceryItem } from '../data/mockData.js';
 
 interface Readonly_GroceryItemRowProps {
@@ -19,8 +19,8 @@ export function GroceryItemRow({ item }: GroceryItemRowProps) {
   const [unit, setUnit] = useState(item.defaultUnit);
 
   const containerClass = item.faded
-    ? 'flex flex-wrap items-center gap-x-4 gap-y-3 rounded border border-border/30 bg-surface p-5 opacity-60'
-    : 'group flex flex-wrap items-center gap-x-4 gap-y-3 rounded border border-border/30 bg-surface p-5 transition-all hover:border-amber-warm';
+    ? 'flex flex-wrap items-center gap-x-4 gap-y-3 rounded border border-[color-mix(in_srgb,var(--border)_30%,transparent)] bg-surface p-5 opacity-60'
+    : 'group flex flex-wrap items-center gap-x-4 gap-y-3 rounded border border-[color-mix(in_srgb,var(--border)_30%,transparent)] bg-surface p-5 transition-all hover:border-amber-warm';
 
   const checkBorderClass = item.faded
     ? 'border-border'
@@ -46,7 +46,7 @@ export function GroceryItemRow({ item }: GroceryItemRowProps) {
       </div>
 
       <div className="flex w-full flex-shrink-0 flex-wrap items-center gap-2 sm:w-auto sm:gap-3">
-        <div className="flex flex-shrink-0 items-center rounded border border-border/30 bg-surface-2 p-1">
+        <div className="flex flex-shrink-0 items-center rounded border border-[color-mix(in_srgb,var(--border)_30%,transparent)] bg-surface-2 p-1">
           <button
             type="button"
             onClick={() => setQuantity((q) => Math.max(0, q - 1))}
@@ -69,7 +69,7 @@ export function GroceryItemRow({ item }: GroceryItemRowProps) {
           value={unit}
           onChange={(e) => setUnit(e.target.value)}
           aria-label={`Unit for ${item.name}`}
-          className="min-w-0 flex-shrink rounded border border-border/30 bg-surface-2 px-3 py-1.5 pe-8 text-xs font-medium uppercase tracking-widest focus:border-amber-warm focus:ring-amber-warm"
+          className="min-w-0 flex-shrink rounded border border-[color-mix(in_srgb,var(--border)_30%,transparent)] bg-surface-2 px-3 py-1.5 pe-8 text-xs font-medium uppercase tracking-widest focus:border-amber-warm focus:ring-amber-warm"
         >
           {item.units.map((u) => (
             <option key={u} value={u}>

@@ -3,7 +3,7 @@ import type {
   ChildDotColor,
   ChildPerson,
   ChildVariation,
-} from '../data/multiChildMockData.js';
+} from '../day-view-model.js';
 
 const dotClass: Record<ChildDotColor, string> = {
   foliage: 'bg-foliage',
@@ -32,6 +32,7 @@ function formatChipSummary(v: ChildVariation): string {
 
 export function VariationChip({ kid, variation }: VariationChipProps) {
   const [expanded, setExpanded] = useState(false);
+  const isPaused = variation.paused === true;
   return (
     <div className="shrink-0">
       <button
@@ -40,7 +41,9 @@ export function VariationChip({ kid, variation }: VariationChipProps) {
           setExpanded((v) => !v);
         }}
         aria-expanded={expanded}
-        className="flex items-center gap-2 rounded-full border border-border/30 bg-surface px-3 py-1.5 text-xs text-fg transition-colors hover:border-amber-warm/40"
+        className={`flex items-center gap-2 rounded-full border border-border bg-surface px-3 py-1.5 text-xs text-fg transition-colors hover:border-lumi-terracotta-warmed ${
+          isPaused ? 'opacity-60' : ''
+        }`}
       >
         <span
           className={`h-2 w-2 rounded-full ${dotClass[kid.color]}`}
@@ -48,8 +51,12 @@ export function VariationChip({ kid, variation }: VariationChipProps) {
         />
         <span className="font-medium">{kid.name}</span>
         <span className="text-fg-muted">·</span>
-        <span className="text-fg-muted">{formatChipSummary(variation)}</span>
-        <span className="ms-1 text-fg-muted/60">{expanded ? '▴' : '▾'}</span>
+        {/* A paused child's lunch is not being made — say so instead of the
+            variation summary. */}
+        <span className="text-fg-muted">
+          {isPaused ? 'Paused this day' : formatChipSummary(variation)}
+        </span>
+        <span className="ms-1 text-fg-muted">{expanded ? '▴' : '▾'}</span>
       </button>
       {expanded ? (
         <VariationExpandedCard kid={kid} variation={variation} />
@@ -77,25 +84,25 @@ function VariationExpandedCard({ kid, variation }: VariationExpandedCardProps) {
   ];
 
   return (
-    <div className="mt-2 w-72 rounded-lg border border-border/30 bg-surface/60 p-3 text-xs text-fg-muted">
+    <div className="mt-2 w-72 rounded-lg border border-border bg-surface p-3 text-xs text-fg-muted">
       <p className="mb-2 font-medium text-fg">{kid.name}&rsquo;s variation</p>
       <dl className="space-y-1">
         {rows.map((r) => (
           <div key={r.label} className="flex justify-between gap-3">
-            <dt className="text-fg-muted/70">{r.label}</dt>
-            <dd className="capitalize text-fg/90">{r.value}</dd>
+            <dt className="text-fg-muted">{r.label}</dt>
+            <dd className="capitalize text-fg">{r.value}</dd>
           </div>
         ))}
         {variation.addOns.length > 0 ? (
           <div className="pt-1">
-            <dt className="text-fg-muted/70">Add-ons</dt>
-            <dd className="text-fg/90">{variation.addOns.join(', ')}</dd>
+            <dt className="text-fg-muted">Add-ons</dt>
+            <dd className="text-fg">{variation.addOns.join(', ')}</dd>
           </div>
         ) : null}
         {variation.removals.length > 0 ? (
           <div className="pt-1">
-            <dt className="text-fg-muted/70">Remove</dt>
-            <dd className="text-fg/90">{variation.removals.join(', ')}</dd>
+            <dt className="text-fg-muted">Remove</dt>
+            <dd className="text-fg">{variation.removals.join(', ')}</dd>
           </div>
         ) : null}
       </dl>
