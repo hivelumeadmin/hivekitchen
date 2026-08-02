@@ -1,5 +1,5 @@
 ﻿# generated: 2026-04-23
-# last_updated: 2026-08-02 (SPRINT PLANNING: Epic 15 "Canonical Data Model v2" registered — 9 slices from canonical-data-model-v2-spec.md �8 strangler sequence; all backlog. Board otherwise: epics 13+14+chore-s1 done and MERGED to main (PR #63); 5-s15/5-s16/12-s10 still in review; epics 6,8,9,10,11 + 5-s17/5-s18 backlog.)
+# last_updated: 2026-08-02 (SPRINT PLANNING: Epic 15 "Canonical Data Model v2" registered — 9 slices from canonical-data-model-v2-spec.md §8 strangler sequence; all backlog. Board otherwise: epics 13+14+chore-s1 done and MERGED to main (PR #63); 5-s15/5-s16/12-s10 still in review; epics 6,8,9,10,11 + 5-s17/5-s18 backlog.)
 # project: hivekitchen
 # project_key: NOKEY
 # tracking_system: file-system
@@ -52,7 +52,7 @@
 # Walls (decision moments) are flagged with `# WALL:` markers.
 
 generated: 2026-04-23
-last_updated: 2026-08-02 (Epic 15 Canonical Data Model v2 registered by sprint-planning — 9 slices, all backlog; source spec canonical-data-model-v2-spec.md)
+last_updated: 2026-08-02 (15-s1 family-calendar story authored via create-story — ready-for-dev; epic-15 in-progress)
 project: hivekitchen
 project_key: NOKEY
 tracking_system: file-system
@@ -586,8 +586,8 @@ development_status:
   # KitchenMapRepository.loadRaw() ships its kitchen_map_version bump trigger
   # IN THE SAME MIGRATION that creates it. RLS ships WITH each table (§7.2).
   # ==========================================================================
-  epic-15: backlog
-  15-s1-family-calendar-terms-exceptions: backlog        # NEW calendar_terms + calendar_exceptions (+RLS +kitchen-map triggers in same migration); isLunchDay() derivation; planner reads lunch days pre-flight, falls back to all-weekdays when empty; Google read-only sync = future ingestion source, NOT this slice
+  epic-15: in-progress
+  15-s1-family-calendar-terms-exceptions: ready-for-dev        # NEW calendar_terms + calendar_exceptions (+RLS +kitchen-map triggers in same migration); isLunchDay() derivation; planner reads lunch days pre-flight, falls back to all-weekdays when empty; Google read-only sync = future ingestion source, NOT this slice # story authored 2026-08-02 (create-story, claude-fable-5): grounded in 3-agent codebase research; key reconciliations: LLM currently decides the day set (no server authority exists); plannedDays is the designed seam (prompt+snack+tracer); omit-dont-pause; snack rotation must stop dropping saturday; kitchen-map projection DEFERRED but bump triggers ship in the migration per spec §7.3; no web changes
   15-s2-signals-log-dual-write: backlog                  # NEW append-only signals table (kind/subject_ref/payload Zod-validated at write boundary); dual-write from the 5 existing learning paths (lunch_link rating, lunch requests, leftover log, extra_removal, preference edits); no read changes yet
   15-s3-child-preferences-projection-flip: backlog       # WALL: parity flip — child_preferences becomes a materialized projection over signals (kitchen-map-style refresh-on-write); verify parity vs legacy writes; flip reads; retire the old write paths
   15-s4-retire-school-policy-notes: backlog              # kill dual representation: drop children.school_policy_notes; migrate surviving free-text into school_policies rows (policy_type='note'); coordinated contract change
