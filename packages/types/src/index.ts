@@ -336,6 +336,8 @@ import {
   PreferenceEditSignalPayloadSchema,
   SignalRowSchema,
   RecordSignalInputSchema,
+  // Story 15-s3 — per-kind subject_ref (arrived with the projection reader)
+  LunchRatingSubjectRefSchema,
   // Story 7-S14 — Kitchen Profile parent-deterministic safety edits
   AllergenKeySchema,
   AddChildAllergenRequestSchema,
@@ -845,6 +847,9 @@ export type ExtraRemovalSignalPayload = z.infer<typeof ExtraRemovalSignalPayload
 export type PreferenceEditSignalPayload = z.infer<typeof PreferenceEditSignalPayloadSchema>;
 export type SignalRow = z.infer<typeof SignalRowSchema>;
 export type RecordSignalInput = z.infer<typeof RecordSignalInputSchema>;
+
+// Story 15-s3 — per-kind subject_ref (arrived with the projection reader)
+export type LunchRatingSubjectRef = z.infer<typeof LunchRatingSubjectRefSchema>;
 
 // Story 7-S14 — Kitchen Profile parent-deterministic safety edits (Phase 1)
 export type AllergenKey = z.infer<typeof AllergenKeySchema>;

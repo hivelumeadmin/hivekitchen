@@ -27,7 +27,6 @@ function childBody(opts: { snack: boolean; extra: boolean } = { snack: true, ext
       household_id: SAMPLE_HOUSEHOLD_ID,
       name: CHILD_NAME,
       age_band: 'child',
-      school_policy_notes: null,
       declared_allergens: [],
       cultural_identifiers: [],
       dietary_preferences: [],

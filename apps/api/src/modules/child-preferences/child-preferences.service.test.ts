@@ -43,6 +43,21 @@ function buildChildPrefsRepo() {
   } as unknown as ChildPreferencesRepository & { upsertSignal: ReturnType<typeof vi.fn> };
 }
 
+// Story 15-s3 — the seam projects FROM the landed row, so a stub record() must
+// echo back the SignalRow the DB would have returned.
+let signalSeq = 0;
+function buildSignals() {
+  return vi.fn().mockImplementation(async (input: Record<string, unknown>) => {
+    signalSeq += 1;
+    return {
+      id: `99999999-9999-4999-8999-${String(signalSeq).padStart(12, '0')}`,
+      kind: 'lunch_rating',
+      created_at: input.occurred_at,
+      ...input,
+    };
+  });
+}
+
 function mainSlot() {
   return { id: 's-main', plan_day_id: DAY_ID, slot_kind: 'main', main_assignment_id: MAIN_ASSIGNMENT_ID, recipe_id: null, extra_kind: null };
 }
@@ -62,7 +77,7 @@ describe('ChildPreferencesService.recordRatingSignals', () => {
         { id: MAIN_ASSIGNMENT_ID, plan_id: PLAN_ID, sequence: 2, recipe_id: RECIPE_MAIN },
       ]),
     } as unknown as Partial<PlansRepository>);
-    const service = new ChildPreferencesService(childPrefs, plans, buildLogger());
+    const service = new ChildPreferencesService(childPrefs, plans, buildLogger(), { record: buildSignals() });
 
     await service.recordRatingSignals({
       householdId: HOUSEHOLD_ID,
@@ -95,7 +110,7 @@ describe('ChildPreferencesService.recordRatingSignals', () => {
     const plans = buildPlansRepo({
       findCommittedPlanIdByWeekOf: vi.fn().mockResolvedValue(null),
     } as unknown as Partial<PlansRepository>);
-    const service = new ChildPreferencesService(childPrefs, plans, buildLogger());
+    const service = new ChildPreferencesService(childPrefs, plans, buildLogger(), { record: buildSignals() });
 
     await service.recordRatingSignals({ householdId: HOUSEHOLD_ID, childId: CHILD_ID, rating: 'ok', signalDate: WED });
 
@@ -106,7 +121,7 @@ describe('ChildPreferencesService.recordRatingSignals', () => {
   it('skips a Sunday rating without even looking up a plan', async () => {
     const childPrefs = buildChildPrefsRepo();
     const plans = buildPlansRepo();
-    const service = new ChildPreferencesService(childPrefs, plans, buildLogger());
+    const service = new ChildPreferencesService(childPrefs, plans, buildLogger(), { record: buildSignals() });
 
     await service.recordRatingSignals({ householdId: HOUSEHOLD_ID, childId: CHILD_ID, rating: 'loved', signalDate: SUN });
 
@@ -120,7 +135,7 @@ describe('ChildPreferencesService.recordRatingSignals', () => {
       findSlotsByDayId: vi.fn().mockResolvedValue([mainSlot(), snackSlot()]),
       findMainAssignmentsByPlanId: vi.fn().mockResolvedValue([]), // no matching assignment
     } as unknown as Partial<PlansRepository>);
-    const service = new ChildPreferencesService(childPrefs, plans, buildLogger());
+    const service = new ChildPreferencesService(childPrefs, plans, buildLogger(), { record: buildSignals() });
 
     await service.recordRatingSignals({ householdId: HOUSEHOLD_ID, childId: CHILD_ID, rating: 'ok', signalDate: WED });
 
@@ -136,7 +151,7 @@ describe('ChildPreferencesService.recordRatingSignals', () => {
     const plans = buildPlansRepo({
       findSlotsByDayId: vi.fn().mockResolvedValue([snackSlot(), extraSlot()]),
     } as unknown as Partial<PlansRepository>);
-    const service = new ChildPreferencesService(childPrefs, plans, buildLogger());
+    const service = new ChildPreferencesService(childPrefs, plans, buildLogger(), { record: buildSignals() });
 
     await expect(
       service.recordRatingSignals({ householdId: HOUSEHOLD_ID, childId: CHILD_ID, rating: 'not-really', signalDate: WED }),
@@ -144,9 +159,10 @@ describe('ChildPreferencesService.recordRatingSignals', () => {
     expect(childPrefs.upsertSignal).toHaveBeenCalledTimes(2);
   });
 
-  // ---- Story 15-s2: signals-log dual-write at the per-slot seam ----
+  // ---- Story 15-s3: signals are the system of record; child_preferences is
+  // the projection applied FROM the landed row (was 15-s2 dual-write) ----
 
-  it('dual-writes one signals row per slot with recipe-level subject_ref', async () => {
+  it('writes one signals row per slot with recipe-level subject_ref', async () => {
     const childPrefs = buildChildPrefsRepo();
     const plans = buildPlansRepo({
       findSlotsByDayId: vi.fn().mockResolvedValue([mainSlot(), snackSlot(), extraSlot()]),
@@ -154,7 +170,7 @@ describe('ChildPreferencesService.recordRatingSignals', () => {
         { id: MAIN_ASSIGNMENT_ID, plan_id: PLAN_ID, sequence: 2, recipe_id: RECIPE_MAIN },
       ]),
     } as unknown as Partial<PlansRepository>);
-    const record = vi.fn().mockResolvedValue(undefined);
+    const record = buildSignals();
     const service = new ChildPreferencesService(childPrefs, plans, buildLogger(), { record });
 
     await service.recordRatingSignals({
@@ -178,50 +194,64 @@ describe('ChildPreferencesService.recordRatingSignals', () => {
     });
   });
 
-  it('re-rating appends — two invocations produce two full signal sets', async () => {
+  it('re-rating appends a signal AND the projection overwrites the same row (both stores)', async () => {
     const childPrefs = buildChildPrefsRepo();
     const plans = buildPlansRepo({
       findSlotsByDayId: vi.fn().mockResolvedValue([snackSlot()]),
     } as unknown as Partial<PlansRepository>);
-    const record = vi.fn().mockResolvedValue(undefined);
+    const record = buildSignals();
     const service = new ChildPreferencesService(childPrefs, plans, buildLogger(), { record });
 
     await service.recordRatingSignals({ householdId: HOUSEHOLD_ID, childId: CHILD_ID, rating: 'loved', signalDate: WED });
     await service.recordRatingSignals({ householdId: HOUSEHOLD_ID, childId: CHILD_ID, rating: 'not-really', signalDate: WED });
 
+    // Log: two appended rows (a correction is a new signal).
     expect(record).toHaveBeenCalledTimes(2);
     expect((record.mock.calls[1]?.[0] as { payload: { rating: string } }).payload.rating).toBe('not-really');
+    // Projection: two upserts on the SAME dedup key — the later one wins.
+    expect(childPrefs.upsertSignal).toHaveBeenCalledTimes(2);
+    expect(childPrefs.upsertSignal.mock.calls.map((c) => (c[0] as { signal_type: string }).signal_type)).toEqual([
+      'loved',
+      'not-really',
+    ]);
+    const [first, second] = childPrefs.upsertSignal.mock.calls.map((c) => c[0] as Record<string, unknown>);
+    expect(second).toMatchObject({
+      child_id: first?.child_id,
+      recipe_id: first?.recipe_id,
+      slot_kind: first?.slot_kind,
+      signal_date: first?.signal_date,
+    });
   });
 
-  it('still writes child_preferences when the signals dual-write is not wired (optional dep)', async () => {
+  it('projects from the landed signal — the row the log returned, not seam-local data', async () => {
     const childPrefs = buildChildPrefsRepo();
     const plans = buildPlansRepo({
       findSlotsByDayId: vi.fn().mockResolvedValue([snackSlot()]),
     } as unknown as Partial<PlansRepository>);
-    const service = new ChildPreferencesService(childPrefs, plans, buildLogger());
-
-    await service.recordRatingSignals({ householdId: HOUSEHOLD_ID, childId: CHILD_ID, rating: 'ok', signalDate: WED });
-
-    expect(childPrefs.upsertSignal).toHaveBeenCalledTimes(1);
-  });
-
-  it('dual-writes the signal even when the child_preferences upsert for that slot fails', async () => {
-    const childPrefs = buildChildPrefsRepo();
-    childPrefs.upsertSignal.mockRejectedValueOnce(new Error('slot write failed'));
-    const plans = buildPlansRepo({
-      findSlotsByDayId: vi.fn().mockResolvedValue([snackSlot()]),
-    } as unknown as Partial<PlansRepository>);
-    const record = vi.fn().mockResolvedValue(undefined);
+    // The DB is the authority on what landed: this row carries a different
+    // recipe than the seam asked for, and the projection must follow the row.
+    const record = vi.fn().mockImplementation(async (input: Record<string, unknown>) => ({
+      ...input,
+      id: '99999999-9999-4999-8999-999999999999',
+      kind: 'lunch_rating',
+      created_at: input.occurred_at,
+      subject_ref: { recipe_id: RECIPE_EXTRA, slot_kind: 'extra' },
+    }));
     const service = new ChildPreferencesService(childPrefs, plans, buildLogger(), { record });
 
     await service.recordRatingSignals({ householdId: HOUSEHOLD_ID, childId: CHILD_ID, rating: 'ok', signalDate: WED });
 
-    expect(record).toHaveBeenCalledTimes(1);
+    expect(childPrefs.upsertSignal.mock.calls[0]?.[0]).toMatchObject({
+      recipe_id: RECIPE_EXTRA,
+      slot_kind: 'extra',
+      source: 'layer1_emoji',
+    });
   });
 
-  it('all upsertSignal writes still land when the signals write FAILS through the real SignalsService (AC #9)', async () => {
-    // A REAL SignalsService whose insert always fails — proves the seam
-    // survives a failing signals WRITE, not just an unwired dep (15-s2 review).
+  it('writes NOTHING to child_preferences when the signals write FAILS through the real SignalsService (15-s3 flip)', async () => {
+    // Inverts the 15-s2 AC#9 test for this seam: the projection derives from
+    // the log, so `log ⊇ stores` now holds by construction here. A rating whose
+    // signal never landed lands nowhere.
     const warn = vi.fn();
     const failingClient = {
       from: (table: string) => {
@@ -249,7 +279,7 @@ describe('ChildPreferencesService.recordRatingSignals', () => {
     await expect(
       service.recordRatingSignals({ householdId: HOUSEHOLD_ID, childId: CHILD_ID, rating: 'loved', signalDate: WED }),
     ).resolves.toBeUndefined();
-    expect(childPrefs.upsertSignal).toHaveBeenCalledTimes(2);
+    expect(childPrefs.upsertSignal).not.toHaveBeenCalled();
     expect(warn).toHaveBeenCalledTimes(2); // one swallowed failure per slot
   });
 
@@ -258,7 +288,7 @@ describe('ChildPreferencesService.recordRatingSignals', () => {
     const plans = buildPlansRepo({
       findCommittedPlanIdByWeekOf: vi.fn().mockRejectedValue(new Error('db down')),
     } as unknown as Partial<PlansRepository>);
-    const service = new ChildPreferencesService(childPrefs, plans, buildLogger());
+    const service = new ChildPreferencesService(childPrefs, plans, buildLogger(), { record: buildSignals() });
 
     await expect(
       service.recordRatingSignals({ householdId: HOUSEHOLD_ID, childId: CHILD_ID, rating: 'loved', signalDate: WED }),

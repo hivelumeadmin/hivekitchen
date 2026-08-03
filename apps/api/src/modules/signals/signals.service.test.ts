@@ -70,8 +70,15 @@ describe('SignalsService.record', () => {
     const capture = freshCapture();
     const { service, warn } = buildService(capture);
 
-    await service.record(RATING_INPUT);
+    const row = await service.record(RATING_INPUT);
 
+    // Story 15-s3 — the landed row is the projection's input, so record()
+    // returns it instead of void.
+    expect(row).toMatchObject({
+      id: '99999999-9999-4999-8999-999999999999',
+      kind: 'lunch_rating',
+      subject_ref: { recipe_id: RECIPE_ID, slot_kind: 'main' },
+    });
     expect(capture.rows).toHaveLength(1);
     expect(capture.rows[0]).toEqual({
       household_id: HOUSEHOLD_ID,
@@ -161,7 +168,7 @@ describe('SignalsService.record', () => {
         occurred_at: OCCURRED_AT,
         source: 'app',
       }),
-    ).resolves.toBeUndefined();
+    ).resolves.toBeNull();
 
     expect(capture.rows).toHaveLength(0);
     expect(warn).toHaveBeenCalledTimes(1);
@@ -172,7 +179,7 @@ describe('SignalsService.record', () => {
     capture.failNext.value = true;
     const { service, warn } = buildService(capture);
 
-    await expect(service.record(RATING_INPUT)).resolves.toBeUndefined();
+    await expect(service.record(RATING_INPUT)).resolves.toBeNull();
 
     expect(capture.rows).toHaveLength(0);
     expect(warn).toHaveBeenCalledTimes(1);
@@ -184,7 +191,7 @@ describe('SignalsService.record', () => {
 
     // A malformed call from a future JS caller: both the pre-try kind
     // extraction and the catch's household_id access must be null-safe.
-    await expect(service.record(null as never)).resolves.toBeUndefined();
+    await expect(service.record(null as never)).resolves.toBeNull();
 
     expect(capture.rows).toHaveLength(0);
     expect(warn).toHaveBeenCalledTimes(1);

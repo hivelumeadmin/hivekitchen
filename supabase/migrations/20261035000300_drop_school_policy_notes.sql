@@ -1,0 +1,37 @@
+-- Story 15-s4 (Canonical Data Model v2 §4.2, §5 row 5, §8 step 3) —
+-- Drop the legacy free-text school-policy column on children.
+--
+-- `children.school_policy_notes` was created by 20260510000000 as an interim
+-- stand-in while the normalized `school_policies` table was deferred. That
+-- table shipped in 20260700000000 (Story 3.16) and deliberately left the column
+-- in place, leaving two representations of the same fact. This migration
+-- removes the duplicate.
+--
+-- Runs AFTER `apps/api/scripts/backfill-school-policy-notes.ts` has executed
+-- against this database and its parity gate has passed (every child with a
+-- non-empty note carries a matching `school_policies` row with
+-- policy_type='note'). The script ABORTs non-zero on mismatch, so applying this
+-- migration before the gate passes is a data-loss event by design — do NOT run
+-- it first. The script also cannot run afterwards: `verifyParity` reads this
+-- column, so once it is gone the cutover is no longer verifiable.
+--
+-- Behaviour is unchanged by this drop. The column was never read by the
+-- planner, the allergy guardrail, or KitchenMapRepository.loadRaw() — it
+-- round-tripped only through the Children REST API and the onboarding agent's
+-- child.upsert tool, all of which drop it in the same PR (coordinated contract
+-- change). Backfilled rows land with is_active=false, and
+-- SchoolPoliciesRepository.findActiveByChildId filters is_active=true, so the
+-- planner prompt is byte-identical before and after.
+--
+-- Pre-beta hard cutover (same stance as 20261008000100): rollback data loss is
+-- acceptable. The honest rollback path is re-adding the column as nullable text
+-- and repopulating it from `school_policies` WHERE policy_type='note'; anything
+-- edited through the policy route since the backfill would not round-trip.
+--
+-- Mirrors:
+--   - apps/api/src/modules/children/children.repository.ts (CHILD_COLUMNS)
+--   - packages/contracts/src/children.ts (AddChildBodySchema, ChildResponseSchema)
+--   - packages/contracts/src/onboarding-tools.ts (ChildUpsertInputSchema)
+
+ALTER TABLE children
+  DROP COLUMN IF EXISTS school_policy_notes;

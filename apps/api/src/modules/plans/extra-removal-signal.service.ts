@@ -8,7 +8,7 @@ import type { SignalsService } from '../signals/signals.service.js';
 //
 // When a parent swaps out the same Extra component_type BIAS_THRESHOLD times
 // within WINDOW_DAYS, the component_type is silently added to that child's
-// extra_rules.bans. The planner sees the ban on its next prompt and stops
+// Extra bans. The planner sees the ban on its next prompt and stops
 // proposing that type. Per the product spec there is NO parent confirmation
 // or banner — bias is intentionally invisible to the user. Audit visibility
 // for ops is provided via the plan.extra_bias_applied event.
@@ -58,7 +58,7 @@ export class ExtraRemovalSignalService {
 
   // Called when a parent swaps out an Extra plan_item. Records the removal
   // signal and, if the rolling-window threshold is met, silently extends the
-  // child's extra_rules.bans. Errors are logged but never thrown — bias is
+  // child's Extra bans. Errors are logged but never thrown — bias is
   // a soft signal and must not break the swap path.
   async recordRemoval(input: RecordRemovalInput): Promise<void> {
     const componentType = input.componentType.trim().toLowerCase();
@@ -123,13 +123,13 @@ export class ExtraRemovalSignalService {
     }
   }
 
-  // Adds component_type to the child's extra_rules.bans via an atomic
-  // DB-level append (`append_extra_ban` RPC). The RPC performs the
-  // containment check + append in a single UPDATE so two concurrent
-  // applyBias calls for *different* component types on the same child
-  // cannot race and overwrite each other's writes (read-then-write would
-  // lose one ban). Marks all matching unapplied signals as bias_applied so
-  // the threshold counter resets cleanly.
+  // Adds component_type to the child's Extra bans. Story 15-s5 moved these
+  // from a JSONB array to child_extra_rules rows, so the append is a plain
+  // INSERT guarded by the (child_id, rule, component_type) unique index: two
+  // concurrent applyBias calls for *different* component types write different
+  // rows and cannot overwrite each other, and a repeat of the same type is a
+  // no-op. Marks all matching unapplied signals as bias_applied so the
+  // threshold counter resets cleanly.
   private async applyBias(opts: {
     householdId: string;
     childId: string;
@@ -145,11 +145,11 @@ export class ExtraRemovalSignalService {
         componentType: opts.componentType,
       });
     } catch (err) {
-      // RPC failure (network, function missing, permission). Leave signals
-      // unapplied so the next swap can retry.
+      // Write failure (network, permission). Leave signals unapplied so the
+      // next swap can retry.
       this.logger.error(
         { err, child_id: opts.childId, component_type: opts.componentType },
-        'extra-removal-signal: append_extra_ban RPC failed — bias not applied',
+        'extra-removal-signal: extra-rules ban insert failed — bias not applied',
       );
       return;
     }
@@ -159,7 +159,7 @@ export class ExtraRemovalSignalService {
       // signals unapplied so a retry (e.g., on the next swap) can succeed.
       this.logger.warn(
         { child_id: opts.childId, household_id: opts.householdId },
-        'extra-removal-signal: append_extra_ban returned not_found — bias not applied',
+        'extra-removal-signal: child not found for household — bias not applied',
       );
       return;
     }
@@ -194,7 +194,7 @@ export class ExtraRemovalSignalService {
 
     this.logger.info(
       { child_id: opts.childId, component_type: opts.componentType },
-      'extra bias applied: component_type added to extra_rules.bans',
+      'extra bias applied: component_type added to the child Extra bans',
     );
   }
 

@@ -1,6 +1,6 @@
 # Story 15.3: child-preferences-projection-flip
 
-Status: ready-for-dev
+Status: done
 
 <!-- Epic 15: Canonical Data Model v2. Source spec: _bmad-output/planning-artifacts/canonical-data-model-v2-spec.md §4.9 (projections derive from signals), §4.13 (kitchen map — NOT touched this slice, see Scope), §7.3 (bump-trigger invariant), §8 step 2 (strangler: build projection → verify parity → flip → retire old write path). WALL slice. -->
 <!-- Grounded in 2-agent codebase research 2026-08-02. Key reconciliations vs the spec's prose: (1) "kitchen-map-style refresh-on-write" is NOT literal — kitchen map is lazy recompute-on-read behind a version key, but child_preferences backs 4 live read shapes incl. a child-facing endpoint with a 200ms budget, so the projection target IS the existing child_preferences table and "refresh on write" = apply-from-signal at the write seam; (2) the "flip reads" strangler step therefore collapses — readers never move; what flips is the WRITE path (rows become derivable only from signals rows); (3) parity requires a BACKFILL first: signals started accumulating at 15-s2 (not even pushed yet) while child_preferences has historical rows — the reserved source='import' enum value exists exactly for this; (4) NO loadRaw()/kitchen-map change and NO bump trigger — child_preferences does not feed loadRaw() today (verified: kitchen-map.repository.ts:304-331 reads 14 tables, not this one) and §7.3 binds triggers to loadRaw sources only (same reasoning recorded in 20261035000200's header). -->
@@ -34,29 +34,39 @@ This slice: backfill historical ratings into `signals` (`source='import'`), a pu
 
 ## Tasks / Subtasks
 
-- [ ] Task 1 — Contracts (AC: #1)
-  - [ ] 1.1 `LunchRatingSubjectRefSchema` in `packages/contracts/src/signals.ts` (`.strict()`, uuid + slot enum); export via `index.ts`; `z.infer` alias in `packages/types` (both blocks); update the `subject_ref` convention comment (`signals.ts:78-85`) to point at the schema for lunch_rating.
-  - [ ] 1.2 Colocated tests in `signals.test.ts`; `contracts:check`.
-- [ ] Task 2 — SignalsService return value + repository read (AC: #2, #3)
-  - [ ] 2.1 `record(): Promise<SignalRow | null>` — return the repository row on success, `null` from the catch. Touch nothing else in the method.
-  - [ ] 2.2 `findLunchRatingsByHousehold` on `SignalsRepository`; amend the class doctrine comment ("reads arrive with the 15-s3 projection" → arrived).
-  - [ ] 2.3 Update `signals.service.test.ts` (returned row asserted; failure paths null). Other seams need no changes — verify by diff.
-- [ ] Task 3 — Projection module (AC: #4)
-  - [ ] 3.1 `child-preferences.projection.ts`: `projectLunchRatings(rows)` pure collapse + `applyLunchRatingSignal(row)` (validates via the per-kind schemas, maps to `ChildPreferenceInsert`, calls `ChildPreferencesRepository.upsertSignal`).
-  - [ ] 3.2 Unit tests: last-write-wins by occurred_at, tie-breaks (created_at, id), re-rate collapse (N→1), skip-and-warn on bad subject_ref/payload/null child_id, slot_kind isolation, source mapping to 'layer1_emoji'.
-- [ ] Task 4 — Seam flip (AC: #5, #6)
-  - [ ] 4.1 Rewire `recordRatingSignals`: per slot `const row = await record(...)`; `if (row) await applyLunchRatingSignal(row)` (per-slot try/catch on apply, warn-and-continue). Retire the direct upsert call; leave the 3-DM-C1-style retirement comment.
-  - [ ] 4.2 `signalsService` required in the constructor; update `lunch-link.routes.ts` construction; sweep test constructions.
-  - [ ] 4.3 Reshape `child-preferences.service.test.ts`: delete the retired "not wired" test; invert the failing-signals test (no projection write); keep and re-point the per-slot/subject_ref/re-rate tests at the new flow (re-rate now asserts BOTH stores: signal appended AND upsert overwrote).
-- [ ] Task 5 — Backfill + parity script (AC: #7, #8)
-  - [ ] 5.1 `apps/api/scripts/backfill-lunch-rating-signals.ts` per AC #7; env handling copied from `backfill-household-allergens.ts` `main()` (no KEK needed — lunch_rating payloads are plaintext); header carries the do-not-rerun-after-reset warning (AC #8).
-  - [ ] 5.2 Unit tests for `runBackfill` dedup predicate + `verifyParity` set-equality (mock client, exported-pure-function precedent).
-  - [ ] 5.3 Append the replay-after-reset deferral to `deferred-work.md` under this story's heading.
-- [ ] Task 6 — Verification & gates (AC: #9, #10)
-  - [ ] 6.1 `pnpm turbo lint typecheck test`, `knip`, `contracts:check`; full API suite vs 2479/0/39.
-  - [ ] 6.2 Reader-untouched proof: confirm the diff contains no changes under flavor-passport, child-signal assembler/tools, render/prompt files; run planner golden evals.
-  - [ ] 6.3 Negative control (AC #10); full E2E vs 425/13/0; zero `apps/web` diff.
-  - [ ] 6.4 Dev Record: files, decisions, deviations, baselines; update `sprint-status.yaml`.
+- [x] Task 1 — Contracts (AC: #1)
+  - [x] 1.1 `LunchRatingSubjectRefSchema` in `packages/contracts/src/signals.ts` (`.strict()`, uuid + slot enum); export via `index.ts`; `z.infer` alias in `packages/types` (both blocks); update the `subject_ref` convention comment (`signals.ts:78-85`) to point at the schema for lunch_rating.
+  - [x] 1.2 Colocated tests in `signals.test.ts`; `contracts:check`.
+- [x] Task 2 — SignalsService return value + repository read (AC: #2, #3)
+  - [x] 2.1 `record(): Promise<SignalRow | null>` — return the repository row on success, `null` from the catch. Touch nothing else in the method.
+  - [x] 2.2 `findLunchRatingsByHousehold` on `SignalsRepository`; amend the class doctrine comment ("reads arrive with the 15-s3 projection" → arrived).
+  - [x] 2.3 Update `signals.service.test.ts` (returned row asserted; failure paths null). Other seams need no changes — verify by diff.
+- [x] Task 3 — Projection module (AC: #4)
+  - [x] 3.1 `child-preferences.projection.ts`: `projectLunchRatings(rows)` pure collapse + `applyLunchRatingSignal(row)` (validates via the per-kind schemas, maps to `ChildPreferenceInsert`, calls `ChildPreferencesRepository.upsertSignal`).
+  - [x] 3.2 Unit tests: last-write-wins by occurred_at, tie-breaks (created_at, id), re-rate collapse (N→1), skip-and-warn on bad subject_ref/payload/null child_id, slot_kind isolation, source mapping to 'layer1_emoji'.
+- [x] Task 4 — Seam flip (AC: #5, #6)
+  - [x] 4.1 Rewire `recordRatingSignals`: per slot `const row = await record(...)`; `if (row) await applyLunchRatingSignal(row)` (per-slot try/catch on apply, warn-and-continue). Retire the direct upsert call; leave the 3-DM-C1-style retirement comment.
+  - [x] 4.2 `signalsService` required in the constructor; update `lunch-link.routes.ts` construction; sweep test constructions.
+  - [x] 4.3 Reshape `child-preferences.service.test.ts`: delete the retired "not wired" test; invert the failing-signals test (no projection write); keep and re-point the per-slot/subject_ref/re-rate tests at the new flow (re-rate now asserts BOTH stores: signal appended AND upsert overwrote).
+- [x] Task 5 — Backfill + parity script (AC: #7, #8)
+  - [x] 5.1 `apps/api/scripts/backfill-lunch-rating-signals.ts` per AC #7; env handling copied from `backfill-household-allergens.ts` `main()` (no KEK needed — lunch_rating payloads are plaintext); header carries the do-not-rerun-after-reset warning (AC #8).
+  - [x] 5.2 Unit tests for `runBackfill` dedup predicate + `verifyParity` set-equality (mock client, exported-pure-function precedent).
+  - [x] 5.3 Append the replay-after-reset deferral to `deferred-work.md` under this story's heading.
+- [x] Task 6 — Verification & gates (AC: #9, #10)
+  - [x] 6.1 `pnpm turbo lint typecheck test`, `knip`, `contracts:check`; full API suite vs 2479/0/39.
+  - [x] 6.2 Reader-untouched proof: confirm the diff contains no changes under flavor-passport, child-signal assembler/tools, render/prompt files; run planner golden evals.
+  - [x] 6.3 Negative control (AC #10); full E2E vs 425/13/0; zero `apps/web` diff.
+  - [x] 6.4 Dev Record: files, decisions, deviations, baselines; update `sprint-status.yaml`.
+
+### Review Findings
+
+- [x] [Review][Patch] Backfill script's offset pagination has no `ORDER BY`, risking skipped/duplicated rows across pages [apps/api/scripts/backfill-lunch-rating-signals.ts: loadPreferences ~106-119, listHouseholdIds ~148-163] — fixed: `loadPreferences` orders by `id`; `listHouseholdIds` orders by `household_id, id`
+- [x] [Review][Patch] `ScriptDeps.logger` is declared but never threaded into `projectLunchRatings(...)` calls, so a live cutover run produces zero skip-warnings [apps/api/scripts/backfill-lunch-rating-signals.ts: runBackfill, verifyParity] — fixed: `logger` retyped to `{warn}`, threaded into both call sites, `main()` wires a console logger; 2 new tests
+- [x] [Review][Patch] Stale log message in the per-slot catch still says "upsertSignal failed" though the call is now `applyLunchRatingSignal` [apps/api/src/modules/child-preferences/child-preferences.service.ts] — fixed: message renamed
+- [x] [Review][Defer] `pageSize: 0` on the backfill script's paginated helpers causes an infinite loop (invalid `.range()` + `offset` never advances) [apps/api/scripts/backfill-lunch-rating-signals.ts] — deferred, pre-existing pattern class, not reachable from any current caller (CLI always uses the default)
+- [x] [Review][Defer] `isLater()`'s final tie-break (raw UUID `id` comparison) doesn't correlate with true chronological insertion order when `occurred_at` and `created_at` are both equal [apps/api/src/modules/child-preferences/child-preferences.projection.ts] — deferred, this is exactly the AC #4-specified tie-break order; fixing needs a monotonic sequence, not a code change
+- [x] [Review][Defer] `verifyParity`'s `mismatches` array accumulates unbounded before the CLI truncates it at print time [apps/api/scripts/backfill-lunch-rating-signals.ts] — deferred, low real-world risk given the repo's documented "per-household volume is tiny"
+- [x] [Review][Defer] No test exercises the actual multi-page continuation loop for the script's paginated helpers or `findLunchRatingsByHousehold`'s default page size [apps/api/scripts/backfill-lunch-rating-signals.ts, apps/api/src/modules/signals/signals.repository.ts] — deferred, coverage gap not a bug; bundle with the ORDER BY patch's test update
 
 ## Dev Notes
 
@@ -124,8 +134,59 @@ readers (4 shapes) — UNCHANGED, still query child_preferences directly
 
 ### Agent Model Used
 
+claude-opus-5 (1M context) — dev-story workflow, 2026-08-02.
+
 ### Debug Log References
+
+- Negative control (AC #10): inverted the `occurred_at` comparison in `isLater()` → 2 projection tests failed (`collapses N re-ratings…`, `is order-independent…`); restored → 12/12 green. The collapse ordering is genuinely under test.
+- RED phases observed: `signals.service.test.ts` 4 failed before the return-type change; `child-preferences.projection.test.ts` failed to resolve the module before it existed.
 
 ### Completion Notes List
 
+**What flipped.** `child_preferences` is now a projection over the `signals` log. The rating seam (`recordRatingSignals`) writes the signal FIRST, and the projection applies from the row the DB returned. The direct `upsertSignal` call built from seam-local data is retired — after this slice the only code path that writes `child_preferences` is `applyLunchRatingSignal(row)`. Readers are byte-untouched: `getAggregatedSignals`, `getVariantEligibleChildIds`, `FlavorPassportRepository`, `child-signal.assembler.ts`, `render.ts`, `planner.prompt.ts`, `deleteByChild` — none appear in the diff, and the planner golden evals pass unchanged.
+
+**Disclosed behavior change (AC #6, deliberate).** A rating whose signals insert fails now lands in NO store (previously it still landed in `child_preferences`). `log ⊇ stores` holds by construction at this seam. Covered by an inverted AC#9 test driving the REAL `SignalsService` against a failing insert: zero `upsertSignal` calls, two warns. A per-slot upsert failure AFTER a landed signal is still caught-and-continue.
+
+**Deviations from the story text (3, all disclosed):**
+1. **AC #3 — cursor shape.** `findLunchRatingsByHousehold(householdId, { limit, after })` takes a COMPOSITE cursor `{occurredAt, id}`, not the story's bare `afterId`. An id-only cursor cannot page an `occurred_at`-ordered scan: the seam stamps `occurred_at` per slot from wall-clock time, so the three slots of one rating routinely share a millisecond and an id-only cursor would skip or repeat rows. Ordering, index usage, and the "no route exposes it" constraint are as specified.
+2. **AC #4 — `applyLunchRatingSignal` arity.** Signature is `(repository, row, logger)`, not `(row)` — the projection module is a pure module, not a class, so the repository and logger are passed in rather than captured. Still reuses `ChildPreferencesRepository.upsertSignal` as the single physical write primitive.
+3. **AC #7 — parity diff contents.** Mismatches print `{household_id, child_id, recipe_id, slot_kind, signal_date, reason}` where `reason ∈ {missing_in_projection, extra_in_projection, signal_type_mismatch}`. Rating VALUES are deliberately never printed (a test asserts this) — the reason code says what is wrong without emitting a child's preference. Diff output is capped at 50 rows with a total count; `process.exit(1)` on any mismatch, no skip-on-error escape hatch.
+
+**Design notes.** The projection function doubles as the backfill's dedup predicate (a signal exists for a key iff the projection produces that key), so the two can never disagree. `projectLunchRatings` is order-independent — it compares rather than assuming sorted input — and skips unprojectable rows with a counted warn rather than throwing, because a poisoned row in an immutable log must not be able to block a rebuild. `child_preferences.source` is pinned to `'layer1_emoji'` (the live writer's default); `signals.source` (`lunch_link`/`import`) is a different vocabulary and is deliberately not copied across.
+
+**Reset semantics (AC #8) recorded, not solved.** The projection is forward-apply-only, so a flavor-journey reset stays effective; the backfill/parity script is a cutover-time tool and its header carries a prominent DO-NOT-RE-RUN-AFTER-RESET warning. Replay-after-reset (a watermark on `children`) is in `deferred-work.md`.
+
+**USER-SIDE GATE (unchanged from 15-s1/15-s2, now load-bearing).** `supabase db push --include-all` for the three unpushed Epic-15 migrations (20261035000000 / …000100 / …000200), THEN run:
+`pnpm --filter @hivekitchen/api exec tsx scripts/backfill-lunch-rating-signals.ts`
+The parity gate inside that script IS the cutover proof. Until it is run against a real database, the flip is covered by unit tests only — no integration evidence exists that the live table is reproducible from the log.
+
+**Gates.** API suite **2504 passed / 0 failed / 39 skipped** (baseline 2479/0/39 → +25 tests, zero failures). `pnpm turbo lint typecheck` 14/14. `contracts:check` 555 exports (was 553). `knip` exit 0. Planner golden evals green. Full E2E **425 passed / 13 skipped / 0 failed** — exactly baseline, re-verified after code review. `git diff -- apps/web` EMPTY throughout. No migration ships in this slice.
+
+**Code review (2026-08-02, 3-layer adversarial pass: Blind Hunter + Edge Case Hunter + Acceptance Auditor).** 3 patches applied: backfill script's offset pagination now orders by `id` / `(household_id, id)` (two independent layers converged on this as the headline finding — unordered `.range()` paging can skip/duplicate rows across pages, which would have silently undermined the parity gate's role as "the cutover proof"); `ScriptDeps.logger` is now actually threaded into `projectLunchRatings(...)` so a live cutover surfaces skipped/unprojectable signals instead of dead-lettering them silently; a stale log message renamed. 4 findings deferred (see Review Findings + deferred-work.md): `isLater()`'s UUID tie-break is exactly the AC #4-specified order, not a defect; `pageSize:0` latent infinite-loop hazard, unreachable from any current caller; unbounded in-memory mismatch accumulation before CLI truncation; missing multi-page-continuation test coverage. 7 findings dismissed as noise (false-positive injection risk on system-generated timestamp/uuid values; already-disclosed items; precedent-matching patterns). Post-patch: API 2504/0/39, E2E 425/13/0 re-verified, turbo/knip/contracts:check all green.
+
 ### File List
+
+**New**
+- `apps/api/src/modules/child-preferences/child-preferences.projection.ts`
+- `apps/api/src/modules/child-preferences/child-preferences.projection.test.ts`
+- `apps/api/src/modules/signals/signals.repository.test.ts`
+- `apps/api/scripts/backfill-lunch-rating-signals.ts`
+- `apps/api/scripts/backfill-lunch-rating-signals.test.ts`
+
+**Modified**
+- `packages/contracts/src/signals.ts`
+- `packages/contracts/src/signals.test.ts`
+- `packages/types/src/index.ts`
+- `apps/api/src/modules/signals/signals.service.ts`
+- `apps/api/src/modules/signals/signals.service.test.ts`
+- `apps/api/src/modules/signals/signals.repository.ts`
+- `apps/api/src/modules/child-preferences/child-preferences.service.ts`
+- `apps/api/src/modules/child-preferences/child-preferences.service.test.ts`
+- `_bmad-output/implementation-artifacts/deferred-work.md`
+- `_bmad-output/implementation-artifacts/sprint-status.yaml`
+
+**Not modified (deliberately, AC #9):** `child-preferences.repository.ts`, `flavor-passport.repository.ts`, `child-signal.assembler.ts`, `child-signal.tools.ts`, `render.ts`, `planner.prompt.ts`, `flavor-journey-reset.service.ts`, `account-deletion.job.ts`, `lunch-link.routes.ts` (its construction was already positional), all of `apps/web`.
+
+## Change Log
+
+- 2026-08-02 — 15-s3 implemented (dev-story, claude-opus-5). `child_preferences` becomes a projection over the append-only `signals` log: `record()` returns the landed row, a new pure projection module collapses/applies it, and the direct write path is retired. Adds `LunchRatingSubjectRefSchema` (closes the 15-s2 per-kind `subject_ref` deferral), the repository's first read, and a cutover backfill + parity-gate script. Readers, prompts, and `apps/web` untouched. Status → review.

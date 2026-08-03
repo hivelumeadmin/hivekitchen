@@ -1602,7 +1602,6 @@ interface DashboardChildRow {
   household_id: string;
   name: string;
   age_band: string;
-  school_policy_notes: string | null;
   appetite_level: string;
   texture_needs: string;
   spice_tolerance: string;
@@ -1627,7 +1626,6 @@ function makeDashboardChild(overrides: Partial<DashboardChildRow> = {}): Dashboa
     household_id: SAMPLE_HOUSEHOLD_ID,
     name: 'Layla',
     age_band: 'child',
-    school_policy_notes: null,
     appetite_level: 'normal',
     texture_needs: 'normal',
     spice_tolerance: 'mild',

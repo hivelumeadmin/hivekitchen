@@ -14,15 +14,14 @@ export interface AddChildInput {
 
 /**
  * Slice C / polish — partial-update variant of AddChildBody for the
- * onboarding agent's child.upsert tool. Tag arrays + school_policy_notes
- * are optional (undefined = preserve existing on update; empty array =
- * explicit overwrite). name + age_band stay required because they're
- * the identifying fields.
+ * onboarding agent's child.upsert tool. Tag arrays are optional
+ * (undefined = preserve existing on update; empty array = explicit
+ * overwrite). name + age_band stay required because they're the
+ * identifying fields.
  */
 interface UpsertByNameBody {
   name: AddChildBody['name'];
   age_band: AddChildBody['age_band'];
-  school_policy_notes?: AddChildBody['school_policy_notes'] | undefined;
   declared_allergens?: AddChildBody['declared_allergens'] | undefined;
   cultural_identifiers?: AddChildBody['cultural_identifiers'] | undefined;
   dietary_preferences?: AddChildBody['dietary_preferences'] | undefined;
@@ -63,7 +62,6 @@ export class ChildrenService {
       household_id: input.householdId,
       name: input.body.name,
       age_band: input.body.age_band,
-      school_policy_notes: input.body.school_policy_notes ?? null,
       declared_allergens: input.body.declared_allergens,
       cultural_identifiers: input.body.cultural_identifiers,
       dietary_preferences: input.body.dietary_preferences,
@@ -104,8 +102,7 @@ export class ChildrenService {
 
     if (target !== undefined) {
       // PATCH merge: undefined fields preserve existing values; explicit
-      // arrays (including []) overwrite. school_policy_notes follows the
-      // same rule (undefined preserves; null explicitly clears).
+      // arrays (including []) overwrite.
       // bag_composition_pattern (2.5-s8) follows the same rule: undefined
       // skips the column entirely, null clears, value writes. The repository
       // omits the column from the UPDATE statement when undefined is passed.
@@ -114,10 +111,6 @@ export class ChildrenService {
         household_id: input.householdId,
         name: input.body.name.trim(),
         age_band: input.body.age_band,
-        school_policy_notes:
-          input.body.school_policy_notes === undefined
-            ? target.school_policy_notes
-            : input.body.school_policy_notes,
         declared_allergens: input.body.declared_allergens ?? target.declared_allergens,
         cultural_identifiers: input.body.cultural_identifiers ?? target.cultural_identifiers,
         dietary_preferences: input.body.dietary_preferences ?? target.dietary_preferences,
@@ -130,7 +123,6 @@ export class ChildrenService {
           household_id: input.householdId,
           name: input.body.name,
           age_band: input.body.age_band,
-          school_policy_notes: input.body.school_policy_notes ?? null,
           declared_allergens: input.body.declared_allergens ?? [],
           cultural_identifiers: input.body.cultural_identifiers ?? [],
           dietary_preferences: input.body.dietary_preferences ?? [],
@@ -147,7 +139,6 @@ export class ChildrenService {
       household_id: input.householdId,
       name: input.body.name,
       age_band: input.body.age_band,
-      school_policy_notes: input.body.school_policy_notes ?? null,
       declared_allergens: input.body.declared_allergens ?? [],
       cultural_identifiers: input.body.cultural_identifiers ?? [],
       dietary_preferences: input.body.dietary_preferences ?? [],
@@ -219,7 +210,6 @@ function toChildResponse(row: DecryptedChildRow): ChildResponse {
     household_id: row.household_id,
     name: row.name,
     age_band: row.age_band,
-    school_policy_notes: row.school_policy_notes,
     declared_allergens: row.declared_allergens,
     cultural_identifiers: row.cultural_identifiers,
     dietary_preferences: row.dietary_preferences,

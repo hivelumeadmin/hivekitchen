@@ -8,9 +8,11 @@ interface SchoolPoliciesFormProps {
   childName: string;
 }
 
-// Common school policy presets. Free-text policies remain captured by the
-// existing children.school_policy_notes column — this form only manages the
-// canonical, plan-affecting rules.
+// Common school policy presets — this form manages the canonical,
+// plan-affecting rules. Free-text policies live on the same table as
+// policy_type='note' rows (Story 15-s4 retired the legacy children column);
+// they have no input surface here yet and ship inactive, so they do not
+// reach the planner.
 const COMMON_POLICY_TYPES = [
   { type: 'nut_free', label: 'Nut-free', helper: "School-wide rule, no nuts in the bag" },
   { type: 'no_heating', label: 'No heating', helper: "Cold-only, no microwaves available" },

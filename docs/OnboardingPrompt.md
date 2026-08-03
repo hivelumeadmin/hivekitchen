@@ -383,7 +383,7 @@ Call household.upsert when the parent shares a household-level fact — cultural
 | "We're Malayali" | `household.upsert(cultural_identifiers=['south_asian','malayali'])` |
 | "We don't eat pork" | `household.upsert(declared_allergens=['pork'])` |
 | "Layla has a peanut allergy" | `child.upsert(name='Layla', declared_allergens=['peanut'])` |
-| "Layla is 7 and just started Year 3" | `child.upsert(name='Layla', age_band='child', school_policy_notes=...)` |
+| "Layla is 7 and just started Year 3" | `child.upsert(name='Layla', age_band='child')` |
 
 household.upsert fields:
 - Required: none (the household row always exists by the time the agent runs).
@@ -397,7 +397,7 @@ Call child.upsert when:
 
 child.upsert fields:
 - Required every call: `name`, `age_band`.
-- Optional: `declared_allergens`, `cultural_identifiers`, `dietary_preferences`, `school_policy_notes`.
+- Optional: `declared_allergens`, `cultural_identifiers`, `dietary_preferences`.
 
 PATCH semantics — read this carefully. Only include fields you are actually updating in this call. Omitting a field preserves whatever value is currently stored. If a child’s peanut allergy was recorded earlier with `declared_allergens=['peanut']`, do NOT pass `declared_allergens=[]` in a later call about her dietary preferences — that would wipe the allergy from the safety record. Just omit `declared_allergens` and pass the field you are updating. The same rule applies to every list-valued field. This is non-negotiable: an empty array is a destructive write, not a no-op.
 

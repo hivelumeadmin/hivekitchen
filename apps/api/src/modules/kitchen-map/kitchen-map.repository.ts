@@ -179,7 +179,13 @@ interface EncryptedChildRow {
   name: string;
   age_band: 'toddler' | 'child' | 'preteen' | 'teen';
   bag_composition_pattern: BagCompositionPattern;
-  extra_rules: { pins?: unknown; bans?: unknown } | null;
+}
+
+// Story 15-s5 — extra rules moved off `children` into child_extra_rules rows.
+interface RawExtraRuleRow {
+  child_id: string;
+  rule: 'pin' | 'ban';
+  component_type: string;
 }
 
 interface JoinedRecipeFields {
@@ -242,7 +248,10 @@ const CAREGIVER_COLUMNS = 'id, role, display_name, cultural_language';
 // were dropped from children (migration 20261008000100); per-child values now
 // come from household_allergens / household_cultural_identifiers /
 // dietary_preferences satellite tables.
-const CHILD_COLUMNS = 'id, name, age_band, bag_composition_pattern, extra_rules';
+// Story 15-s5 — extra_rules dropped from children (migration 20261035000500);
+// per-child pins/bans now come from the child_extra_rules satellite table.
+const CHILD_COLUMNS = 'id, name, age_band, bag_composition_pattern';
+const EXTRA_RULE_COLUMNS = 'child_id, rule, component_type';
 const HOUSEHOLD_CULTURAL_COLUMNS = 'cultural_tag';
 const HOUSEHOLD_ALLERGEN_COLUMNS = 'allergen, source';
 const CULTURAL_PRIOR_COLUMNS = 'key, label, tier, state, confidence, presence, enforcement';
@@ -292,6 +301,7 @@ export class KitchenMapRepository extends BaseRepository {
       culturalRes,
       memoryRes,
       schoolPoliciesRes,
+      extraRulesRes,
       extraLibraryRes,
       usageRes,
       allergensRes,
@@ -312,6 +322,7 @@ export class KitchenMapRepository extends BaseRepository {
         .is('soft_forget_at', null)
         .eq('hard_forgotten', false),
       this.fetchSchoolPoliciesForHousehold(householdId),
+      this.fetchExtraRulesForHousehold(householdId),
       this.client.from('extra_library').select(EXTRA_LIBRARY_COLUMNS).eq('household_id', householdId),
       // Slice 2.6-s1 — single source of truth: the favorite_lunches projection
       // is derived in the composer from these same usage rows. The standalone
@@ -415,6 +426,7 @@ export class KitchenMapRepository extends BaseRepository {
         dek,
         decryptedAllergens,
         dietaryAllRows,
+        extraRulesRes,
       ),
       cultural_priors: (culturalRes.data ?? []) as RawCulturalPriorRow[],
       memory_nodes: (memoryRes.data ?? []) as RawMemoryNodeRow[],
@@ -477,12 +489,41 @@ export class KitchenMapRepository extends BaseRepository {
     return (data ?? []) as RawSchoolPolicyRow[];
   }
 
+  // Story 15-s5 — mirrors fetchSchoolPoliciesForHousehold: child_extra_rules
+  // carries child_id only, so fan the household's children into an `IN` filter.
+  private async fetchExtraRulesForHousehold(householdId: string): Promise<RawExtraRuleRow[]> {
+    const { data: kids, error: kidsErr } = await this.client
+      .from('children')
+      .select('id')
+      .eq('household_id', householdId);
+    if (kidsErr) throw kidsErr;
+    const childIds = (kids ?? []).map((k) => (k as { id: string }).id);
+    if (childIds.length === 0) return [];
+
+    const { data, error } = await this.client
+      .from('child_extra_rules')
+      .select(EXTRA_RULE_COLUMNS)
+      .in('child_id', childIds)
+      .order('component_type', { ascending: true });
+    if (error) throw error;
+    return (data ?? []) as RawExtraRuleRow[];
+  }
+
   private decryptChildren(
     rows: EncryptedChildRow[],
     dek: Buffer | null,
     childAllergens: RawAllergenRow[],
     dietaryRows: DietaryRow[],
+    extraRuleRows: RawExtraRuleRow[],
   ): RawChildRow[] {
+    const extraRulesByChild = new Map<string, { pins: string[]; bans: string[] }>();
+    for (const r of extraRuleRows) {
+      const entry = extraRulesByChild.get(r.child_id) ?? { pins: [], bans: [] };
+      if (r.rule === 'pin') entry.pins.push(r.component_type);
+      else entry.bans.push(r.component_type);
+      extraRulesByChild.set(r.child_id, entry);
+    }
+
     const allergensByChild = new Map<string, string[]>();
     for (const r of childAllergens) {
       const list = allergensByChild.get(r.child_id) ?? [];
@@ -539,7 +580,7 @@ export class KitchenMapRepository extends BaseRepository {
           cultural_identifiers: [],
           dietary_preferences: dietaryByChild.get(row.id) ?? [],
           bag_composition_pattern: row.bag_composition_pattern,
-          extra_rules: this.normaliseExtraRules(row.extra_rules),
+          extra_rules: extraRulesByChild.get(row.id) ?? { pins: [], bans: [] },
         });
       } catch (err) {
         this.logger.error(
@@ -669,22 +710,6 @@ export class KitchenMapRepository extends BaseRepository {
       });
     }
     return out;
-  }
-
-  private normaliseExtraRules(
-    raw: EncryptedChildRow['extra_rules'],
-  ): { pins: string[]; bans: string[] } {
-    if (raw === null || raw === undefined) {
-      return { pins: [], bans: [] };
-    }
-    return {
-      pins: Array.isArray(raw.pins)
-        ? raw.pins.filter((v): v is string => typeof v === 'string')
-        : [],
-      bans: Array.isArray(raw.bans)
-        ? raw.bans.filter((v): v is string => typeof v === 'string')
-        : [],
-    };
   }
 
 }

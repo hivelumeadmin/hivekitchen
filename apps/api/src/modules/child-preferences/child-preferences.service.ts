@@ -3,6 +3,7 @@ import type { Weekday } from '@hivekitchen/types';
 import { getCurrentWeekMonday } from '../../lib/derive-week-id.js';
 import type { PlansRepository } from '../plans/plans.repository.js';
 import type { SignalsService } from '../signals/signals.service.js';
+import { applyLunchRatingSignal } from './child-preferences.projection.js';
 import type { ChildPreferencesRepository } from './child-preferences.repository.js';
 
 // 0=Sun..6=Sat → plan_days.day enum. Sunday has no plan_day (plans run Mon-Sat),
@@ -34,16 +35,14 @@ export interface RecordRatingSignalsOptions {
 // caught and logged, never propagated. "No committed plan for the week" is a
 // normal state (the plan may not be generated yet) and logs at debug.
 export class ChildPreferencesService {
-  // signalsService is optional so non-rating constructions stay untouched;
-  // when present, each per-slot upsert is dual-written to the append-only
-  // signals log (Story 15-s2). This seam — not the session-level route — is
-  // where signals are written because 15-s3's projection must reproduce
-  // child_preferences, which is per-slot.
+  // signalsService is REQUIRED as of Story 15-s3: the signals log is the system
+  // of record for ratings and child_preferences is its projection, so a
+  // construction without it could not write anything at all.
   constructor(
     private readonly childPrefsRepo: ChildPreferencesRepository,
     private readonly plansRepo: PlansRepository,
     private readonly logger: FastifyBaseLogger,
-    private readonly signalsService?: Pick<SignalsService, 'record'>,
+    private readonly signalsService: Pick<SignalsService, 'record'>,
   ) {}
 
   async recordRatingSignals(opts: RecordRatingSignalsOptions): Promise<void> {
@@ -96,26 +95,18 @@ export class ChildPreferencesService {
         }
         if (recipeId === null) continue;
 
-        try {
-          await this.childPrefsRepo.upsertSignal({
-            household_id: opts.householdId,
-            child_id: opts.childId,
-            recipe_id: recipeId,
-            slot_kind: slot.slot_kind,
-            signal_type: opts.rating,
-            signal_date: opts.signalDate,
-          });
-        } catch (err) {
-          this.logger.warn(
-            { err, householdId: opts.householdId, slot_kind: slot.slot_kind },
-            'child_preferences: upsertSignal failed for slot — continuing',
-          );
-        }
-
-        // Story 15-s2 — dual-write to the signals log. record() never throws;
-        // a re-rating APPENDS a new signal (append-only: a correction is a new
-        // row) even though upsertSignal above overwrites by dedup key.
-        await this.signalsService?.record({
+        // Story 15-s3 — the log first, then the projection FROM the landed row.
+        // Retired here: the direct childPrefsRepo.upsertSignal(...) call that
+        // built a child_preferences row out of seam-local data (Story 4-S11 →
+        // 15-s3, 3-DM-C1 retirement pattern):
+        //   upsertSignal({household_id, child_id, recipe_id, slot_kind,
+        //                 signal_type, signal_date})   (seam-local)
+        //     → record(...) → applyLunchRatingSignal(row) (log-derived)
+        // Nothing else writes child_preferences after this slice, so a rating
+        // whose signal never landed lands nowhere — `log ⊇ stores` by
+        // construction. record() never throws; a re-rating APPENDS a new signal
+        // (append-only) while the projection overwrites by dedup key.
+        const signal = await this.signalsService.record({
           household_id: opts.householdId,
           child_id: opts.childId,
           subject_ref: { recipe_id: recipeId, slot_kind: slot.slot_kind },
@@ -123,6 +114,16 @@ export class ChildPreferencesService {
           occurred_at: new Date().toISOString(),
           source: 'lunch_link',
         });
+        if (signal === null) continue; // record() already warned
+
+        try {
+          await applyLunchRatingSignal(this.childPrefsRepo, signal, this.logger);
+        } catch (err) {
+          this.logger.warn(
+            { err, householdId: opts.householdId, slot_kind: slot.slot_kind },
+            'child_preferences: applyLunchRatingSignal failed for slot — continuing',
+          );
+        }
       }
     } catch (err) {
       this.logger.warn(

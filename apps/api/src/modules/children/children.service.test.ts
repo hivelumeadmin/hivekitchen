@@ -11,7 +11,6 @@ function makeExistingRow(overrides: Partial<DecryptedChildRow> = {}): DecryptedC
     household_id: HOUSEHOLD_ID,
     name: 'Layla',
     age_band: 'child',
-    school_policy_notes: null,
     declared_allergens: ['peanut'],
     cultural_identifiers: [],
     dietary_preferences: [],

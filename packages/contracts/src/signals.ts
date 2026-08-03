@@ -85,8 +85,20 @@ export const SignalPayloadSchema = z.discriminatedUnion('kind', [
 //   lunch_request  → { request_id: uuid, session_id: uuid }
 //   extra_removal  → { plan_item_id: uuid | null }
 //   preference_edit → null
-// Kept as a loose record here; per-kind subject_ref schemas arrive with the
-// first READER (the 15-s3 projection), which is when validation buys something.
+// Kept as a loose record on the row/input schemas so writers stay unchanged;
+// per-kind subject_ref schemas arrive with the first READER, which is when
+// validation buys something. lunch_rating's arrived with the 15-s3 projection
+// (LunchRatingSubjectRefSchema below) — the projection boundary parses with it.
+
+// Story 15-s3 — the projection reads (recipe_id, slot_kind) off every
+// lunch_rating signal to reproduce a child_preferences row; slot_kind mirrors
+// child_preferences.slot_kind's CHECK (FR124 keeps main/snack/extra distinct).
+export const LunchRatingSubjectRefSchema = z
+  .object({
+    recipe_id: z.string().uuid(),
+    slot_kind: z.enum(['main', 'snack', 'extra']),
+  })
+  .strict();
 
 export const SignalRowSchema = z.object({
   id: z.string().uuid(),
@@ -119,5 +131,6 @@ export type LunchRatingSignalPayload = z.infer<typeof LunchRatingSignalPayloadSc
 export type LunchRequestSignalPayload = z.infer<typeof LunchRequestSignalPayloadSchema>;
 export type ExtraRemovalSignalPayload = z.infer<typeof ExtraRemovalSignalPayloadSchema>;
 export type PreferenceEditSignalPayload = z.infer<typeof PreferenceEditSignalPayloadSchema>;
+export type LunchRatingSubjectRef = z.infer<typeof LunchRatingSubjectRefSchema>;
 export type SignalRow = z.infer<typeof SignalRowSchema>;
 export type RecordSignalInput = z.infer<typeof RecordSignalInputSchema>;

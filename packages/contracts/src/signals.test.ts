@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  LunchRatingSubjectRefSchema,
   RecordSignalInputSchema,
   SignalKindSchema,
   SignalPayloadSchema,
@@ -155,6 +156,44 @@ describe('RecordSignalInputSchema', () => {
       RecordSignalInputSchema.parse(
         input({ kind: 'extra_removal', component_type: 'cucumber' }, { occurred_at: '2026-08-02' }),
       ),
+    ).toThrow();
+  });
+});
+
+describe('LunchRatingSubjectRefSchema', () => {
+  it('round-trips a lunch_rating subject_ref', () => {
+    const ref = { recipe_id: RECIPE_ID, slot_kind: 'snack' };
+
+    expect(LunchRatingSubjectRefSchema.parse(ref)).toEqual(ref);
+  });
+
+  it('accepts all three slot kinds', () => {
+    for (const slot_kind of ['main', 'snack', 'extra']) {
+      expect(LunchRatingSubjectRefSchema.parse({ recipe_id: RECIPE_ID, slot_kind }).slot_kind).toBe(
+        slot_kind,
+      );
+    }
+  });
+
+  it('rejects an unknown key (strict) — the projection must not read smuggled fields', () => {
+    expect(() =>
+      LunchRatingSubjectRefSchema.parse({
+        recipe_id: RECIPE_ID,
+        slot_kind: 'main',
+        signal_date: '2026-08-02',
+      }),
+    ).toThrow();
+  });
+
+  it('rejects a slot_kind outside the child_preferences CHECK', () => {
+    expect(() =>
+      LunchRatingSubjectRefSchema.parse({ recipe_id: RECIPE_ID, slot_kind: 'dessert' }),
+    ).toThrow();
+  });
+
+  it('rejects a non-uuid recipe_id', () => {
+    expect(() =>
+      LunchRatingSubjectRefSchema.parse({ recipe_id: 'not-a-uuid', slot_kind: 'main' }),
     ).toThrow();
   });
 });

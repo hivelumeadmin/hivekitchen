@@ -1,7 +1,7 @@
 import type { Buffer } from 'node:buffer';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { RecordSignalInputSchema } from '@hivekitchen/contracts';
-import type { RecordSignalInput } from '@hivekitchen/types';
+import type { RecordSignalInput, SignalRow } from '@hivekitchen/types';
 import { encryptField } from '../../lib/envelope-encryption.js';
 import { getOrCreateHouseholdDek } from '../../lib/household-key.js';
 import { SignalsRepository } from './signals.repository.js';
@@ -37,7 +37,11 @@ export class SignalsService {
     this.repository = new SignalsRepository(client);
   }
 
-  async record(input: RecordSignalInput): Promise<void> {
+  // Returns the landed row (Story 15-s3: the child_preferences projection
+  // applies FROM the signal, so the seam needs what actually persisted) or
+  // null on any swallowed failure. The catch is the ONLY null path — adding a
+  // throw path here would break the never-throws contract at all six seams.
+  async record(input: RecordSignalInput): Promise<SignalRow | null> {
     // Null-safe on `input` itself: this line runs before the try, and the
     // catch below dereferences input too — a malformed call from a future JS
     // caller must not break the never-throws contract (15-s2 review patch).
@@ -55,7 +59,7 @@ export class SignalsService {
         payload = { ...parsed.payload, item: encryptField(parsed.payload.item, dek) };
       }
 
-      await this.repository.insert({
+      return await this.repository.insert({
         householdId: parsed.household_id,
         childId: parsed.child_id,
         kind: parsed.payload.kind,
@@ -74,6 +78,7 @@ export class SignalsService {
         },
         'signals write failed — primary path unaffected (append-only log misses this event)',
       );
+      return null;
     }
   }
 }

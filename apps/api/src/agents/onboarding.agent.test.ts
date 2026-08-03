@@ -307,7 +307,7 @@ describe('OnboardingAgent — strict tool serialization (2.7-s2)', () => {
     const required = fn.parameters.required as string[];
     const props = Object.keys(fn.parameters.properties as Record<string, unknown>);
     expect(new Set(required)).toEqual(new Set(props));
-    expect(required).toContain('school_policy_notes');
+    expect(required).toContain('bag_composition_pattern');
     expect(required).toContain('declared_allergens');
   });
 
@@ -375,7 +375,6 @@ describe('OnboardingAgent — null-strip before handler parse (2.7-s2)', () => {
             args: {
               name: 'Layla',
               age_band: 'child',
-              school_policy_notes: null,
               declared_allergens: null,
               cultural_identifiers: null,
               dietary_preferences: null,
@@ -398,7 +397,7 @@ describe('OnboardingAgent — null-strip before handler parse (2.7-s2)', () => {
     expect(result.toolCallsSummary).toMatchObject([{ tool: 'child.upsert', error: false }]);
     // Null-valued keys were removed before the handler saw the args.
     expect(received).not.toHaveProperty('declared_allergens');
-    expect(received).not.toHaveProperty('school_policy_notes');
+    expect(received).not.toHaveProperty('bag_composition_pattern');
     expect(received).toMatchObject({ name: 'Layla', age_band: 'child' });
   });
 

@@ -35,7 +35,6 @@ function mockSavedResponse(snack: boolean, extra: boolean): Response {
         household_id: HOUSEHOLD_ID,
         name: 'Asha',
         age_band: 'child',
-        school_policy_notes: null,
         declared_allergens: [],
         cultural_identifiers: [],
         dietary_preferences: [],

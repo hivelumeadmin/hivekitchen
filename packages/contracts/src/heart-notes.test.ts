@@ -203,7 +203,6 @@ describe('ListChildrenResponseSchema', () => {
     household_id: HOUSEHOLD_UUID,
     name: 'Layla',
     age_band: 'child' as const,
-    school_policy_notes: null,
     declared_allergens: [],
     cultural_identifiers: [],
     dietary_preferences: [],

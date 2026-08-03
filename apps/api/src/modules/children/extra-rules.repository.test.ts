@@ -1,51 +1,112 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect } from 'vitest';
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { ExtraRulesRepository, parseExtraRules } from './extra-rules.repository.js';
+import { ExtraRulesRepository } from './extra-rules.repository.js';
 
 const CHILD_ID = '11111111-1111-4111-8111-111111111111';
 const HOUSEHOLD_ID = '22222222-2222-4222-8222-222222222222';
 
-interface Step {
-  op: string;
-  args: unknown[];
+interface RuleRow {
+  child_id: string;
+  rule: 'pin' | 'ban';
+  component_type: string;
 }
 
-// Self-returning chainable that records every call. update().eq().eq()
-// .select().maybeSingle() and select().eq().maybeSingle() are the two
-// shapes ExtraRulesRepository exercises.
-function buildChainClient(terminalResult: unknown): {
+interface FakeOpts {
+  // A child row exists under (CHILD_ID, HOUSEHOLD_ID) unless this is false.
+  childExists?: boolean;
+  rules?: RuleRow[];
+  rpcResult?: { data: unknown; error: unknown };
+  insertError?: { code?: string; message: string } | null;
+  readError?: Error;
+}
+
+interface Fake {
   client: SupabaseClient;
-  steps: Step[];
-} {
-  const steps: Step[] = [];
-  const builder: Record<string, unknown> = {};
-  const passthrough = (op: string) => (...args: unknown[]) => {
-    steps.push({ op, args });
-    return builder;
+  rules: RuleRow[];
+  rpcCalls: Array<{ fn: string; args: unknown }>;
+  inserted: Array<Record<string, unknown>>;
+}
+
+// In-memory Supabase double covering the four shapes the repository issues:
+//   children:          .select('id').eq('id').eq('household_id').maybeSingle()
+//   child_extra_rules: .select(...).eq('child_id').order()
+//   child_extra_rules: .insert({...})
+//   rpc('replace_child_extra_rules', {...})
+function buildFake(opts: FakeOpts = {}): Fake {
+  const rules: RuleRow[] = [...(opts.rules ?? [])];
+  const rpcCalls: Array<{ fn: string; args: unknown }> = [];
+  const inserted: Array<Record<string, unknown>> = [];
+  const childExists = opts.childExists ?? true;
+
+  const childrenTable = () => {
+    const filters: Record<string, unknown> = {};
+    const chain: Record<string, unknown> = {
+      select: () => chain,
+      eq: (col: string, value: unknown) => {
+        filters[col] = value;
+        return chain;
+      },
+      maybeSingle: async () => {
+        if (opts.readError !== undefined) return { data: null, error: opts.readError };
+        const match =
+          childExists && filters.id === CHILD_ID && filters.household_id === HOUSEHOLD_ID;
+        return { data: match ? { id: CHILD_ID } : null, error: null };
+      },
+    };
+    return chain;
   };
-  for (const op of ['select', 'update', 'eq', 'insert', 'is', 'order']) {
-    builder[op] = passthrough(op);
-  }
-  builder.maybeSingle = vi.fn().mockResolvedValue(terminalResult);
-  builder.single = vi.fn().mockResolvedValue(terminalResult);
-  const fromMock = vi.fn().mockImplementation((table: string) => {
-    steps.push({ op: 'from', args: [table] });
-    return builder;
-  });
-  return { client: { from: fromMock } as unknown as SupabaseClient, steps };
+
+  const rulesTable = () => {
+    const filters: Record<string, unknown> = {};
+    const chain: Record<string, unknown> = {
+      select: () => chain,
+      eq: (col: string, value: unknown) => {
+        filters[col] = value;
+        return chain;
+      },
+      order: (col: string) => {
+        if (col !== 'component_type') throw new Error(`unexpected order column: ${col}`);
+        return chain;
+      },
+      insert: async (row: Record<string, unknown>) => {
+        if (opts.insertError !== null && opts.insertError !== undefined) {
+          return { data: null, error: opts.insertError };
+        }
+        inserted.push(row);
+        rules.push(row as unknown as RuleRow);
+        return { data: null, error: null };
+      },
+      then: (resolve: (v: unknown) => unknown) => {
+        if (opts.readError !== undefined) return resolve({ data: null, error: opts.readError });
+        const rows = rules
+          .filter((r) => r.child_id === filters.child_id)
+          .map((r) => ({ rule: r.rule, component_type: r.component_type }))
+          .sort((a, b) => a.component_type.localeCompare(b.component_type));
+        return resolve({ data: rows, error: null });
+      },
+    };
+    return chain;
+  };
+
+  const client = {
+    from: (table: string) => {
+      if (table === 'children') return childrenTable();
+      if (table === 'child_extra_rules') return rulesTable();
+      throw new Error(`unexpected table: ${table}`);
+    },
+    rpc: (fn: string, args: unknown) => {
+      rpcCalls.push({ fn, args });
+      return Promise.resolve(opts.rpcResult ?? { data: true, error: null });
+    },
+  } as unknown as SupabaseClient;
+
+  return { client, rules, rpcCalls, inserted };
 }
 
 describe('ExtraRulesRepository.updateExtraRules', () => {
-  it('writes the {pins,bans} payload and returns the persisted row', async () => {
-    const { client, steps } = buildChainClient({
-      data: {
-        id: CHILD_ID,
-        extra_rules: { pins: ['fruit'], bans: ['sweet treat'] },
-        updated_at: '2026-05-07T12:00:00.000Z',
-      },
-      error: null,
-    });
-    const repo = new ExtraRulesRepository(client);
+  it('replaces the full rule set through the atomic RPC and echoes the persisted shape', async () => {
+    const fake = buildFake();
+    const repo = new ExtraRulesRepository(fake.client);
 
     const result = await repo.updateExtraRules({
       childId: CHILD_ID,
@@ -54,28 +115,21 @@ describe('ExtraRulesRepository.updateExtraRules', () => {
       bans: ['sweet treat'],
     });
 
-    expect(result).toEqual({
-      child_id: CHILD_ID,
-      extra_rules: { pins: ['fruit'], bans: ['sweet treat'] },
-      updated_at: '2026-05-07T12:00:00.000Z',
-    });
-    expect(steps.find((s) => s.op === 'from')?.args).toEqual(['children']);
-    // Both ownership filters are applied: id + household_id.
-    const eqCalls = steps.filter((s) => s.op === 'eq');
-    expect(eqCalls.some((s) => s.args[0] === 'id' && s.args[1] === CHILD_ID)).toBe(true);
-    expect(
-      eqCalls.some((s) => s.args[0] === 'household_id' && s.args[1] === HOUSEHOLD_ID),
-    ).toBe(true);
-    // The update payload carries the structured rules and an updated_at stamp.
-    const updateCall = steps.find((s) => s.op === 'update');
-    expect(updateCall?.args[0]).toMatchObject({
-      extra_rules: { pins: ['fruit'], bans: ['sweet treat'] },
+    expect(result?.child_id).toBe(CHILD_ID);
+    expect(result?.extra_rules).toEqual({ pins: ['fruit'], bans: ['sweet treat'] });
+    expect(typeof result?.updated_at).toBe('string');
+    expect(fake.rpcCalls[0]?.fn).toBe('replace_child_extra_rules');
+    expect(fake.rpcCalls[0]?.args).toEqual({
+      p_child_id: CHILD_ID,
+      p_household_id: HOUSEHOLD_ID,
+      p_pins: ['fruit'],
+      p_bans: ['sweet treat'],
     });
   });
 
-  it('returns null when no row matches (cross-household guard)', async () => {
-    const { client } = buildChainClient({ data: null, error: null });
-    const repo = new ExtraRulesRepository(client);
+  it('returns null when the RPC reports no matching child (cross-household guard)', async () => {
+    const fake = buildFake({ rpcResult: { data: false, error: null } });
+    const repo = new ExtraRulesRepository(fake.client);
 
     const result = await repo.updateExtraRules({
       childId: CHILD_ID,
@@ -87,101 +141,131 @@ describe('ExtraRulesRepository.updateExtraRules', () => {
     expect(result).toBeNull();
   });
 
-  it('throws when the database returns an error', async () => {
-    const { client } = buildChainClient({ data: null, error: new Error('db down') });
-    const repo = new ExtraRulesRepository(client);
+  it('tolerates the RETURNS-scalar arriving as a single-element array over PostgREST', async () => {
+    const fake = buildFake({ rpcResult: { data: [true], error: null } });
+    const repo = new ExtraRulesRepository(fake.client);
+
+    const result = await repo.updateExtraRules({
+      childId: CHILD_ID,
+      householdId: HOUSEHOLD_ID,
+      pins: ['grain'],
+      bans: [],
+    });
+
+    expect(result?.extra_rules).toEqual({ pins: ['grain'], bans: [] });
+  });
+
+  it('throws when the RPC returns an error', async () => {
+    const fake = buildFake({ rpcResult: { data: null, error: new Error('rpc down') } });
+    const repo = new ExtraRulesRepository(fake.client);
 
     await expect(
-      repo.updateExtraRules({
-        childId: CHILD_ID,
-        householdId: HOUSEHOLD_ID,
-        pins: [],
-        bans: [],
-      }),
-    ).rejects.toThrow(/db down/);
+      repo.updateExtraRules({ childId: CHILD_ID, householdId: HOUSEHOLD_ID, pins: [], bans: [] }),
+    ).rejects.toThrow(/rpc down/);
   });
 });
 
-describe('ExtraRulesRepository.findExtraRules', () => {
-  it('returns the parsed pins/bans for a known child', async () => {
-    const { client } = buildChainClient({
-      data: { extra_rules: { pins: ['fruit'], bans: [] } },
-      error: null,
+describe('ExtraRulesRepository.findExtraRulesForChild', () => {
+  it('groups rows into pins and bans for a child in the household', async () => {
+    const fake = buildFake({
+      rules: [
+        { child_id: CHILD_ID, rule: 'pin', component_type: 'fruit' },
+        { child_id: CHILD_ID, rule: 'ban', component_type: 'candy' },
+      ],
     });
-    const repo = new ExtraRulesRepository(client);
+    const repo = new ExtraRulesRepository(fake.client);
 
-    expect(await repo.findExtraRules(CHILD_ID)).toEqual({
+    expect(await repo.findExtraRulesForChild(CHILD_ID, HOUSEHOLD_ID)).toEqual({
       pins: ['fruit'],
+      bans: ['candy'],
+    });
+  });
+
+  it('returns empty arrays for a child with no rule rows', async () => {
+    const fake = buildFake();
+    const repo = new ExtraRulesRepository(fake.client);
+
+    expect(await repo.findExtraRulesForChild(CHILD_ID, HOUSEHOLD_ID)).toEqual({
+      pins: [],
       bans: [],
     });
   });
 
-  it('returns the default empty rules when the row is missing the column', async () => {
-    const { client } = buildChainClient({ data: { extra_rules: null }, error: null });
-    const repo = new ExtraRulesRepository(client);
+  it('returns null when the child is not in the household (no existence leak)', async () => {
+    const fake = buildFake({ childExists: false });
+    const repo = new ExtraRulesRepository(fake.client);
 
-    expect(await repo.findExtraRules(CHILD_ID)).toEqual({ pins: [], bans: [] });
+    expect(await repo.findExtraRulesForChild(CHILD_ID, HOUSEHOLD_ID)).toBeNull();
   });
 
-  it('returns the default empty rules when no row matches', async () => {
-    const { client } = buildChainClient({ data: null, error: null });
-    const repo = new ExtraRulesRepository(client);
+  it('throws when the database returns an error', async () => {
+    const fake = buildFake({ readError: new Error('db down') });
+    const repo = new ExtraRulesRepository(fake.client);
+
+    await expect(repo.findExtraRulesForChild(CHILD_ID, HOUSEHOLD_ID)).rejects.toThrow(/db down/);
+  });
+});
+
+describe('ExtraRulesRepository.findExtraRules', () => {
+  it('groups rows into pins and bans without an ownership check', async () => {
+    const fake = buildFake({
+      rules: [
+        { child_id: CHILD_ID, rule: 'pin', component_type: 'grain' },
+        { child_id: CHILD_ID, rule: 'pin', component_type: 'fruit' },
+      ],
+    });
+    const repo = new ExtraRulesRepository(fake.client);
+
+    expect(await repo.findExtraRules(CHILD_ID)).toEqual({ pins: ['fruit', 'grain'], bans: [] });
+  });
+
+  it('returns empty arrays when the child has no rows', async () => {
+    const fake = buildFake();
+    const repo = new ExtraRulesRepository(fake.client);
 
     expect(await repo.findExtraRules(CHILD_ID)).toEqual({ pins: [], bans: [] });
   });
 });
 
 describe('ExtraRulesRepository.appendBanAtomic', () => {
-  function buildRpcClient(rpcResult: { data: unknown; error: unknown }): {
-    client: SupabaseClient;
-    rpcCalls: Array<{ fn: string; args: unknown }>;
-  } {
-    const rpcCalls: Array<{ fn: string; args: unknown }> = [];
-    const rpc = vi.fn().mockImplementation((fn: string, args: unknown) => {
-      rpcCalls.push({ fn, args });
-      return Promise.resolve(rpcResult);
-    });
-    return {
-      client: { rpc } as unknown as SupabaseClient,
-      rpcCalls,
-    };
-  }
-
-  it('returns parsed rules + appended status when the RPC reports an append', async () => {
-    const { client, rpcCalls } = buildRpcClient({
-      data: [
-        { extra_rules: { pins: ['fruit'], bans: ['sweet treat'] }, status: 'appended' },
-      ],
-      error: null,
-    });
-    const repo = new ExtraRulesRepository(client);
+  it('inserts a lowercased ban row and reports appended', async () => {
+    const fake = buildFake({ rules: [{ child_id: CHILD_ID, rule: 'pin', component_type: 'fruit' }] });
+    const repo = new ExtraRulesRepository(fake.client);
 
     const result = await repo.appendBanAtomic({
       childId: CHILD_ID,
       householdId: HOUSEHOLD_ID,
-      componentType: 'sweet treat',
+      componentType: '  Sweet Treat ',
     });
 
     expect(result).toEqual({
       extra_rules: { pins: ['fruit'], bans: ['sweet treat'] },
       status: 'appended',
     });
-    expect(rpcCalls[0]?.fn).toBe('append_extra_ban');
-    expect(rpcCalls[0]?.args).toEqual({
-      p_child_id: CHILD_ID,
-      p_household_id: HOUSEHOLD_ID,
-      p_component_type: 'sweet treat',
-    });
+    expect(fake.inserted).toEqual([
+      { child_id: CHILD_ID, rule: 'ban', component_type: 'sweet treat' },
+    ]);
   });
 
-  it('returns already_banned status without appending when the type is present', async () => {
-    const { client } = buildRpcClient({
-      data: [
-        { extra_rules: { pins: [], bans: ['sweet treat'] }, status: 'already_banned' },
-      ],
-      error: null,
+  it('throws a clear error instead of inserting when componentType exceeds 50 chars', async () => {
+    const fake = buildFake();
+    const repo = new ExtraRulesRepository(fake.client);
+
+    await expect(
+      repo.appendBanAtomic({
+        childId: CHILD_ID,
+        householdId: HOUSEHOLD_ID,
+        componentType: 'x'.repeat(51),
+      }),
+    ).rejects.toThrow(/exceeds 50 chars/);
+    expect(fake.inserted).toEqual([]);
+  });
+
+  it('reports already_banned without inserting when the type is present in another casing', async () => {
+    const fake = buildFake({
+      rules: [{ child_id: CHILD_ID, rule: 'ban', component_type: 'Sweet Treat' }],
     });
-    const repo = new ExtraRulesRepository(client);
+    const repo = new ExtraRulesRepository(fake.client);
 
     const result = await repo.appendBanAtomic({
       childId: CHILD_ID,
@@ -190,17 +274,31 @@ describe('ExtraRulesRepository.appendBanAtomic', () => {
     });
 
     expect(result).toEqual({
-      extra_rules: { pins: [], bans: ['sweet treat'] },
+      extra_rules: { pins: [], bans: ['Sweet Treat'] },
       status: 'already_banned',
     });
+    expect(fake.inserted).toEqual([]);
   });
 
-  it('returns null when the RPC reports not_found (cross-household / missing row)', async () => {
-    const { client } = buildRpcClient({
-      data: [{ extra_rules: null, status: 'not_found' }],
-      error: null,
+  it('treats a unique-violation from a concurrent writer as already_banned, not an error', async () => {
+    const fake = buildFake({
+      rules: [{ child_id: CHILD_ID, rule: 'ban', component_type: 'sweet treat' }],
+      insertError: { code: '23505', message: 'duplicate key value' },
     });
-    const repo = new ExtraRulesRepository(client);
+    const repo = new ExtraRulesRepository(fake.client);
+    // Force the pre-check to miss so the insert is actually attempted.
+    const result = await repo.appendBanAtomic({
+      childId: CHILD_ID,
+      householdId: HOUSEHOLD_ID,
+      componentType: 'gummy',
+    });
+
+    expect(result?.status).toBe('already_banned');
+  });
+
+  it('returns null when the child is not in the household (cross-household guard)', async () => {
+    const fake = buildFake({ childExists: false });
+    const repo = new ExtraRulesRepository(fake.client);
 
     const result = await repo.appendBanAtomic({
       childId: CHILD_ID,
@@ -209,24 +307,12 @@ describe('ExtraRulesRepository.appendBanAtomic', () => {
     });
 
     expect(result).toBeNull();
+    expect(fake.inserted).toEqual([]);
   });
 
-  it('returns null on an empty RPC response', async () => {
-    const { client } = buildRpcClient({ data: [], error: null });
-    const repo = new ExtraRulesRepository(client);
-
-    expect(
-      await repo.appendBanAtomic({
-        childId: CHILD_ID,
-        householdId: HOUSEHOLD_ID,
-        componentType: 'sweet treat',
-      }),
-    ).toBeNull();
-  });
-
-  it('throws when the RPC returns an error', async () => {
-    const { client } = buildRpcClient({ data: null, error: new Error('rpc down') });
-    const repo = new ExtraRulesRepository(client);
+  it('throws on a non-unique-violation insert error', async () => {
+    const fake = buildFake({ insertError: { code: '08006', message: 'connection failure' } });
+    const repo = new ExtraRulesRepository(fake.client);
 
     await expect(
       repo.appendBanAtomic({
@@ -234,35 +320,19 @@ describe('ExtraRulesRepository.appendBanAtomic', () => {
         householdId: HOUSEHOLD_ID,
         componentType: 'sweet treat',
       }),
-    ).rejects.toThrow(/rpc down/);
+    ).rejects.toThrow(/connection failure/);
   });
-});
 
-describe('parseExtraRules', () => {
-  it('passes through a valid object', () => {
-    expect(parseExtraRules({ pins: ['fruit'], bans: ['candy'] })).toEqual({
-      pins: ['fruit'],
-      bans: ['candy'],
+  it('never issues an append_extra_ban RPC — the function is retired', async () => {
+    const fake = buildFake();
+    const repo = new ExtraRulesRepository(fake.client);
+
+    await repo.appendBanAtomic({
+      childId: CHILD_ID,
+      householdId: HOUSEHOLD_ID,
+      componentType: 'sweet treat',
     });
-  });
 
-  it('parses a JSON string defensively', () => {
-    expect(parseExtraRules('{"pins":["fruit"],"bans":[]}')).toEqual({
-      pins: ['fruit'],
-      bans: [],
-    });
-  });
-
-  it('drops non-string entries without throwing', () => {
-    expect(parseExtraRules({ pins: ['fruit', 7, null], bans: ['candy', {}] })).toEqual({
-      pins: ['fruit'],
-      bans: ['candy'],
-    });
-  });
-
-  it('returns defaults for malformed inputs', () => {
-    expect(parseExtraRules(null)).toEqual({ pins: [], bans: [] });
-    expect(parseExtraRules(42)).toEqual({ pins: [], bans: [] });
-    expect(parseExtraRules([])).toEqual({ pins: [], bans: [] });
+    expect(fake.rpcCalls).toEqual([]);
   });
 });

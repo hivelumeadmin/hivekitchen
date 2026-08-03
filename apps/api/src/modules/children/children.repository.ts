@@ -16,7 +16,6 @@ export interface InsertChildParams {
   household_id: string;
   name: string;
   age_band: 'toddler' | 'child' | 'preteen' | 'teen';
-  school_policy_notes: string | null;
   declared_allergens: string[];
   cultural_identifiers: string[];
   dietary_preferences: string[];
@@ -45,7 +44,6 @@ export interface DecryptedChildRow {
   household_id: string;
   name: string;
   age_band: 'toddler' | 'child' | 'preteen' | 'teen';
-  school_policy_notes: string | null;
   declared_allergens: string[];
   cultural_identifiers: string[];
   dietary_preferences: string[];
@@ -63,7 +61,6 @@ interface ChildRow {
   household_id: string;
   name: string;
   age_band: 'toddler' | 'child' | 'preteen' | 'teen';
-  school_policy_notes: string | null;
   appetite_level: AppetiteLevel;
   texture_needs: TextureNeeds;
   spice_tolerance: SpiceTolerance;
@@ -77,7 +74,7 @@ const CHILD_COLUMNS =
   // allergens come from household_allergens via ChildAllergensRepository;
   // per-child cultural/dietary identity is intentionally not tracked at the
   // child row level (canonical §5: those are household-shared in the model).
-  'id, household_id, name, age_band, school_policy_notes, appetite_level, texture_needs, spice_tolerance, bag_composition_pattern, created_at';
+  'id, household_id, name, age_band, appetite_level, texture_needs, spice_tolerance, bag_composition_pattern, created_at';
 
 export class ChildrenRepository extends BaseRepository {
   // Slice 2.6-s8 — declared_allergens reads + writes now route through the
@@ -114,7 +111,6 @@ export class ChildrenRepository extends BaseRepository {
       household_id: params.household_id,
       name: params.name,
       age_band: params.age_band,
-      school_policy_notes: params.school_policy_notes,
     };
     if (params.bag_composition_pattern !== undefined) {
       insertRow.bag_composition_pattern = params.bag_composition_pattern;
@@ -296,7 +292,6 @@ export class ChildrenRepository extends BaseRepository {
     household_id: string;
     name: string;
     age_band: InsertChildParams['age_band'];
-    school_policy_notes: string | null;
     declared_allergens: string[];
     cultural_identifiers: string[];
     dietary_preferences: string[];
@@ -308,7 +303,6 @@ export class ChildrenRepository extends BaseRepository {
     const updateRow: Record<string, unknown> = {
       name: params.name,
       age_band: params.age_band,
-      school_policy_notes: params.school_policy_notes,
       updated_at: new Date().toISOString(),
     };
     if (params.bag_composition_pattern !== undefined) {
@@ -472,7 +466,6 @@ export class ChildrenRepository extends BaseRepository {
       household_id: row.household_id,
       name: row.name,
       age_band: row.age_band,
-      school_policy_notes: row.school_policy_notes,
       // Story 3-DM-B2 — encrypted JSONB columns dropped. Caller overlays
       // declared_allergens from household_allergens. cultural_identifiers
       // and dietary_preferences are not modeled at the child row level

@@ -25,7 +25,6 @@ export const BagCompositionPatternSchema = z.enum([
 export const AddChildBodySchema = z.object({
   name: z.string().trim().min(1).max(100),
   age_band: AgeBandSchema,
-  school_policy_notes: z.string().trim().max(500).nullish(),
   declared_allergens: z.array(z.string().min(1).max(100)).max(50).default([]),
   cultural_identifiers: z.array(z.string().min(1).max(100)).max(20).default([]),
   dietary_preferences: z.array(z.string().min(1).max(100)).max(30).default([]),
@@ -59,7 +58,6 @@ export const ChildResponseSchema = z.object({
   household_id: z.string().uuid(),
   name: z.string(),
   age_band: AgeBandSchema,
-  school_policy_notes: z.string().nullable(),
   declared_allergens: z.array(z.string()),
   cultural_identifiers: z.array(z.string()),
   dietary_preferences: z.array(z.string()),

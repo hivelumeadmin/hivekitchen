@@ -29,7 +29,6 @@ interface ChildRowDb {
   household_id: string;
   name: string;
   age_band: 'toddler' | 'child' | 'preteen' | 'teen';
-  school_policy_notes: string | null;
   appetite_level: 'light' | 'normal' | 'heavy';
   texture_needs: 'soft' | 'mixed' | 'normal';
   spice_tolerance: 'mild' | 'regular' | 'spicy';
@@ -38,7 +37,6 @@ interface ChildRowDb {
     | 'main_plus_snack'
     | 'main_plus_extra'
     | 'main_plus_snack_plus_extra';
-  extra_rules: { pins: string[]; bans: string[] };
   // Story 7-S7 — annual flavor-journey reset cooldown timestamp (NULL = never).
   flavor_journey_reset_at?: string | null;
   created_at: string;
@@ -118,6 +116,14 @@ interface MockDbState {
   // Slice 4-S12 — child_preferences rows (with embedded recipes) for the
   // FlavorPassport endpoint.
   childPreferences: unknown[];
+  // Story 15-s5 — extra rules moved off children.extra_rules into rows.
+  childExtraRules: ChildExtraRuleRowDb[];
+}
+
+interface ChildExtraRuleRowDb {
+  child_id: string;
+  rule: 'pin' | 'ban';
+  component_type: string;
 }
 
 // In-memory Supabase mock — children + users (for parental_notice gate).
@@ -139,12 +145,73 @@ function buildMockSupabase(state: MockDbState) {
       if (table === 'dietary_preferences') return dietaryPreferencesTable(state);
       if (table === 'child_preferences') return childPreferencesTable(state);
       if (table === 'memory_nodes') return memoryNodesTable();
+      if (table === 'child_extra_rules') return childExtraRulesTable(state);
       throw new Error(`unexpected table: ${table}`);
     },
-    rpc(_fnName: string) {
+    rpc(fnName: string, args?: Record<string, unknown>) {
+      if (fnName === 'replace_child_extra_rules') {
+        return Promise.resolve({ data: replaceChildExtraRules(state, args ?? {}), error: null });
+      }
       return Promise.resolve({ data: [], error: null });
     },
   };
+}
+
+// Story 15-s5 — child_extra_rules reads. ExtraRulesRepository issues
+// .select('rule, component_type').eq('child_id', id).order('component_type')
+// and awaits the builder, plus a bare .insert(row) for the passive-bias path.
+function childExtraRulesTable(state: MockDbState) {
+  const filters: Record<string, unknown> = {};
+  const chain: Record<string, unknown> = {
+    select: () => chain,
+    eq: (column: string, value: unknown) => {
+      filters[column] = value;
+      return chain;
+    },
+    order: () => chain,
+    insert: async (row: ChildExtraRuleRowDb) => {
+      const duplicate = state.childExtraRules.some(
+        (r) =>
+          r.child_id === row.child_id &&
+          r.rule === row.rule &&
+          r.component_type === row.component_type,
+      );
+      if (duplicate) {
+        return { data: null, error: { code: '23505', message: 'duplicate key value' } };
+      }
+      state.childExtraRules.push(row);
+      return { data: null, error: null };
+    },
+    then: (resolve: (v: unknown) => unknown) =>
+      resolve({
+        data: state.childExtraRules
+          .filter((r) => r.child_id === filters.child_id)
+          .map((r) => ({ rule: r.rule, component_type: r.component_type }))
+          .sort((a, b) => a.component_type.localeCompare(b.component_type)),
+        error: null,
+      }),
+  };
+  return chain;
+}
+
+// Mirrors the SECURITY DEFINER function: cross-household guard, then an
+// atomic delete-and-reinsert of the child's whole rule set.
+function replaceChildExtraRules(state: MockDbState, args: Record<string, unknown>): boolean {
+  const childId = args.p_child_id as string;
+  const householdId = args.p_household_id as string;
+  const owned = state.children.some((c) => c.id === childId && c.household_id === householdId);
+  if (!owned) return false;
+
+  state.childExtraRules = state.childExtraRules.filter((r) => r.child_id !== childId);
+  for (const [rule, labels] of [
+    ['pin', (args.p_pins ?? []) as string[]],
+    ['ban', (args.p_bans ?? []) as string[]],
+  ] as const) {
+    for (const component_type of labels) {
+      state.childExtraRules.push({ child_id: childId, rule, component_type });
+    }
+  }
+  return true;
 }
 
 // In-memory supabase for school_policies. Implements only the fluent-chain
@@ -259,7 +326,7 @@ function childrenTable(state: MockDbState) {
   return {
     insert(row: Omit<
       ChildRowDb,
-      'id' | 'appetite_level' | 'texture_needs' | 'spice_tolerance' | 'bag_composition_pattern' | 'extra_rules' | 'created_at' | 'updated_at'
+      'id' | 'appetite_level' | 'texture_needs' | 'spice_tolerance' | 'bag_composition_pattern' | 'created_at' | 'updated_at'
     >) {
       return {
         select() {
@@ -270,13 +337,11 @@ function childrenTable(state: MockDbState) {
                 household_id: row.household_id,
                 name: row.name,
                 age_band: row.age_band,
-                school_policy_notes: row.school_policy_notes,
                 // Story 3-DM-B1 — DB defaults for the new enum columns.
                 appetite_level: 'normal',
                 texture_needs: 'normal',
                 spice_tolerance: 'mild',
                 bag_composition_pattern: 'main_plus_snack_plus_extra',
-                extra_rules: { pins: [], bans: [] },
                 created_at: '2026-04-28T10:00:00.000Z',
                 updated_at: '2026-04-28T10:00:00.000Z',
               };
@@ -524,6 +589,7 @@ function emptyState(opts: {
     householdCulturalIdentifiers: [],
     dietaryPreferences: [],
     childPreferences: [],
+    childExtraRules: [],
   };
 }
 

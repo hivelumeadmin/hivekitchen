@@ -225,7 +225,6 @@ interface Stores {
     id: string;
     name: string;
     age_band: AgeBand;
-    school_policy_notes: string | null;
     declared_allergens: string[];
     cultural_identifiers: string[];
     dietary_preferences: string[];
@@ -292,7 +291,6 @@ function seedStores(stores: Stores, seed: ScenarioSeed): void {
       id,
       name: child.name,
       age_band: child.ageBand,
-      school_policy_notes: null,
       declared_allergens: [],
       cultural_identifiers: [],
       dietary_preferences: [],
@@ -511,7 +509,6 @@ function makeChildrenServiceFake(stores: Stores): OnboardingServiceDeps['childre
       body: {
         name: string;
         age_band: AgeBand;
-        school_policy_notes?: string | null;
         declared_allergens?: string[];
         cultural_identifiers?: string[];
         dietary_preferences?: string[];
@@ -523,9 +520,6 @@ function makeChildrenServiceFake(stores: Stores): OnboardingServiceDeps['childre
       if (existing !== undefined) {
         // PATCH merge — undefined preserves; explicit arrays/values overwrite.
         if (input.body.age_band !== undefined) existing.age_band = input.body.age_band;
-        if (input.body.school_policy_notes !== undefined) {
-          existing.school_policy_notes = input.body.school_policy_notes ?? null;
-        }
         if (input.body.declared_allergens !== undefined) existing.declared_allergens = input.body.declared_allergens;
         if (input.body.cultural_identifiers !== undefined) existing.cultural_identifiers = input.body.cultural_identifiers;
         if (input.body.dietary_preferences !== undefined) existing.dietary_preferences = input.body.dietary_preferences;
@@ -539,7 +533,6 @@ function makeChildrenServiceFake(stores: Stores): OnboardingServiceDeps['childre
         id,
         name: input.body.name,
         age_band: input.body.age_band,
-        school_policy_notes: input.body.school_policy_notes ?? null,
         declared_allergens: input.body.declared_allergens ?? [],
         cultural_identifiers: input.body.cultural_identifiers ?? [],
         dietary_preferences: input.body.dietary_preferences ?? [],

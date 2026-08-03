@@ -200,8 +200,8 @@ async function openDay(page: Page, day: Weekday, o: SetupOptions = {}) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         children: [
-          { id: CHILD_A, household_id: SAMPLE_HOUSEHOLD_ID, name: 'Aarav', age_band: 'toddler', school_policy_notes: null, declared_allergens: [], cultural_identifiers: [], dietary_preferences: [], appetite_level: 'normal', texture_needs: 'normal', spice_tolerance: 'mild', bag_composition_pattern: 'main_plus_snack', created_at: '2026-01-01T00:00:00.000Z' },
-          { id: CHILD_B, household_id: SAMPLE_HOUSEHOLD_ID, name: 'Mira', age_band: 'child', school_policy_notes: null, declared_allergens: [], cultural_identifiers: [], dietary_preferences: [], appetite_level: 'normal', texture_needs: 'normal', spice_tolerance: 'mild', bag_composition_pattern: 'main_plus_snack', created_at: '2026-01-01T00:00:00.000Z' },
+          { id: CHILD_A, household_id: SAMPLE_HOUSEHOLD_ID, name: 'Aarav', age_band: 'toddler', declared_allergens: [], cultural_identifiers: [], dietary_preferences: [], appetite_level: 'normal', texture_needs: 'normal', spice_tolerance: 'mild', bag_composition_pattern: 'main_plus_snack', created_at: '2026-01-01T00:00:00.000Z' },
+          { id: CHILD_B, household_id: SAMPLE_HOUSEHOLD_ID, name: 'Mira', age_band: 'child', declared_allergens: [], cultural_identifiers: [], dietary_preferences: [], appetite_level: 'normal', texture_needs: 'normal', spice_tolerance: 'mild', bag_composition_pattern: 'main_plus_snack', created_at: '2026-01-01T00:00:00.000Z' },
         ],
       }),
     }),

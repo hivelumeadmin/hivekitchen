@@ -81,7 +81,6 @@ export function buildChild(overrides: Partial<DecryptedChildRow> = {}): Decrypte
     household_id: TEST_IDS.household,
     name: 'Aarav',
     age_band: 'child',
-    school_policy_notes: null,
     declared_allergens: [],
     cultural_identifiers: [],
     dietary_preferences: [],

@@ -35,7 +35,6 @@ function childResponse(
     household_id: SAMPLE_HOUSEHOLD_ID,
     name: CHILD_NAME,
     age_band: 'child',
-    school_policy_notes: null,
     declared_allergens: [],
     cultural_identifiers: [],
     dietary_preferences: [],

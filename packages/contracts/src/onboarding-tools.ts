@@ -46,11 +46,6 @@ export const ChildUpsertInputSchema = z.object({
   /** From AddChildBodySchema. Mirrors the children.age_band column. */
   age_band: AgeBandSchema,
 
-  /** Optional — short note about the child's school policy as the agent
-   *  understood it. Persisted to children.school_policy_notes. Omitted
-   *  on update means "preserve existing"; pass null to explicitly clear. */
-  school_policy_notes: z.string().trim().max(500).nullish(),
-
   /** Allergen tag keys. Service validates against allergen_tags.
    *  PATCH SEMANTICS: omitting this field on an update preserves the
    *  existing array. Pass an explicit array (including []) to overwrite. */

@@ -162,7 +162,6 @@ export function createChildUpsertToolSpec(
         body: {
           name: parsed.name,
           age_band: parsed.age_band,
-          school_policy_notes: parsed.school_policy_notes,
           declared_allergens,
           cultural_identifiers,
           dietary_preferences,

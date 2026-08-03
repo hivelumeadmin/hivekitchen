@@ -55,7 +55,6 @@ function makeChild(overrides: Partial<DecryptedChildRow> = {}): DecryptedChildRo
     household_id: HOUSEHOLD_ID,
     name: 'Layla',
     age_band: 'child',
-    school_policy_notes: null,
     declared_allergens: [],
     cultural_identifiers: [],
     dietary_preferences: [],
