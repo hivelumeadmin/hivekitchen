@@ -1,5 +1,10 @@
 # Deferred Work Log
 
+## Deferred from: code review of 15-s6-family-language-terms-table (2026-08-03)
+
+- **D-15S6-CR1: Backfill's duplicate-term collapsing keeps the first occurrence, not the most-advanced state** — `expectedTerms()` in the backfill script drops any second entry for the same `(household_id, term)` pair found in a household's JSONB array rather than preferring the most-advanced ratchet state or failing the run. Only reachable via pre-existing data corruption; no current write path (old whole-array read-modify-write or the new RPCs) can produce a duplicate term within one household. [`apps/api/scripts/backfill-family-language-terms.ts`]
+- **D-15S6-CR2: `record_family_language_usage` silently drops malformed detected elements with no signal** — `CONTINUE WHEN v_term IS NULL OR v_maps_to IS NULL` skips a bad element with no error/log. The RPC is locked to `service_role` and the only caller (the repository) always sends well-typed elements, so this is a theoretical gap absent a future non-TypeScript caller of the RPC. [`supabase/migrations/20261036000000_create_family_language_terms.sql`]
+
 ## Deferred from: 14-s4-ship-family-first-day-view (2026-07-30, dev-story)
 
 - **D-14S4-1: Cooked / prepped signals have no persistence** — "Mark cooked" and "Done prepping" (and "Skip prep tonight") are part of the locked day-detail action vocabulary but no endpoint records them, so they ship disabled with an honest hint. Needs a `plan_day` completion signal (table + route + optimistic mutation) — and it is the natural source for the *familiarity* signal below. [`apps/web/src/features/day-detail/components/WallCardSwipeStack.tsx` ModeActionBar]

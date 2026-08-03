@@ -6,42 +6,61 @@ import type {
 import { BaseRepository } from '../../repository/base.repository.js';
 import type { DetectedTerm } from './family-language.detector.js';
 
-// Slice 5-S10 — household-scoped family-language ratchet (UX-DR47). The terms
-// live in households.preferred_family_language_terms (a JSONB array). There is no
-// atomic JSONB-array element upsert in supabase-js, so each mutation is a single
-// read → mutate in memory → write back on the one household row.
+// Slice 5-S10 — household-scoped family-language ratchet (UX-DR47). Story 15-s6
+// moved the storage from `households.preferred_family_language_terms` (a JSONB
+// array) to one `family_language_terms` row per term; the public shape every
+// consumer reads is unchanged.
 //
-// Review patch (5-S10): the read-modify-write of the WHOLE array is not lock-free
-// safe — a concurrent recordUsage could write back a stale snapshot over a freshly
-// ratified term and DEMOTE it (active → candidate), breaking the forward-only
-// invariant. We serialize all mutations per household with a module-level async
-// lock so read→mutate→write runs atomically within this process. Caveat: the lock
-// is in-process only; a multi-instance deployment would still need a DB-level
-// guard (optimistic version column / SELECT … FOR UPDATE). Single-process at beta.
-const householdLocks = new Map<string, Promise<unknown>>();
+// Both mutations run inside SECURITY DEFINER functions that lock the affected
+// row with SELECT … FOR UPDATE. That replaces the module-level in-process async
+// lock this repository used to carry, whose own comment disclosed that it did
+// not hold across API instances — a stale whole-array write-back could DEMOTE a
+// concurrently-ratified term (active → candidate) and break the forward-only
+// ratchet. The row lock is a real cross-instance guard.
 
-function withHouseholdLock<T>(householdId: string, fn: () => Promise<T>): Promise<T> {
-  const prev = householdLocks.get(householdId) ?? Promise.resolve();
-  const next = prev.then(fn, fn);
-  // Keep the chain alive but drop the entry once it settles and nothing queued
-  // behind it, so the map does not grow unbounded.
-  householdLocks.set(householdId, next);
-  void next.finally(() => {
-    if (householdLocks.get(householdId) === next) householdLocks.delete(householdId);
-  });
-  return next;
+interface TermRow {
+  term: string;
+  maps_to: string;
+  usage_count: number;
+  state: FamilyLanguageState;
+  first_seen_at: string;
+  ratified_at: string | null;
+}
+
+interface RatifyRow extends TermRow {
+  transitioned_from: FamilyLanguageState | null;
+}
+
+const TERM_COLUMNS = 'term, maps_to, usage_count, state, first_seen_at, ratified_at';
+
+// record_family_language_usage returns whole rows (to_jsonb), so id and
+// household_id ride along; the wire shape carries neither.
+function toTerm(row: TermRow): FamilyLanguageTerm {
+  return {
+    term: row.term,
+    maps_to: row.maps_to,
+    usage_count: row.usage_count,
+    state: row.state,
+    first_seen_at: row.first_seen_at,
+    ratified_at: row.ratified_at,
+  };
 }
 
 export class FamilyLanguageRepository extends BaseRepository {
   async getTerms(householdId: string): Promise<FamilyLanguageTerm[]> {
+    // first_seen_at mirrors the JSONB array's insertion order. It is not unique:
+    // one record_family_language_usage call inserting several terms stamps them
+    // all with the same transaction timestamp, so `term` breaks the tie and the
+    // agent prompt stays byte-stable across reads.
     const { data, error } = await this.client
-      .from('households')
-      .select('preferred_family_language_terms')
-      .eq('id', householdId)
-      .maybeSingle();
+      .from('family_language_terms')
+      .select(TERM_COLUMNS)
+      .eq('household_id', householdId)
+      .order('first_seen_at', { ascending: true })
+      .order('term', { ascending: true });
     if (error) throw error;
-    const row = data as { preferred_family_language_terms: FamilyLanguageTerm[] | null } | null;
-    return row?.preferred_family_language_terms ?? [];
+    const rows = Array.isArray(data) ? (data as TermRow[]) : [];
+    return rows.map(toTerm);
   }
 
   // Bump usage for each detected term and surface the ones that JUST crossed the
@@ -49,44 +68,26 @@ export class FamilyLanguageRepository extends BaseRepository {
   // fires the moment usage_count crosses from `< threshold` to `>= threshold`.
   // Because each call bumps a term at most once, the crossing happens on exactly
   // one call, so each term yields a prompt exactly once. `active`/`forgotten`
-  // terms only have their count bumped (never re-prompted, never demoted).
+  // terms only have their count bumped (never re-prompted, never demoted). The
+  // crossing logic lives in record_family_language_usage so the read of the
+  // previous count and the write of the new one cannot be interleaved.
   async recordUsage(
     householdId: string,
     detected: DetectedTerm[],
     threshold: number,
   ): Promise<{ newlyCandidate: FamilyLanguageTerm[] }> {
-    return withHouseholdLock(householdId, async () => {
-    const terms = await this.getTerms(householdId);
-    const now = new Date().toISOString();
-    const newlyCandidate: FamilyLanguageTerm[] = [];
-
-    for (const d of detected) {
-      const existing = terms.find((t) => t.term === d.term);
-      if (existing === undefined) {
-        const created: FamilyLanguageTerm = {
-          term: d.term,
-          maps_to: d.maps_to,
-          usage_count: d.occurrences,
-          state: 'candidate',
-          first_seen_at: now,
-          ratified_at: null,
-        };
-        terms.push(created);
-        if (d.occurrences >= threshold) newlyCandidate.push(created);
-        continue;
-      }
-
-      const prev = existing.usage_count;
-      existing.usage_count = prev + d.occurrences;
-
-      if (existing.state === 'candidate' && prev < threshold && existing.usage_count >= threshold) {
-        newlyCandidate.push(existing);
-      }
-    }
-
-    await this.writeTerms(householdId, terms);
-    return { newlyCandidate };
+    const { data, error } = await this.client.rpc('record_family_language_usage', {
+      p_household_id: householdId,
+      p_detected: detected.map((d) => ({
+        term: d.term,
+        maps_to: d.maps_to,
+        occurrences: d.occurrences,
+      })),
+      p_threshold: threshold,
     });
+    if (error) throw error;
+    const rows = Array.isArray(data) ? (data as TermRow[]) : [];
+    return { newlyCandidate: rows.map(toTerm) };
   }
 
   // Forward-only ratchet (UX-DR47). opt_in: candidate → active (idempotent on
@@ -99,46 +100,18 @@ export class FamilyLanguageRepository extends BaseRepository {
     term: string,
     action: FamilyLanguageRatifyAction,
   ): Promise<{ updated: FamilyLanguageTerm | null; from: FamilyLanguageState | null }> {
-    return withHouseholdLock(householdId, async () => {
-    const terms = await this.getTerms(householdId);
-    const existing = terms.find((t) => t.term === term);
-    if (existing === undefined) {
-      return { updated: null, from: null };
-    }
-
-    if (action === 'tell_lumi_more') {
-      return { updated: existing, from: null };
-    }
-
-    if (action === 'opt_in') {
-      if (existing.state === 'candidate') {
-        const from = existing.state;
-        existing.state = 'active';
-        existing.ratified_at = new Date().toISOString();
-        await this.writeTerms(householdId, terms);
-        return { updated: existing, from };
-      }
-      // active (idempotent) or forgotten (cannot opt in a forgotten term) → no-op.
-      return { updated: existing, from: null };
-    }
-
-    // action === 'forget'
-    if (existing.state === 'candidate') {
-      const from = existing.state;
-      existing.state = 'forgotten';
-      await this.writeTerms(householdId, terms);
-      return { updated: existing, from };
-    }
-    // active → forward-only lock (no demotion); forgotten → already there → no-op.
-    return { updated: existing, from: null };
+    const { data, error } = await this.client.rpc('ratify_family_language_term', {
+      p_household_id: householdId,
+      p_term: term,
+      p_action: action,
     });
-  }
-
-  private async writeTerms(householdId: string, terms: FamilyLanguageTerm[]): Promise<void> {
-    const { error } = await this.client
-      .from('households')
-      .update({ preferred_family_language_terms: terms })
-      .eq('id', householdId);
     if (error) throw error;
+
+    const rows = Array.isArray(data) ? (data as RatifyRow[]) : [];
+    const row = rows[0];
+    // Zero rows = no such term for this household.
+    if (row === undefined) return { updated: null, from: null };
+
+    return { updated: toTerm(row), from: row.transitioned_from ?? null };
   }
 }

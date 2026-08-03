@@ -9,6 +9,7 @@ import type { AuditWriteInput } from '../../audit/audit.types.js';
 import { authenticateHook } from '../../middleware/authenticate.hook.js';
 import { isDomainError } from '../../common/errors.js';
 import { familyLanguageRoutes } from './family-language.routes.js';
+import { buildFamilyLanguageDouble, type TermRow } from './family-language.test-double.js';
 
 const SAMPLE_USER_ID = '11111111-1111-4111-8111-111111111111';
 const SAMPLE_HOUSEHOLD_ID = '22222222-2222-4222-8222-222222222222';
@@ -16,37 +17,18 @@ const OTHER_HOUSEHOLD_ID = '33333333-3333-4333-8333-333333333333';
 const JWT_SECRET = 'a'.repeat(32);
 
 interface MockState {
-  terms: FamilyLanguageTerm[];
+  terms: TermRow[];
 }
 
+// Story 15-s6 — the repository reads `family_language_terms` rows and mutates
+// them through the two SECURITY DEFINER functions, so the route tests drive the
+// shared in-memory double instead of stubbing a `households` JSONB column.
+// `state.terms` is rebound to the double's live table so assertions still read
+// post-request storage.
 function buildMockSupabase(state: MockState) {
-  return {
-    from(table: string) {
-      if (table !== 'households') throw new Error(`unexpected table: ${table}`);
-      return {
-        select() {
-          const chain = {
-            eq() {
-              return chain;
-            },
-            maybeSingle: async () => ({
-              data: { preferred_family_language_terms: state.terms },
-              error: null,
-            }),
-          };
-          return chain;
-        },
-        update(updates: { preferred_family_language_terms: FamilyLanguageTerm[] }) {
-          return {
-            eq() {
-              state.terms = updates.preferred_family_language_terms;
-              return Promise.resolve({ error: null });
-            },
-          };
-        },
-      };
-    },
-  };
+  const double = buildFamilyLanguageDouble(state.terms);
+  state.terms = double.rows();
+  return double.client;
 }
 
 interface BuildAppOpts {
@@ -121,8 +103,9 @@ function signToken(
   return app.jwt.sign({ sub: SAMPLE_USER_ID, hh: householdId, role });
 }
 
-function candidate(): FamilyLanguageTerm {
+function candidate(): TermRow {
   return {
+    household_id: SAMPLE_HOUSEHOLD_ID,
     term: 'Nani',
     maps_to: 'grandmother',
     usage_count: 2,

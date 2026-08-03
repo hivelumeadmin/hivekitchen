@@ -1,0 +1,42 @@
+-- Story 15-s6 (Canonical Data Model v2 §2, §4.1, §5 row 7, §8 step 3, §10) —
+-- Drop the JSONB family-language column.
+--
+-- `households.preferred_family_language_terms` (20261020000000) held one array
+-- per household of {term, maps_to, usage_count, state, first_seen_at,
+-- ratified_at} objects. 20261036000000 replaced it with one
+-- `family_language_terms` row per term. This migration removes the duplicate
+-- representation.
+--
+-- Runs AFTER `apps/api/scripts/backfill-family-language-terms.ts` has executed
+-- against this database and its verification gate has passed (every array entry
+-- carries a matching row, no row is orphaned, and every matched pair agrees on
+-- `state` and `usage_count`). The script ABORTs non-zero on mismatch, so
+-- applying this migration before the gate passes is a data-loss event by design.
+-- The script also cannot run afterwards: `verifyParity` reads
+-- `households.preferred_family_language_terms`, so once the column is gone the
+-- cutover is no longer verifiable.
+--
+-- The `state`/`usage_count` value check is stronger than the existence-only
+-- parity 15-s4 and 15-s5 used, on purpose: `state` carries the forward-only
+-- ratchet invariant (UX-DR47), and an `active` term silently copied back as
+-- `candidate` would be a correctness bug that set equality alone cannot see.
+--
+-- Ordering: migrations apply in filename order, so …000000 (create) always
+-- precedes …000100 (drop), and both land after the still-unpushed
+-- 20261035000000 … 20261035000500 from 15-s1 through 15-s5.
+--
+-- Behaviour is unchanged by this drop. The only module that ever touched the
+-- column is FamilyLanguageRepository, whose public methods
+-- (getTerms/recordUsage/ratify) keep their exact signatures and their
+-- FamilyLanguageTerm[] return shape. Every consumer — LumiService's
+-- submitTextTurn + fetchHouseholdSnapshot, lumi-nudge.job.ts, and the two
+-- /v1/households/:id/family-language routes — is byte-untouched, and the wire
+-- contract (packages/contracts/src/family-language.ts) is unchanged.
+--
+-- Pre-beta hard cutover (same stance as 20261035000300 and 20261035000500):
+-- rollback data loss is acceptable. The honest rollback path is re-adding the
+-- column with its old default and repopulating it by aggregating
+-- family_language_terms back into a JSON array per household.
+
+ALTER TABLE households
+  DROP COLUMN IF EXISTS preferred_family_language_terms;
