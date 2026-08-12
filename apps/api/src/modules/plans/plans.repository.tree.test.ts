@@ -252,6 +252,139 @@ describe('PlansRepository.findSlotsByDayIds (batch)', () => {
   });
 });
 
+// Story 15-s7 — plan_slots stores (item_type, item_id); PlansRepository maps
+// it back to the unchanged PlanSlotRow triple. These cover all three branches
+// of that bijection plus the two direct-write paths.
+const SNACK_SKU_ID = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+
+function rawSlot(overrides: Record<string, unknown>) {
+  return {
+    id: SLOT_ID,
+    plan_day_id: DAY_A_ID,
+    slot_kind: 'snack',
+    item_type: 'recipe',
+    item_id: RECIPE_ID,
+    extra_kind: null,
+    paused_at: null,
+    created_at: NOW,
+    updated_at: NOW,
+    ...overrides,
+  };
+}
+
+describe('PlansRepository slot item_type → legacy-triple mapping (15-s7)', () => {
+  it('maps all three item_type branches to exactly one non-null legacy field', async () => {
+    const { client } = buildTreeClient({
+      data: [
+        rawSlot({ slot_kind: 'main', item_type: 'main_assignment', item_id: MAIN_ASSIGN_ID }),
+        rawSlot({ slot_kind: 'snack', item_type: 'snack_sku', item_id: SNACK_SKU_ID }),
+        rawSlot({ slot_kind: 'extra', item_type: 'recipe', item_id: RECIPE_ID, extra_kind: 'drink' }),
+      ],
+      error: null,
+    });
+    const repo = new PlansRepository(client);
+
+    const [main, snack, extra] = await repo.findSlotsByDayIds([DAY_A_ID]);
+
+    expect(main).toMatchObject({
+      main_assignment_id: MAIN_ASSIGN_ID,
+      recipe_id: null,
+      snack_sku_id: null,
+    });
+    expect(snack).toMatchObject({
+      main_assignment_id: null,
+      recipe_id: null,
+      snack_sku_id: SNACK_SKU_ID,
+    });
+    expect(extra).toMatchObject({
+      main_assignment_id: null,
+      recipe_id: RECIPE_ID,
+      snack_sku_id: null,
+      extra_kind: 'drink',
+    });
+  });
+
+  it('strips the raw item_type / item_id columns from the returned row', async () => {
+    const { client } = buildTreeClient({
+      data: [rawSlot({})],
+      error: null,
+    });
+    const repo = new PlansRepository(client);
+
+    const [slot] = await repo.findSlotsByDayId(DAY_A_ID);
+
+    expect(slot).not.toHaveProperty('item_type');
+    expect(slot).not.toHaveProperty('item_id');
+    expect(slot).toMatchObject({ id: SLOT_ID, plan_day_id: DAY_A_ID, paused_at: null });
+  });
+
+  it('throws rather than silently mapping an unrecognized item_type to an all-null triple', async () => {
+    const { client } = buildTreeClient({
+      data: [rawSlot({ item_type: 'not_a_real_item_type' })],
+      error: null,
+    });
+    const repo = new PlansRepository(client);
+
+    await expect(repo.findSlotsByDayId(DAY_A_ID)).rejects.toThrow(/unrecognized item_type/);
+  });
+
+  it('selects item_type / item_id and no legacy item columns', async () => {
+    const { client, steps } = buildTreeClient({ data: [], error: null });
+    const repo = new PlansRepository(client);
+
+    await repo.findSlotsByDayId(DAY_A_ID);
+
+    const columns = steps.find((s) => s.op === 'select')?.args[0] as string;
+    expect(columns).toContain('item_type');
+    expect(columns).toContain('item_id');
+    expect(columns).not.toContain('main_assignment_id');
+    expect(columns).not.toContain('recipe_id');
+    expect(columns).not.toContain('snack_sku_id');
+  });
+});
+
+describe('PlansRepository.updateSlotRecipe (15-s7)', () => {
+  it('writes item_type=recipe + item_id and returns the mapped legacy shape', async () => {
+    const { client, steps } = buildTreeClient({
+      data: rawSlot({ item_type: 'recipe', item_id: RECIPE_ID }),
+      error: null,
+    });
+    const repo = new PlansRepository(client);
+
+    const out = await repo.updateSlotRecipe({ slotId: SLOT_ID, newRecipeId: RECIPE_ID });
+
+    const patch = steps.find((s) => s.op === 'update')?.args[0] as Record<string, unknown>;
+    expect(patch.item_type).toBe('recipe');
+    expect(patch.item_id).toBe(RECIPE_ID);
+    expect(typeof patch.updated_at).toBe('string');
+    expect(out.recipe_id).toBe(RECIPE_ID);
+    expect(out.snack_sku_id).toBeNull();
+    expect(out.main_assignment_id).toBeNull();
+  });
+});
+
+describe('PlansRepository.updateSlotSnackSku (15-s7)', () => {
+  it('writes item_type=snack_sku + item_id in one column pair (no recipe_id null-out)', async () => {
+    const { client, steps } = buildTreeClient({
+      data: rawSlot({ item_type: 'snack_sku', item_id: SNACK_SKU_ID }),
+      error: null,
+    });
+    const repo = new PlansRepository(client);
+
+    const out = await repo.updateSlotSnackSku({ slotId: SLOT_ID, newSnackSkuId: SNACK_SKU_ID });
+
+    const patch = steps.find((s) => s.op === 'update')?.args[0] as Record<string, unknown>;
+    expect(patch.item_type).toBe('snack_sku');
+    expect(patch.item_id).toBe(SNACK_SKU_ID);
+    expect(patch).not.toHaveProperty('recipe_id');
+    expect(patch).not.toHaveProperty('snack_sku_id');
+    // A legacy recipe-backed snack slot converges on the SKU: recipe_id reads
+    // back as null purely because item_type moved, not because it was nulled.
+    expect(out.snack_sku_id).toBe(SNACK_SKU_ID);
+    expect(out.recipe_id).toBeNull();
+  });
+});
+
 describe('PlansRepository.findVariationsBySlotIds', () => {
   it('queries plan_slot_variations with .in() over the slot-id list', async () => {
     const { client, steps } = buildTreeClient({ data: [], error: null });

@@ -28,8 +28,39 @@ const PLAN_MAIN_ASSIGNMENT_COLUMNS =
 const PLAN_DAY_COLUMNS =
   'id, plan_id, day, paused_at, paused_reason, paused_note, created_at, updated_at';
 
+// Story 15-s7 — plan_slots stores ONE polymorphic reference (item_type,
+// item_id) in place of the three nullable item columns. The PlanSlotRow
+// contract is unchanged: mapSlotRow() below translates the DB shape back to
+// the legacy triple, so every consumer (including apps/web) is untouched.
 const PLAN_SLOT_COLUMNS =
-  'id, plan_day_id, slot_kind, main_assignment_id, recipe_id, extra_kind, snack_sku_id, paused_at, created_at, updated_at';
+  'id, plan_day_id, slot_kind, item_type, item_id, extra_kind, paused_at, created_at, updated_at';
+
+type SlotItemType = 'main_assignment' | 'recipe' | 'snack_sku';
+
+type RawPlanSlotRow = Omit<
+  PlanSlotRow,
+  'main_assignment_id' | 'recipe_id' | 'snack_sku_id'
+> & {
+  item_type: SlotItemType;
+  item_id: string;
+};
+
+// Lossless bijection: the DB CHECK matrix guarantees exactly one legacy field
+// is non-null for any given item_type, which is the same invariant the three
+// dropped XOR CHECKs used to enforce column-side.
+function mapSlotRow(row: RawPlanSlotRow): PlanSlotRow {
+  const { item_type, item_id, ...rest } = row;
+  switch (item_type) {
+    case 'main_assignment':
+      return { ...rest, main_assignment_id: item_id, recipe_id: null, snack_sku_id: null };
+    case 'recipe':
+      return { ...rest, main_assignment_id: null, recipe_id: item_id, snack_sku_id: null };
+    case 'snack_sku':
+      return { ...rest, main_assignment_id: null, recipe_id: null, snack_sku_id: item_id };
+    default:
+      throw new Error(`plan_slots row ${row.id} has unrecognized item_type: ${item_type as string}`);
+  }
+}
 
 const PLAN_SLOT_VARIATION_COLUMNS =
   'id, plan_slot_id, child_id, portion_size, texture, spice_level, cutting_style, container, add_ons, removals, notes, paused_at, created_at, updated_at';
@@ -323,7 +354,7 @@ export class PlansRepository extends BaseRepository {
       .select(PLAN_SLOT_COLUMNS)
       .eq('plan_day_id', planDayId);
     if (error) throw error;
-    return (data ?? []) as PlanSlotRow[];
+    return ((data ?? []) as RawPlanSlotRow[]).map(mapSlotRow);
   }
 
   // Batch variant used by findSlotsByPlanId — avoids round-trip-per-day.
@@ -334,7 +365,7 @@ export class PlansRepository extends BaseRepository {
       .select(PLAN_SLOT_COLUMNS)
       .in('plan_day_id', planDayIds as string[]);
     if (error) throw error;
-    return (data ?? []) as PlanSlotRow[];
+    return ((data ?? []) as RawPlanSlotRow[]).map(mapSlotRow);
   }
 
   // §9.1 step 2 — variation read across multiple slots. Composer batches
@@ -468,9 +499,9 @@ export class PlansRepository extends BaseRepository {
   }
 
   // Tree-shape snack/extra recipe swap. Single-row UPDATE on plan_slots —
-  // the slot owns the recipe_id directly for snack/extra slots (main slots
-  // route through swapMain above). The DB CHECK guarantees slot_kind=main
-  // slots can't have a recipe_id, so a misrouted call against a main slot
+  // the slot owns the recipe reference directly for snack/extra slots (main
+  // slots route through swapMain above). The DB CHECK guarantees slot_kind=main
+  // slots can't hold item_type='recipe', so a misrouted call against a main slot
   // fails at the DB layer; the service layer should reject up front with a
   // domain-level error before the DB call.
   async updateSlotRecipe(opts: {
@@ -480,19 +511,21 @@ export class PlansRepository extends BaseRepository {
     const { data, error } = await this.client
       .from('plan_slots')
       .update({
-        recipe_id: opts.newRecipeId,
+        item_type: 'recipe',
+        item_id: opts.newRecipeId,
         updated_at: new Date().toISOString(),
       })
       .eq('id', opts.slotId)
       .select(PLAN_SLOT_COLUMNS)
       .single();
     if (error) throw error;
-    return data as PlanSlotRow;
+    return mapSlotRow(data as RawPlanSlotRow);
   }
 
   // Epic 13-s9 (routing-spec §9 #3) — point a snack slot at a snack SKU.
-  // recipe_id is nulled in the same write so the slot XOR CHECK holds and a
-  // legacy recipe-backed snack slot converges on the SKU column.
+  // Story 15-s7: there is only one item column now, so retargeting a legacy
+  // recipe-backed snack slot at a SKU is a single (item_type, item_id) write
+  // instead of a set-one/null-the-other pair.
   async updateSlotSnackSku(opts: {
     slotId: string;
     newSnackSkuId: string;
@@ -500,15 +533,15 @@ export class PlansRepository extends BaseRepository {
     const { data, error } = await this.client
       .from('plan_slots')
       .update({
-        snack_sku_id: opts.newSnackSkuId,
-        recipe_id: null,
+        item_type: 'snack_sku',
+        item_id: opts.newSnackSkuId,
         updated_at: new Date().toISOString(),
       })
       .eq('id', opts.slotId)
       .select(PLAN_SLOT_COLUMNS)
       .single();
     if (error) throw error;
-    return data as PlanSlotRow;
+    return mapSlotRow(data as RawPlanSlotRow);
   }
 
   // Epic 13-s10 — real "Confirm the week". Sets confirmed_at only when it is
