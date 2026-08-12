@@ -22,6 +22,7 @@
     "seed:dev": "tsx test/helpers/seed-dev.ts",
     "seed:reset": "tsx test/helpers/seed-dev.ts --reset",
     "db:reset": "tsx --env-file=apps/api/.env.local scripts/dev-db-reset.ts --confirm",
+    "db:verify-reset": "tsx --env-file=apps/api/.env.local scripts/verify-reset-cascade.ts",
     "db:plan-commit-load-test": "tsx --env-file=apps/api/.env.local scripts/plan-commit-load-test.ts",
     "db:reset-plans": "tsx --env-file=apps/api/.env.local scripts/reset-all-plans.ts"
   },
