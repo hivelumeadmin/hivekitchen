@@ -2,6 +2,17 @@
 
 Status: done
 
+> **⚠️ SUPERSEDED 2026-08-12 — do not follow the USER-SIDE GATE instructions below.**
+> This document is a point-in-time record and is preserved unedited. Its gate text
+> ("three Epic-15 migrations still unpushed", then run the backfill) described what was
+> true when the story was authored; it is no longer actionable. **All nine Epic 15
+> migrations are applied** on the linked project, verified directly against the live
+> schema. `apps/api/scripts/backfill-lunch-rating-signals.ts` **still exists and is still
+> runnable** — unlike its three sibling backfills, it reads `child_preferences` and writes
+> `signals`, neither of which was dropped. Current state of record:
+> `_bmad-output/implementation-artifacts/sprint-status.yaml` (MIGRATION-GATE
+> RECONCILIATION) and §3 of `epic-15-retro-2026-08-03.md`.
+
 <!-- Epic 15: Canonical Data Model v2. Source spec: _bmad-output/planning-artifacts/canonical-data-model-v2-spec.md §4.9 (projections derive from signals), §4.13 (kitchen map — NOT touched this slice, see Scope), §7.3 (bump-trigger invariant), §8 step 2 (strangler: build projection → verify parity → flip → retire old write path). WALL slice. -->
 <!-- Grounded in 2-agent codebase research 2026-08-02. Key reconciliations vs the spec's prose: (1) "kitchen-map-style refresh-on-write" is NOT literal — kitchen map is lazy recompute-on-read behind a version key, but child_preferences backs 4 live read shapes incl. a child-facing endpoint with a 200ms budget, so the projection target IS the existing child_preferences table and "refresh on write" = apply-from-signal at the write seam; (2) the "flip reads" strangler step therefore collapses — readers never move; what flips is the WRITE path (rows become derivable only from signals rows); (3) parity requires a BACKFILL first: signals started accumulating at 15-s2 (not even pushed yet) while child_preferences has historical rows — the reserved source='import' enum value exists exactly for this; (4) NO loadRaw()/kitchen-map change and NO bump trigger — child_preferences does not feed loadRaw() today (verified: kitchen-map.repository.ts:304-331 reads 14 tables, not this one) and §7.3 binds triggers to loadRaw sources only (same reasoning recorded in 20261035000200's header). -->
 

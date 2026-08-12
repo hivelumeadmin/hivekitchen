@@ -2,6 +2,17 @@
 
 Status: done
 
+> **⚠️ SUPERSEDED 2026-08-12 — do not follow the USER-SIDE GATE instructions below.**
+> This document is a point-in-time record and is preserved unedited. Its three-ordered-step
+> gate (push, then run `apps/api/scripts/backfill-child-extra-rules.ts`, then apply the
+> drop) is no longer actionable, and the order it warned about was not honoured:
+> **`20261035000500` was applied without the backfill ever running.** The script's
+> `verifyParity` reads the now-dropped `children.extra_rules`, so it could never run again
+> and was **deleted in `53f41ff`**. Data impact was nil — the target was an effectively
+> empty dev database. Current state of record:
+> `_bmad-output/implementation-artifacts/sprint-status.yaml` (MIGRATION-GATE
+> RECONCILIATION) and §3 of `epic-15-retro-2026-08-03.md`.
+
 <!-- Epic 15: Canonical Data Model v2. Source spec: _bmad-output/planning-artifacts/canonical-data-model-v2-spec.md §4.2 ("Remove children.extra_rules jsonb {pins,bans}. Normalize into child_extra_rules(child_id, extra_library_id, rule enum('pin','ban'), created_at). Pins/bans are queried by the planner per-child; they should be rows."), §5 row 6, §7.4 (JSONB policy — not permitted as a convenience store for data queried by its fields), §8 step 3 (JSONB removals — small independent PRs), §10 (retired-columns list). -->
 <!-- Grounded in codebase research 2026-08-02. Key facts that override/extend the spec's brevity:
   (1) UNLIKE 15-s4's school_policy_notes, children.extra_rules is HEAVILY planner-visible today: it feeds KitchenMapRepository.loadRaw() (CHILD_COLUMNS), gates Extra-slot candidate coverage in coverage.ts, drives deterministic snack-rotation category pins/bans, and has an existing atomic-append RPC (append_extra_ban) backing a passive-bias write path (ExtraRemovalSignalService, Story 3.22, FR116).

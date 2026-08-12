@@ -2,6 +2,18 @@
 
 Status: done
 
+> **⚠️ SUPERSEDED 2026-08-12 — do not follow the USER-SIDE GATE instructions below.**
+> This document is a point-in-time record and is preserved unedited. Its three-ordered-step
+> gate (push, then run `apps/api/scripts/backfill-family-language-terms.ts`, then apply the
+> drop) is no longer actionable, and the order it warned about was not honoured:
+> **`20261036000100` was applied without the backfill ever running.** The script's
+> `verifyParity` reads the now-dropped `households.preferred_family_language_terms`, so it
+> could never run again and was **deleted in `53f41ff`** — taking deferred item D-15S6-CR1
+> with it (closed as unactionable). Data impact was nil — the target was an effectively
+> empty dev database. Current state of record:
+> `_bmad-output/implementation-artifacts/sprint-status.yaml` (MIGRATION-GATE
+> RECONCILIATION) and §3 of `epic-15-retro-2026-08-03.md`.
+
 <!-- Note: Validation is optional. Run validate-create-story for quality check before dev-story. -->
 
 <!-- Epic 15: Canonical Data Model v2. Source spec: _bmad-output/planning-artifacts/canonical-data-model-v2-spec.md §2 ("New JSONB escape hatches crept back in: preferred_family_language_terms..."), §4.1 ("households, users — KEEP. Two changes: Remove preferred_family_language_terms jsonb. Promote to satellite table family_language_terms(household_id, term, added_at, source) — it's a growing set with provenance, which is a table, not a jsonb array."), §5 row 7, §7.3 (Kitchen Map trigger invariant), §7.4 (JSONB policy), §8 step 3 (JSONB removals — small independent PRs), §10 (NEW tables / retired columns). -->

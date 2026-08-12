@@ -2,6 +2,17 @@
 
 Status: done
 
+> **⚠️ SUPERSEDED 2026-08-12 — do not follow the USER-SIDE GATE instructions below.**
+> This document is a point-in-time record and is preserved unedited. Its gate text
+> (run `apps/api/scripts/backfill-school-policy-notes.ts` first, *then* push the drop
+> migration) is no longer actionable, and the order it warned about was not honoured:
+> **`20261035000300` was applied without the backfill ever running.** The script's
+> `verifyParity` reads the now-dropped `children.school_policy_notes`, so it could never
+> run again and was **deleted in `53f41ff`**. Data impact was nil — the target was an
+> effectively empty dev database. Current state of record:
+> `_bmad-output/implementation-artifacts/sprint-status.yaml` (MIGRATION-GATE
+> RECONCILIATION) and §3 of `epic-15-retro-2026-08-03.md`.
+
 <!-- Epic 15: Canonical Data Model v2. Source spec: _bmad-output/planning-artifacts/canonical-data-model-v2-spec.md §4.2 ("Remove children.school_policy_notes text... Migrate any surviving free-text into a school_policies row with policy_type='note'"), §4.5, §5 row 5, §10 (retired-columns list), §8 step 3 ("JSONB removals — each is a small, independent migration + repo change + contract update in one PR"). -->
 <!-- Grounded in codebase research 2026-08-02. Key facts that override the spec's brevity: (1) children.school_policy_notes is a DEAD END today — it is read/written ONLY by the Children REST API and the onboarding agent's child.upsert tool; it is NEVER read by KitchenMapRepository.loadRaw(), the planner prompt, or the guardrail engine (confirmed by direct grep of apps/api/src/agents/** and apps/api/src/modules/allergy-guardrail/**). The parenthetical in deferred-work.md:885 ("today they [free-text policies] do [affect plan generation] via the legacy school_policy_notes column") is STALE/INACCURATE — verified false by this research; corrected in Task 6. (2) school_policies.policy_type is PLAIN TEXT with a length CHECK (1-100 chars), NOT a Postgres enum — 'note' requires zero schema/enum change, it's already a legal value. (3) The planner DOES read every ACTIVE school_policies row today (render.ts:233, all policy_type values, no filter) — so backfilled 'note' rows must ship is_active:false or previously-invisible free text starts appearing in the planner prompt as an unplanned side effect of a data-hygiene slice. This is the story's one deliberate decision (Task 1). -->
 
