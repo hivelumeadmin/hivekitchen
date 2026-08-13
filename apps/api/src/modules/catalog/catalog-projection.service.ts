@@ -3,6 +3,7 @@ import type { ChipOption } from '@hivekitchen/contracts';
 import type { HouseholdsRepository } from '../households/households.repository.js';
 import type { OnboardingChipSuggestionRepository } from './onboarding-chip-suggestion.repository.js';
 import type { CuratedBaselineRepository } from './curated-baseline.repository.js';
+import { canonicalizeFavoriteName, type RecipesRepository } from '../recipe/recipes.repository.js';
 
 // Slice 2.6-s4 / 2.6-s6 / 16-s1 — projects the per-household generated chip
 // suggestions into a deterministic, diversity-shaped chip set for the Moment
@@ -11,11 +12,15 @@ import type { CuratedBaselineRepository } from './curated-baseline.repository.js
 // 16-s1 (AC 4) — the chip source moved off `recipes`/`household_recipe_usage`
 // to `onboarding_chip_suggestions`: recipe seeding used to have to happen
 // before the information that should drive chip suggestions (M3 stated
-// taste) existed. This class no longer depends on RecipesRepository at all —
-// there is no code path here that can read a `recipes` row, which is the
-// negative control AC 4 asks for. Declared favourites are a SEPARATE union
-// this class does not yet perform (16-s7); this file returns only the
-// generated set.
+// taste) existed. The GENERATED set never reads `recipes` — AC 4's negative
+// control is that a `recipes` row cannot masquerade as a generated
+// suggestion, not that this class never touches `recipes` for any purpose.
+//
+// 16-s1 (AC 13) — RecipesRepository IS a dependency again, for exactly one
+// read: findHouseholdFavoritesWithIds(). Declared favourites are UNIONED in
+// (pinned first, exempt from the diversity cap), never blended into the
+// generated/fallback pool as if they were undifferentiated candidates — each
+// chip's provenance ('declared' vs 'inferred') tells them apart.
 //
 // 2.6-s6: getM5Chips now returns `M5ChipResult` ({ chips, coldStartReason }).
 // When the caller is told the household is truly cold, it renders the
@@ -23,25 +28,30 @@ import type { CuratedBaselineRepository } from './curated-baseline.repository.js
 //
 // 16-s1 (AC 8, 9) — when generated suggestions (post allergen/dietary filter)
 // fall below CHIP_FLOOR, the SAME filter is applied to `curated_baseline_items`
-// (read-only — this class cannot write recipes) and that becomes the chip
-// source INSTEAD of the thin suggestion set — decision 2's "used only to
+// (read-only — this class calls only read methods on it) and that becomes the
+// chip source INSTEAD of the thin suggestion set — decision 2's "used only to
 // populate chips when generation yields too few" is a replacement, not a
-// blend. If the fallback also underflows CHIP_FLOOR, that's cold-start
+// blend. If the fallback also underflows CHIP_FLOOR, declared favourites (if
+// any) override cold-start (AC 13); otherwise that's cold-start
 // ('chip_floor_underflow'), never a sparse partial grid.
 //
 // Single entry point: getM5Chips(householdId, declaredCuisineTags?). Pipeline:
 //   1. Wait up to 5s for Stage 1 (households.stage1_completed_at NOT NULL).
 //   2. SELECT all generated suggestion rows for the household, personalization-
 //      filtered. Below CHIP_FLOOR (12) → read + filter curated_baseline_items
-//      instead; below CHIP_FLOOR again → cold-start.
-//   3. Sort in TS: declared-cuisine match first, then id ASC (deterministic
-//      tie-breaker). Suggestions carry no confidence/provenance/favorite
-//      columns — those were household_recipe_usage-specific.
-//   4. Diversity cap (max 3 per cuisine_tag); if accumulator < 12, re-walk
-//      with cap 5; below-threshold log fires if final < 12.
-//   5. Project to ChipOption[] — key=suggestion id (UUID) or, on the fallback
-//      path, the curated item's own canonical_name (never its row id — see
-//      AC 5 resolution note inline); provenance='inferred' either way.
+//      instead; below CHIP_FLOOR again → favourites-only if any exist,
+//      else cold-start.
+//   3. Dedupe the winning pool against declared favourites (canonicalized
+//      name), then sort: declared-cuisine match first, then id ASC.
+//   4. Diversity cap (max 3 per cuisine_tag + a combined starch/protein
+//      combo, AC 12), budget shrunk by favourites.length (AC 13); if
+//      accumulator < 12, re-walk with cap 5; below-threshold log fires if
+//      the GENERATED count alone is < 12.
+//   5. Project to ChipOption[], favourites first — key=suggestion id (UUID),
+//      declared favourite's recipes.id, or (fallback path only) the curated
+//      item's own canonical_name (never its row id — see AC 5 resolution
+//      note inline); provenance 'declared' for favourites, 'inferred'
+//      otherwise.
 //
 // NEVER throws — every error path returns { chips: [], coldStartReason: null }.
 
@@ -72,10 +82,14 @@ export interface CatalogProjectionServiceDeps {
   onboardingChipSuggestionRepository: OnboardingChipSuggestionRepository;
   householdsRepository: HouseholdsRepository;
   // Slice 16-s1 (AC 8) — read-only fallback source when generation fails,
-  // times out, or leaves too few survivors. This class has no dependency
-  // capable of writing `recipes`/`household_recipe_usage` at all, so the
-  // "MUST NOT materialise" constraint holds structurally.
+  // times out, or leaves too few survivors. `CuratedBaselineRepository` only
+  // exposes reads at all, so the "MUST NOT materialise" constraint holds
+  // structurally for this dependency.
   curatedBaselineRepository: CuratedBaselineRepository;
+  // Slice 16-s1 (AC 13) — read-only. Used for exactly one read
+  // (findHouseholdFavoritesWithIds), never a write — moving the chip source
+  // off `recipes` did not reopen a write path back into it.
+  recipesRepository: RecipesRepository;
   logger: FastifyBaseLogger;
 }
 
@@ -97,6 +111,7 @@ export class CatalogProjectionService {
   private readonly onboardingChipSuggestionRepository: OnboardingChipSuggestionRepository;
   private readonly householdsRepository: HouseholdsRepository;
   private readonly curatedBaselineRepository: CuratedBaselineRepository;
+  private readonly recipesRepository: RecipesRepository;
   private readonly logger: FastifyBaseLogger;
   // Test seam — Vitest fake timers don't intercept setTimeout when called
   // inside service code without a configurable wait fn. Injectable so unit
@@ -110,6 +125,7 @@ export class CatalogProjectionService {
     this.onboardingChipSuggestionRepository = deps.onboardingChipSuggestionRepository;
     this.householdsRepository = deps.householdsRepository;
     this.curatedBaselineRepository = deps.curatedBaselineRepository;
+    this.recipesRepository = deps.recipesRepository;
     this.logger = deps.logger;
     this.wait =
       wait ?? ((ms) => new Promise((r) => setTimeout(r, ms)));
@@ -142,12 +158,17 @@ export class CatalogProjectionService {
       // suggestions that don't satisfy non-negotiable dietary requirements.
       let rows = this.filterByPersonalization(allRows, allergenFilter, requiredDietaryFlags);
 
+      // Step 2c — AC 13: declared favourites, fetched once and reused below
+      // both to override an otherwise-empty cold-start (favourites are never
+      // sparse or stereotyped — showing them beats hiding content the parent
+      // already gave us) and to union into the final chip set.
+      const favourites = await this.recipesRepository.findHouseholdFavoritesWithIds(householdId);
+
       // Step 3 — AC 8: generation failed, timed out, or left too few
       // survivors after filtering. All three reduce to the same observable
       // state by the time M5 is reached: few/no rows in
       // onboarding_chip_suggestions. Read curated_baseline_items directly —
-      // read-only, this class has no dependency capable of writing
-      // `recipes`/`household_recipe_usage` at all.
+      // via a repository whose only exposed methods are reads.
       if (rows.length < CHIP_FLOOR) {
         const curatedRaw =
           declaredCuisineTags.length > 0
@@ -191,6 +212,14 @@ export class CatalogProjectionService {
         // whose declared allergens exclude most of the curated 50). Never a
         // sparse/partial grid — a real cold-start reason instead.
         if (filteredCurated.length < CHIP_FLOOR) {
+          // AC 13 (judgment call — see Dev Notes) — declared favourites
+          // override cold-start. Doctrine frames cold-start as avoiding a
+          // blank/sparse/stereotyped card; the parent's own favourites are
+          // neither, so showing them beats hiding content already given to
+          // us in favour of the conversational fallback.
+          if (favourites.length > 0) {
+            return { chips: this.toFavouriteChips(favourites), coldStartReason: null };
+          }
           this.logger.info(
             {
               module: 'catalog',
@@ -207,16 +236,32 @@ export class CatalogProjectionService {
         rows = filteredCurated;
       }
 
-      // Step 4 — stable sort: declared-cuisine matches first, then favorites,
-      // then provenance priority, then confidence, then id.
+      // Step 3b — AC 13: dedupe the winning pool against declared favourites
+      // by CANONICALIZED name (declareForHousehold's own normalization), not
+      // raw string equality — a favourite re-declared with different
+      // punctuation/casing must not also render as a separate generated chip.
+      const favouriteNames = new Set(
+        favourites.map((f) => canonicalizeFavoriteName(f.canonical_name).toLowerCase()),
+      );
+      rows = rows.filter(
+        (r) => !favouriteNames.has(canonicalizeFavoriteName(r.label).toLowerCase()),
+      );
+
+      // Step 4 — stable sort: declared-cuisine matches first, then id.
       const sorted = this.sortCandidates(rows, declaredCuisineTags);
 
+      // AC 13 — favourites are exempt from the diversity cap and are pinned
+      // ahead of the generated/fallback set, but still count toward
+      // TARGET_CHIPS: the generated budget shrinks to make room rather than
+      // capping favourites out of their own list.
+      const generatedBudget = Math.max(0, TARGET_CHIPS - favourites.length);
+
       // Step 4 — diversity cap (3 per cuisine_tag).
-      let picked = this.pickWithDiversityCap(sorted, DIVERSITY_CAP_PRIMARY);
+      let picked = this.pickWithDiversityCap(sorted, DIVERSITY_CAP_PRIMARY, generatedBudget);
 
       // Step 5 — underflow relax to 5 per cuisine_tag.
       if (picked.length < UNDERFLOW_THRESHOLD) {
-        const relaxed = this.pickWithDiversityCap(sorted, DIVERSITY_CAP_RELAXED);
+        const relaxed = this.pickWithDiversityCap(sorted, DIVERSITY_CAP_RELAXED, generatedBudget);
         this.logger.info(
           {
             module: 'catalog',
@@ -230,7 +275,9 @@ export class CatalogProjectionService {
         picked = relaxed;
       }
 
-      // Step 6 — below-threshold log.
+      // Step 6 — below-threshold log. Deliberately about the GENERATED pool
+      // alone (favourites are a separate signal, not "more discovery
+      // content") — unaffected by how many favourites exist.
       if (picked.length < UNDERFLOW_THRESHOLD) {
         this.logger.info(
           {
@@ -243,15 +290,17 @@ export class CatalogProjectionService {
         );
       }
 
-      // Step 7 — project to ChipOption[]. Every generated suggestion is
-      // LLM-inferred; a 'declared' provenance only exists for the favourites
-      // union (16-s7), which this class does not yet perform.
-      const chips: ChipOption[] = picked.map((r) => ({
+      // Step 7 — project to ChipOption[]. Favourites sort first (AC 13);
+      // every generated/fallback suggestion is 'inferred'.
+      const generatedChips: ChipOption[] = picked.map((r) => ({
         key: r.id,
         label: r.label,
         provenance: 'inferred',
       }));
-      return { chips, coldStartReason: null };
+      return {
+        chips: [...this.toFavouriteChips(favourites), ...generatedChips],
+        coldStartReason: null,
+      };
     } catch (err) {
       // Defensive: a query failure must not surface to the caller. Return
       // the cold-start-safe empty result so the onboarding service can
@@ -307,6 +356,20 @@ export class CatalogProjectionService {
     }
   }
 
+  // Slice 16-s1 (AC 13) — declared favourites keep their real recipes.id as
+  // the chip key (unlike fallback chips, which use canonical_name — see the
+  // note where curatedRows is built). AC 5's resolution order (suggestion
+  // store first, recipes fallback second) already resolves this id back to
+  // its label without any change to that code.
+  private toFavouriteChips(
+    favourites: ReadonlyArray<{ id: string; canonical_name: string }>,
+  ): ChipOption[] {
+    return favourites.map((f) => ({
+      key: f.id,
+      label: f.canonical_name,
+      provenance: 'declared',
+    }));
+  }
 
   private filterByPersonalization(
     rows: ReadonlyArray<SuggestionRow>,
@@ -362,12 +425,16 @@ export class CatalogProjectionService {
   private pickWithDiversityCap(
     sorted: ReadonlyArray<SuggestionRow>,
     cap: number,
+    // Slice 16-s1 (AC 13) — defaults to TARGET_CHIPS for callers outside this
+    // file's own budget-shrinking logic (none currently), but getM5Chips
+    // always passes the favourites-adjusted budget explicitly.
+    target: number = TARGET_CHIPS,
   ): SuggestionRow[] {
     const buckets = new Map<string, number>();
     const out: SuggestionRow[] = [];
     const seen = new Set<string>();
     for (const row of sorted) {
-      if (out.length >= TARGET_CHIPS) break;
+      if (out.length >= target) break;
       if (seen.has(row.id)) continue;
       // Copy — row.cuisine_tags must not be mutated by the combo-key push
       // below (it would otherwise alias the row's own array when non-empty).

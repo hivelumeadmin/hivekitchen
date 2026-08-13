@@ -413,3 +413,79 @@ describe('RecipesRepository.findIngredientsByIds — Story 3.S39 batch fetch', (
     expect(result.get(RECIPE_B)).toEqual([]);
   });
 });
+
+describe('RecipesRepository.findHouseholdFavoritesWithIds — Slice 16-s1 (AC 13)', () => {
+  const FAV_A = '55555555-5555-4555-8555-555555555555';
+  const FAV_B = '66666666-6666-4666-8666-666666666666';
+
+  it('qualifies rows by is_household_favorite OR a parent-stated provenance, excluding neither', async () => {
+    const rows = [
+      {
+        is_household_favorite: true,
+        catalog_provenance: 'inferred',
+        recipes: { id: FAV_A, canonical_name: 'Lemon Rice', is_active: true },
+      },
+      {
+        is_household_favorite: false,
+        catalog_provenance: 'declared',
+        recipes: { id: FAV_B, canonical_name: 'Dal Chawal', is_active: true },
+      },
+      {
+        // Neither signal — an ordinary seeded row, not a favourite.
+        is_household_favorite: false,
+        catalog_provenance: 'inferred',
+        recipes: {
+          id: '77777777-7777-4777-8777-777777777777',
+          canonical_name: 'Rice Bowl',
+          is_active: true,
+        },
+      },
+    ];
+    const plan: Op[] = [
+      { table: 'household_recipe_usage', op: 'select', result: { data: rows, error: null } },
+    ];
+    const { client, recorded } = buildClient(plan);
+    const repo = new RecipesRepository(client);
+
+    const result = await repo.findHouseholdFavoritesWithIds(HOUSEHOLD_ID);
+
+    expect(result).toEqual([
+      { id: FAV_A, canonical_name: 'Lemon Rice' },
+      { id: FAV_B, canonical_name: 'Dal Chawal' },
+    ]);
+    expect(recorded.map((r) => `${r.table}:${r.op}`)).toEqual([
+      'household_recipe_usage:select',
+    ]);
+  });
+
+  it('excludes an inactive recipe even if it otherwise qualifies as a favourite', async () => {
+    const rows = [
+      {
+        is_household_favorite: true,
+        catalog_provenance: 'declared',
+        recipes: { id: FAV_A, canonical_name: 'Retired Dish', is_active: false },
+      },
+    ];
+    const plan: Op[] = [
+      { table: 'household_recipe_usage', op: 'select', result: { data: rows, error: null } },
+    ];
+    const { client } = buildClient(plan);
+    const repo = new RecipesRepository(client);
+
+    const result = await repo.findHouseholdFavoritesWithIds(HOUSEHOLD_ID);
+
+    expect(result).toEqual([]);
+  });
+
+  it('returns an empty array when Supabase returns null data', async () => {
+    const plan: Op[] = [
+      { table: 'household_recipe_usage', op: 'select', result: { data: null, error: null } },
+    ];
+    const { client } = buildClient(plan);
+    const repo = new RecipesRepository(client);
+
+    const result = await repo.findHouseholdFavoritesWithIds(HOUSEHOLD_ID);
+
+    expect(result).toEqual([]);
+  });
+});

@@ -3,6 +3,7 @@ import type { FastifyBaseLogger } from 'fastify';
 import type { HouseholdsRepository } from '../households/households.repository.js';
 import type { OnboardingChipSuggestionRepository } from './onboarding-chip-suggestion.repository.js';
 import type { CuratedBaselineRepository } from './curated-baseline.repository.js';
+import type { RecipesRepository } from '../recipe/recipes.repository.js';
 import { CatalogProjectionService } from './catalog-projection.service.js';
 
 const HOUSEHOLD_ID = '11111111-1111-4111-8111-111111111111';
@@ -85,6 +86,9 @@ interface BuildArgs {
   // just resolve []) — a curated repo that's entirely absent isn't a real
   // production configuration, so there's no "unwired" mode to model here.
   curatedRows?: CuratedRow[];
+  // Slice 16-s1 (AC 13) — declared favourites, unioned in ahead of whichever
+  // pool (suggestions or fallback) wins.
+  favourites?: Array<{ id: string; canonical_name: string }>;
 }
 
 function buildService(args: BuildArgs) {
@@ -106,6 +110,9 @@ function buildService(args: BuildArgs) {
     findAllActive: vi.fn().mockResolvedValue(args.curatedRows ?? []),
     findActiveByCuisineTags: vi.fn().mockResolvedValue(args.curatedRows ?? []),
   };
+  const recipesRepository = {
+    findHouseholdFavoritesWithIds: vi.fn().mockResolvedValue(args.favourites ?? []),
+  };
   const logger = makeLogger();
   const service = new CatalogProjectionService(
     {
@@ -114,6 +121,7 @@ function buildService(args: BuildArgs) {
       householdsRepository: householdsRepository as unknown as HouseholdsRepository,
       curatedBaselineRepository:
         curatedBaselineRepository as unknown as CuratedBaselineRepository,
+      recipesRepository: recipesRepository as unknown as RecipesRepository,
       logger,
     },
     wait,
@@ -123,6 +131,7 @@ function buildService(args: BuildArgs) {
     onboardingChipSuggestionRepository,
     householdsRepository,
     curatedBaselineRepository,
+    recipesRepository,
     logger,
     wait,
   };
@@ -321,6 +330,9 @@ describe('CatalogProjectionService.getM5Chips', () => {
       findAllActive: vi.fn().mockResolvedValue([]),
       findActiveByCuisineTags: vi.fn().mockResolvedValue([]),
     };
+    const recipesRepository = {
+      findHouseholdFavoritesWithIds: vi.fn().mockResolvedValue([]),
+    };
     const logger = makeLogger();
     const service = new CatalogProjectionService(
       {
@@ -329,6 +341,7 @@ describe('CatalogProjectionService.getM5Chips', () => {
         householdsRepository: householdsRepository as unknown as HouseholdsRepository,
         curatedBaselineRepository:
           curatedBaselineRepository as unknown as CuratedBaselineRepository,
+        recipesRepository: recipesRepository as unknown as RecipesRepository,
         logger,
       },
       async () => undefined,
@@ -357,6 +370,9 @@ describe('CatalogProjectionService.getM5Chips', () => {
       findAllActive: vi.fn().mockResolvedValue([]),
       findActiveByCuisineTags: vi.fn().mockResolvedValue([]),
     };
+    const recipesRepository = {
+      findHouseholdFavoritesWithIds: vi.fn().mockResolvedValue([]),
+    };
     const logger = makeLogger();
     const service = new CatalogProjectionService(
       {
@@ -365,6 +381,7 @@ describe('CatalogProjectionService.getM5Chips', () => {
         householdsRepository: householdsRepository as unknown as HouseholdsRepository,
         curatedBaselineRepository:
           curatedBaselineRepository as unknown as CuratedBaselineRepository,
+        recipesRepository: recipesRepository as unknown as RecipesRepository,
         logger,
       },
       async () => undefined,
@@ -748,5 +765,117 @@ describe('CatalogProjectionService.getM5Chips — starch/protein diversity backs
     // Bound purely by the pre-existing cuisine cap-5 relax, unaffected by the
     // starch/protein backstop.
     expect(chips).toHaveLength(5);
+  });
+});
+
+// ===========================================================================
+// Slice 16-s1 (AC 13) — already-tapped favourites stay visible on M5
+// re-entry. Moving the chip source off `recipes` broke this for free (the
+// old projection sorted household_recipe_usage.is_household_favorite rows
+// first); rebuilt deliberately as a union step.
+// ===========================================================================
+describe('CatalogProjectionService.getM5Chips — declared-favourites union (16-s1 AC 13)', () => {
+  it('renders 3 declared favourites at the head, exactly once each, alongside a full generated set', async () => {
+    const favourites = [
+      { id: 'fav-1', canonical_name: 'Lemon Rice' },
+      { id: 'fav-2', canonical_name: 'Dal Chawal' },
+      // Declared conversationally (free text), not by tapping a chip — no
+      // suggestion row exists for this one. Must still appear.
+      { id: 'fav-3', canonical_name: 'Sunday Biryani' },
+    ];
+    const rows = Array.from({ length: 12 }, (_, i) => makeRow(`sugg-${i}`, `Suggestion ${i}`, [`c${i}`]));
+    const { service } = buildService({ rows, stage1At: '2026-05-25T00:00:00Z', favourites });
+
+    const { chips } = await service.getM5Chips(HOUSEHOLD_ID, []);
+
+    expect(chips.slice(0, 3).map((c) => c.key)).toEqual(['fav-1', 'fav-2', 'fav-3']);
+    expect(chips.slice(0, 3).every((c) => c.provenance === 'declared')).toBe(true);
+    expect(chips.filter((c) => c.key === 'fav-3')).toHaveLength(1);
+  });
+
+  it('dedupes a generated suggestion whose label matches a declared favourite by CANONICALIZED name, not raw equality', async () => {
+    const favourites = [{ id: 'fav-1', canonical_name: "Aunt's Rice" }];
+    // Same dish, apostrophe + case differ — canonicalizeFavoriteName strips
+    // hyphens/apostrophes (case handled by an explicit .toLowerCase() on top);
+    // raw string equality would miss this and render it twice.
+    const rows = [
+      makeRow('sugg-dup', 'AUNTS RICE', ['x']),
+      ...Array.from({ length: 11 }, (_, i) => makeRow(`sugg-${i}`, `Other ${i}`, [`c${i}`])),
+    ];
+    const { service } = buildService({ rows, stage1At: '2026-05-25T00:00:00Z', favourites });
+
+    const { chips } = await service.getM5Chips(HOUSEHOLD_ID, []);
+
+    expect(chips.filter((c) => c.key === 'fav-1' || c.key === 'sugg-dup')).toHaveLength(1);
+    expect(chips[0]?.key).toBe('fav-1');
+  });
+
+  it('declared favourites are exempt from the diversity cap — a parent\'s own 5 same-cuisine dishes are not capped', async () => {
+    const favourites = Array.from({ length: 5 }, (_, i) => ({
+      id: `fav-${i}`,
+      canonical_name: `Family Rice Dish ${i}`,
+    }));
+    const rows = Array.from({ length: 12 }, (_, i) => makeRow(`sugg-${i}`, `Suggestion ${i}`, [`c${i}`]));
+    const { service } = buildService({ rows, stage1At: '2026-05-25T00:00:00Z', favourites });
+
+    const { chips } = await service.getM5Chips(HOUSEHOLD_ID, []);
+
+    // All 5 favourites survive even though they'd blow the cuisine cap-3/5 if
+    // they were run through pickWithDiversityCap like a generated suggestion.
+    expect(chips.filter((c) => c.key.startsWith('fav-'))).toHaveLength(5);
+  });
+
+  it('declared favourites still count toward TARGET_CHIPS = 20 — the generated budget shrinks to make room', async () => {
+    const favourites = Array.from({ length: 5 }, (_, i) => ({
+      id: `fav-${i}`,
+      canonical_name: `Favourite ${i}`,
+    }));
+    // 20 distinct-cuisine suggestions — with no favourites this alone would
+    // fill the full budget.
+    const rows = Array.from({ length: 20 }, (_, i) => makeRow(`sugg-${i}`, `Suggestion ${i}`, [`c${i}`]));
+    const { service } = buildService({ rows, stage1At: '2026-05-25T00:00:00Z', favourites });
+
+    const { chips } = await service.getM5Chips(HOUSEHOLD_ID, []);
+
+    expect(chips).toHaveLength(20);
+    expect(chips.filter((c) => c.key.startsWith('fav-'))).toHaveLength(5);
+    expect(chips.filter((c) => c.key.startsWith('sugg-'))).toHaveLength(15);
+  });
+
+  it('favourites render (overriding cold-start) when generation and the curated fallback both underflow CHIP_FLOOR', async () => {
+    // Judgment call (16-s1 completion notes): doctrine frames cold-start as
+    // avoiding a blank/sparse/stereotyped card. A parent's own declared
+    // favourites are neither — showing them is strictly better than punting
+    // to the conversational fallback and hiding content the parent already
+    // gave us.
+    const favourites = [
+      { id: 'fav-1', canonical_name: 'Lemon Rice' },
+      { id: 'fav-2', canonical_name: 'Dal Chawal' },
+    ];
+    const { service } = buildService({
+      rows: [],
+      stage1At: '2026-05-25T00:00:00Z',
+      curatedRows: [],
+      favourites,
+    });
+
+    const result = await service.getM5Chips(HOUSEHOLD_ID, []);
+
+    expect(result.coldStartReason).toBeNull();
+    expect(result.chips.map((c) => c.key)).toEqual(['fav-1', 'fav-2']);
+  });
+
+  it('true cold-start still fires when there are no favourites and generation + fallback both underflow', async () => {
+    const { service } = buildService({
+      rows: [],
+      stage1At: '2026-05-25T00:00:00Z',
+      curatedRows: [],
+      favourites: [],
+    });
+
+    const result = await service.getM5Chips(HOUSEHOLD_ID, []);
+
+    expect(result.coldStartReason).toBe('chip_floor_underflow');
+    expect(result.chips).toEqual([]);
   });
 });

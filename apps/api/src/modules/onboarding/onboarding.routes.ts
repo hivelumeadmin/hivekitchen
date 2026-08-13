@@ -136,6 +136,10 @@ const onboardingRoutesPlugin: FastifyPluginAsync = async (fastify) => {
     // Slice 16-s1 (AC 8) — read-only curated-50 fallback when generated
     // suggestions fall below CHIP_FLOOR.
     curatedBaselineRepository: curatedBaselineRepo,
+    // Slice 16-s1 (AC 13) — declared-favourites union. Same instance already
+    // constructed above for favorite_lunch.add / curatedBaseline; used here
+    // for exactly one read (findHouseholdFavoritesWithIds).
+    recipesRepository,
     logger: fastify.log,
   });
 

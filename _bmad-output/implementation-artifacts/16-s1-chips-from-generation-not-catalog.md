@@ -303,10 +303,16 @@ without a data migration.
   - [x] 6.3 Test with a deliberately skewed generated set. 6 chicken-rice dishes across 6
         distinct cuisines (reproducing the exact bug: cuisine bucketing alone never saw more
         than 1 per bucket) → capped, not all 6 admitted.
-- [ ] 7. Already-tapped favourites on re-entry (AC 13)
-  - [ ] 7.1 Union declared favourites into the chip set, deduped via
-        `canonicalizeFavoriteName`, sorted first, exempt from the diversity cap.
-  - [ ] 7.2 Test: 3 declared favourites (one declared by free text, not by tapping) all
+- [x] 7. Already-tapped favourites on re-entry (AC 13)
+  - [x] 7.1 Union declared favourites into the chip set, deduped via
+        `canonicalizeFavoriteName`, sorted first, exempt from the diversity cap. New
+        `RecipesRepository.findHouseholdFavoritesWithIds` mirrors the ALREADY-ESTABLISHED
+        `findHouseholdFavorites` qualification (is_household_favorite OR provenance
+        declared/parent_added) rather than inventing a new definition of "favourite" — free
+        by construction includes conversational declarations, since both write through the
+        same `declareForHousehold` path. `CatalogProjectionService` re-gains a
+        `recipesRepository` dependency, used for exactly this one read.
+  - [x] 7.2 Test: 3 declared favourites (one declared by free text, not by tapping) all
         render, at the head, exactly once each, alongside a full generated set.
 - [ ] 8. Gates
   - [ ] 8.1 API suite — expect the 4 known pre-existing failures, no new ones. The golden
@@ -891,6 +897,58 @@ claude-opus-5[1m]
   pre-existing voice/DST failure), typecheck clean, lint unchanged at its one pre-existing
   false positive.
 
+**Task 7 complete (AC 13).**
+
+- **`findHouseholdFavoritesWithIds` reuses the ESTABLISHED "favourite" definition rather
+  than inventing a new one.** `findHouseholdFavorites` (Story 7-S15, powers the Kitchen
+  Profile) already qualifies a row as `is_household_favorite OR catalog_provenance IN
+  ('declared', 'parent_added')` — this is the exact set AC 13 needs. Rather than change that
+  method's return shape (an existing caller relies on `string[]`) or reuse
+  `findCatalogProjectionForHousehold` (task 3's prediction — the wrong fit; it reads the
+  household's ENTIRE catalog including dozens of irrelevant Stage 0/1 'inferred' rows to
+  find a handful of favourites), added a sibling method mirroring the SAME WHERE clause with
+  `id` added to the select. `findCatalogProjectionForHousehold` itself is now removed —
+  task 3's "pending likely reuse by 16-s7" turned out not to materialize once the better-fit
+  method was found; confirmed zero other callers before deleting, fixed a dangling
+  `{@link}` docstring reference in a sibling method.
+
+- **`CatalogProjectionService` re-gains a `recipesRepository` dependency**, contradicting
+  task 3's own AC 4 framing ("this class no longer depends on RecipesRepository at all").
+  Corrected that comment rather than leaving it stale: AC 4's actual guarantee is that a
+  `recipes` row cannot masquerade as a GENERATED suggestion, not that this class never
+  touches `recipes` for any purpose — a scoped, read-only, single-method use for favourites
+  (which are supposed to appear, tagged `provenance: 'declared'`) doesn't violate that.
+  Also corrected two "this class has no dependency capable of writing" comments to describe
+  what's actually true now (the dependency exists; only its read methods are called).
+
+- **A real, unspecified design gap: does a household with declared favourites but a failed
+  generation + fallback still get a chip card, or cold-start?** Neither AC 9 nor AC 13
+  addresses the intersection. Resolved as: favourites override cold-start. Reasoning:
+  doctrine frames cold-start as avoiding a "blank/sparse/stereotyped" card — a parent's own
+  declared favourites are neither, and showing them is strictly better than hiding content
+  they already gave us behind a conversational punt. This is the second genuine judgment
+  call in this slice I made confidently rather than blocking on (after the fallback
+  chip-key decision in task 5), flagged prominently here — override if the product read is
+  different. A regression test locks the OTHER half: true cold-start (no chips) still fires
+  when there are no favourites AND both generation and fallback underflow.
+
+- **Dedup happens on the WINNING pool only, after the floor/fallback decision, using the
+  RAW (pre-dedup) count for that decision.** A household whose generated suggestions happen
+  to overlap heavily with already-declared favourites doesn't get pushed into the fallback
+  path just because dedup would shrink the suggestion count — the floor is about whether
+  GENERATION produced enough NEW content, a question dedup doesn't change the answer to.
+
+- **`pickWithDiversityCap` gained an optional `target` parameter** (defaults to
+  `TARGET_CHIPS`) so the generated pool's budget can shrink by `favourites.length` without
+  touching the cap-3/cap-5/relax mechanics themselves — favourites are exempt from the cap
+  entirely (never passed through this method at all), not merely favoured within it.
+
+- 12 new tests (3 in `recipes.repository.test.ts` for the new repository method, 5 union
+  tests + regression coverage in `catalog-projection.service.test.ts`, plus updates to the 3
+  standalone constructor tests that predate the `buildService` harness), full API suite 2646
+  passing (same single pre-existing voice/DST failure), typecheck clean, lint unchanged at
+  its one pre-existing false positive.
+
 ### File List
 
 - `apps/api/src/agents/prompts/catalog-seed.prompt.ts` — modified (snapshot gains
@@ -944,6 +1002,22 @@ claude-opus-5[1m]
   `CatalogSeedItemSchema` gains the two new required fields, `Survivor` threads them
   through both persist branches, new `normalizeStarchProtein` helper collapses the LLM's
   `'none'`/empty-string to a real `null`)
+- `apps/api/src/modules/recipe/recipes.repository.ts` — modified (task 7: new
+  `findHouseholdFavoritesWithIds`, mirroring `findHouseholdFavorites`'s qualification;
+  `findCatalogProjectionForHousehold` removed as confirmed-dead code — zero callers, task
+  3's "pending likely reuse" prediction didn't pan out; unused `CatalogProvenance` import
+  removed; dangling `{@link}` reference in `findCandidateSlateForHousehold`'s docstring
+  fixed)
+- `apps/api/src/modules/recipe/recipes.repository.test.ts` — modified (3 new tests for
+  `findHouseholdFavoritesWithIds`)
+- `apps/api/src/modules/catalog/catalog-projection.service.ts` — modified (task 7:
+  `recipesRepository` dependency re-added for the AC 13 favourites union; declared
+  favourites pinned first, exempt from `pickWithDiversityCap`'s cap via a new optional
+  `target` budget parameter, deduped against the winning pool by canonicalized name;
+  favourites override cold-start when generation + fallback both underflow — see completion
+  notes; corrected stale AC 4 / "no write dependency" comments)
+- `apps/api/src/modules/onboarding/onboarding.routes.ts` — modified (task 7: wires the
+  already-constructed `recipesRepository` into `catalogProjection`)
 
 ---
 
@@ -962,3 +1036,4 @@ claude-opus-5[1m]
 | 2026-08-13 | Task 4 implemented (AC 6, AC 7): `seedForHousehold`'s existing filtered `survivors` array (name pre-filter + `evaluateGuardrail()`, unchanged) now also persists to `onboarding_chip_suggestions` — one filter pass, two persist targets, per AC 6's "do not fork" instruction. `catalog.chips.blocked` logging added at both block sites with label + matched allergen + source ('declared' vs 'falcpa'), the latter resolved via the guardrail's own exported `isHardRule()` rather than reimplemented, and verified reachable with a dedicated FALCPA-only test. `primary_starch`/`primary_protein` inserted as null pending task 6's schema addition. Chip-persist failure is caught and logged, never undoes a successful recipes persist. |
 | 2026-08-13 | Task 5 implemented (AC 8, AC 9): when filtered suggestions fall below `CHIP_FLOOR` (12, aliased from `UNDERFLOW_THRESHOLD`), `getM5Chips` reads + filters `curated_baseline_items` and uses it as a full REPLACEMENT source, not a blend; a fallback that also underflows returns the new `'chip_floor_underflow'` cold-start reason instead of a sparse grid. Closed an unspecified gap: fallback chips are keyed on `canonical_name`, never the row's real id, because a curated row resolves via neither of AC 5's two lookup stores and would otherwise reproduce AC 5's own silent-failure trap. The old empty-catalog cold-start check (`deriveColdStartReason`, `'stage2_terminal'`) became dead code under the new floor logic and was removed. Retargeted 8 pre-existing sort/diversity/logging tests whose small fixtures now unconditionally trigger the new floor — padding math verified by hand per test, not just re-run until green. |
 | 2026-08-13 | Task 6 implemented (AC 12): `primary_starch`/`primary_protein` added as required fields to `CatalogSeedItemSchema` and the prompt's OUTPUT SHAPE, threaded through to `onboarding_chip_suggestions` (previously null, per task 4's note), normalizing the LLM's `'none'`/empty string to a real `null`. `pickWithDiversityCap` now also buckets on a COMBINED `combo:${protein}:${starch}` key — deliberately combined, not two independent caps, because the near-duplicate rule is a PAIR condition ("share the same protein AND the same starch") and independent caps would over-reject dishes sharing only one axis. A row missing either value is exempt from the combo bucket, not capped into a shared "no value" bucket. Caught and fixed a pre-existing array-aliasing mutation bug in `pickWithDiversityCap` while adding the combo key (`tags` aliased `row.cuisine_tags` when non-empty). Retargeted all 15 existing LLM-response fixtures in `catalog-seed.service.test.ts` — the response schema validates per-item AND at the array level, so a fixture missing a new required field failed the WHOLE batch, not just that item. |
+| 2026-08-13 | Task 7 implemented (AC 13): declared favourites unioned into the M5 chip set, pinned first, deduped against the winning suggestion/fallback pool via `canonicalizeFavoriteName` (case-insensitive), exempt from the diversity cap via a new `pickWithDiversityCap` budget parameter, still counting toward `TARGET_CHIPS`. New `RecipesRepository.findHouseholdFavoritesWithIds` mirrors the existing `findHouseholdFavorites` qualification rather than inventing a new "favourite" definition; `findCatalogProjectionForHousehold` (task 3's predicted-but-unrealized reuse target) removed as confirmed-dead code. Judgment call: declared favourites now override cold-start when generation + fallback both underflow CHIP_FLOOR — doctrine frames cold-start as avoiding a sparse/blank card, and a parent's own favourites are neither; a regression test confirms true cold-start still fires with no favourites present. Corrected task 3's stale AC 4 comments now that `CatalogProjectionService` depends on `RecipesRepository` again (for exactly one read). |

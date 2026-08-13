@@ -1,4 +1,3 @@
-import type { CatalogProvenance } from '@hivekitchen/types';
 import { BaseRepository } from '../../repository/base.repository.js';
 
 // ===========================================================================
@@ -796,94 +795,47 @@ export class RecipesRepository extends BaseRepository {
   }
 
   /**
-   * Slice 2.6-s4 — projection read for M5 chip personalization.
+   * Slice 16-s1 (AC 13) — the household's declared favourites, WITH id, for
+   * the M5 union: pinned first, exempt from the diversity cap, resolved via
+   * recipes.id (AC 5's existing findById() fallback, unchanged).
    *
-   * Returns every catalog row visible to the household (banned rows excluded
-   * at the SQL layer to keep the projection size small). Sort + diversity
-   * shaping happens in CatalogProjectionService — this method is intentionally
-   * a single-purpose SELECT-with-join with no business logic so it stays
-   * cheap to test and reason about.
-   *
-   * Mirrors the join shape KitchenMapRepository uses
-   * (USAGE_JOIN_COLUMNS) — household_recipe_usage → recipes is many-to-one
-   * so PostgREST may return `recipes` as an array or object; we normalize.
+   * Same qualification as {@link findHouseholdFavorites} (not banned AND
+   * (is_household_favorite OR catalog_provenance is parent-stated)) — a
+   * sibling method rather than changing that one's return shape, which an
+   * existing caller (Story 7-S15, Kitchen Profile) relies on as string[].
+   * Reads ONLY qualifying rows, not the household's full catalog — Stage 0/
+   * Stage 1 still seed `recipes` until 16-s3 retires them, so a
+   * full-catalog read here would pull dozens of irrelevant 'inferred' rows
+   * to find a handful of declared ones.
    */
-  async findCatalogProjectionForHousehold(
+  async findHouseholdFavoritesWithIds(
     householdId: string,
-  ): Promise<
-    Array<{
-      id: string;
-      canonical_name: string;
-      cuisine_tags: string[];
-      cultural_tags: string[];
-      allergen_flags: string[];
-      dietary_flags: string[];
-      catalog_provenance: CatalogProvenance;
-      confidence_score: number;
-      is_household_favorite: boolean;
-    }>
-  > {
+  ): Promise<Array<{ id: string; canonical_name: string }>> {
     const { data, error } = await this.client
       .from('household_recipe_usage')
       .select(
-        'catalog_provenance, confidence_score, is_household_favorite, recipes!inner(id, canonical_name, cuisine_tags, cultural_tags, allergen_flags, dietary_flags, is_active)',
+        'is_household_favorite, catalog_provenance, last_used_at, recipes!inner(id, canonical_name, is_active)',
       )
       .eq('household_id', householdId)
-      .eq('is_household_banned', false);
+      .eq('is_household_banned', false)
+      .order('is_household_favorite', { ascending: false })
+      .order('last_used_at', { ascending: false, nullsFirst: false });
     if (error) throw error;
 
-    const out: Array<{
-      id: string;
-      canonical_name: string;
-      cuisine_tags: string[];
-      cultural_tags: string[];
-      allergen_flags: string[];
-      dietary_flags: string[];
-      catalog_provenance: CatalogProvenance;
-      confidence_score: number;
-      is_household_favorite: boolean;
-    }> = [];
+    const out: Array<{ id: string; canonical_name: string }> = [];
     for (const raw of (data ?? []) as Array<{
-      catalog_provenance: CatalogProvenance;
-      confidence_score: number;
       is_household_favorite: boolean;
+      catalog_provenance: string;
       recipes:
-        | Array<{
-            id: string;
-            canonical_name: string;
-            cuisine_tags: string[] | null;
-            cultural_tags: string[] | null;
-            allergen_flags: string[] | null;
-            dietary_flags: string[] | null;
-            is_active: boolean;
-          }>
-        | {
-            id: string;
-            canonical_name: string;
-            cuisine_tags: string[] | null;
-            cultural_tags: string[] | null;
-            allergen_flags: string[] | null;
-            dietary_flags: string[] | null;
-            is_active: boolean;
-          }
+        | Array<{ id: string; canonical_name: string; is_active: boolean }>
+        | { id: string; canonical_name: string; is_active: boolean }
         | null;
     }>) {
-      const joined = Array.isArray(raw.recipes)
-        ? raw.recipes[0]
-        : (raw.recipes ?? undefined);
-      if (joined === undefined) continue;
-      if (!joined.is_active) continue;
-      out.push({
-        id: joined.id,
-        canonical_name: joined.canonical_name,
-        cuisine_tags: joined.cuisine_tags ?? [],
-        cultural_tags: joined.cultural_tags ?? [],
-        allergen_flags: joined.allergen_flags ?? [],
-        dietary_flags: joined.dietary_flags ?? [],
-        catalog_provenance: raw.catalog_provenance,
-        confidence_score: raw.confidence_score,
-        is_household_favorite: raw.is_household_favorite,
-      });
+      const joined = Array.isArray(raw.recipes) ? raw.recipes[0] : (raw.recipes ?? undefined);
+      if (joined === undefined || joined.is_active === false) continue;
+      if (raw.is_household_favorite || FAVORITE_LUNCH_PROVENANCES.has(raw.catalog_provenance)) {
+        out.push({ id: joined.id, canonical_name: joined.canonical_name });
+      }
     }
     return out;
   }
@@ -895,8 +847,10 @@ export class RecipesRepository extends BaseRepository {
    * the SQL layer), carrying the fields the planner needs to judge slot fit
    * WITHOUT a recipe.fetch turn: applicable_slots (for grouping), allergen_flags,
    * ingredient_keys (key ingredients), cuisine_tags, plus the usage/confidence
-   * signals the loader ranks by. A superset of {@link findCatalogProjectionForHousehold}
-   * (adds applicable_slots + ingredient_keys); ranking/grouping is the loader's job.
+   * signals the loader ranks by. Ranking/grouping is the loader's job.
+   * (16-s1: the M5-projection sibling this once cross-referenced,
+   * findCatalogProjectionForHousehold, was removed as unused — the M5 chip
+   * source moved off `recipes` entirely; see catalog-projection.service.ts.)
    *
    * Mirrors the household_recipe_usage → recipes join shape (many-to-one, so
    * PostgREST may return `recipes` as an array or object; we normalize).
