@@ -131,6 +131,99 @@ describe('BriefCanvas', () => {
     });
   });
 
+  // The gate used to be `flaggedItems.length > 0`, so every hard-fail that
+  // carried no compound-uncertain flags — infrastructure-uncertain verdicts,
+  // `blocked` verdicts, planner retry exhaustion — fell through to the empty
+  // state and sat on "preparing your first plan" forever.
+  it('renders the hard-fail state (NOT "preparing plan") when hard_fail is set with no flagged_items', async () => {
+    const { hkFetch } = await import('@/lib/fetch.js');
+    vi.mocked(hkFetch).mockImplementation(async (path: string) => {
+      if (path.startsWith('/v1/plans')) {
+        return {
+          plan: null,
+          main_assignments: [],
+          days: [],
+          slots: [],
+          variations: [],
+          is_draft: false,
+          week_of: '2026-04-20',
+          hard_fail: { week_of: '2026-04-20', failed_at: '2026-04-19T18:00:00.000Z' },
+        };
+      }
+      return { brief: null } satisfies BriefResponse;
+    });
+
+    renderWithClient(<BriefCanvas />);
+
+    await waitFor(() => {
+      expect(screen.getByText(/Lumi couldn’t build this week’s plan\./)).toBeDefined();
+    });
+    // The regression this test exists for.
+    expect(
+      screen.queryByText('Lumi is preparing your first plan. Check back Sunday evening.'),
+    ).toBeNull();
+    // A dead end with no action is what we are removing — the retry must exist.
+    expect(screen.getByRole('button', { name: 'Try again' })).toBeDefined();
+  });
+
+  it('still renders the allergy banner (not the plain state) when hard_fail carries flagged_items', async () => {
+    const { hkFetch } = await import('@/lib/fetch.js');
+    vi.mocked(hkFetch).mockImplementation(async (path: string) => {
+      if (path.startsWith('/v1/plans')) {
+        return {
+          plan: null,
+          main_assignments: [],
+          days: [],
+          slots: [],
+          variations: [],
+          is_draft: false,
+          week_of: '2026-04-20',
+          hard_fail: { week_of: '2026-04-20', failed_at: '2026-04-19T18:00:00.000Z' },
+          flagged_items: [
+            { child_id: 'c1', ingredient: 'pesto', slot: 'main', day: 'mon' },
+          ],
+        };
+      }
+      return { brief: null } satisfies BriefResponse;
+    });
+
+    renderWithClient(<BriefCanvas />);
+
+    await waitFor(() => {
+      expect(screen.getByText(/Lumi needs your help with one ingredient/)).toBeDefined();
+    });
+    expect(screen.queryByText(/Lumi couldn’t build this week’s plan\./)).toBeNull();
+  });
+
+  // Negative control: without hard_fail the empty state must still win, or the
+  // new gate would swallow the ordinary pre-compose week.
+  it('renders "preparing plan" (NOT the hard-fail state) when no hard_fail is present', async () => {
+    const { hkFetch } = await import('@/lib/fetch.js');
+    vi.mocked(hkFetch).mockImplementation(async (path: string) => {
+      if (path.startsWith('/v1/plans')) {
+        return {
+          plan: null,
+          main_assignments: [],
+          days: [],
+          slots: [],
+          variations: [],
+          is_draft: false,
+          week_of: '2026-04-20',
+        };
+      }
+      return { brief: null } satisfies BriefResponse;
+    });
+
+    renderWithClient(<BriefCanvas />);
+
+    await waitFor(() => {
+      expect(
+        screen.getByText('Lumi is preparing your first plan. Check back Sunday evening.'),
+      ).toBeDefined();
+    });
+    expect(screen.queryByText(/Lumi couldn’t build this week’s plan\./)).toBeNull();
+  });
+
   it('renders PageHeader (headline + lumi_note), tile grid, and FreshnessState when brief is populated', async () => {
     const { hkFetch } = await import('@/lib/fetch.js');
     vi.mocked(hkFetch).mockResolvedValue({ brief: makeBrief() } satisfies BriefResponse);

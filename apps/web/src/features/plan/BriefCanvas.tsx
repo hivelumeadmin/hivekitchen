@@ -35,12 +35,19 @@ export function BriefCanvas() {
   // Story pre-4-s3 — first-ever plan hard-failed on compound-uncertain
   // ingredients: surface the banner instead of the "preparing your first plan"
   // empty state.
+  //
+  // Gate is `hardFail`, NOT `flaggedItems.length`. Only compound-uncertain
+  // rejections carry flags; infrastructure-uncertain verdicts, `blocked`
+  // verdicts and planner retry exhaustion hard-fail with none. Gating on flags
+  // meant every one of those weeks silently rendered "Lumi is preparing your
+  // first plan. Check back Sunday evening." forever. BriefHardFail carries its
+  // own no-flags branch, so an empty array is a valid, handled input here.
   if (
     !view.isLoading &&
     !view.isPlanLoading &&
     view.brief === null &&
     !view.isError &&
-    view.flaggedItems.length > 0
+    view.hardFail !== null
   ) {
     return <BriefHardFail flaggedItems={view.flaggedItems} onRetry={lifecycle.handleBannerRetry} />;
   }

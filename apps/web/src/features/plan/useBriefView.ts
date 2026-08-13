@@ -101,6 +101,15 @@ export function useBriefView(householdId: string | null) {
   // below each row and the row's date line. Anchored on week_of (see getWeekDates).
   const weekDates = useMemo(() => getWeekDates(planData?.week_of), [planData?.week_of]);
   const flaggedItemsRaw = planData?.flagged_items ?? [];
+  // The route returns `hard_fail` whenever a plan.hard_fail audit row exists for
+  // the week (plans.routes.ts), independently of `flagged_items` — only
+  // compound-uncertain rejections carry flags. Infrastructure-uncertain
+  // verdicts (no_rules_loaded, falcpa_baseline_missing, decrypt failures),
+  // `blocked` verdicts (which populate `conflicts`, not `flagged_items`) and
+  // planner retry exhaustion all hard-fail with zero flags. This value was
+  // previously never read, so those weeks fell through to BriefEmptyState and
+  // sat on "Lumi is preparing your first plan" forever.
+  const hardFail = planData?.hard_fail ?? null;
   // Story 3-DM-C1 Phase 9b part 4 step 4 — DisambiguationPicker takes a
   // DayTreeView (the canonical tree slice for the active day). The brief surface
   // renders tiles from brief_state.plan_tile_summaries (composer-fed; carries
@@ -206,6 +215,7 @@ export function useBriefView(householdId: string | null) {
     planReasoning,
     childColorMap,
     flaggedItems,
+    hardFail,
     planId,
     canSwap,
     weekConfirmed,
