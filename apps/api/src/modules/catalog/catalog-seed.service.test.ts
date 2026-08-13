@@ -379,6 +379,10 @@ describe('CatalogSeedService — seedForHousehold', () => {
 
     expect(deps.recipesRepo.seedFromCatalogBaseline).not.toHaveBeenCalled();
     expect(deps.householdsRepo.setStage1CompletedAt).not.toHaveBeenCalled();
+    // AC 9 forced-failure path 1/4 — an LLM error leaves zero chip
+    // suggestions persisted, which is the precondition getM5Chips' CHIP_FLOOR
+    // fallback (AC 8) relies on to still render a non-empty chip set.
+    expect(deps.onboardingChipSuggestionRepo.insertMany).not.toHaveBeenCalled();
     const errCalls = (logger.error as ReturnType<typeof vi.fn>).mock.calls;
     const failed = errCalls.find(
       ([ctx]) => (ctx as { action?: string }).action === 'catalog.stage1.failed',
@@ -400,6 +404,8 @@ describe('CatalogSeedService — seedForHousehold', () => {
     ).rejects.toThrow();
 
     expect(deps.householdsRepo.setStage1CompletedAt).not.toHaveBeenCalled();
+    // AC 9 forced-failure path 2/4 — LLM timeout.
+    expect(deps.onboardingChipSuggestionRepo.insertMany).not.toHaveBeenCalled();
     const errCalls = (logger.error as ReturnType<typeof vi.fn>).mock.calls;
     const timeout = errCalls.find(
       ([ctx]) => (ctx as { action?: string }).action === 'catalog.stage1.llm_timeout',
@@ -421,6 +427,8 @@ describe('CatalogSeedService — seedForHousehold', () => {
     ).rejects.toThrow();
 
     expect(deps.householdsRepo.setStage1CompletedAt).not.toHaveBeenCalled();
+    // AC 9 forced-failure path 3/4 — malformed (non-JSON) response.
+    expect(deps.onboardingChipSuggestionRepo.insertMany).not.toHaveBeenCalled();
     const errCalls = (logger.error as ReturnType<typeof vi.fn>).mock.calls;
     const failed = errCalls.find(
       ([ctx]) =>
@@ -444,11 +452,50 @@ describe('CatalogSeedService — seedForHousehold', () => {
     ).rejects.toThrow();
 
     expect(deps.householdsRepo.setStage1CompletedAt).not.toHaveBeenCalled();
+    // AC 9 forced-failure path 3/4 (schema-invalid variant) — a malformed
+    // response either way leaves zero chip suggestions persisted.
+    expect(deps.onboardingChipSuggestionRepo.insertMany).not.toHaveBeenCalled();
     const errCalls = (logger.error as ReturnType<typeof vi.fn>).mock.calls;
     const invalid = errCalls.find(
       ([ctx]) => (ctx as { action?: string }).action === 'catalog.stage1.response_schema_invalid',
     );
     expect(invalid).toBeDefined();
+  });
+
+  it('AC 9 forced-failure path 4/4 — a filter that blocks EVERY item leaves zero chip suggestions persisted', async () => {
+    const deps = buildDeps();
+    // No parent_declared rules, so nothing is blocked by household allergens —
+    // instead every item names a bare FALCPA token in its canonical_name, so
+    // the name pre-filter (not the guardrail) drops all of them. Either
+    // filter site blocking everything demonstrates the same AC 9 guarantee.
+    deps.openai.chat.completions.create.mockResolvedValue({
+      choices: [
+        {
+          message: {
+            content: JSON.stringify({
+              items: Array.from({ length: 10 }, (_, i) => ({
+                canonical_name: `peanut dish ${i + 1}`,
+                allergen_flags: ['peanut'],
+                dietary_flags: [],
+                cultural_tags: [],
+                cuisine_tags: [],
+                applicable_slots: ['main'],
+              })),
+            }),
+          },
+        },
+      ],
+    });
+
+    await buildService(deps).seedForHousehold(HOUSEHOLD_ID, REQUEST_ID);
+
+    expect(deps.recipesRepo.seedFromCatalogBaseline).toHaveBeenCalledWith(
+      HOUSEHOLD_ID,
+      [],
+      expect.any(Function),
+      expect.any(Number),
+    );
+    expect(deps.onboardingChipSuggestionRepo.insertMany).toHaveBeenCalledWith(HOUSEHOLD_ID, []);
   });
 
   it('curated baseline flag disagreement: curated tags overwrite LLM tags; item_index logged (no canonical_name)', async () => {

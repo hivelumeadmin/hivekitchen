@@ -101,9 +101,11 @@ const onboardingRoutesPlugin: FastifyPluginAsync = async (fastify) => {
   // Slice 2.6-s2 — Stage 0 catalog re-materialization wired into
   // OnboardingService so M3 exit triggers a fire-and-forget rematerialize().
   // Same KEK is shared with the existing childAllergens / household /
-  // child-rules wires above.
+  // child-rules wires above. Shared with catalogProjection below (16-s1
+  // AC 8) — the repository is a stateless read wrapper.
+  const curatedBaselineRepo = new CuratedBaselineRepository(fastify.supabase);
   const curatedBaseline = new CuratedBaselineMaterializationService({
-    curatedBaselineRepo: new CuratedBaselineRepository(fastify.supabase),
+    curatedBaselineRepo,
     recipesRepo: recipesRepository,
     householdsRepo: householdsRepository,
     guardrailRepo: new AllergyGuardrailRepository(fastify.supabase, kek),
@@ -131,6 +133,9 @@ const onboardingRoutesPlugin: FastifyPluginAsync = async (fastify) => {
   const catalogProjection = new CatalogProjectionService({
     onboardingChipSuggestionRepository,
     householdsRepository,
+    // Slice 16-s1 (AC 8) — read-only curated-50 fallback when generated
+    // suggestions fall below CHIP_FLOOR.
+    curatedBaselineRepository: curatedBaselineRepo,
     logger: fastify.log,
   });
 

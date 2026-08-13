@@ -275,10 +275,20 @@ without a data migration.
   - [x] 4.2 Structured block log with reason and match source. `catalog.chips.blocked` added
         at both existing block sites (name pre-filter, guardrail `verdict === 'blocked'`)
         alongside the pre-existing logs, not replacing them.
-- [ ] 5. Fallback (AC 8, 9)
-  - [ ] 5.1 Read `curated_baseline_items` directly for chips; no materialisation.
-  - [ ] 5.2 `CHIP_FLOOR = 12`; apply allergen + dietary filtering to fallback too.
-  - [ ] 5.3 Four forced-failure tests + the fallback-also-underflows → cold-start case.
+- [x] 5. Fallback (AC 8, 9)
+  - [x] 5.1 Read `curated_baseline_items` directly for chips; no materialisation. Read-only
+        by construction: `CatalogProjectionService` has no dependency capable of writing
+        `recipes`/`household_recipe_usage` at all.
+  - [x] 5.2 `CHIP_FLOOR = 12`; apply allergen + dietary filtering to fallback too.
+        `CHIP_FLOOR` is a named alias of `UNDERFLOW_THRESHOLD`, not a new constant.
+        Fallback rows run through the SAME `filterByPersonalization` the suggestion path uses.
+  - [x] 5.3 Four forced-failure tests + the fallback-also-underflows → cold-start case.
+        Split across two layers: `catalog-seed.service.test.ts` proves each of the 4 named
+        failure modes (timeout, error, malformed response, filter-blocks-everything) leaves
+        zero rows in `onboarding_chip_suggestions`; `catalog-projection.service.test.ts`
+        proves the resulting empty/thin suggestion table triggers the fallback and still
+        renders a non-empty chip set, or correctly cold-starts if the fallback also
+        underflows.
 - [ ] 6. Diversity (AC 12)
   - [ ] 6.1 Add `primary_starch` / `primary_protein` to the generated-item schema.
   - [ ] 6.2 Bucket the selection on those dimensions alongside cuisine.
@@ -776,6 +786,57 @@ claude-opus-5[1m]
   block-scenario fixture), full API suite 2624 passing (same single pre-existing voice/DST
   failure), typecheck clean, lint unchanged at its one pre-existing false positive.
 
+**Task 5 complete (AC 8, AC 9).**
+
+- **A real, previously-unspecified design gap: what chip KEY does a fallback item get?**
+  Neither AC 5 nor the Dev Notes' resolution diagram mention a third resolution source, and
+  a curated_baseline_items row is never written into `recipes` OR `onboarding_chip_suggestions`
+  — so its real UUID `id` would resolve via NEITHER of AC 5's two lookup stores, silently
+  reproducing the exact "UUID passed raw to the agent" failure AC 5 exists to prevent.
+  Resolved by keying fallback chips on `canonical_name` itself (both `key` and `label`),
+  never the row's real id — matching the non-UUID pattern every other non-M5 chip already
+  uses. `UUID_RE` never matches a dish name, so `submitTextTurn`'s resolution block simply
+  skips these keys and passes them through as their own label — no change needed to AC 5's
+  resolution code, and no new failure mode introduced.
+
+- **Fallback REPLACES the thin suggestion set; it does not blend with it.** Decision 2's own
+  wording — "used only to populate chips when generation yields too few" — reads as a
+  source swap, not a union (the ONLY explicit union in this story is AC 13's favourites
+  union, task 7). Verified via a dedicated test: a single real suggestion does not survive
+  alongside a 15-row curated fallback.
+
+- **The CHIP_FLOOR check subsumed the old empty-catalog cold-start entirely.** The prior
+  `deriveColdStartReason` fired `'stage2_terminal'` only when the suggestion table was
+  literally empty (`rows.length === 0`); since `CHIP_FLOOR(12) > 0`, that condition is now
+  strictly a special case of "below CHIP_FLOOR" and gets picked up by the same branch, then
+  routed through the fallback before any cold-start decision is made. The old method became
+  dead code as a direct result of this change and was removed rather than left orphaned.
+  `'stage2_terminal'` stays in the `ColdStartReason` union (harmless, matches two other
+  already-dead literals already tolerated there pre-dating this slice) but a NEW
+  `'chip_floor_underflow'` value is what actually fires now — confirmed no other file does
+  an exhaustive switch on this type, so adding the literal was safe.
+
+- **Retargeting the pre-existing sort/diversity/logging tests took real care, not just
+  padding.** Every one of those tests used small (2-6 row) fixtures that now trigger the
+  new fallback unconditionally. Naive padding breaks several of them in non-obvious ways —
+  verified by hand before editing, not just by re-running:
+  - Padding a bucket ALREADY at its diversity cap doesn't change that bucket's admitted
+    count (the cap, not the raw candidate count, decides what's admitted) — safe for the
+    sort-tie-break and diversity-cap-3 tests.
+  - Padding a bucket involved in a near-capacity MULTI-TAG interaction is NOT safe — it
+    changes whether the shared item gets admitted after the relax step. The multi-tag test
+    is padded with a THIRD, non-overlapping cuisine instead, verified by re-tracing the
+    admission math by hand.
+  - The relax-to-5 mechanic (pre-existing, unrelated to CHIP_FLOOR) still fires whenever the
+    CAPPED count falls under `UNDERFLOW_THRESHOLD`, independent of the raw row count now
+    being >= `CHIP_FLOOR` — this bit the sort-tie-break test's rewrite once (padding pulled
+    in 2 extra rows via the relax step); fixed by asserting only the first three chips,
+    which is what the test is actually about.
+
+- 21 new/retargeted tests across the two test files, full API suite 2631 passing (same
+  single pre-existing voice/DST failure), typecheck clean, lint unchanged at its one
+  pre-existing false positive.
+
 ### File List
 
 - `apps/api/src/agents/prompts/catalog-seed.prompt.ts` — modified (snapshot gains
@@ -796,15 +857,22 @@ claude-opus-5[1m]
   counts corrected for the new trigger)
 - `supabase/migrations/20261040000000_create_onboarding_chip_suggestions.sql` — new
 - `apps/api/src/modules/catalog/onboarding-chip-suggestion.repository.ts` — new
-- `apps/api/src/modules/catalog/catalog-projection.service.ts` — modified (chip source
-  moved off `recipes`/`household_recipe_usage` to `onboarding_chip_suggestions`;
-  `recipesRepository` dependency removed; sort simplified)
-- `apps/api/src/modules/catalog/catalog-projection.service.test.ts` — rewritten (fixture
-  shape follows the new repository; numeric expectations preserved and verified by hand;
-  1 new negative-control test)
-- `apps/api/src/modules/onboarding/onboarding.routes.ts` — modified (constructs
+- `apps/api/src/modules/catalog/catalog-projection.service.ts` — modified (task 3: chip
+  source moved off `recipes`/`household_recipe_usage` to `onboarding_chip_suggestions`,
+  `recipesRepository` dependency removed, sort simplified; task 5: `CHIP_FLOOR` fallback to
+  `curated_baseline_items`, `deriveColdStartReason` removed as dead code, new
+  `'chip_floor_underflow'` cold-start reason)
+- `apps/api/src/modules/catalog/catalog-projection.service.test.ts` — rewritten (task 3:
+  fixture shape follows the new repository; task 5: fallback test suite added, several
+  pre-existing sort/diversity tests retargeted with hand-verified padding — see completion
+  notes)
+- `apps/api/src/modules/catalog/catalog-seed.service.test.ts` — modified (task 4: AC 6/7
+  tests; task 5: `insertMany`-not-called assertions on the 4 forced-failure tests + 1 new
+  filter-blocks-everything test)
+- `apps/api/src/modules/onboarding/onboarding.routes.ts` — modified (task 3: constructs
   `OnboardingChipSuggestionRepository`, wires it into both `catalogProjection` and
-  `OnboardingService`)
+  `OnboardingService`; task 5: `curatedBaselineRepo` hoisted to a shared variable, wired
+  into `catalogProjection`)
 - `apps/api/src/modules/onboarding/onboarding.service.ts` — modified (AC 5 resolution
   checks the suggestion store before the recipes fallback; unresolved-in-both-stores now
   logs `onboarding.m5_chip_uuid_unresolved`)
@@ -828,3 +896,4 @@ claude-opus-5[1m]
 | 2026-08-13 | Three-layer adversarial code review of commit `50ef972` (Tasks 1-2): 23 raw findings → 2 decision-needed (both resolved "leave bundled as-is" — an M2 attribution feature and a Stage 1 retry/throw redesign were both swept into the commit as pre-existing uncommitted work), 10 patch (8 applied — attempts-counter fragility on read failure, misreported post-enqueue log, dual-rendered dietary tag, a vacuous test, 2 coverage gaps, an eval-harness gap, a fragile assertion; 2 left as open action items needing product/architecture judgment), 6 defer (logged to `deferred-work.md`), 4 dismissed (2 refuted against the full repo, 2 already self-disclosed). |
 | 2026-08-13 | Task 3 implemented (AC 4, AC 5): `onboarding_chip_suggestions` table + repository created; `CatalogProjectionService` repointed at it with `recipesRepository` removed entirely (AC 4's negative control is structural — no code path to `recipes` exists); AC 5's chip-key resolution now checks the suggestion store before the recipes fallback, and a key unresolved in BOTH stores now logs `onboarding.m5_chip_uuid_unresolved` instead of failing silently. `findCatalogProjectionForHousehold` on `RecipesRepository` deliberately left in place, unused, pending likely reuse by 16-s7's favourites union. |
 | 2026-08-13 | Task 4 implemented (AC 6, AC 7): `seedForHousehold`'s existing filtered `survivors` array (name pre-filter + `evaluateGuardrail()`, unchanged) now also persists to `onboarding_chip_suggestions` — one filter pass, two persist targets, per AC 6's "do not fork" instruction. `catalog.chips.blocked` logging added at both block sites with label + matched allergen + source ('declared' vs 'falcpa'), the latter resolved via the guardrail's own exported `isHardRule()` rather than reimplemented, and verified reachable with a dedicated FALCPA-only test. `primary_starch`/`primary_protein` inserted as null pending task 6's schema addition. Chip-persist failure is caught and logged, never undoes a successful recipes persist. |
+| 2026-08-13 | Task 5 implemented (AC 8, AC 9): when filtered suggestions fall below `CHIP_FLOOR` (12, aliased from `UNDERFLOW_THRESHOLD`), `getM5Chips` reads + filters `curated_baseline_items` and uses it as a full REPLACEMENT source, not a blend; a fallback that also underflows returns the new `'chip_floor_underflow'` cold-start reason instead of a sparse grid. Closed an unspecified gap: fallback chips are keyed on `canonical_name`, never the row's real id, because a curated row resolves via neither of AC 5's two lookup stores and would otherwise reproduce AC 5's own silent-failure trap. The old empty-catalog cold-start check (`deriveColdStartReason`, `'stage2_terminal'`) became dead code under the new floor logic and was removed. Retargeted 8 pre-existing sort/diversity/logging tests whose small fixtures now unconditionally trigger the new floor — padding math verified by hand per test, not just re-run until green. |

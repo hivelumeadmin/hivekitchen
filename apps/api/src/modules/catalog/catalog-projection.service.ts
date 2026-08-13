@@ -2,6 +2,7 @@ import type { FastifyBaseLogger } from 'fastify';
 import type { ChipOption } from '@hivekitchen/contracts';
 import type { HouseholdsRepository } from '../households/households.repository.js';
 import type { OnboardingChipSuggestionRepository } from './onboarding-chip-suggestion.repository.js';
+import type { CuratedBaselineRepository } from './curated-baseline.repository.js';
 
 // Slice 2.6-s4 / 2.6-s6 / 16-s1 — projects the per-household generated chip
 // suggestions into a deterministic, diversity-shaped chip set for the Moment
@@ -17,22 +18,30 @@ import type { OnboardingChipSuggestionRepository } from './onboarding-chip-sugge
 // generated set.
 //
 // 2.6-s6: getM5Chips now returns `M5ChipResult` ({ chips, coldStartReason }).
-// When any declared cuisine bucket falls below PER_CUISINE_FLOOR_THRESHOLD,
-// Stage 1 times out with a depleted catalog, or the catalog is empty after
-// Stage 2 recovery, the caller is told to render the conversational fallback
-// instead of a sparse/stereotyped chip card.
+// When the caller is told the household is truly cold, it renders the
+// conversational fallback instead of a sparse/stereotyped chip card.
+//
+// 16-s1 (AC 8, 9) — when generated suggestions (post allergen/dietary filter)
+// fall below CHIP_FLOOR, the SAME filter is applied to `curated_baseline_items`
+// (read-only — this class cannot write recipes) and that becomes the chip
+// source INSTEAD of the thin suggestion set — decision 2's "used only to
+// populate chips when generation yields too few" is a replacement, not a
+// blend. If the fallback also underflows CHIP_FLOOR, that's cold-start
+// ('chip_floor_underflow'), never a sparse partial grid.
 //
 // Single entry point: getM5Chips(householdId, declaredCuisineTags?). Pipeline:
 //   1. Wait up to 5s for Stage 1 (households.stage1_completed_at NOT NULL).
-//   2. SELECT all generated suggestion rows for the household.
+//   2. SELECT all generated suggestion rows for the household, personalization-
+//      filtered. Below CHIP_FLOOR (12) → read + filter curated_baseline_items
+//      instead; below CHIP_FLOOR again → cold-start.
 //   3. Sort in TS: declared-cuisine match first, then id ASC (deterministic
 //      tie-breaker). Suggestions carry no confidence/provenance/favorite
 //      columns — those were household_recipe_usage-specific.
 //   4. Diversity cap (max 3 per cuisine_tag); if accumulator < 12, re-walk
 //      with cap 5; below-threshold log fires if final < 12.
-//   5. Project to ChipOption[] with key=suggestion id (UUID), label=label,
-//      provenance='inferred' (every generated suggestion is LLM-inferred).
-//   6. Per-cuisine floor check (post-step-2 raw rows) — fires cold-start.
+//   5. Project to ChipOption[] — key=suggestion id (UUID) or, on the fallback
+//      path, the curated item's own canonical_name (never its row id — see
+//      AC 5 resolution note inline); provenance='inferred' either way.
 //
 // NEVER throws — every error path returns { chips: [], coldStartReason: null }.
 
@@ -42,11 +51,17 @@ const TARGET_CHIPS = 20;
 const UNDERFLOW_THRESHOLD = 12;
 const DIVERSITY_CAP_PRIMARY = 3;
 const DIVERSITY_CAP_RELAXED = 5;
+// Slice 16-s1 (AC 8) — the story's own vocabulary for the same number;
+// explicitly NOT a third floor.
+const CHIP_FLOOR = UNDERFLOW_THRESHOLD;
 
 export type ColdStartReason =
   | 'per_cuisine_floor'
   | 'stage1_timeout'
-  | 'stage2_terminal';
+  | 'stage2_terminal'
+  // Slice 16-s1 (AC 9) — generated suggestions AND the curated-baseline
+  // fallback both came up short of CHIP_FLOOR after filtering.
+  | 'chip_floor_underflow';
 
 export interface M5ChipResult {
   chips: ChipOption[];
@@ -56,6 +71,11 @@ export interface M5ChipResult {
 export interface CatalogProjectionServiceDeps {
   onboardingChipSuggestionRepository: OnboardingChipSuggestionRepository;
   householdsRepository: HouseholdsRepository;
+  // Slice 16-s1 (AC 8) — read-only fallback source when generation fails,
+  // times out, or leaves too few survivors. This class has no dependency
+  // capable of writing `recipes`/`household_recipe_usage` at all, so the
+  // "MUST NOT materialise" constraint holds structurally.
+  curatedBaselineRepository: CuratedBaselineRepository;
   logger: FastifyBaseLogger;
 }
 
@@ -70,6 +90,7 @@ interface SuggestionRow {
 export class CatalogProjectionService {
   private readonly onboardingChipSuggestionRepository: OnboardingChipSuggestionRepository;
   private readonly householdsRepository: HouseholdsRepository;
+  private readonly curatedBaselineRepository: CuratedBaselineRepository;
   private readonly logger: FastifyBaseLogger;
   // Test seam — Vitest fake timers don't intercept setTimeout when called
   // inside service code without a configurable wait fn. Injectable so unit
@@ -82,6 +103,7 @@ export class CatalogProjectionService {
   ) {
     this.onboardingChipSuggestionRepository = deps.onboardingChipSuggestionRepository;
     this.householdsRepository = deps.householdsRepository;
+    this.curatedBaselineRepository = deps.curatedBaselineRepository;
     this.logger = deps.logger;
     this.wait =
       wait ?? ((ms) => new Promise((r) => setTimeout(r, ms)));
@@ -112,28 +134,67 @@ export class CatalogProjectionService {
 
       // Step 2b — personalization filter: exclude allergen conflicts and
       // suggestions that don't satisfy non-negotiable dietary requirements.
-      const rows = this.filterByPersonalization(allRows, allergenFilter, requiredDietaryFlags);
+      let rows = this.filterByPersonalization(allRows, allergenFilter, requiredDietaryFlags);
 
-      // Step 3 (early gate) — cold-start only when catalog is truly empty.
-      // The per-cuisine floor check was removed: cultural_priors stores both
-      // broad cultural keys (south_asian) and sub-cuisine keys (south_indian,
-      // halal) from cuisine.declare. Sub-cuisines have < 5 baseline items and
-      // dietary/religious keys have 0 cuisine_tag matches — both triggered
-      // spurious cold-starts with 50 perfectly usable chips in the catalog.
-      const coldStartReason = this.deriveColdStartReason(rows);
-      if (coldStartReason !== null) {
+      // Step 3 — AC 8: generation failed, timed out, or left too few
+      // survivors after filtering. All three reduce to the same observable
+      // state by the time M5 is reached: few/no rows in
+      // onboarding_chip_suggestions. Read curated_baseline_items directly —
+      // read-only, this class has no dependency capable of writing
+      // `recipes`/`household_recipe_usage` at all.
+      if (rows.length < CHIP_FLOOR) {
+        const curatedRaw =
+          declaredCuisineTags.length > 0
+            ? await this.curatedBaselineRepository.findActiveByCuisineTags(declaredCuisineTags)
+            : await this.curatedBaselineRepository.findAllActive();
+        // Deliberately keyed by canonical_name, NOT the curated_baseline_items
+        // id. A curated row is never inserted into recipes or the suggestion
+        // store, so its real id would resolve via neither lookup AC 5 checks —
+        // reproducing exactly the silent-failure trap AC 5 exists to close.
+        // The dish name is already a valid, non-UUID chip key (same pattern
+        // every non-M5 chip in this app already uses), so tapping one needs
+        // no resolution at all — it passes straight through as its own label.
+        const curatedRows: SuggestionRow[] = curatedRaw.map((c) => ({
+          id: c.canonical_name,
+          label: c.canonical_name,
+          cuisine_tags: c.cuisine_tags,
+          allergen_flags: c.allergen_flags,
+          dietary_flags: c.dietary_flags,
+        }));
+        const filteredCurated = this.filterByPersonalization(
+          curatedRows,
+          allergenFilter,
+          requiredDietaryFlags,
+        );
         this.logger.info(
           {
             module: 'catalog',
-            action: 'catalog.m5.cold_start_triggered',
+            action: 'catalog.m5.chip_floor_fallback',
             household_id: householdId,
-            cold_start_reason: coldStartReason,
-            declared_cuisine_count: declaredCuisineTags.length,
-            total_catalog_rows: rows.length,
+            suggestion_count: rows.length,
+            curated_count: filteredCurated.length,
           },
-          'M5 cold-start triggered',
+          'M5 chip suggestions below floor — falling back to curated baseline',
         );
-        return { chips: [], coldStartReason };
+
+        // AC 9 — the fallback itself came up short too (e.g. a household
+        // whose declared allergens exclude most of the curated 50). Never a
+        // sparse/partial grid — a real cold-start reason instead.
+        if (filteredCurated.length < CHIP_FLOOR) {
+          this.logger.info(
+            {
+              module: 'catalog',
+              action: 'catalog.m5.cold_start_triggered',
+              household_id: householdId,
+              cold_start_reason: 'chip_floor_underflow',
+              declared_cuisine_count: declaredCuisineTags.length,
+              total_catalog_rows: filteredCurated.length,
+            },
+            'M5 cold-start triggered — fallback also underflowed CHIP_FLOOR',
+          );
+          return { chips: [], coldStartReason: 'chip_floor_underflow' };
+        }
+        rows = filteredCurated;
       }
 
       // Step 4 — stable sort: declared-cuisine matches first, then favorites,
@@ -236,15 +297,6 @@ export class CatalogProjectionService {
     }
   }
 
-  /**
-   * Cold-start only when the personalized catalog has 0 rows. Shows chips
-   * whenever anything exists, even if a declared sub-cuisine has few matches.
-   */
-  private deriveColdStartReason(
-    rows: ReadonlyArray<SuggestionRow>,
-  ): ColdStartReason | null {
-    return rows.length === 0 ? 'stage2_terminal' : null;
-  }
 
   private filterByPersonalization(
     rows: ReadonlyArray<SuggestionRow>,
