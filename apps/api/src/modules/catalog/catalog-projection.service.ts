@@ -65,7 +65,11 @@ const DIVERSITY_CAP_RELAXED = 5;
 // explicitly NOT a third floor.
 const CHIP_FLOOR = UNDERFLOW_THRESHOLD;
 
-export type ColdStartReason =
+// Task 8 gate (knip) — not exported. Confirmed unused as an external type
+// import both before and after 16-s1 (pre-existing, not caused by this
+// slice); every consumer treats `coldStartReason` as a bare `string | null`
+// via M5ChipResult below, which IS exported and used.
+type ColdStartReason =
   | 'per_cuisine_floor'
   | 'stage1_timeout'
   | 'stage2_terminal'

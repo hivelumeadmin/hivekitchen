@@ -1,6 +1,6 @@
 # Story 16.1: chips-from-generation-not-catalog
 
-Status: ready-for-dev
+Status: review
 
 > Brief: `_bmad-output/planning-artifacts/catalog-seeding-redesign-generate-at-onboarding.md`
 > All five design decisions were resolved 2026-08-13 and are binding here — see Doctrine.
@@ -314,12 +314,23 @@ without a data migration.
         `recipesRepository` dependency, used for exactly this one read.
   - [x] 7.2 Test: 3 declared favourites (one declared by free text, not by tapping) all
         render, at the head, exactly once each, alongside a full generated set.
-- [ ] 8. Gates
-  - [ ] 8.1 API suite — expect the 4 known pre-existing failures, no new ones. The golden
-        `catalogSeedCalls` 2 vs 1 should go GREEN via task 1.2; if it does not, stop and
-        diagnose rather than editing the golden.
-  - [ ] 8.2 turbo lint + typecheck, knip, contracts:check.
-  - [ ] 8.3 E2E onboarding spec — needs `VITE_E2E=true` in the web build.
+- [x] 8. Gates
+  - [x] 8.1 API suite — the story's own "4 known pre-existing failures" is stale; only 1 is
+        actually observed (`voice-transcript.repository.test.ts`, a DST clock-arithmetic
+        edge case unrelated to this slice — confirmed identical across every task in this
+        story, first noted in task 1). 2646 passing / 1 pre-existing failure / 39 skipped.
+        `catalogSeedCalls` golden confirmed GREEN (task 1.2), re-verified here in isolation.
+  - [x] 8.2 turbo lint + typecheck, knip, contracts:check — all 9 packages typecheck clean;
+        all 6 lintable packages lint clean (see Watch Out — one pre-existing false-positive
+        lint error, flagged since task 1, closed here with a targeted disable, not a log
+        rewrite); knip clean (one pre-existing unused export narrowed to module-private —
+        see Dev Notes); `contracts:check` PASSED, 555 exports verified.
+  - [x] 8.3 E2E onboarding spec — built `apps/web` with `VITE_E2E=true`, ran all 4
+        onboarding-adjacent Playwright specs: 19 passed, 4 skipped (voice-entry-point,
+        gated off per the text-first doctrine, unrelated to this slice), 0 failed. This
+        slice's chip-generation work is backend-only — no frontend code changed — so this
+        gate is a regression check, not new coverage; the M5 chip-card presentation itself
+        is 16-s2's scope.
 
 ---
 
@@ -949,6 +960,46 @@ claude-opus-5[1m]
   passing (same single pre-existing voice/DST failure), typecheck clean, lint unchanged at
   its one pre-existing false positive.
 
+**Task 8 complete (Gates).**
+
+- **The story's "4 known pre-existing failures" claim is stale.** Only 1 has been observed
+  at every task boundary in this slice: `voice-transcript.repository.test.ts`'s
+  `defaults retention_until to ~now + 90 days`, a DST clock-arithmetic edge case (the delta
+  is exactly one hour) in a module this slice never touches. Recorded the corrected count
+  rather than silently accepting the stale number.
+
+- **Closed two pre-existing gate failures that predate this slice, both flagged and left
+  open in earlier tasks pending exactly this moment:**
+  - The `hivekitchen/no-assistant-filler` false positive at
+    `onboarding.service.ts` (flagged since task 1's Watch Out) — the rule matches a Pino
+    operational log string, not user-facing Lumi copy, which it has no exemption for.
+    Closed with a targeted `eslint-disable-next-line` + reason comment, NOT by rewording the
+    log (which would have destroyed the operational signal on the retry path this slice
+    built in task 1). First disable-comment placement attempt put a multi-line explanation
+    directly above the directive, which meant "next line" from the directive's own
+    perspective was the second explanation line, not the flagged string — ESLint accepted
+    it as a no-op ("unused eslint-disable directive") without complaint, which would have
+    shipped a silently-broken suppression if the resulting lint run hadn't been checked
+    line-by-line rather than trusted from the exit code alone.
+  - `ColdStartReason` was `export`ed but never imported as a type anywhere, confirmed true
+    both before this slice (`git show` against the pre-16-s1 baseline) and after — not
+    caused by this slice's work, but knip is one of this task's own gates. Narrowed to
+    module-private since nothing external ever consumed it; `M5ChipResult`, which IS
+    exported and used, carries the same information through `coldStartReason: string`-like
+    usage at every real call site.
+
+- **E2E scope matches what this slice actually changed: nothing in the frontend.** All chip
+  generation, filtering, and the favourites union are backend-only; the M5 chip CARD's
+  presentation is 16-s2's job. Ran the 4 onboarding-adjacent Playwright specs (not the full
+  suite) as a regression check that nothing broke, not as new coverage for content this
+  slice didn't add.
+
+- Full gate results: typecheck clean (9/9 packages), lint clean (6/6 lintable packages, 1
+  pre-existing false positive suppressed with a documented reason), knip clean (1
+  pre-existing unused export narrowed), `contracts:check` PASSED (555 exports), API suite
+  2646 passing / 1 pre-existing failure / 39 skipped, E2E 19 passing / 4 skipped
+  (voice-entry, gated off) / 0 failed.
+
 ### File List
 
 - `apps/api/src/agents/prompts/catalog-seed.prompt.ts` — modified (snapshot gains
@@ -1018,6 +1069,11 @@ claude-opus-5[1m]
   notes; corrected stale AC 4 / "no write dependency" comments)
 - `apps/api/src/modules/onboarding/onboarding.routes.ts` — modified (task 7: wires the
   already-constructed `recipesRepository` into `catalogProjection`)
+- `apps/api/src/modules/onboarding/onboarding.service.ts` — modified (task 8: targeted
+  `eslint-disable-next-line hivekitchen/no-assistant-filler` + reason on the pre-existing
+  false-positive log line)
+- `apps/api/src/modules/catalog/catalog-projection.service.ts` — modified (task 8:
+  `ColdStartReason` un-exported — pre-existing unused export, knip gate)
 
 ---
 
@@ -1037,3 +1093,4 @@ claude-opus-5[1m]
 | 2026-08-13 | Task 5 implemented (AC 8, AC 9): when filtered suggestions fall below `CHIP_FLOOR` (12, aliased from `UNDERFLOW_THRESHOLD`), `getM5Chips` reads + filters `curated_baseline_items` and uses it as a full REPLACEMENT source, not a blend; a fallback that also underflows returns the new `'chip_floor_underflow'` cold-start reason instead of a sparse grid. Closed an unspecified gap: fallback chips are keyed on `canonical_name`, never the row's real id, because a curated row resolves via neither of AC 5's two lookup stores and would otherwise reproduce AC 5's own silent-failure trap. The old empty-catalog cold-start check (`deriveColdStartReason`, `'stage2_terminal'`) became dead code under the new floor logic and was removed. Retargeted 8 pre-existing sort/diversity/logging tests whose small fixtures now unconditionally trigger the new floor — padding math verified by hand per test, not just re-run until green. |
 | 2026-08-13 | Task 6 implemented (AC 12): `primary_starch`/`primary_protein` added as required fields to `CatalogSeedItemSchema` and the prompt's OUTPUT SHAPE, threaded through to `onboarding_chip_suggestions` (previously null, per task 4's note), normalizing the LLM's `'none'`/empty string to a real `null`. `pickWithDiversityCap` now also buckets on a COMBINED `combo:${protein}:${starch}` key — deliberately combined, not two independent caps, because the near-duplicate rule is a PAIR condition ("share the same protein AND the same starch") and independent caps would over-reject dishes sharing only one axis. A row missing either value is exempt from the combo bucket, not capped into a shared "no value" bucket. Caught and fixed a pre-existing array-aliasing mutation bug in `pickWithDiversityCap` while adding the combo key (`tags` aliased `row.cuisine_tags` when non-empty). Retargeted all 15 existing LLM-response fixtures in `catalog-seed.service.test.ts` — the response schema validates per-item AND at the array level, so a fixture missing a new required field failed the WHOLE batch, not just that item. |
 | 2026-08-13 | Task 7 implemented (AC 13): declared favourites unioned into the M5 chip set, pinned first, deduped against the winning suggestion/fallback pool via `canonicalizeFavoriteName` (case-insensitive), exempt from the diversity cap via a new `pickWithDiversityCap` budget parameter, still counting toward `TARGET_CHIPS`. New `RecipesRepository.findHouseholdFavoritesWithIds` mirrors the existing `findHouseholdFavorites` qualification rather than inventing a new "favourite" definition; `findCatalogProjectionForHousehold` (task 3's predicted-but-unrealized reuse target) removed as confirmed-dead code. Judgment call: declared favourites now override cold-start when generation + fallback both underflow CHIP_FLOOR — doctrine frames cold-start as avoiding a sparse/blank card, and a parent's own favourites are neither; a regression test confirms true cold-start still fires with no favourites present. Corrected task 3's stale AC 4 comments now that `CatalogProjectionService` depends on `RecipesRepository` again (for exactly one read). |
+| 2026-08-13 | Task 8 (Gates) complete. Corrected the story's stale "4 known pre-existing failures" claim — only 1 is actually observed (voice-transcript DST edge case, unrelated). Closed two gate failures flagged-and-deferred in earlier tasks: the `no-assistant-filler` false positive (targeted `eslint-disable-next-line` + reason, not a log reword — first placement attempt silently no-op'd due to a multi-line comment between the directive and the flagged line, caught by checking the lint run's output line-by-line rather than trusting the exit code) and `ColdStartReason`'s pre-existing unused export (un-exported, confirmed dead both before and after this slice via `git show` on the pre-16-s1 baseline). All gates green: typecheck 9/9 packages, lint 6/6 packages, knip clean, `contracts:check` 555 exports, API suite 2646/1-pre-existing/39-skipped, E2E (4 onboarding-adjacent specs, this slice is backend-only) 19 passed/4 skipped(voice, gated off)/0 failed. Story status → `review`. |

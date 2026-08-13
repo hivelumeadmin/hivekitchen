@@ -477,6 +477,13 @@ export class OnboardingService {
               household_id: householdId,
               attempts: status.attempts,
             },
+            // False positive: this is a Pino operational log line, never
+            // rendered to the parent. The rule polices user-facing Lumi copy;
+            // it has no exemption for logger message strings. Pre-existing
+            // since before 16-s1 (verified 2026-08-13); do not "fix" by
+            // rewording the log, which would destroy the operational signal
+            // on this retry path.
+            // eslint-disable-next-line hivekitchen/no-assistant-filler
             'Stage 1 seeding has failed repeatedly — leaving the household on the Stage 0 baseline',
           );
           return;
