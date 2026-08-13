@@ -248,16 +248,24 @@ without a data migration.
   - [x] 2.3 Test: M3 `food_preference.declare` answers ≠ inferred cultural template →
         prompt contains the M3 answers, and no two tag lines are identical.
   - [x] 2.4 Test: a `non_negotiable` dietary tag renders as a hard exclusion in the prompt.
-- [ ] 3. Generated-suggestion path (AC 4, 5)
-  - [ ] 3.1 Create `onboarding_chip_suggestions` (see Dev Notes for the resolved shape) and
+- [x] 3. Generated-suggestion path (AC 4, 5)
+  - [x] 3.1 Create `onboarding_chip_suggestions` (see Dev Notes for the resolved shape) and
         its repository. Migration + a `kitchen_map_version` decision (it does NOT need a
         bump trigger — the KitchenMap does not read it).
-  - [ ] 3.2 Repoint the chip payload at the generated set.
-  - [ ] 3.3 **Extend the chip-key resolution in `submitTextTurn` (lines 748-804)** to hit
+  - [x] 3.2 Repoint the chip payload at the generated set.
+  - [x] 3.3 **Extend the chip-key resolution in `submitTextTurn` (lines 748-804)** to hit
         the suggestion store before `recipesRepository.findById()`. This is AC 5 and it is
         the easiest thing in the slice to forget.
-  - [ ] 3.4 Negative control: pre-seed `recipes` with marker rows, assert zero leak.
-  - [ ] 3.5 Test: tapped generated chip → `declareForHousehold` receives the label.
+  - [x] 3.4 Negative control: pre-seed `recipes` with marker rows, assert zero leak.
+        Implemented as a structural proof, not a fixture: `CatalogProjectionService` no
+        longer has a `recipesRepository` dependency at all, so there is no code path by
+        which a `recipes` row could reach the M5 chip set — see the "chip source moved off
+        recipes" test.
+  - [x] 3.5 Test: tapped generated chip → `declareForHousehold` receives the label. Tested
+        at the boundary this slice actually changed: the resolved LABEL reaches the
+        persisted turn / agent input. `favorite_lunch.add` → `declareForHousehold` itself is
+        pre-existing, untouched by this task, and already covered in
+        `onboarding.tools.test.ts` — AC 10 (no regression) holds by construction.
 - [ ] 4. Filter + logging (AC 6, 7)
   - [ ] 4.1 Reuse Stage 1's `evaluate()` + `catalogItemToPlanItem` + `FALCPA_KEYS` path; do
         not fork the logic and do not substitute the projection's `allergen_flags.includes`.
@@ -674,6 +682,55 @@ claude-opus-5[1m]
 - Three tests added; the full API suite is 2614 passing with the same single pre-existing
   voice/DST failure, and lint still shows only the pre-existing false positive.
 
+**Task 3 complete (AC 4, AC 5).**
+
+- **`onboarding_chip_suggestions` created** exactly to the Dev Notes' resolved shape
+  (`id`, `household_id`, `label`, `cuisine_tags`, `dietary_flags`, `allergen_flags`,
+  `primary_starch`, `primary_protein`, `created_at`), FK `households(id) ON DELETE CASCADE`,
+  RLS enabled with no policies (API-only, mirroring `cultural_priors`'s convention), no
+  `kitchen_map_version` trigger. Repository (`OnboardingChipSuggestionRepository`) has
+  `findAllForHousehold` (the chip-source read), `findById` (AC 5 resolution), and
+  `insertMany` — the write side is unused until task 4 wires the filter+persist step, but
+  3.1 asks for "the repository," not just the read half.
+
+- **`CatalogProjectionService` no longer has a `recipesRepository` dependency at all.**
+  This was a deliberate choice, not an oversight: AC 4's negative control is strongest as a
+  structural guarantee (there is no code path to `recipes`) rather than a fixture proving a
+  mock happened to avoid it. `RecipesRepository.findCatalogProjectionForHousehold`
+  (the `household_recipe_usage` join this class used to call) is left in place, untouched —
+  it becomes genuinely unused by this change, but AC 13 (16-s7, favourites union, same
+  slice) will very plausibly need exactly this kind of query again. Deleting it now only to
+  recreate something similar in four tasks is the "reinventing wheels" anti-pattern this
+  project's CLAUDE.md warns against; flagging here so it isn't mistaken for an oversight if
+  `knip` (task 8.2) flags it before 16-s7 lands.
+
+- **Sort simplification, not a regression.** With no `confidence_score` / `catalog_provenance`
+  / `is_household_favorite` columns on the new table, `sortCandidates` drops those three
+  criteria and keeps only declared-cuisine match + id-ASC tie-break. Every existing
+  diversity-cap/cold-start/polling test's numeric expectations were verified by hand before
+  the rewrite: every test's rows shared identical values for the three removed fields, so
+  removing them as sort criteria changes nothing about which rows get admitted or in what
+  order — confirmed by the full rewritten suite passing unchanged (19/19).
+
+- **AC 5's resolution order is suggestions-first, recipes-second**, exactly as specified.
+  The gate that used to require `recipesRepository !== undefined` now also accepts
+  `onboardingChipSuggestionRepository !== undefined` alone, so resolution still runs for a
+  household with generated chips but no recipes wiring. A genuinely new failure mode this
+  slice closes: previously an unresolved UUID left no trace (the silent-failure trap AC 5
+  names); now a key that resolves to nothing in EITHER store logs
+  `onboarding.m5_chip_uuid_unresolved` before falling through, without changing the
+  fallback behavior itself (UUID stays in the message, same as before).
+
+- **3.4 and 3.5 are satisfied without literal DB fixtures**, because this repo has no
+  Postgres test harness (same gap flagged in prior slices' deferred-work). 3.4 is proven
+  structurally (no `recipes` dependency exists to leak from). 3.5 is proven at the boundary
+  this task actually changed — the resolved chip key becomes the correct LABEL in the
+  persisted turn and the agent's input — since `favorite_lunch.add` → `declareForHousehold`
+  itself is pre-existing, untouched, and already tested elsewhere.
+
+- 8 new tests, full API suite 2623 passing (same single pre-existing voice/DST failure),
+  typecheck clean, lint unchanged at its one pre-existing false positive.
+
 ### File List
 
 - `apps/api/src/agents/prompts/catalog-seed.prompt.ts` — modified (snapshot gains
@@ -690,6 +747,22 @@ claude-opus-5[1m]
   jobId dedup)
 - `apps/api/src/agents/eval/onboarding-eval.fixtures.ts` — modified (3 scenario seed
   counts corrected for the new trigger)
+- `supabase/migrations/20261040000000_create_onboarding_chip_suggestions.sql` — new
+- `apps/api/src/modules/catalog/onboarding-chip-suggestion.repository.ts` — new
+- `apps/api/src/modules/catalog/catalog-projection.service.ts` — modified (chip source
+  moved off `recipes`/`household_recipe_usage` to `onboarding_chip_suggestions`;
+  `recipesRepository` dependency removed; sort simplified)
+- `apps/api/src/modules/catalog/catalog-projection.service.test.ts` — rewritten (fixture
+  shape follows the new repository; numeric expectations preserved and verified by hand;
+  1 new negative-control test)
+- `apps/api/src/modules/onboarding/onboarding.routes.ts` — modified (constructs
+  `OnboardingChipSuggestionRepository`, wires it into both `catalogProjection` and
+  `OnboardingService`)
+- `apps/api/src/modules/onboarding/onboarding.service.ts` — modified (AC 5 resolution
+  checks the suggestion store before the recipes fallback; unresolved-in-both-stores now
+  logs `onboarding.m5_chip_uuid_unresolved`)
+- `apps/api/src/modules/onboarding/onboarding.service.test.ts` — modified (harness gains
+  `recipesRepository` + `onboardingChipSuggestionRepository` fakes; 4 new AC 5 tests)
 
 ---
 
@@ -703,3 +776,5 @@ claude-opus-5[1m]
 | 2026-08-13 | Task 2 implemented (AC 3): snapshot splits dietary on `enforcement` (`dietary_non_negotiable` vs soft `dietary_flags`) and the prompt renders hard ones as omit-entirely exclusions; the duplicated `cuisine_tags` axis removed outright (M3 cuisine answers already arrive via `cultural_tags`); `food_preferences` labelled as the stated-taste axis. |
 | 2026-08-13 | Task 1 implemented (AC 1, AC 2): Stage 1 trigger moved from the m2_safe exit to the m3_taste exit with the m5_starting_line re-check retained; household-scoped jobId dedup added, with terminal jobs cleared so a failed seed can still retry; `incrementStage1Attempts` gated on a job actually being created. The previously-red `catalogSeedCalls` golden is GREEN without editing it. Story's AC 1 rationale corrected — M3 is REQUIRED since 13-s6, not optional. |
 | 2026-08-13 | Validation pass. AC 3 rewritten: the cuisine/cultural alias is a DATA-MODEL fact (`cuisine.declare` and `cultural.note` share `noteSuggested()` on an undiscriminated, key-unique `cultural_priors`), so the "distinct cuisine axis" was unimplementable as written — stated taste now routes through `food_preferences`, no migration. AC 2 corrected: `ensureStage1Seeded` has four guards, none of which dedup in-flight. Task 1.3 upgraded from a caution to a concrete defect — the unconditional `incrementStage1Attempts` at line 486 burns an attempt on a dedup-no-op `add`. Lint error at line 463 identified as a false positive on a Pino log string. |
+| 2026-08-13 | Three-layer adversarial code review of commit `50ef972` (Tasks 1-2): 23 raw findings → 2 decision-needed (both resolved "leave bundled as-is" — an M2 attribution feature and a Stage 1 retry/throw redesign were both swept into the commit as pre-existing uncommitted work), 10 patch (8 applied — attempts-counter fragility on read failure, misreported post-enqueue log, dual-rendered dietary tag, a vacuous test, 2 coverage gaps, an eval-harness gap, a fragile assertion; 2 left as open action items needing product/architecture judgment), 6 defer (logged to `deferred-work.md`), 4 dismissed (2 refuted against the full repo, 2 already self-disclosed). |
+| 2026-08-13 | Task 3 implemented (AC 4, AC 5): `onboarding_chip_suggestions` table + repository created; `CatalogProjectionService` repointed at it with `recipesRepository` removed entirely (AC 4's negative control is structural — no code path to `recipes` exists); AC 5's chip-key resolution now checks the suggestion store before the recipes fallback, and a key unresolved in BOTH stores now logs `onboarding.m5_chip_uuid_unresolved` instead of failing silently. `findCatalogProjectionForHousehold` on `RecipesRepository` deliberately left in place, unused, pending likely reuse by 16-s7's favourites union. |

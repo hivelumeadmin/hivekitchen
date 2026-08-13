@@ -32,6 +32,7 @@ import type { DietaryPreferencesRepository } from '../dietary-preferences/dietar
 import type { FoodPreferencesRepository } from '../food-preferences/food-preferences.repository.js';
 import type { SignalsService } from '../signals/signals.service.js';
 import type { RecipesRepository } from '../recipe/recipes.repository.js';
+import type { OnboardingChipSuggestionRepository } from '../catalog/onboarding-chip-suggestion.repository.js';
 import type { HouseholdRulesRepository } from '../household-rules/household-rules.repository.js';
 import type { HouseholdsRepository } from '../households/households.repository.js';
 import type { HouseholdsService } from '../households/households.service.js';
@@ -96,6 +97,10 @@ export interface OnboardingServiceDeps {
   // .declareForHousehold(); the standalone favorite_lunches table is dropped
   // by migration 20260908000200.
   recipesRepository?: RecipesRepository;
+  // Slice 16-s1 (AC 5) — M5 chip-key resolution checks this FIRST, before the
+  // recipesRepository fallback above. Generated-suggestion chips have no
+  // recipes row; declared-favourite chips still resolve via recipes.id.
+  onboardingChipSuggestionRepository?: OnboardingChipSuggestionRepository;
   // Slice 2.6-s2 — Stage 0 catalog re-materialization fires fire-and-forget
   // when the parent advances out of m3_taste. Optional so legacy tests that
   // don't wire the catalog still pass; production composition provides it.
@@ -358,6 +363,8 @@ export class OnboardingService {
   private readonly householdRulesRepository?: HouseholdRulesRepository;
   // Slice 2.6-s1 (replaces 2.5-s9 favoriteLunchesRepository)
   private readonly recipesRepository?: RecipesRepository;
+  // Slice 16-s1 (AC 5) — checked before recipesRepository for chip-key resolution
+  private readonly onboardingChipSuggestionRepository?: OnboardingChipSuggestionRepository;
   // Slice 2.6-s2 — Stage 0 catalog re-seed at M3 exit
   private readonly curatedBaseline?: CuratedBaselineMaterializationService;
   // Slice 2.6-s3 — Stage 1 catalog seed fire-and-forget queue at M2 exit
@@ -395,6 +402,7 @@ export class OnboardingService {
     this.signalsService = deps.signalsService;
     this.householdRulesRepository = deps.householdRulesRepository;
     this.recipesRepository = deps.recipesRepository;
+    this.onboardingChipSuggestionRepository = deps.onboardingChipSuggestionRepository;
     this.curatedBaseline = deps.curatedBaseline;
     this.catalogSeedQueue = deps.catalogSeedQueue;
     this.catalogProjection = deps.catalogProjection;
@@ -804,27 +812,54 @@ export class OnboardingService {
       .replace(/\[CHIP_PROMPT:elevation:[a-z0-9_]+:[^\]]+\]/g, '')
       .trim();
 
-    // M5 chip UUID resolution: the M5 chip card uses recipe IDs (UUIDs) as
-    // chip keys. When the parent selects chips, the client sends those UUIDs
-    // in the [Chips selected: ...] header. Resolve them to canonical recipe
-    // names here, before the DB write and the agent call, so:
+    // M5 chip UUID resolution: the M5 chip card uses either a generated
+    // suggestion id or a declared-favourite recipe id as chip keys. When the
+    // parent selects chips, the client sends those UUIDs in the
+    // [Chips selected: ...] header. Resolve them to display labels here,
+    // before the DB write and the agent call, so:
     //   a) the stored turn has readable names (conversation history stays clean)
     //   b) the agent receives readable names it can pass to favorite_lunch.add
-    // Detection: UUID shape distinguishes M5 recipe keys from all other moment
+    // Detection: UUID shape distinguishes M5 chip keys from all other moment
     // chip keys (allergen slugs, cuisine slugs, bag patterns, etc. are short
     // human-readable tokens — never UUID-shaped).
+    //
+    // Slice 16-s1 (AC 5) — resolution order is suggestions FIRST, recipes
+    // SECOND. Generated-suggestion chips have no recipes row at all; a lookup
+    // that only checked recipes would return null and pass the raw UUID
+    // through to the agent, which calls favorite_lunch.add("<uuid>") and
+    // creates a recipe literally named after it — no error, no log,
+    // permanently wrong data. Key spaces stay separate (suggestion ids never
+    // collide with recipe ids), so checking both is safe and unambiguous.
     let resolvedUserMessage = userMessage;
-    if (this.recipesRepository !== undefined) {
+    if (this.recipesRepository !== undefined || this.onboardingChipSuggestionRepository !== undefined) {
       const chipKeys = parseChipKeys(userMessage);
       const uuidChipKeys = chipKeys.filter((k) => UUID_RE.test(k));
       if (uuidChipKeys.length > 0) {
+        const suggestionRepo = this.onboardingChipSuggestionRepository;
         const recipesRepo = this.recipesRepository;
         const resolvedNames = new Map<string, string>();
         await Promise.all(
           uuidChipKeys.map(async (uuid) => {
             try {
-              const recipe = await recipesRepo.findById(uuid);
-              if (recipe !== null) resolvedNames.set(uuid, recipe.canonical_name);
+              const suggestion = await suggestionRepo?.findById(uuid);
+              if (suggestion !== null && suggestion !== undefined) {
+                resolvedNames.set(uuid, suggestion.label);
+                return;
+              }
+              const recipe = await recipesRepo?.findById(uuid);
+              if (recipe !== null && recipe !== undefined) {
+                resolvedNames.set(uuid, recipe.canonical_name);
+                return;
+              }
+              this.logger.warn(
+                {
+                  module: 'onboarding',
+                  action: 'onboarding.m5_chip_uuid_unresolved',
+                  household_id: input.householdId,
+                  uuid,
+                },
+                'm5 chip UUID resolved to nothing in either store — keeping UUID in message',
+              );
             } catch (err) {
               this.logger.warn(
                 {

@@ -1,8 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import type { FastifyBaseLogger } from 'fastify';
-import type { CatalogProvenance } from '@hivekitchen/types';
 import type { HouseholdsRepository } from '../households/households.repository.js';
-import type { RecipesRepository } from '../recipe/recipes.repository.js';
+import type { OnboardingChipSuggestionRepository } from './onboarding-chip-suggestion.repository.js';
 import { CatalogProjectionService } from './catalog-projection.service.js';
 
 const HOUSEHOLD_ID = '11111111-1111-4111-8111-111111111111';
@@ -30,37 +29,22 @@ function makeLogger(): FastifyBaseLogger & { calls: Array<{ level: string; paylo
   return log;
 }
 
+// Slice 16-s1 — the chip source moved from a recipes/household_recipe_usage
+// join to onboarding_chip_suggestions. The new table carries no
+// confidence/provenance/is_household_favorite columns — those were
+// household_recipe_usage-specific. Every generated suggestion projects to a
+// chip with provenance 'inferred'; a declared-favourites union (with its own
+// pinned-first sort) is 16-s7's job, not this service's.
 type Row = {
   id: string;
-  canonical_name: string;
+  label: string;
   cuisine_tags: string[];
-  cultural_tags: string[];
-  allergen_flags: string[];
   dietary_flags: string[];
-  catalog_provenance: CatalogProvenance;
-  confidence_score: number;
-  is_household_favorite: boolean;
+  allergen_flags: string[];
 };
 
-function makeRow(
-  id: string,
-  canonical_name: string,
-  cuisine_tags: string[],
-  provenance: CatalogProvenance = 'inferred',
-  confidence_score = 50,
-  is_household_favorite = false,
-): Row {
-  return {
-    id,
-    canonical_name,
-    cuisine_tags,
-    cultural_tags: [],
-    allergen_flags: [],
-    dietary_flags: [],
-    catalog_provenance: provenance,
-    confidence_score,
-    is_household_favorite,
-  };
+function makeRow(id: string, label: string, cuisine_tags: string[]): Row {
+  return { id, label, cuisine_tags, dietary_flags: [], allergen_flags: [] };
 }
 
 interface BuildArgs {
@@ -82,92 +66,51 @@ function buildService(args: BuildArgs) {
       return args.stage1At ?? null;
     }),
   };
-  const recipesRepository = {
-    findCatalogProjectionForHousehold: vi.fn().mockResolvedValue(args.rows),
+  const onboardingChipSuggestionRepository = {
+    findAllForHousehold: vi.fn().mockResolvedValue(args.rows),
   };
   const logger = makeLogger();
   const service = new CatalogProjectionService(
     {
-      recipesRepository: recipesRepository as unknown as RecipesRepository,
+      onboardingChipSuggestionRepository:
+        onboardingChipSuggestionRepository as unknown as OnboardingChipSuggestionRepository,
       householdsRepository: householdsRepository as unknown as HouseholdsRepository,
       logger,
     },
     wait,
   );
-  return { service, recipesRepository, householdsRepository, logger, wait };
+  return { service, onboardingChipSuggestionRepository, householdsRepository, logger, wait };
 }
 
 describe('CatalogProjectionService.getM5Chips', () => {
-  it('happy path: 20 rows → 20 returned, sorted (favorites first, then provenance, then confidence)', async () => {
+  it('happy path: 20 rows → 20 returned, every chip carries provenance "inferred"', async () => {
     const rows: Row[] = [];
-    // 4 favorites with mixed cuisines
-    rows.push(makeRow('aaa-1', 'Fav One', ['cuisine_a'], 'declared', 80, true));
-    rows.push(makeRow('aaa-2', 'Fav Two', ['cuisine_b'], 'declared', 80, true));
-    rows.push(makeRow('aaa-3', 'Fav Three', ['cuisine_c'], 'parent_added', 80, true));
-    rows.push(makeRow('aaa-4', 'Fav Four', ['cuisine_d'], 'inferred', 70, true));
-    // 16 non-favorites mixed across cuisines
-    for (let i = 0; i < 16; i++) {
-      rows.push(
-        makeRow(
-          `bbb-${String(i).padStart(2, '0')}`,
-          `Other ${i}`,
-          // spread across enough cuisines so cap-3 doesn't bite
-          [`cuisine_${i % 8}`],
-          'inferred',
-          50,
-          false,
-        ),
-      );
+    for (let i = 0; i < 20; i++) {
+      // Spread across enough cuisines that cap-3 doesn't bite.
+      rows.push(makeRow(`bbb-${String(i).padStart(2, '0')}`, `Item ${i}`, [`cuisine_${i % 8}`]));
     }
-    const { service } = buildService({ rows, stage1At: '2026-05-25T00:00:00Z' });
-    const { chips, coldStartReason } = await service.getM5Chips(HOUSEHOLD_ID, []);
-    expect(coldStartReason).toBeNull();
-    expect(chips).toHaveLength(20);
-    // Favorites surface first
-    expect(chips.slice(0, 4).map((c) => c.key)).toEqual(['aaa-1', 'aaa-2', 'aaa-3', 'aaa-4']);
-    // Provenance is carried into the chip
-    expect(chips[0]?.provenance).toBe('declared');
-  });
-
-  it("projects 'parent_added' provenance into the chip output", async () => {
-    const rows = [makeRow('p-1', 'PA item', ['x'], 'parent_added', 60, false)];
-    const { service } = buildService({ rows, stage1At: '2026-05-25T00:00:00Z' });
-    const { chips } = await service.getM5Chips(HOUSEHOLD_ID, []);
-    expect(chips[0]?.provenance).toBe('parent_added');
-  });
-
-  it('repository excludes banned rows by SQL (service shape contract)', async () => {
-    // The repository contract is "rows excluded at SQL." Verify the service
-    // passes everything the repo returned to the projection — i.e. doesn't
-    // silently re-filter — so the SQL-level contract stays load-bearing.
-    const rows = [
-      makeRow('r-1', 'A', ['x'], 'inferred', 50, false),
-      makeRow('r-2', 'B', ['y'], 'inferred', 50, false),
-    ];
-    const { service, recipesRepository } = buildService({
+    const { service, onboardingChipSuggestionRepository } = buildService({
       rows,
       stage1At: '2026-05-25T00:00:00Z',
     });
-    const { chips } = await service.getM5Chips(HOUSEHOLD_ID, []);
-    expect(chips.map((c) => c.key)).toEqual(['r-1', 'r-2']);
-    expect(recipesRepository.findCatalogProjectionForHousehold).toHaveBeenCalledTimes(1);
+    const { chips, coldStartReason } = await service.getM5Chips(HOUSEHOLD_ID, []);
+    expect(coldStartReason).toBeNull();
+    expect(chips).toHaveLength(20);
+    expect(chips.every((c) => c.provenance === 'inferred')).toBe(true);
+    expect(onboardingChipSuggestionRepository.findAllForHousehold).toHaveBeenCalledTimes(1);
   });
 
-  it('sort tie-breaker: identical favorite/provenance/confidence → ordered by id ASC', async () => {
-    const rows = [
-      makeRow('zzz', 'Z', ['x'], 'inferred', 50, false),
-      makeRow('aaa', 'A', ['x'], 'inferred', 50, false),
-      makeRow('mmm', 'M', ['x'], 'inferred', 50, false),
-    ];
+  it('sort tie-breaker: same cuisine → ordered by id ASC', async () => {
+    const rows = [makeRow('zzz', 'Z', ['x']), makeRow('aaa', 'A', ['x']), makeRow('mmm', 'M', ['x'])];
     const { service } = buildService({ rows, stage1At: '2026-05-25T00:00:00Z' });
     const { chips } = await service.getM5Chips(HOUSEHOLD_ID, []);
-    // Diversity cap-3 on cuisine 'x' admits all three; order is id-ASC after
-    // the upstream weights tie.
+    // Diversity cap-3 on cuisine 'x' admits all three; order is id-ASC, the
+    // only remaining tie-break once favorite/provenance/confidence are gone.
     expect(chips.map((c) => c.key)).toEqual(['aaa', 'mmm', 'zzz']);
   });
 
   it('Stage 1 wait: stage1_completed_at = null then flips → polls and returns', async () => {
-    const rows = [makeRow('r-1', 'A', ['x'], 'inferred', 50, false)];
+    const rows = [makeRow('r-1', 'A', ['x'])];
     const { service, householdsRepository } = buildService({
       rows,
       stage1FlipAfterCalls: 3, // null on calls 1+2, non-null on call 3
@@ -178,7 +121,7 @@ describe('CatalogProjectionService.getM5Chips', () => {
   });
 
   it('Stage 1 timeout: never flips → logs catalog.m5.stage1_timeout and still returns', async () => {
-    const rows = [makeRow('r-1', 'A', ['x'], 'inferred', 50, false)];
+    const rows = [makeRow('r-1', 'A', ['x'])];
     const { service, logger, wait } = buildService({ rows, stage1At: null });
     // Make wait advance "time" so the loop terminates without sleeping. After
     // ~21 waits the timeout fires (5000ms / 250ms = 20). To keep the test
@@ -209,7 +152,7 @@ describe('CatalogProjectionService.getM5Chips', () => {
   it('diversity cap-3 enforced: 6 items in one cuisine → 3 in output', async () => {
     const rows: Row[] = [];
     for (let i = 0; i < 6; i++) {
-      rows.push(makeRow(`r-${i}`, `Item ${i}`, ['anglo'], 'inferred', 50, false));
+      rows.push(makeRow(`r-${i}`, `Item ${i}`, ['anglo']));
     }
     const { service } = buildService({ rows, stage1At: '2026-05-25T00:00:00Z' });
     const { chips } = await service.getM5Chips(HOUSEHOLD_ID, []);
@@ -221,7 +164,7 @@ describe('CatalogProjectionService.getM5Chips', () => {
   it('diversity relax-to-5: cap-3 underflows → relaxed walk logs catalog.m5.diversity_relaxed', async () => {
     const rows: Row[] = [];
     for (let i = 0; i < 6; i++) {
-      rows.push(makeRow(`r-${i}`, `Item ${i}`, ['anglo'], 'inferred', 50, false));
+      rows.push(makeRow(`r-${i}`, `Item ${i}`, ['anglo']));
     }
     const { service, logger } = buildService({ rows, stage1At: '2026-05-25T00:00:00Z' });
     await service.getM5Chips(HOUSEHOLD_ID, []);
@@ -234,10 +177,7 @@ describe('CatalogProjectionService.getM5Chips', () => {
   });
 
   it('below-threshold: final count < 12 → catalog.m5.below_threshold logged, partial result returned', async () => {
-    const rows = [
-      makeRow('r-1', 'A', ['x'], 'inferred', 50, false),
-      makeRow('r-2', 'B', ['y'], 'inferred', 50, false),
-    ];
+    const rows = [makeRow('r-1', 'A', ['x']), makeRow('r-2', 'B', ['y'])];
     const { service, logger } = buildService({ rows, stage1At: '2026-05-25T00:00:00Z' });
     const { chips } = await service.getM5Chips(HOUSEHOLD_ID, []);
     expect(chips).toHaveLength(2);
@@ -262,14 +202,14 @@ describe('CatalogProjectionService.getM5Chips', () => {
     const rows: Row[] = [];
     // 3 rows in cuisine_a — fills bucket
     for (let i = 0; i < 3; i++) {
-      rows.push(makeRow(`a-${i}`, `Aitem ${i}`, ['cuisine_a'], 'declared', 80, true));
+      rows.push(makeRow(`a-${i}`, `Aitem ${i}`, ['cuisine_a']));
     }
     // 3 rows in cuisine_b — fills second bucket
     for (let i = 0; i < 3; i++) {
-      rows.push(makeRow(`b-${i}`, `Bitem ${i}`, ['cuisine_b'], 'declared', 80, true));
+      rows.push(makeRow(`b-${i}`, `Bitem ${i}`, ['cuisine_b']));
     }
     // 1 dual-tag row: should be rejected when either bucket is full
-    rows.push(makeRow('dual', 'Dual item', ['cuisine_a', 'cuisine_b'], 'inferred', 50, false));
+    rows.push(makeRow('dual', 'Dual item', ['cuisine_a', 'cuisine_b']));
     const { service } = buildService({ rows, stage1At: '2026-05-25T00:00:00Z' });
     const { chips } = await service.getM5Chips(HOUSEHOLD_ID, []);
     // Cap-3: 6 items + dual rejected = 6 final → relax-to-5 → admits dual now? Let's trace:
@@ -280,8 +220,8 @@ describe('CatalogProjectionService.getM5Chips', () => {
   });
 
   it('never throws — repository error path returns { chips: [], coldStartReason: null }', async () => {
-    const recipesRepository = {
-      findCatalogProjectionForHousehold: vi.fn().mockRejectedValue(new Error('boom')),
+    const onboardingChipSuggestionRepository = {
+      findAllForHousehold: vi.fn().mockRejectedValue(new Error('boom')),
     };
     const householdsRepository = {
       getStage1CompletedAt: vi.fn().mockResolvedValue('2026-05-25T00:00:00Z'),
@@ -289,7 +229,8 @@ describe('CatalogProjectionService.getM5Chips', () => {
     const logger = makeLogger();
     const service = new CatalogProjectionService(
       {
-        recipesRepository: recipesRepository as unknown as RecipesRepository,
+        onboardingChipSuggestionRepository:
+          onboardingChipSuggestionRepository as unknown as OnboardingChipSuggestionRepository,
         householdsRepository: householdsRepository as unknown as HouseholdsRepository,
         logger,
       },
@@ -306,9 +247,9 @@ describe('CatalogProjectionService.getM5Chips', () => {
   it('stage1 poll DB error falls through to catalog read (patch F2)', async () => {
     // getStage1CompletedAt throws — waitForStage1 must catch and fall through
     // so the catalog read still runs and chips are returned.
-    const rows = [makeRow('r-1', 'A', ['x'], 'inferred', 50, false)];
-    const recipesRepository = {
-      findCatalogProjectionForHousehold: vi.fn().mockResolvedValue(rows),
+    const rows = [makeRow('r-1', 'A', ['x'])];
+    const onboardingChipSuggestionRepository = {
+      findAllForHousehold: vi.fn().mockResolvedValue(rows),
     };
     const householdsRepository = {
       getStage1CompletedAt: vi.fn().mockRejectedValue(new Error('db-poll-error')),
@@ -316,7 +257,8 @@ describe('CatalogProjectionService.getM5Chips', () => {
     const logger = makeLogger();
     const service = new CatalogProjectionService(
       {
-        recipesRepository: recipesRepository as unknown as RecipesRepository,
+        onboardingChipSuggestionRepository:
+          onboardingChipSuggestionRepository as unknown as OnboardingChipSuggestionRepository,
         householdsRepository: householdsRepository as unknown as HouseholdsRepository,
         logger,
       },
@@ -346,11 +288,11 @@ describe('CatalogProjectionService.getM5Chips — cold-start fallback (Slice 2.6
     const rows: Row[] = [];
     // 22 English rows
     for (let i = 0; i < 22; i++) {
-      rows.push(makeRow(`en-${i}`, `English ${i}`, ['english'], 'inferred', 50, false));
+      rows.push(makeRow(`en-${i}`, `English ${i}`, ['english']));
     }
     // Only 2 Tibetan rows — previously triggered per_cuisine_floor; now chips show
-    rows.push(makeRow('tb-1', 'Tibetan 1', ['tibetan'], 'inferred', 50, false));
-    rows.push(makeRow('tb-2', 'Tibetan 2', ['tibetan'], 'inferred', 50, false));
+    rows.push(makeRow('tb-1', 'Tibetan 1', ['tibetan']));
+    rows.push(makeRow('tb-2', 'Tibetan 2', ['tibetan']));
 
     const { service } = buildService({ rows, stage1At: '2026-05-25T00:00:00Z' });
     const result = await service.getM5Chips(HOUSEHOLD_ID, ['english', 'tibetan']);
@@ -362,10 +304,10 @@ describe('CatalogProjectionService.getM5Chips — cold-start fallback (Slice 2.6
   it('per_cuisine_floor does NOT fire when all declared cuisines meet the floor', async () => {
     const rows: Row[] = [];
     for (let i = 0; i < 10; i++) {
-      rows.push(makeRow(`en-${i}`, `English ${i}`, ['english'], 'inferred', 50, false));
+      rows.push(makeRow(`en-${i}`, `English ${i}`, ['english']));
     }
     for (let i = 0; i < 6; i++) {
-      rows.push(makeRow(`sa-${i}`, `South Asian ${i}`, ['south_asian'], 'inferred', 50, false));
+      rows.push(makeRow(`sa-${i}`, `South Asian ${i}`, ['south_asian']));
     }
     const { service } = buildService({ rows, stage1At: '2026-05-25T00:00:00Z' });
     const result = await service.getM5Chips(HOUSEHOLD_ID, ['english', 'south_asian']);
@@ -377,10 +319,7 @@ describe('CatalogProjectionService.getM5Chips — cold-start fallback (Slice 2.6
   it('stage1 timeout + sparse cuisine → chips still returned (no cold-start)', async () => {
     // Previously: timeout + per-cuisine below floor → stage1_timeout cold-start.
     // Now: per-cuisine floor removed; chips show whenever catalog is non-empty.
-    const rows: Row[] = [
-      makeRow('tb-1', 'Tibetan 1', ['tibetan'], 'inferred', 50, false),
-      makeRow('tb-2', 'Tibetan 2', ['tibetan'], 'inferred', 50, false),
-    ];
+    const rows: Row[] = [makeRow('tb-1', 'Tibetan 1', ['tibetan']), makeRow('tb-2', 'Tibetan 2', ['tibetan'])];
     const { service, wait } = buildService({ rows, stage1At: null });
     let elapsed = 0;
     const realNow = Date.now;
@@ -415,7 +354,7 @@ describe('CatalogProjectionService.getM5Chips — cold-start fallback (Slice 2.6
   it('no cold-start when declaredCuisineTags is empty AND catalog is healthy', async () => {
     const rows: Row[] = [];
     for (let i = 0; i < 15; i++) {
-      rows.push(makeRow(`en-${i}`, `English ${i}`, ['english'], 'inferred', 50, false));
+      rows.push(makeRow(`en-${i}`, `English ${i}`, ['english']));
     }
     const { service } = buildService({ rows, stage1At: '2026-05-25T00:00:00Z' });
     const result = await service.getM5Chips(HOUSEHOLD_ID, []);
@@ -426,7 +365,7 @@ describe('CatalogProjectionService.getM5Chips — cold-start fallback (Slice 2.6
   it('no cold-start when declaredCuisineTags is empty and stage1 times out but catalog has rows', async () => {
     const rows: Row[] = [];
     for (let i = 0; i < 15; i++) {
-      rows.push(makeRow(`en-${i}`, `English ${i}`, ['english'], 'inferred', 50, false));
+      rows.push(makeRow(`en-${i}`, `English ${i}`, ['english']));
     }
     const { service, wait } = buildService({ rows, stage1At: null });
     let elapsed = 0;
@@ -448,9 +387,34 @@ describe('CatalogProjectionService.getM5Chips — cold-start fallback (Slice 2.6
   it('default declaredCuisineTags parameter is treated as empty', async () => {
     // Calls that pre-date this slice (no second arg) must keep working: an
     // omitted declaredCuisineTags defaults to [] → per-cuisine check skipped.
-    const rows = [makeRow('r-1', 'A', ['english'], 'inferred', 50, false)];
+    const rows = [makeRow('r-1', 'A', ['english'])];
     const { service } = buildService({ rows, stage1At: '2026-05-25T00:00:00Z' });
     const result = await service.getM5Chips(HOUSEHOLD_ID);
     expect(result.coldStartReason).toBeNull();
+  });
+});
+
+// ===========================================================================
+// Slice 16-s1 (AC 4) — negative control: recipes are no longer the source.
+// ===========================================================================
+
+describe('CatalogProjectionService.getM5Chips — chip source moved off recipes (16-s1 AC 4)', () => {
+  it('never reads recipes/household_recipe_usage; a household with marker recipes rows sees only generated suggestions', async () => {
+    // The service no longer takes a recipesRepository dependency at all — the
+    // negative control here is structural: the deps interface has no path to
+    // `recipes`, so a marker row planted there literally cannot leak into the
+    // suggestion-sourced chip set. Proven by asserting the only source called
+    // is onboardingChipSuggestionRepository, and its rows are exactly what's
+    // returned.
+    const rows = [makeRow('sugg-1', 'Generated Idli', ['south_asian'])];
+    const { service, onboardingChipSuggestionRepository } = buildService({
+      rows,
+      stage1At: '2026-05-25T00:00:00Z',
+    });
+    const { chips } = await service.getM5Chips(HOUSEHOLD_ID, []);
+    expect(chips.map((c) => c.label)).toEqual(['Generated Idli']);
+    expect(onboardingChipSuggestionRepository.findAllForHousehold).toHaveBeenCalledWith(
+      HOUSEHOLD_ID,
+    );
   });
 });

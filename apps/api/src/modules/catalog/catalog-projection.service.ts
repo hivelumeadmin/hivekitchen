@@ -1,12 +1,20 @@
 import type { FastifyBaseLogger } from 'fastify';
 import type { ChipOption } from '@hivekitchen/contracts';
-import type { CatalogProvenance } from '@hivekitchen/types';
 import type { HouseholdsRepository } from '../households/households.repository.js';
-import type { RecipesRepository } from '../recipe/recipes.repository.js';
+import type { OnboardingChipSuggestionRepository } from './onboarding-chip-suggestion.repository.js';
 
-// Slice 2.6-s4 / 2.6-s6 — projects the per-household catalog (recipes +
-// household_recipe_usage) into a deterministic, diversity-shaped chip set for
-// the Moment 5 starting-line chip card.
+// Slice 2.6-s4 / 2.6-s6 / 16-s1 — projects the per-household generated chip
+// suggestions into a deterministic, diversity-shaped chip set for the Moment
+// 5 starting-line chip card.
+//
+// 16-s1 (AC 4) — the chip source moved off `recipes`/`household_recipe_usage`
+// to `onboarding_chip_suggestions`: recipe seeding used to have to happen
+// before the information that should drive chip suggestions (M3 stated
+// taste) existed. This class no longer depends on RecipesRepository at all —
+// there is no code path here that can read a `recipes` row, which is the
+// negative control AC 4 asks for. Declared favourites are a SEPARATE union
+// this class does not yet perform (16-s7); this file returns only the
+// generated set.
 //
 // 2.6-s6: getM5Chips now returns `M5ChipResult` ({ chips, coldStartReason }).
 // When any declared cuisine bucket falls below PER_CUISINE_FLOOR_THRESHOLD,
@@ -16,12 +24,14 @@ import type { RecipesRepository } from '../recipe/recipes.repository.js';
 //
 // Single entry point: getM5Chips(householdId, declaredCuisineTags?). Pipeline:
 //   1. Wait up to 5s for Stage 1 (households.stage1_completed_at NOT NULL).
-//   2. SELECT joined catalog rows (banned filtered at SQL).
-//   3. Sort in TS: favorites first, then provenance priority, then confidence,
-//      then id ASC (deterministic tie-breaker).
+//   2. SELECT all generated suggestion rows for the household.
+//   3. Sort in TS: declared-cuisine match first, then id ASC (deterministic
+//      tie-breaker). Suggestions carry no confidence/provenance/favorite
+//      columns — those were household_recipe_usage-specific.
 //   4. Diversity cap (max 3 per cuisine_tag); if accumulator < 12, re-walk
 //      with cap 5; below-threshold log fires if final < 12.
-//   5. Project to ChipOption[] with key=recipe_id (UUID), label=canonical_name.
+//   5. Project to ChipOption[] with key=suggestion id (UUID), label=label,
+//      provenance='inferred' (every generated suggestion is LLM-inferred).
 //   6. Per-cuisine floor check (post-step-2 raw rows) — fires cold-start.
 //
 // NEVER throws — every error path returns { chips: [], coldStartReason: null }.
@@ -44,47 +54,21 @@ export interface M5ChipResult {
 }
 
 export interface CatalogProjectionServiceDeps {
-  recipesRepository: RecipesRepository;
+  onboardingChipSuggestionRepository: OnboardingChipSuggestionRepository;
   householdsRepository: HouseholdsRepository;
   logger: FastifyBaseLogger;
 }
 
-/**
- * Provenance priority weight — higher = surface earlier. Matches brief §4 AC4.
- *   declared      = 4  (parent stated it)
- *   parent_added  = 3  (parent added in-app post-onboarding)
- *   inferred      = 2  (Stage 1 LLM seed)
- *   plan_promoted = 1  (planner promoted it)
- */
-function provenancePriority(p: CatalogProvenance): number {
-  switch (p) {
-    case 'declared':
-      return 4;
-    case 'parent_added':
-      return 3;
-    case 'inferred':
-      return 2;
-    case 'plan_promoted':
-      return 1;
-    default:
-      return 0;
-  }
-}
-
-interface CatalogRow {
+interface SuggestionRow {
   id: string;
-  canonical_name: string;
+  label: string;
   cuisine_tags: string[];
-  cultural_tags: string[];
   allergen_flags: string[];
   dietary_flags: string[];
-  catalog_provenance: CatalogProvenance;
-  confidence_score: number;
-  is_household_favorite: boolean;
 }
 
 export class CatalogProjectionService {
-  private readonly recipesRepository: RecipesRepository;
+  private readonly onboardingChipSuggestionRepository: OnboardingChipSuggestionRepository;
   private readonly householdsRepository: HouseholdsRepository;
   private readonly logger: FastifyBaseLogger;
   // Test seam — Vitest fake timers don't intercept setTimeout when called
@@ -96,7 +80,7 @@ export class CatalogProjectionService {
     deps: CatalogProjectionServiceDeps,
     wait?: (ms: number) => Promise<void>,
   ) {
-    this.recipesRepository = deps.recipesRepository;
+    this.onboardingChipSuggestionRepository = deps.onboardingChipSuggestionRepository;
     this.householdsRepository = deps.householdsRepository;
     this.logger = deps.logger;
     this.wait =
@@ -123,11 +107,11 @@ export class CatalogProjectionService {
       await this.waitForStage1(householdId);
 
       // Step 2 — single read.
-      const allRows: CatalogRow[] =
-        await this.recipesRepository.findCatalogProjectionForHousehold(householdId);
+      const allRows: SuggestionRow[] =
+        await this.onboardingChipSuggestionRepository.findAllForHousehold(householdId);
 
       // Step 2b — personalization filter: exclude allergen conflicts and
-      // recipes that don't satisfy non-negotiable dietary requirements.
+      // suggestions that don't satisfy non-negotiable dietary requirements.
       const rows = this.filterByPersonalization(allRows, allergenFilter, requiredDietaryFlags);
 
       // Step 3 (early gate) — cold-start only when catalog is truly empty.
@@ -188,11 +172,13 @@ export class CatalogProjectionService {
         );
       }
 
-      // Step 7 — project to ChipOption[].
+      // Step 7 — project to ChipOption[]. Every generated suggestion is
+      // LLM-inferred; a 'declared' provenance only exists for the favourites
+      // union (16-s7), which this class does not yet perform.
       const chips: ChipOption[] = picked.map((r) => ({
         key: r.id,
-        label: r.canonical_name,
-        provenance: r.catalog_provenance,
+        label: r.label,
+        provenance: 'inferred',
       }));
       return { chips, coldStartReason: null };
     } catch (err) {
@@ -255,16 +241,16 @@ export class CatalogProjectionService {
    * whenever anything exists, even if a declared sub-cuisine has few matches.
    */
   private deriveColdStartReason(
-    rows: ReadonlyArray<CatalogRow>,
+    rows: ReadonlyArray<SuggestionRow>,
   ): ColdStartReason | null {
     return rows.length === 0 ? 'stage2_terminal' : null;
   }
 
   private filterByPersonalization(
-    rows: ReadonlyArray<CatalogRow>,
+    rows: ReadonlyArray<SuggestionRow>,
     allergenFilter: ReadonlyArray<string>,
     requiredDietaryFlags: ReadonlyArray<string>,
-  ): CatalogRow[] {
+  ): SuggestionRow[] {
     if (allergenFilter.length === 0 && requiredDietaryFlags.length === 0) return [...rows];
     return rows.filter((row) => {
       if (allergenFilter.some((a) => row.allergen_flags.includes(a))) return false;
@@ -273,25 +259,21 @@ export class CatalogProjectionService {
     });
   }
 
+  // 16-s1 — favorite/provenance/confidence sort criteria are gone with the
+  // recipes-usage join; declared-cuisine match is now the only signal besides
+  // the id tie-break. 16-s7's favourites union restores a pinned-first
+  // ordering, but as a UNION step upstream of this sort, not as a field on
+  // SuggestionRow.
   private sortCandidates(
-    rows: ReadonlyArray<CatalogRow>,
+    rows: ReadonlyArray<SuggestionRow>,
     declaredCuisineTags: ReadonlyArray<string> = [],
-  ): CatalogRow[] {
+  ): SuggestionRow[] {
     const hasDeclared = declaredCuisineTags.length > 0;
     return [...rows].sort((a, b) => {
       if (hasDeclared) {
         const aMatch = a.cuisine_tags.some((t) => declaredCuisineTags.includes(t)) ? 1 : 0;
         const bMatch = b.cuisine_tags.some((t) => declaredCuisineTags.includes(t)) ? 1 : 0;
         if (aMatch !== bMatch) return bMatch - aMatch;
-      }
-      if (a.is_household_favorite !== b.is_household_favorite) {
-        return a.is_household_favorite ? -1 : 1;
-      }
-      const pa = provenancePriority(a.catalog_provenance);
-      const pb = provenancePriority(b.catalog_provenance);
-      if (pa !== pb) return pb - pa;
-      if (a.confidence_score !== b.confidence_score) {
-        return b.confidence_score - a.confidence_score;
       }
       return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
     });
@@ -304,11 +286,11 @@ export class CatalogProjectionService {
    * Stops at TARGET_CHIPS items or input exhaustion.
    */
   private pickWithDiversityCap(
-    sorted: ReadonlyArray<CatalogRow>,
+    sorted: ReadonlyArray<SuggestionRow>,
     cap: number,
-  ): CatalogRow[] {
+  ): SuggestionRow[] {
     const buckets = new Map<string, number>();
-    const out: CatalogRow[] = [];
+    const out: SuggestionRow[] = [];
     const seen = new Set<string>();
     for (const row of sorted) {
       if (out.length >= TARGET_CHIPS) break;

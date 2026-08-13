@@ -29,6 +29,7 @@ import { AllergyGuardrailRepository } from '../allergy-guardrail/allergy-guardra
 import { CuratedBaselineRepository } from '../catalog/curated-baseline.repository.js';
 import { CuratedBaselineMaterializationService } from '../catalog/curated-baseline.service.js';
 import { CatalogProjectionService } from '../catalog/catalog-projection.service.js';
+import { OnboardingChipSuggestionRepository } from '../catalog/onboarding-chip-suggestion.repository.js';
 import { CATALOG_SEED_QUEUE } from '../../jobs/catalog-seed.job.js';
 import type { CatalogSeedJobData } from '../../jobs/catalog-seed.job.js';
 import type { Queue } from 'bullmq';
@@ -120,11 +121,15 @@ const onboardingRoutesPlugin: FastifyPluginAsync = async (fastify) => {
     ? (fastify.bullmq.getQueue(CATALOG_SEED_QUEUE) as Queue<CatalogSeedJobData>)
     : undefined;
 
-  // Slice 2.6-s4 — per-household M5 chip projection. Reads the catalog at
-  // turn-time and returns ChipOption[] with provenance for the Moment 5
-  // starting-line chip card. Replaces the deleted static 18-chip set.
+  // Slice 2.6-s4 / 16-s1 — per-household M5 chip projection. Reads the
+  // generated chip suggestions at turn-time and returns ChipOption[] for the
+  // Moment 5 starting-line chip card. Replaces the deleted static 18-chip set
+  // and, as of 16-s1, no longer reads recipes/household_recipe_usage.
+  const onboardingChipSuggestionRepository = new OnboardingChipSuggestionRepository(
+    fastify.supabase,
+  );
   const catalogProjection = new CatalogProjectionService({
-    recipesRepository,
+    onboardingChipSuggestionRepository,
     householdsRepository,
     logger: fastify.log,
   });
@@ -151,10 +156,15 @@ const onboardingRoutesPlugin: FastifyPluginAsync = async (fastify) => {
     signalsService: new SignalsService(fastify.supabase, kek, fastify.log),
     householdRulesRepository,
     recipesRepository,
+    // Slice 16-s1 (AC 5) — checked before recipesRepository for M5 chip-key
+    // resolution; same instance catalogProjection reads for the chip source.
+    onboardingChipSuggestionRepository,
     curatedBaseline,
     catalogSeedQueue,
     catalogProjection,
     householdAllergensRepository,
+    // Stage 1 retry accounting for the idempotent ensure.
+    householdsRepository,
   });
 
   // Slice 2-S26 — fire-and-forget audit writer for resume / reset events.

@@ -94,6 +94,13 @@ interface BuildOpts {
   // the ratification-via-tool tests to assert the M3 ratification chip renders
   // from a dietary.declare / cuisine.declare RESULT (not a prose sentinel).
   toolCallsSummary?: Array<{ tool: string; error: boolean; args?: unknown; result?: unknown }>;
+  // Slice 16-s1 (AC 5) — wire the recipes-repository fallback and the
+  // generated-suggestion store for M5 chip-key resolution. Suggestion labels
+  // are keyed by uuid -> label; recipesFindByIdLabel is the legacy fallback
+  // (declared-favourite chips still resolve via recipes.id).
+  wireRecipesRepository?: boolean;
+  suggestionLabelsById?: Record<string, string>;
+  recipesFindByIdLabel?: Record<string, string>;
 }
 
 function normalizeMomentState(
@@ -206,6 +213,26 @@ function buildService(opts: BuildOpts) {
       }
     : undefined;
 
+  // Slice 16-s1 (AC 5) — chip-key resolution mocks. findById on each looks up
+  // its respective fixture map; undefined key -> null (not found), matching
+  // real repository behavior.
+  const recipesRepository = opts.wireRecipesRepository
+    ? {
+        findById: vi.fn(async (id: string) => {
+          const canonical_name = opts.recipesFindByIdLabel?.[id];
+          return canonical_name === undefined ? null : { canonical_name };
+        }),
+      }
+    : undefined;
+  const onboardingChipSuggestionRepository = opts.suggestionLabelsById
+    ? {
+        findById: vi.fn(async (id: string) => {
+          const label = opts.suggestionLabelsById?.[id];
+          return label === undefined ? null : { id, label };
+        }),
+      }
+    : undefined;
+
   const logger = makeLogger();
   const deps: OnboardingServiceDeps = {
     threads: threads as unknown as OnboardingServiceDeps['threads'],
@@ -220,6 +247,10 @@ function buildService(opts: BuildOpts) {
       catalogSeedQueue as unknown as OnboardingServiceDeps['catalogSeedQueue'],
     householdsRepository:
       householdsRepository as unknown as OnboardingServiceDeps['householdsRepository'],
+    recipesRepository:
+      recipesRepository as unknown as OnboardingServiceDeps['recipesRepository'],
+    onboardingChipSuggestionRepository:
+      onboardingChipSuggestionRepository as unknown as OnboardingServiceDeps['onboardingChipSuggestionRepository'],
   };
 
   const service = new OnboardingService(deps);
@@ -233,6 +264,8 @@ function buildService(opts: BuildOpts) {
     householdsRepository,
     existingSeedJob,
     logger,
+    recipesRepository,
+    onboardingChipSuggestionRepository,
   };
 }
 
@@ -2062,5 +2095,122 @@ describe('OnboardingService.submitTextTurn — ONBOARDING_TRACE_DIR (Slice 2.7-s
     await new Promise((r) => setImmediate(r));
 
     expect(await readdir(dir)).toHaveLength(0);
+  });
+});
+
+// ===========================================================================
+// Slice 16-s1 (AC 5) — M5 chip-key resolution checks the generated-suggestion
+// store BEFORE falling back to recipesRepository.findById(). Silent-failure
+// trap: favorite_lunch.add takes a LABEL, not an id — an unresolved key would
+// reach the agent as a raw UUID and become a recipe literally named after it,
+// with no error and no log.
+// ===========================================================================
+describe('OnboardingService.submitTextTurn — M5 chip-key resolution (16-s1 AC 5)', () => {
+  const SUGGESTION_ID = 'aaaaaaaa-1111-4111-8111-111111111111';
+  const FAVOURITE_RECIPE_ID = 'bbbbbbbb-2222-4222-8222-222222222222';
+  const UNRESOLVED_ID = 'cccccccc-3333-4333-8333-333333333333';
+
+  function m5PreTurnState() {
+    return {
+      current_moment: 'm5_starting_line' as const,
+      required_set_status: {
+        m1_household_name: true,
+        m1_child_declared: true,
+        m2_allergen_response: true,
+        m3_answered: true,
+        m2_attribution_pending: [],
+        m5_favorite_count: 0,
+        m5_complete: false,
+      },
+    };
+  }
+
+  function persistedUserTurnContent(
+    threads: ReturnType<typeof buildService>['threads'],
+  ): string {
+    const userAppend = threads.appendTurnNext.mock.calls.find(
+      (c) => (c[0] as { role?: string }).role === 'user',
+    );
+    return (userAppend?.[0].body as { content: string }).content;
+  }
+
+  it('resolves a tapped generated-suggestion chip to its label via the suggestion store', async () => {
+    const { service, threads } = buildService({
+      agentText: 'Noted!',
+      preTurnMomentState: m5PreTurnState(),
+      countsOverride: { household_name_set: true, child_count: 1 },
+      wireRecipesRepository: true,
+      // Deliberately absent from the recipes fallback — if resolution skipped
+      // the suggestion store, the UUID would stay unresolved.
+      recipesFindByIdLabel: {},
+      suggestionLabelsById: { [SUGGESTION_ID]: 'Generated Idli' },
+    });
+
+    await service.submitTextTurn({
+      userId: USER_ID,
+      householdId: HOUSEHOLD_ID,
+      message: `[Chips selected: ${SUGGESTION_ID}]`,
+    });
+
+    expect(persistedUserTurnContent(threads)).toBe('[Chips selected: Generated Idli]');
+  });
+
+  it('falls back to recipesRepository.findById() for a declared-favourite chip not in the suggestion store', async () => {
+    const { service, threads } = buildService({
+      agentText: 'Noted!',
+      preTurnMomentState: m5PreTurnState(),
+      countsOverride: { household_name_set: true, child_count: 1 },
+      wireRecipesRepository: true,
+      recipesFindByIdLabel: { [FAVOURITE_RECIPE_ID]: 'Lemon Rice' },
+      suggestionLabelsById: { [SUGGESTION_ID]: 'Generated Idli' },
+    });
+
+    await service.submitTextTurn({
+      userId: USER_ID,
+      householdId: HOUSEHOLD_ID,
+      message: `[Chips selected: ${FAVOURITE_RECIPE_ID}]`,
+    });
+
+    expect(persistedUserTurnContent(threads)).toBe('[Chips selected: Lemon Rice]');
+  });
+
+  it('resolves a mixed tap (one generated, one declared favourite) from both stores in one turn', async () => {
+    const { service, threads } = buildService({
+      agentText: 'Noted!',
+      preTurnMomentState: m5PreTurnState(),
+      countsOverride: { household_name_set: true, child_count: 1 },
+      wireRecipesRepository: true,
+      recipesFindByIdLabel: { [FAVOURITE_RECIPE_ID]: 'Lemon Rice' },
+      suggestionLabelsById: { [SUGGESTION_ID]: 'Generated Idli' },
+    });
+
+    await service.submitTextTurn({
+      userId: USER_ID,
+      householdId: HOUSEHOLD_ID,
+      message: `[Chips selected: ${SUGGESTION_ID}, ${FAVOURITE_RECIPE_ID}]`,
+    });
+
+    expect(persistedUserTurnContent(threads)).toBe(
+      '[Chips selected: Generated Idli, Lemon Rice]',
+    );
+  });
+
+  it('keeps the raw key in the message when neither store resolves it (silent-failure guard)', async () => {
+    const { service, threads } = buildService({
+      agentText: 'Noted!',
+      preTurnMomentState: m5PreTurnState(),
+      countsOverride: { household_name_set: true, child_count: 1 },
+      wireRecipesRepository: true,
+      recipesFindByIdLabel: {},
+      suggestionLabelsById: {},
+    });
+
+    await service.submitTextTurn({
+      userId: USER_ID,
+      householdId: HOUSEHOLD_ID,
+      message: `[Chips selected: ${UNRESOLVED_ID}]`,
+    });
+
+    expect(persistedUserTurnContent(threads)).toBe(`[Chips selected: ${UNRESOLVED_ID}]`);
   });
 });
