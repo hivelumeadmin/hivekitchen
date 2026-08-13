@@ -54,14 +54,19 @@ OUTPUT SHAPE — return ONLY this JSON object (no preamble, no markdown fences, 
       "dietary_flags": ["<vegetarian | vegan | halal | kosher | ... — only flags that genuinely apply>"],
       "cultural_tags": ["<broad cultural identifiers — south_asian, east_african, halal, ...>"],
       "cuisine_tags": ["<specific cuisines — north_indian, somali, mexican, lebanese, ...>"],
-      "applicable_slots": ["main" | "snack" | "extra"]
+      "applicable_slots": ["main" | "snack" | "extra"],
+      "primary_starch": "<the dominant starch/carb base — rice, bread, noodle, potato, legume, grain, none, ...>",
+      "primary_protein": "<the dominant protein — chicken, beef, fish, egg, tofu, lentil, none, ...>"
     },
     ...
   ]
 }
 
 HARD RULES — violations make the entire output unusable:
-- NO ingredients, instructions, prep_time, descriptions, notes, or any field other than the six listed above.
+- NO ingredients, instructions, prep_time, descriptions, notes, or any field other than the eight listed above.
+- primary_starch and primary_protein exist so a deterministic check can catch near-duplicates
+  you miss — use "none" only when the dish genuinely has no dominant starch or protein (e.g. a
+  fruit cup), not as a default when unsure.
 - AVOID ALL FALCPA allergens named in the snapshot. If a dish could plausibly contain a listed allergen (peanut, tree nut, dairy, egg, wheat, soy, fish, shellfish, sesame, or any household-declared allergen), OMIT THE ENTIRE ITEM. Do NOT trust that emitting allergen_flags: [] makes a peanut-containing dish safe — the only safe peanut dish for a peanut household is one that has been omitted from the catalog.
 - canonical_name must be a short, recognizable dish name (max ~100 chars). Family-style, school-lunch-appropriate. No proper-noun brand names.
 - applicable_slots is at least one of ["main", "snack", "extra"]; most items are ["main"].

@@ -42,10 +42,25 @@ type Row = {
   cuisine_tags: string[];
   dietary_flags: string[];
   allergen_flags: string[];
+  primary_starch: string | null;
+  primary_protein: string | null;
 };
 
-function makeRow(id: string, label: string, cuisine_tags: string[]): Row {
-  return { id, label, cuisine_tags, dietary_flags: [], allergen_flags: [] };
+function makeRow(
+  id: string,
+  label: string,
+  cuisine_tags: string[],
+  starchProtein?: { primary_starch: string | null; primary_protein: string | null },
+): Row {
+  return {
+    id,
+    label,
+    cuisine_tags,
+    dietary_flags: [],
+    allergen_flags: [],
+    primary_starch: starchProtein?.primary_starch ?? null,
+    primary_protein: starchProtein?.primary_protein ?? null,
+  };
 }
 
 type CuratedRow = {
@@ -643,5 +658,95 @@ describe('CatalogProjectionService.getM5Chips — chip source moved off recipes 
       HOUSEHOLD_ID,
     );
     expect(curatedBaselineRepository.findAllActive).not.toHaveBeenCalled();
+  });
+});
+
+// ===========================================================================
+// Slice 16-s1 (AC 12) — deterministic diversity backstop buckets on
+// primary_starch + primary_protein, not only cuisine_tags. Reproduces the
+// exact bug this AC exists to fix: three (here six) chicken-rice dishes
+// across distinct cuisines used to all pass, because cuisine_tags was the
+// ONLY bucketing dimension and each cuisine bucket only ever saw 1 item.
+// ===========================================================================
+describe('CatalogProjectionService.getM5Chips — starch/protein diversity backstop (16-s1 AC 12)', () => {
+  it('a skewed set (N chicken-rice dishes across N distinct cuisines) yields at most the cap, not N chips', async () => {
+    const chickenRiceRows = Array.from({ length: 6 }, (_, i) =>
+      makeRow(`cr-${i}`, `Chicken Rice ${i}`, [`cuisine_${i}`], {
+        primary_starch: 'rice',
+        primary_protein: 'chicken',
+      }),
+    );
+    // 6 padding rows, each its own unique protein+starch combo and cuisine —
+    // clears CHIP_FLOOR without contributing to the chicken+rice combo bucket.
+    const paddingRows = Array.from({ length: 6 }, (_, i) =>
+      makeRow(`pad-${i}`, `Padding ${i}`, [`pad_cuisine_${i}`], {
+        primary_starch: `starch_${i}`,
+        primary_protein: `protein_${i}`,
+      }),
+    );
+    const { service } = buildService({
+      rows: [...chickenRiceRows, ...paddingRows],
+      stage1At: '2026-05-25T00:00:00Z',
+    });
+
+    const { chips } = await service.getM5Chips(HOUSEHOLD_ID, []);
+
+    const chickenRiceChips = chips.filter((c) => c.key.startsWith('cr-'));
+    // Without the starch/protein backstop all 6 would pass (this is the exact
+    // bug AC 12 fixes — each cuisine bucket only ever saw 1 of them). With
+    // it, the shared chicken+rice combo bucket caps them (cap-3, relaxed to
+    // cap-5 since the total pool is 12, at UNDERFLOW_THRESHOLD).
+    expect(chickenRiceChips.length).toBeLessThan(6);
+    expect(chickenRiceChips.length).toBeLessThanOrEqual(5);
+    // All 6 padding rows survive — the backstop doesn't over-reject.
+    expect(chips.filter((c) => c.key.startsWith('pad-'))).toHaveLength(6);
+  });
+
+  it('does not cap unrelated dishes that merely share ONE of starch or protein, not both', async () => {
+    // Same starch (rice), DIFFERENT protein — not a near-duplicate per the
+    // story's own definition ("share the same protein AND the same starch").
+    const rows = [
+      ...Array.from({ length: 5 }, (_, i) =>
+        makeRow(`chicken-rice-${i}`, `Chicken Rice ${i}`, [`c${i}`], {
+          primary_starch: 'rice',
+          primary_protein: 'chicken',
+        }),
+      ),
+      ...Array.from({ length: 5 }, (_, i) =>
+        makeRow(`beef-rice-${i}`, `Beef Rice ${i}`, [`c${5 + i}`], {
+          primary_starch: 'rice',
+          primary_protein: 'beef',
+        }),
+      ),
+      ...Array.from({ length: 2 }, (_, i) =>
+        makeRow(`pad-${i}`, `Pad ${i}`, [`c${10 + i}`], {
+          primary_starch: `s${i}`,
+          primary_protein: `p${i}`,
+        }),
+      ),
+    ];
+    const { service } = buildService({ rows, stage1At: '2026-05-25T00:00:00Z' });
+
+    const { chips } = await service.getM5Chips(HOUSEHOLD_ID, []);
+
+    // Each combo (chicken+rice, beef+rice) is capped independently at 5 (the
+    // relaxed cap) — sharing only the starch does not merge their buckets.
+    expect(chips.filter((c) => c.key.startsWith('chicken-rice-'))).toHaveLength(5);
+    expect(chips.filter((c) => c.key.startsWith('beef-rice-'))).toHaveLength(5);
+  });
+
+  it('a dish with no dominant starch or protein (both null) is exempt from the combo bucket', async () => {
+    // 12 rows, all null starch/protein, all the SAME cuisine — cuisine
+    // bucketing alone still applies (cap-3 -> relax cap-5), but the combo
+    // bucket must not ALSO reject them (null/null items must not collide
+    // with each other in a shared "no value" bucket).
+    const rows = Array.from({ length: 12 }, (_, i) => makeRow(`fruit-${i}`, `Fruit ${i}`, ['x']));
+    const { service } = buildService({ rows, stage1At: '2026-05-25T00:00:00Z' });
+
+    const { chips } = await service.getM5Chips(HOUSEHOLD_ID, []);
+
+    // Bound purely by the pre-existing cuisine cap-5 relax, unaffected by the
+    // starch/protein backstop.
+    expect(chips).toHaveLength(5);
   });
 });

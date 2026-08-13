@@ -99,6 +99,12 @@ const CatalogSeedItemSchema = z.object({
   cultural_tags: z.array(z.string()),
   cuisine_tags: z.array(z.string()),
   applicable_slots: z.array(z.string()).min(1),
+  // Slice 16-s1 (AC 12) — the deterministic diversity backstop needs a real
+  // structured field to bucket on; cuisine_tags alone let three chicken-rice
+  // dishes across three cuisines all pass. "none" (not empty string) is the
+  // LLM's explicit way to say a dish has no dominant starch/protein.
+  primary_starch: z.string().max(64),
+  primary_protein: z.string().max(64),
 });
 
 const CatalogSeedResponseSchema = z.object({
@@ -390,6 +396,8 @@ export class CatalogSeedService {
         cultural_tags: string[];
         cuisine_tags: string[];
         applicable_slots: Array<ValidSlot>;
+        primary_starch: string;
+        primary_protein: string;
       };
       const validated: Survivor[] = [];
 
@@ -484,6 +492,10 @@ export class CatalogSeedService {
             cultural_tags: [...baselineMatch.cultural_tags],
             cuisine_tags: [...baselineMatch.cuisine_tags],
             applicable_slots: [...baselineMatch.applicable_slots],
+            // curated_baseline_items carries no starch/protein columns — keep
+            // the LLM's own classification, same as canonical_name above.
+            primary_starch: item.primary_starch,
+            primary_protein: item.primary_protein,
           });
           continue;
         }
@@ -495,6 +507,8 @@ export class CatalogSeedService {
           cultural_tags: [...item.cultural_tags],
           cuisine_tags: [...item.cuisine_tags],
           applicable_slots: applicableSlots,
+          primary_starch: item.primary_starch,
+          primary_protein: item.primary_protein,
         });
       }
 
@@ -620,10 +634,12 @@ export class CatalogSeedService {
             cuisine_tags: s.cuisine_tags,
             dietary_flags: s.dietary_flags,
             allergen_flags: s.allergen_flags,
-            // Slice 16-s1 (AC 12, task 6) — populated once the generated-item
-            // schema carries starch/protein for diversity bucketing.
-            primary_starch: null,
-            primary_protein: null,
+            // Slice 16-s1 (AC 12) — normalize the LLM's explicit "none" (and
+            // an empty string, belt-and-suspenders) to a real null, so the
+            // diversity bucketing downstream only ever has to check for
+            // null/empty, not match a literal string.
+            primary_starch: normalizeStarchProtein(s.primary_starch),
+            primary_protein: normalizeStarchProtein(s.primary_protein),
           })),
         );
       } catch (err) {
@@ -840,4 +856,11 @@ function setsEqual(a: readonly string[], b: readonly string[]): boolean {
     if (!setA.has(v)) return false;
   }
   return true;
+}
+
+// Slice 16-s1 (AC 12) — the LLM's explicit "no dominant starch/protein"
+// signal ("none") and an empty string both mean the same thing: no value.
+function normalizeStarchProtein(value: string): string | null {
+  const trimmed = value.trim().toLowerCase();
+  return trimmed.length === 0 || trimmed === 'none' ? null : value.trim();
 }

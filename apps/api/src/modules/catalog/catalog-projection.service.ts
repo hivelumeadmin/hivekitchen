@@ -85,6 +85,12 @@ interface SuggestionRow {
   cuisine_tags: string[];
   allergen_flags: string[];
   dietary_flags: string[];
+  // Slice 16-s1 (AC 12) — deterministic diversity backstop. null means the
+  // dish genuinely has no dominant starch/protein (e.g. a fruit cup) and is
+  // exempt from the combo bucket below, not capped into a shared "no value"
+  // bucket with every other such dish.
+  primary_starch: string | null;
+  primary_protein: string | null;
 }
 
 export class CatalogProjectionService {
@@ -160,6 +166,10 @@ export class CatalogProjectionService {
           cuisine_tags: c.cuisine_tags,
           allergen_flags: c.allergen_flags,
           dietary_flags: c.dietary_flags,
+          // curated_baseline_items carries no starch/protein columns — AC 12
+          // is scoped to the generated set. Exempt from the combo bucket.
+          primary_starch: null,
+          primary_protein: null,
         }));
         const filteredCurated = this.filterByPersonalization(
           curatedRows,
@@ -333,9 +343,21 @@ export class CatalogProjectionService {
 
   /**
    * Walk the pre-sorted candidate list; admit each row only if every one of
-   * its cuisine_tags is still below `cap` in the accumulator. A multi-tag
-   * row counts toward every bucket it touches; rejection is "ANY full → skip."
+   * its bucket keys is still below `cap` in the accumulator. A multi-tag row
+   * counts toward every bucket it touches; rejection is "ANY full → skip."
    * Stops at TARGET_CHIPS items or input exhaustion.
+   *
+   * Bucket keys are cuisine_tags (independent per-tag caps, unchanged) PLUS,
+   * per Slice 16-s1 (AC 12), a SINGLE combined `starch+protein` key when both
+   * are present. This is deliberately a COMBINED key, not two independent
+   * ones: the near-duplicate rule this backstops ("share the same protein
+   * AND the same starch") is about the PAIR, not either dimension alone —
+   * capping starch and protein independently would also cap unrelated dishes
+   * that merely share one axis (e.g. two different rice dishes with
+   * different proteins are not near-duplicates). A row missing either value
+   * (a dish with no dominant starch or protein) gets no combo key at all —
+   * exempt, not capped into a shared "no value" bucket with every other such
+   * dish.
    */
   private pickWithDiversityCap(
     sorted: ReadonlyArray<SuggestionRow>,
@@ -347,8 +369,13 @@ export class CatalogProjectionService {
     for (const row of sorted) {
       if (out.length >= TARGET_CHIPS) break;
       if (seen.has(row.id)) continue;
+      // Copy — row.cuisine_tags must not be mutated by the combo-key push
+      // below (it would otherwise alias the row's own array when non-empty).
       const tags =
-        row.cuisine_tags.length > 0 ? row.cuisine_tags : ['__untagged__'];
+        row.cuisine_tags.length > 0 ? [...row.cuisine_tags] : ['__untagged__'];
+      if (row.primary_starch !== null && row.primary_protein !== null) {
+        tags.push(`combo:${row.primary_protein}:${row.primary_starch}`);
+      }
       let allowed = true;
       for (const t of tags) {
         if ((buckets.get(t) ?? 0) >= cap) {

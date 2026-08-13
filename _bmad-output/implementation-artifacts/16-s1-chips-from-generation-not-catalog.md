@@ -289,10 +289,20 @@ without a data migration.
         proves the resulting empty/thin suggestion table triggers the fallback and still
         renders a non-empty chip set, or correctly cold-starts if the fallback also
         underflows.
-- [ ] 6. Diversity (AC 12)
-  - [ ] 6.1 Add `primary_starch` / `primary_protein` to the generated-item schema.
-  - [ ] 6.2 Bucket the selection on those dimensions alongside cuisine.
-  - [ ] 6.3 Test with a deliberately skewed generated set.
+- [x] 6. Diversity (AC 12)
+  - [x] 6.1 Add `primary_starch` / `primary_protein` to the generated-item schema. Also added
+        to the prompt's OUTPUT SHAPE (previously only the prose caps existed, not the
+        structured fields) and threaded through `Survivor` → `onboarding_chip_suggestions`
+        (previously inserted as hardcoded `null`, per task 4's note). Item count left at ~50
+        — no rescaling needed per the AC's own instruction.
+  - [x] 6.2 Bucket the selection on those dimensions alongside cuisine. Implemented as a
+        SINGLE combined `combo:${protein}:${starch}` key (not two independent caps) — the
+        near-duplicate rule is about the PAIR ("share the same protein AND the same
+        starch"), and independent caps would also reject unrelated dishes sharing only one
+        axis. A row missing either value is exempt from the combo bucket entirely.
+  - [x] 6.3 Test with a deliberately skewed generated set. 6 chicken-rice dishes across 6
+        distinct cuisines (reproducing the exact bug: cuisine bucketing alone never saw more
+        than 1 per bucket) → capped, not all 6 admitted.
 - [ ] 7. Already-tapped favourites on re-entry (AC 13)
   - [ ] 7.1 Union declared favourites into the chip set, deduped via
         `canonicalizeFavoriteName`, sorted first, exempt from the diversity cap.
@@ -837,6 +847,50 @@ claude-opus-5[1m]
   single pre-existing voice/DST failure), typecheck clean, lint unchanged at its one
   pre-existing false positive.
 
+**Task 6 complete (AC 12).**
+
+- **The schema change required retargeting every existing LLM-response fixture in
+  `catalog-seed.service.test.ts`.** `primary_starch`/`primary_protein` are required fields
+  on `CatalogSeedItemSchema`, and `CatalogSeedResponseSchema` validates the WHOLE items
+  array against that per-item schema (not a separate looser outer check) — so a fixture
+  missing either field fails at the response level, not the per-item drop-and-continue
+  path, and the entire batch is rejected. Confirmed this is the existing, intentional
+  behavior (the per-item Zod guard in Step 5 is explicitly commented "already done by
+  response parse... but the brief explicitly calls for a guard" — belt-and-suspenders, not
+  a bug). Fixed mechanically across all 15 fixture sites with a scripted insert rather than
+  by hand, then verified every test's *intent* still held (none of them cared about the new
+  fields specifically, so a uniform `'none'` default was correct everywhere).
+
+- **Caught a mutation bug before it shipped, not after.** `pickWithDiversityCap`'s existing
+  `const tags = row.cuisine_tags.length > 0 ? row.cuisine_tags : ['__untagged__']` aliases
+  the row's own array when non-empty — pushing the new combo key onto `tags` would have
+  silently mutated `row.cuisine_tags` in place, corrupting the row for any later
+  re-evaluation (the relax-to-5 pass re-walks the same rows). Copied the array before
+  pushing.
+
+- **The combined-key decision is the substantive judgment call in this task.** AC 12 says
+  "bucket on them" (starch and protein) without specifying independent vs. combined caps.
+  Chose combined (`combo:${protein}:${starch}`) because the near-duplicate definition
+  already in the prompt is explicitly a PAIR condition ("share the same protein AND the
+  same starch") — independent per-dimension caps would over-reject: two dishes sharing only
+  a starch (chicken-rice, beef-rice) are not near-duplicates and must not compete for the
+  same bucket. Verified with a dedicated test that they don't.
+
+- **A row missing either value is exempt from the combo bucket, not capped into a shared
+  "no value" bucket.** Considered and rejected treating null/null like the existing
+  `'__untagged__'` cuisine fallback: a protein-forward salad, an egg dish, and a fruit cup
+  all lacking a "dominant starch" are not near-duplicates of each other just because none of
+  them has one. Verified with a 12-row all-null fixture that only the pre-existing
+  cuisine-cap logic bounds them, unaffected by the new backstop.
+
+- **Fallback rows (curated_baseline_items) are exempt entirely** — that table has no
+  starch/protein columns, and AC 12 is explicitly scoped to "the generated set."
+
+- 6 new tests (3 persistence-side in `catalog-seed.service.test.ts`, 3 bucketing-side in
+  `catalog-projection.service.test.ts`), full API suite 2637 passing (same single
+  pre-existing voice/DST failure), typecheck clean, lint unchanged at its one pre-existing
+  false positive.
+
 ### File List
 
 - `apps/api/src/agents/prompts/catalog-seed.prompt.ts` — modified (snapshot gains
@@ -861,14 +915,18 @@ claude-opus-5[1m]
   source moved off `recipes`/`household_recipe_usage` to `onboarding_chip_suggestions`,
   `recipesRepository` dependency removed, sort simplified; task 5: `CHIP_FLOOR` fallback to
   `curated_baseline_items`, `deriveColdStartReason` removed as dead code, new
-  `'chip_floor_underflow'` cold-start reason)
+  `'chip_floor_underflow'` cold-start reason; task 6: `pickWithDiversityCap` buckets on a
+  combined `combo:${protein}:${starch}` key alongside cuisine, `SuggestionRow` gains
+  `primary_starch`/`primary_protein`, fixed a pre-existing array-aliasing mutation risk
+  while adding the combo key)
 - `apps/api/src/modules/catalog/catalog-projection.service.test.ts` — rewritten (task 3:
   fixture shape follows the new repository; task 5: fallback test suite added, several
   pre-existing sort/diversity tests retargeted with hand-verified padding — see completion
-  notes)
+  notes; task 6: `makeRow` gains starch/protein params, 3 new backstop tests)
 - `apps/api/src/modules/catalog/catalog-seed.service.test.ts` — modified (task 4: AC 6/7
   tests; task 5: `insertMany`-not-called assertions on the 4 forced-failure tests + 1 new
-  filter-blocks-everything test)
+  filter-blocks-everything test; task 6: `primary_starch`/`primary_protein` added to all 15
+  existing item fixtures, 3 new persistence tests)
 - `apps/api/src/modules/onboarding/onboarding.routes.ts` — modified (task 3: constructs
   `OnboardingChipSuggestionRepository`, wires it into both `catalogProjection` and
   `OnboardingService`; task 5: `curatedBaselineRepo` hoisted to a shared variable, wired
@@ -880,6 +938,12 @@ claude-opus-5[1m]
   `recipesRepository` + `onboardingChipSuggestionRepository` fakes; 4 new AC 5 tests)
 - `apps/api/src/jobs/catalog-seed.job.ts` — modified (constructs
   `OnboardingChipSuggestionRepository`, wires it into `CatalogSeedService`)
+- `apps/api/src/agents/prompts/catalog-seed.prompt.ts` — modified (task 6: OUTPUT SHAPE
+  gains `primary_starch`/`primary_protein` fields, HARD RULES field count updated)
+- `apps/api/src/modules/catalog/catalog-seed.service.ts` — modified (task 6:
+  `CatalogSeedItemSchema` gains the two new required fields, `Survivor` threads them
+  through both persist branches, new `normalizeStarchProtein` helper collapses the LLM's
+  `'none'`/empty-string to a real `null`)
 
 ---
 
@@ -897,3 +961,4 @@ claude-opus-5[1m]
 | 2026-08-13 | Task 3 implemented (AC 4, AC 5): `onboarding_chip_suggestions` table + repository created; `CatalogProjectionService` repointed at it with `recipesRepository` removed entirely (AC 4's negative control is structural — no code path to `recipes` exists); AC 5's chip-key resolution now checks the suggestion store before the recipes fallback, and a key unresolved in BOTH stores now logs `onboarding.m5_chip_uuid_unresolved` instead of failing silently. `findCatalogProjectionForHousehold` on `RecipesRepository` deliberately left in place, unused, pending likely reuse by 16-s7's favourites union. |
 | 2026-08-13 | Task 4 implemented (AC 6, AC 7): `seedForHousehold`'s existing filtered `survivors` array (name pre-filter + `evaluateGuardrail()`, unchanged) now also persists to `onboarding_chip_suggestions` — one filter pass, two persist targets, per AC 6's "do not fork" instruction. `catalog.chips.blocked` logging added at both block sites with label + matched allergen + source ('declared' vs 'falcpa'), the latter resolved via the guardrail's own exported `isHardRule()` rather than reimplemented, and verified reachable with a dedicated FALCPA-only test. `primary_starch`/`primary_protein` inserted as null pending task 6's schema addition. Chip-persist failure is caught and logged, never undoes a successful recipes persist. |
 | 2026-08-13 | Task 5 implemented (AC 8, AC 9): when filtered suggestions fall below `CHIP_FLOOR` (12, aliased from `UNDERFLOW_THRESHOLD`), `getM5Chips` reads + filters `curated_baseline_items` and uses it as a full REPLACEMENT source, not a blend; a fallback that also underflows returns the new `'chip_floor_underflow'` cold-start reason instead of a sparse grid. Closed an unspecified gap: fallback chips are keyed on `canonical_name`, never the row's real id, because a curated row resolves via neither of AC 5's two lookup stores and would otherwise reproduce AC 5's own silent-failure trap. The old empty-catalog cold-start check (`deriveColdStartReason`, `'stage2_terminal'`) became dead code under the new floor logic and was removed. Retargeted 8 pre-existing sort/diversity/logging tests whose small fixtures now unconditionally trigger the new floor — padding math verified by hand per test, not just re-run until green. |
+| 2026-08-13 | Task 6 implemented (AC 12): `primary_starch`/`primary_protein` added as required fields to `CatalogSeedItemSchema` and the prompt's OUTPUT SHAPE, threaded through to `onboarding_chip_suggestions` (previously null, per task 4's note), normalizing the LLM's `'none'`/empty string to a real `null`. `pickWithDiversityCap` now also buckets on a COMBINED `combo:${protein}:${starch}` key — deliberately combined, not two independent caps, because the near-duplicate rule is a PAIR condition ("share the same protein AND the same starch") and independent caps would over-reject dishes sharing only one axis. A row missing either value is exempt from the combo bucket, not capped into a shared "no value" bucket. Caught and fixed a pre-existing array-aliasing mutation bug in `pickWithDiversityCap` while adding the combo key (`tags` aliased `row.cuisine_tags` when non-empty). Retargeted all 15 existing LLM-response fixtures in `catalog-seed.service.test.ts` — the response schema validates per-item AND at the array level, so a fixture missing a new required field failed the WHOLE batch, not just that item. |

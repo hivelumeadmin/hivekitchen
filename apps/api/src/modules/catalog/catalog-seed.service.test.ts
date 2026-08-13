@@ -143,6 +143,8 @@ function buildDeps(overrides: Partial<Deps> = {}): Deps {
                       cultural_tags: [],
                       cuisine_tags: ['south_asian'],
                       applicable_slots: ['main'],
+                      primary_starch: 'none',
+                      primary_protein: 'none',
                     })),
                   }),
                 },
@@ -231,6 +233,8 @@ describe('CatalogSeedService — seedForHousehold', () => {
       cultural_tags: [],
       cuisine_tags: ['south_asian'],
       applicable_slots: ['main'],
+      primary_starch: 'none',
+      primary_protein: 'none',
     }));
     // 5 items whose names match a peanut SYNONYM ('groundnut') — no bare
     // 'peanut' token, so they pass the name pre-filter but get blocked by the
@@ -242,6 +246,8 @@ describe('CatalogSeedService — seedForHousehold', () => {
       cultural_tags: [],
       cuisine_tags: ['south_asian'],
       applicable_slots: ['main'],
+      primary_starch: 'none',
+      primary_protein: 'none',
     }));
     // 2 items whose names contain the bare declared-allergen token 'peanut' —
     // dropped by the belt-and-suspenders name pre-filter before the guardrail.
@@ -252,6 +258,8 @@ describe('CatalogSeedService — seedForHousehold', () => {
       cultural_tags: [],
       cuisine_tags: [],
       applicable_slots: ['main'],
+      primary_starch: 'none',
+      primary_protein: 'none',
     }));
     deps.openai.chat.completions.create.mockResolvedValue({
       choices: [
@@ -328,6 +336,8 @@ describe('CatalogSeedService — seedForHousehold', () => {
                   cultural_tags: [],
                   cuisine_tags: [],
                   applicable_slots: ['main'],
+                  primary_starch: 'none',
+                  primary_protein: 'none',
                 },
               ],
             }),
@@ -480,6 +490,8 @@ describe('CatalogSeedService — seedForHousehold', () => {
                 cultural_tags: [],
                 cuisine_tags: [],
                 applicable_slots: ['main'],
+                primary_starch: 'none',
+                primary_protein: 'none',
               })),
             }),
           },
@@ -517,6 +529,8 @@ describe('CatalogSeedService — seedForHousehold', () => {
                   cultural_tags: [],
                   cuisine_tags: ['mexican'], // intentionally wrong
                   applicable_slots: ['main'],
+                  primary_starch: 'none',
+                  primary_protein: 'none',
                 },
               ],
             }),
@@ -532,6 +546,8 @@ describe('CatalogSeedService — seedForHousehold', () => {
         cultural_tags: ['south_asian'],
         cuisine_tags: ['south_asian', 'north_indian'],
         applicable_slots: ['main'],
+        primary_starch: 'none',
+        primary_protein: 'none',
       },
     ]);
     deps.recipesRepo.seedFromCatalogBaseline.mockResolvedValue(1);
@@ -573,6 +589,8 @@ describe('CatalogSeedService — seedForHousehold', () => {
                 cultural_tags: [],
                 cuisine_tags: [],
                 applicable_slots: ['main'],
+                primary_starch: 'none',
+                primary_protein: 'none',
               })),
             }),
           },
@@ -610,6 +628,8 @@ describe('CatalogSeedService — seedForHousehold', () => {
                   cultural_tags: [],
                   cuisine_tags: [],
                   applicable_slots: ['main'],
+                  primary_starch: 'none',
+                  primary_protein: 'none',
                 },
               ],
             }),
@@ -663,6 +683,8 @@ describe('CatalogSeedService — seedForHousehold', () => {
                 cultural_tags: [],
                 cuisine_tags: [],
                 applicable_slots: ['main'],
+                primary_starch: 'none',
+                primary_protein: 'none',
               })),
             }),
           },
@@ -691,6 +713,8 @@ describe('CatalogSeedService — seedForHousehold', () => {
                   cultural_tags: [],
                   cuisine_tags: [],
                   applicable_slots: ['main'],
+                  primary_starch: 'none',
+                  primary_protein: 'none',
                 },
                 {
                   canonical_name: 'chicken rice bowl',
@@ -699,6 +723,8 @@ describe('CatalogSeedService — seedForHousehold', () => {
                   cultural_tags: [],
                   cuisine_tags: [],
                   applicable_slots: ['main'],
+                  primary_starch: 'none',
+                  primary_protein: 'none',
                 },
               ],
             }),
@@ -809,6 +835,8 @@ describe('CatalogSeedService — seedForHousehold', () => {
       cultural_tags: [],
       cuisine_tags: ['south_asian'],
       applicable_slots: ['main'],
+      primary_starch: 'none',
+      primary_protein: 'none',
     }));
     const clean = Array.from({ length: 4 }, (_, i) => ({
       canonical_name: `safe rice bowl ${i + 1}`,
@@ -817,6 +845,8 @@ describe('CatalogSeedService — seedForHousehold', () => {
       cultural_tags: [],
       cuisine_tags: ['south_asian'],
       applicable_slots: ['main'],
+      primary_starch: 'none',
+      primary_protein: 'none',
     }));
     deps.openai.chat.completions.create.mockResolvedValue({
       choices: [
@@ -1092,5 +1122,104 @@ describe('CatalogSeedService — snapshot carries stated preferences (16-s1 AC 3
     const softLine = user.split('\n').find((l) => l.startsWith('dietary_flags'));
     expect(softLine).toBeDefined();
     expect(softLine).not.toContain('halal');
+  });
+});
+
+// ===========================================================================
+// Slice 16-s1 (AC 12, task 6) — primary_starch / primary_protein flow from
+// the LLM item schema through to onboarding_chip_suggestions, powering the
+// deterministic diversity backstop in CatalogProjectionService.
+// ===========================================================================
+describe('CatalogSeedService — primary_starch/primary_protein persistence (16-s1 AC 12)', () => {
+  it('persists the LLM-classified starch/protein for each survivor', async () => {
+    const deps = buildDeps();
+    deps.openai.chat.completions.create.mockResolvedValue({
+      choices: [
+        {
+          message: {
+            content: JSON.stringify({
+              items: [
+                {
+                  canonical_name: 'Chicken Rice Bowl',
+                  allergen_flags: [],
+                  dietary_flags: [],
+                  cultural_tags: [],
+                  cuisine_tags: ['south_asian'],
+                  applicable_slots: ['main'],
+                  primary_starch: 'rice',
+                  primary_protein: 'chicken',
+                },
+              ],
+            }),
+          },
+        },
+      ],
+    });
+
+    await buildService(deps).seedForHousehold(HOUSEHOLD_ID, REQUEST_ID);
+
+    const [, chipItems] = deps.onboardingChipSuggestionRepo.insertMany.mock.calls[0]!;
+    expect(chipItems[0]).toMatchObject({ primary_starch: 'rice', primary_protein: 'chicken' });
+  });
+
+  it('normalizes "none" and an empty string to null', async () => {
+    const deps = buildDeps();
+    deps.openai.chat.completions.create.mockResolvedValue({
+      choices: [
+        {
+          message: {
+            content: JSON.stringify({
+              items: [
+                {
+                  canonical_name: 'Fruit Cup',
+                  allergen_flags: [],
+                  dietary_flags: [],
+                  cultural_tags: [],
+                  cuisine_tags: [],
+                  applicable_slots: ['snack'],
+                  primary_starch: 'none',
+                  primary_protein: '',
+                },
+              ],
+            }),
+          },
+        },
+      ],
+    });
+
+    await buildService(deps).seedForHousehold(HOUSEHOLD_ID, REQUEST_ID);
+
+    const [, chipItems] = deps.onboardingChipSuggestionRepo.insertMany.mock.calls[0]!;
+    expect(chipItems[0]).toMatchObject({ primary_starch: null, primary_protein: null });
+  });
+
+  it('drops an item missing primary_starch/primary_protein (required by the schema)', async () => {
+    const deps = buildDeps();
+    deps.openai.chat.completions.create.mockResolvedValue({
+      choices: [
+        {
+          message: {
+            // Deliberately omits primary_starch/primary_protein — the whole
+            // response fails CatalogSeedResponseSchema (array-of-item schema),
+            // same as any other malformed item.
+            content: JSON.stringify({
+              items: [
+                {
+                  canonical_name: 'Old Shape Item',
+                  allergen_flags: [],
+                  dietary_flags: [],
+                  cultural_tags: [],
+                  cuisine_tags: [],
+                  applicable_slots: ['main'],
+                },
+              ],
+            }),
+          },
+        },
+      ],
+    });
+
+    await expect(buildService(deps).seedForHousehold(HOUSEHOLD_ID, REQUEST_ID)).rejects.toThrow();
+    expect(deps.onboardingChipSuggestionRepo.insertMany).not.toHaveBeenCalled();
   });
 });
