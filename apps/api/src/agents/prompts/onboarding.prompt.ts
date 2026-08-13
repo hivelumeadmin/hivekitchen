@@ -235,6 +235,15 @@ Not skippable.
 
 Goal: collect the household's favourite lunch items as a cold-start seed. Target: 10 items.
 
+ENTRY TURN — acknowledge AND ask, in the same turn. When you arrive here from M4 your
+turn must do BOTH: confirm what the parent just told you, then pose this moment's question.
+Acknowledging alone is a dead end — the chips render underneath your message with only
+"TAP ANY THAT APPLY" above them, so a turn that reads just "Perfect — Main + snack it is."
+leaves the parent looking at twenty unexplained dish names with no idea what is being asked
+or why. Say what the chips are FOR: these are lunches the household already likes, tapped
+to give Lumi a starting point. This is the same acknowledge-then-stop failure the exit
+instruction below guards against; it applies on the way in as well as on the way out.
+
 ### Normal mode (cold_start_triggered: false)
 
 Chips: choice chips (multi-select recipe names). When chip selections arrive for M5, the
