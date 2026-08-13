@@ -284,6 +284,133 @@ without a data migration.
 
 ---
 
+### Review Findings
+
+Adversarial review (2026-08-13) of commit `50ef972` (Tasks 1-2) via three independent
+layers: Blind Hunter (diff only, no project access), Edge Case Hunter (diff + repo read
+access), Acceptance Auditor (diff + this story + the Epic 16 brief). 23 raw findings →
+2 decision-needed, 10 patch, 6 defer, 4 dismissed as noise/refuted/already-handled.
+
+**Resolution (2026-08-13):** both decisions resolved as "leave bundled as-is." 8 of 10
+patches batch-applied and verified (typecheck clean, full API suite 2620 passing with the
+same single pre-existing voice/DST failure as before this review, lint unchanged at its
+one pre-existing false positive). 2 patches left as open action items below — both need a
+judgment call this review is not positioned to make unilaterally.
+
+- [x] [Review][Decision] Scope creep: the M2 "who is this for?" attribution-chip feature
+      is bundled into this commit — `buildM2AttributionChips`, `m2AttributionPending`/
+      `attributionChildren` chip logic, and a new `m2_attribution_pending` moment-state
+      slot threaded through `onboarding.service.ts` and ~35 test fixtures. Not referenced
+      by AC 1, AC 2, or AC 3, nor by this story's own File List for `onboarding.service.ts`.
+      **RESOLVED 2026-08-13 — user chose: leave bundled as-is.** No commit split, no
+      File List rewrite. The 6 defer findings inside this bundle stay deferred,
+      permanently out of 16-s1 scope (not "pending" — decision is final).
+- [x] [Review][Decision] Scope creep: the Stage 1 retry/throw redesign is bundled into
+      `catalog-seed.service.ts` — `seedForHousehold`'s failure contract changes from
+      "NEVER throws" to "THROWS on retryable failure," adds `Stage1RetryableError`, changes
+      `STAGE1_LLM_TIMEOUT_MS` 5s→30s, adds a `setStage1LastError` breadcrumb, and rewrites
+      7 pre-existing tests to `.rejects.toThrow()`. None of this is AC 3 (scoped to
+      `buildSnapshot`'s dietary/cuisine fields). This story's own Watch Out section
+      describes this retry work as "unreleased" pre-existing work, yet the diff shows it
+      landing with real +/- hunks in this commit — the File List under-reports it as
+      "3 AC 3 tests" only.
+      **RESOLVED 2026-08-13 — user chose: leave bundled as-is.** No commit split, no
+      File List rewrite. The defer findings inside this bundle stay deferred, permanently
+      out of 16-s1 scope (not "pending" — decision is final).
+
+- [x] [Review][Patch] Attempts tracking in `ensureStage1Seeded` is non-atomic and silently
+      resets to 0 whenever `getStage1Status()` throws — a flaky READ path (not seeding
+      itself) permanently pins `stage1_attempts` near 1 in the DB, defeating
+      `STAGE1_MAX_ATTEMPTS`. A narrower concurrent-call race on the same read-then-write
+      exists too (already partially acknowledged by the pre-existing
+      `incrementStage1Attempts` comment as a bounded tradeoff) — but does NOT create a
+      duplicate BullMQ job as initially suspected; BullMQ's own jobId semantics prevent two
+      concurrent `add()` calls on the same non-removed jobId from creating two jobs. The
+      only real leak is the counter. [onboarding.service.ts:~450-490] — FIXED: added
+      `attemptsKnown` gate; the increment is skipped entirely when the read failed, instead
+      of writing an unverified baseline. Tests: "does NOT write an attempts count when the
+      status read itself fails".
+- [x] [Review][Patch] `incrementStage1Attempts` throwing AFTER a successful `queue.add()`
+      is caught by the outer handler and logged as `stage1.enqueue_failed`, misreporting a
+      successful enqueue as a failure and leaving the attempts counter undercounted.
+      [onboarding.service.ts:~517] — FIXED: the increment now has its own try/catch with a
+      distinct `stage1.attempts_increment_failed` log action; the enqueue-failed log is no
+      longer reachable from a post-enqueue write failure. Test: "logs the post-enqueue
+      attempts-write failure distinctly, not as an enqueue failure".
+- [ ] [Review][Patch] Terminal BullMQ states `'completed'` and `'failed'` are treated
+      identically ("clear and re-add") in the dedup logic, but `'completed'` doesn't
+      guarantee `stage1_completed_at` was actually set — the bundled retry redesign's
+      quiet-terminal-failure path can resolve without throwing (state `'completed'`) while
+      never marking the household seeded, so this logic risks an unwanted duplicate reseed
+      or retrying something the redesign deliberately chose not to retry.
+      [onboarding.service.ts, ensureStage1Seeded dedup block]
+- [x] [Review][Patch] A tag present as `non_negotiable` in `map.dietary` AND also present
+      in the legacy `map.household.dietary_preferences` renders in BOTH
+      `dietary_non_negotiable` and `dietary_flags` — the legacy-column loop doesn't check
+      `dietaryNonNegotiable` before adding, producing a self-contradictory prompt.
+      [catalog-seed.service.ts, buildSnapshot] — FIXED: the legacy-column loop now checks
+      `dietaryNonNegotiable` before adding, same as the structured-table loop. Test: "does
+      not render a non_negotiable tag as a soft leaning even when it is also in the legacy
+      household column".
+- [x] [Review][Patch] The "never emits two identical tag lines" test is vacuous — since
+      `cuisine_tags` was deleted from the schema outright, it is now structurally
+      impossible for two identical lines to appear regardless of whether `cultural_tags`
+      renders correctly; the assertion would pass even if `cultural_tags` never rendered
+      at all. Should assert exactly 1 line, not `<= 1`. [catalog-seed.service.test.ts] —
+      FIXED: asserts the exact line `cultural_tags: south_asian`, not just a length bound.
+- [x] [Review][Patch] `getState()` handling is only tested for `'waiting'`/`'failed'`, not
+      `'active'`/`'delayed'`, though production code treats all three identically as
+      "in flight." [onboarding.service.test.ts] — FIXED: added a parameterized test
+      covering both `'active'` and `'delayed'`.
+- [x] [Review][Patch] `getStage1Status` returning `null` is an undocumented, untested,
+      silent early-return in `ensureStage1Seeded` — no comment on what a null status means,
+      no log, no test. [onboarding.service.ts] — FIXED: added an explanatory comment
+      (household row not found — deleted mid-interview or never provisioned) and a test.
+- [x] [Review][Patch] The eval harness's fake queue `getJob()` never returns an object with
+      `.remove()` — a future scenario modeling a stuck/terminal prior job would throw
+      (`remove is not a function`) rather than reproduce real queue behavior; the fake in
+      `onboarding.service.test.ts` for the same feature doesn't have this gap.
+      [onboarding-eval.harness.ts] — FIXED: `getJob()`'s returned object now includes
+      `remove()`, matching real BullMQ Job shape.
+- [ ] [Review][Patch] (optional/minor) Only a binary `non_negotiable`/soft split is
+      implemented — `'strong'` enforcement collapses into the same soft bucket as
+      `'default'`/`'just_for_context'`. Does not violate AC 3 as literally scoped (AC 3
+      frames this as a binary split) — flagged as a future enhancement, not a defect.
+      [catalog-seed.service.ts, buildSnapshot]
+- [x] [Review][Patch] (minor/nitpick) Fragile whole-blob `toContain`/`not.toContain`
+      substring assertions in the new AC 3 tests check the entire multi-line rendered
+      prompt rather than a specific field/line. [catalog-seed.service.test.ts] — FIXED:
+      narrowed to the specific `food_preferences` line.
+
+- [x] [Review][Defer] `setStage1LastError` breadcrumb write failure is silently swallowed
+      with no logging, contradicting the "never fail silently" philosophy stated elsewhere
+      in the same bundled redesign. [catalog-seed.service.ts] — deferred, bundled retry
+      redesign is out of 16-s1 scope pending the D1/D2 decision above.
+- [x] [Review][Defer] A later-step throw (e.g. `setStage1CompletedAt`) after catalog rows
+      are already persisted causes a BullMQ retry that reruns the LLM call and re-persists
+      from scratch, duplicating rows. Newly introduced by the bundled retry redesign, not
+      present before this commit, but not AC 1-3. [catalog-seed.service.ts] — deferred,
+      bundled retry redesign is out of 16-s1 scope pending the D1/D2 decision above.
+- [x] [Review][Defer] `enqueueRecovery`'s jobId doesn't include the trigger reason, so a
+      second recovery trigger with a different reason silently no-ops via jobId dedup and
+      is never recorded. [catalog-seed.service.ts] — deferred, confirmed pre-existing,
+      untouched by this diff's +/- hunks.
+- [x] [Review][Defer] Confusing M2-attribution-clearing heuristic —
+      `userMessage.trim().length > 0` doesn't actually distinguish "answered in prose" from
+      any other non-empty submission (including chip-generated turns); untested branch.
+      [onboarding.service.ts] — deferred, bundled M2-attribution feature is out of 16-s1
+      scope pending the D1/D2 decision above.
+- [x] [Review][Defer] `Stage1RetryableError.reason` is typed as bare `string` instead of a
+      literal union, so a typo at a new throw site compiles cleanly and silently produces
+      an unrecognized breadcrumb value. [catalog-seed.service.ts] — deferred, bundled retry
+      redesign is out of 16-s1 scope pending the D1/D2 decision above.
+- [x] [Review][Defer] Copy-pasted, undifferentiated comment repeated verbatim across 6
+      rewritten tests in the bundled retry redesign's test changes.
+      [catalog-seed.service.test.ts] — deferred, bundled retry redesign is out of 16-s1
+      scope pending the D1/D2 decision above.
+
+---
+
 ## Dev Notes
 
 ### The system after this slice (target state)

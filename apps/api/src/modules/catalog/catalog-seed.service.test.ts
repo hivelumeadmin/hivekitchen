@@ -873,10 +873,17 @@ describe('CatalogSeedService — snapshot carries stated preferences (16-s1 AC 3
 
     await buildService(deps).seedForHousehold(HOUSEHOLD_ID, REQUEST_ID);
 
-    const user = userPromptFrom(deps);
-    expect(user).toContain('pasta');
+    // Review follow-up (16-s1) — check the specific food_preferences line
+    // rather than the whole prompt blob: a whole-blob toContain/not.toContain
+    // pair is exactly the kind of ambiguous-match risk this diff's prompt
+    // changes are themselves trying to eliminate from the LLM's output.
+    const foodPrefLine = userPromptFrom(deps)
+      .split('\n')
+      .find((l) => l.startsWith('food_preferences'));
+    expect(foodPrefLine).toBeDefined();
+    expect(foodPrefLine).toContain('pasta');
     // Only loves/likes are forwarded — a refused item must not read as a hint.
-    expect(user).not.toContain('okra');
+    expect(foodPrefLine).not.toContain('okra');
   });
 
   it('never emits two identical tag lines (cuisine was aliased to culture)', async () => {
@@ -887,10 +894,13 @@ describe('CatalogSeedService — snapshot carries stated preferences (16-s1 AC 3
     const lines = userPromptFrom(deps)
       .split('\n')
       .map((l) => l.trim())
-      .filter((l) => l.includes(':') && l.endsWith('south_asian'));
+      .filter((l) => l.endsWith('south_asian'));
     // Previously `cultural_tags: south_asian` and `cuisine_tags: south_asian`
-    // were both rendered from map.cultural.active[].key.
-    expect(lines.length).toBeLessThanOrEqual(1);
+    // were both rendered from map.cultural.active[].key. Review follow-up
+    // (16-s1) — assert exactly 1: since cuisine_tags no longer exists in the
+    // schema at all, `<= 1` was vacuous (it would also pass at 0, i.e. even if
+    // cultural_tags silently stopped rendering).
+    expect(lines).toEqual(['cultural_tags: south_asian']);
   });
 
   it('renders a non_negotiable dietary tag as a hard exclusion, separately from soft ones', async () => {
@@ -923,5 +933,31 @@ describe('CatalogSeedService — snapshot carries stated preferences (16-s1 AC 3
     // The soft one must NOT be presented as a hard rule.
     expect(hardLine).not.toContain('low_sugar');
     expect(user).toContain('low_sugar');
+  });
+
+  // Review follow-up (16-s1) — the legacy household.dietary_preferences loop
+  // didn't check dietaryNonNegotiable before adding, so a tag present in BOTH
+  // sources rendered as a hard exclusion AND a soft leaning simultaneously —
+  // a self-contradictory prompt.
+  it('does not render a non_negotiable tag as a soft leaning even when it is also in the legacy household column', async () => {
+    const map = buildKitchenMap();
+    map.household.dietary_preferences = ['halal'];
+    map.dietary = [
+      {
+        child_id: null,
+        tag: 'halal',
+        enforcement: 'non_negotiable',
+        source: 'onboarding_declared',
+      },
+    ];
+    const deps = buildDeps();
+    deps.kitchenMapService.get.mockResolvedValue(map);
+
+    await buildService(deps).seedForHousehold(HOUSEHOLD_ID, REQUEST_ID);
+
+    const user = userPromptFrom(deps);
+    const softLine = user.split('\n').find((l) => l.startsWith('dietary_flags'));
+    expect(softLine).toBeDefined();
+    expect(softLine).not.toContain('halal');
   });
 });

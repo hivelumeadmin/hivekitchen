@@ -1,5 +1,14 @@
 # Deferred Work Log
 
+## Deferred from: code review of 16-s1-chips-from-generation-not-catalog (2026-08-13)
+
+- **`setStage1LastError` breadcrumb write failure is silently swallowed with no logging** — contradicts the "never fail silently" philosophy stated elsewhere in the same bundled redesign. Deferred, bundled retry redesign is out of 16-s1 scope pending a decision on the scope-creep findings (M2 attribution feature + Stage 1 retry/throw redesign bundled into this commit). [`apps/api/src/modules/catalog/catalog-seed.service.ts`]
+- **A later-step throw (e.g. `setStage1CompletedAt`) after catalog rows are already persisted causes a BullMQ retry that reruns the LLM call and re-persists from scratch, duplicating rows** — newly introduced by the bundled retry redesign, not present before this commit, but not part of AC 1-3. Deferred pending the same scope decision. [`apps/api/src/modules/catalog/catalog-seed.service.ts`]
+- **`enqueueRecovery`'s jobId doesn't include the trigger reason, so a second recovery trigger with a different reason silently no-ops via jobId dedup and is never recorded** — confirmed pre-existing, untouched by this diff's +/- hunks. [`apps/api/src/modules/catalog/catalog-seed.service.ts`]
+- **Confusing M2-attribution-clearing heuristic** — `userMessage.trim().length > 0` doesn't actually distinguish "answered in prose" from any other non-empty submission (including chip-generated turns); untested branch. Deferred, bundled M2-attribution feature is out of 16-s1 scope pending the same scope decision. [`apps/api/src/modules/onboarding/onboarding.service.ts`]
+- **`Stage1RetryableError.reason` is typed as bare `string` instead of a literal union** — a typo at a new throw site compiles cleanly and silently produces an unrecognized breadcrumb value. Deferred pending the same scope decision. [`apps/api/src/modules/catalog/catalog-seed.service.ts`]
+- **Copy-pasted, undifferentiated comment repeated verbatim across 6 rewritten tests** in the bundled retry redesign's test changes. Deferred pending the same scope decision. [`apps/api/src/modules/catalog/catalog-seed.service.test.ts`]
+
 ## Deferred from: code review of 15-s8-constraint-resolver-tiers (2026-08-03)
 
 - **`buildSoftWeights`'s dietary-tag fan-out has no dedup guard** — a household-wide row (`child_id: null`) and a child-scoped row for the same tag both survive the filter, producing a duplicate `{tag, enforcement}` entry for that child. No correctness impact (soft weights are advisory hints, not a binary gate) and no AC requires dedup. [`apps/api/src/modules/constraint-resolver/constraint-resolver.ts:168-170`]

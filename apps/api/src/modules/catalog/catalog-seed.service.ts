@@ -702,8 +702,15 @@ export class CatalogSeedService {
     }
 
     const dietaryFlags = new Set<string>();
-    // The legacy household column carries no enforcement, so it stays soft.
-    for (const tag of map.household.dietary_preferences) dietaryFlags.add(tag);
+    // The legacy household column carries no enforcement, so it defaults to
+    // soft — UNLESS the same tag is also declared non_negotiable via the
+    // structured table, in which case the hard exclusion wins. Review
+    // follow-up (16-s1): this loop used to skip the dietaryNonNegotiable
+    // check, so an overlapping tag rendered as both a hard exclusion and a
+    // soft leaning in the same prompt.
+    for (const tag of map.household.dietary_preferences) {
+      if (!dietaryNonNegotiable.has(tag)) dietaryFlags.add(tag);
+    }
     for (const d of map.dietary) {
       if (!dietaryNonNegotiable.has(d.tag)) dietaryFlags.add(d.tag);
     }

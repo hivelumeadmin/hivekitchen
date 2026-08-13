@@ -87,6 +87,9 @@ interface BuildOpts {
   // skips the whole block when the repo is absent.
   wireHouseholdsRepository?: boolean;
   stage1Status?: { completedAt: string | null; attempts: number } | null;
+  // Slice 16-s1 review follow-up — model getStage1Status() throwing (a
+  // transient DB/network read failure), independent of stage1Status.
+  stage1StatusReadFails?: boolean;
   // Slice 2.7-s5 — recorded tool-call summaries the agent mock returns. Used by
   // the ratification-via-tool tests to assert the M3 ratification chip renders
   // from a dietary.declare / cuisine.declare RESULT (not a prose sentinel).
@@ -188,23 +191,27 @@ function buildService(opts: BuildOpts) {
 
   const householdsRepository = opts.wireHouseholdsRepository
     ? {
-        getStage1Status: vi
-          .fn()
-          .mockResolvedValue(
-            opts.stage1Status === undefined
-              ? { completedAt: null, attempts: 0 }
-              : opts.stage1Status,
-          ),
+        getStage1Status:
+          opts.stage1StatusReadFails === true
+            ? vi.fn().mockRejectedValue(new Error('connection reset'))
+            : vi
+                .fn()
+                .mockResolvedValue(
+                  opts.stage1Status === undefined
+                    ? { completedAt: null, attempts: 0 }
+                    : opts.stage1Status,
+                ),
         incrementStage1Attempts: vi.fn().mockResolvedValue(undefined),
         setStage1LastError: vi.fn().mockResolvedValue(undefined),
       }
     : undefined;
 
+  const logger = makeLogger();
   const deps: OnboardingServiceDeps = {
     threads: threads as unknown as OnboardingServiceDeps['threads'],
     agent: agent as unknown as OnboardingServiceDeps['agent'],
     culturalPriorService: {} as OnboardingServiceDeps['culturalPriorService'],
-    logger: makeLogger(),
+    logger,
     momentRepository:
       momentRepository as unknown as OnboardingServiceDeps['momentRepository'],
     catalogProjection:
@@ -225,6 +232,7 @@ function buildService(opts: BuildOpts) {
     catalogSeedQueue,
     householdsRepository,
     existingSeedJob,
+    logger,
   };
 }
 
@@ -636,6 +644,162 @@ describe('OnboardingService.submitTextTurn — catalog-seed enqueue at m3_taste 
     });
     expect(householdsRepository?.incrementStage1Attempts).toHaveBeenCalledWith(HOUSEHOLD_ID, 2);
   });
+
+  // Review follow-up (16-s1) — a status-read failure must not be recorded as
+  // "attempt 1" every time. The real DB count is unknown, so writing anything
+  // pins stage1_attempts at 1 forever if the read path stays flaky, silently
+  // defeating STAGE1_MAX_ATTEMPTS (the code still enqueues on a read failure
+  // by design — this only guards the attempts bookkeeping, not the enqueue).
+  it('does NOT write an attempts count when the status read itself fails', async () => {
+    const { service, catalogSeedQueue, householdsRepository } = buildService({
+      agentText: 'Noted.',
+      preTurnMomentState: {
+        current_moment: 'm3_taste',
+        required_set_status: {
+          m1_household_name: true,
+          m1_child_declared: true,
+          m2_allergen_response: true,
+          m3_answered: false,
+          m2_attribution_pending: [],
+          m5_favorite_count: 0,
+          m5_complete: false,
+        },
+      },
+      countsOverride: { household_name_set: true, child_count: 1 },
+      wireCatalogSeedQueue: true,
+      wireHouseholdsRepository: true,
+      stage1StatusReadFails: true,
+    });
+
+    await service.submitTextTurn({
+      userId: USER_ID,
+      householdId: HOUSEHOLD_ID,
+      message: '[Chips selected: vegetarian]',
+    });
+
+    await vi.waitFor(() => {
+      expect(catalogSeedQueue?.add).toHaveBeenCalledTimes(1);
+    });
+    expect(householdsRepository?.incrementStage1Attempts).not.toHaveBeenCalled();
+  });
+
+  // Review follow-up (16-s1) — incrementStage1Attempts throwing AFTER a
+  // successful add() must not be logged as an enqueue failure: the job WAS
+  // created, and the log line is the operational signal someone debugging a
+  // "stuck household" would trust.
+  it('logs the post-enqueue attempts-write failure distinctly, not as an enqueue failure', async () => {
+    const { service, catalogSeedQueue, householdsRepository, logger } = buildService({
+      agentText: 'Noted.',
+      preTurnMomentState: {
+        current_moment: 'm3_taste',
+        required_set_status: {
+          m1_household_name: true,
+          m1_child_declared: true,
+          m2_allergen_response: true,
+          m3_answered: false,
+          m2_attribution_pending: [],
+          m5_favorite_count: 0,
+          m5_complete: false,
+        },
+      },
+      countsOverride: { household_name_set: true, child_count: 1 },
+      wireCatalogSeedQueue: true,
+      wireHouseholdsRepository: true,
+    });
+    householdsRepository!.incrementStage1Attempts.mockRejectedValue(new Error('write failed'));
+
+    await service.submitTextTurn({
+      userId: USER_ID,
+      householdId: HOUSEHOLD_ID,
+      message: '[Chips selected: vegetarian]',
+    });
+
+    // The job was already added before the failing write; that must stand.
+    await vi.waitFor(() => {
+      expect(catalogSeedQueue?.add).toHaveBeenCalledTimes(1);
+    });
+    const logCalls = (logger.error as ReturnType<typeof vi.fn>).mock.calls as Array<
+      [{ action?: string }, ...unknown[]]
+    >;
+    expect(logCalls.some(([ctx]) => ctx.action === 'stage1.enqueue_failed')).toBe(false);
+    expect(
+      logCalls.some(([ctx]) => ctx.action === 'stage1.attempts_increment_failed'),
+    ).toBe(true);
+  });
+
+  // Review follow-up (16-s1) — getStage1Status() returning null (household row
+  // not found) must abandon the ensure cleanly, without ever calling add().
+  it('does NOT enqueue when the household status row is not found', async () => {
+    const { service, catalogSeedQueue } = buildService({
+      agentText: 'Noted.',
+      preTurnMomentState: {
+        current_moment: 'm3_taste',
+        required_set_status: {
+          m1_household_name: true,
+          m1_child_declared: true,
+          m2_allergen_response: true,
+          m3_answered: false,
+          m2_attribution_pending: [],
+          m5_favorite_count: 0,
+          m5_complete: false,
+        },
+      },
+      countsOverride: { household_name_set: true, child_count: 1 },
+      wireCatalogSeedQueue: true,
+      wireHouseholdsRepository: true,
+      stage1Status: null,
+    });
+
+    await service.submitTextTurn({
+      userId: USER_ID,
+      householdId: HOUSEHOLD_ID,
+      message: '[Chips selected: vegetarian]',
+    });
+
+    // No positive edge to wait on (the function returns early), so wait a tick
+    // for the fire-and-forget call to run, then assert it never reached add().
+    await vi.waitFor(() => {
+      expect(catalogSeedQueue?.getJob).not.toHaveBeenCalled();
+    });
+    expect(catalogSeedQueue?.add).not.toHaveBeenCalled();
+  });
+
+  // Review follow-up (16-s1) — the getState() in-flight branch must not
+  // silently misclassify BullMQ's other non-terminal states.
+  it.each(['active', 'delayed'] as const)(
+    'does NOT enqueue while an existing seed job is %s (non-terminal)',
+    async (jobState) => {
+      const { service, catalogSeedQueue } = buildService({
+        agentText: 'Noted.',
+        preTurnMomentState: {
+          current_moment: 'm3_taste',
+          required_set_status: {
+            m1_household_name: true,
+            m1_child_declared: true,
+            m2_allergen_response: true,
+            m3_answered: false,
+            m2_attribution_pending: [],
+            m5_favorite_count: 0,
+            m5_complete: false,
+          },
+        },
+        countsOverride: { household_name_set: true, child_count: 1 },
+        wireCatalogSeedQueue: true,
+        existingSeedJobState: jobState,
+      });
+
+      await service.submitTextTurn({
+        userId: USER_ID,
+        householdId: HOUSEHOLD_ID,
+        message: '[Chips selected: vegetarian]',
+      });
+
+      await vi.waitFor(() => {
+        expect(catalogSeedQueue?.getJob).toHaveBeenCalled();
+      });
+      expect(catalogSeedQueue?.add).not.toHaveBeenCalled();
+    },
+  );
 
   it('does NOT enqueue the seed on a turn that does not leave m2_safe', async () => {
     // Slice 2.7-s7 — the seed fires only on the controller's m2_safe EXIT. A

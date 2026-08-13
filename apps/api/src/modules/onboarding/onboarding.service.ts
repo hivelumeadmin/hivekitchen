@@ -448,9 +448,17 @@ export class OnboardingService {
     }
 
     let attempts = 0;
+    // Review follow-up (16-s1) — tracks whether `attempts` reflects a real read.
+    // On a read failure we still enqueue (see below), but we must NOT write an
+    // attempts count we don't actually know: doing so pinned stage1_attempts at
+    // 1 forever whenever the read path was flaky, silently defeating
+    // STAGE1_MAX_ATTEMPTS.
+    let attemptsKnown = false;
     if (this.householdsRepository !== undefined) {
       try {
         const status = await this.householdsRepository.getStage1Status(householdId);
+        // No household row — deleted mid-interview, or never provisioned.
+        // Nothing to seed; abandon the ensure cleanly.
         if (status === null) return;
         if (status.completedAt !== null) return; // already seeded — nothing to do
         if (status.attempts >= STAGE1_MAX_ATTEMPTS) {
@@ -466,10 +474,12 @@ export class OnboardingService {
           return;
         }
         attempts = status.attempts;
+        attemptsKnown = true;
       } catch (err) {
         // A status read failure must not block the enqueue: seeding twice is
         // harmless (the service is idempotent on stage1_completed_at), never
-        // seeding is not.
+        // seeding is not. It must also not touch the attempts count — see
+        // attemptsKnown above.
         this.logger.warn(
           { err, module: 'onboarding', action: 'stage1.status_read_failed', household_id: householdId },
           'Stage 1 status read failed — enqueueing anyway',
@@ -512,9 +522,6 @@ export class OnboardingService {
         { household_id: householdId, request_id: randomUUID() },
         { ...CATALOG_SEED_JOB_OPTS, jobId },
       );
-      // Count the ENQUEUE, not the run: a job the worker never picks up must
-      // still consume an attempt, or a dead worker means an unbounded loop.
-      await this.householdsRepository?.incrementStage1Attempts(householdId, attempts + 1);
       this.logger.info(
         {
           module: 'onboarding',
@@ -524,6 +531,28 @@ export class OnboardingService {
         },
         'Stage 1 catalog seed enqueued',
       );
+      // Count the ENQUEUE, not the run: a job the worker never picks up must
+      // still consume an attempt, or a dead worker means an unbounded loop.
+      // Only write when we know the real baseline (attemptsKnown) — writing an
+      // absolute value derived from a failed read would silently pin the
+      // count. Isolated in its own try/catch: the job is already enqueued at
+      // this point, so a write failure here is NOT an enqueue failure and must
+      // not be logged or handled as one.
+      if (attemptsKnown) {
+        try {
+          await this.householdsRepository?.incrementStage1Attempts(householdId, attempts + 1);
+        } catch (err) {
+          this.logger.error(
+            {
+              err,
+              module: 'onboarding',
+              action: 'stage1.attempts_increment_failed',
+              household_id: householdId,
+            },
+            'Stage 1 catalog seed enqueued, but the attempts counter write failed',
+          );
+        }
+      }
     } catch (err) {
       this.logger.error(
         { err, module: 'onboarding', action: 'stage1.enqueue_failed', household_id: householdId },

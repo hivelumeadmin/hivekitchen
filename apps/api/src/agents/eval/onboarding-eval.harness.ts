@@ -767,8 +767,22 @@ function makeCatalogSeedQueueFake(): CatalogSeedQueueFake {
       if (opts?.jobId !== undefined) queued.add(opts.jobId);
       calls.push({ jobName, payload });
     },
-    getJob: async (jobId: string): Promise<{ getState: () => Promise<string> } | null> =>
-      queued.has(jobId) ? { getState: async (): Promise<string> => 'waiting' } : null,
+    getJob: async (
+      jobId: string,
+    ): Promise<{ getState: () => Promise<string>; remove: () => Promise<void> } | null> =>
+      queued.has(jobId)
+        ? {
+            getState: async (): Promise<string> => 'waiting',
+            // Review follow-up (16-s1) — production code calls .remove() on a
+            // terminal ('completed'/'failed') job before re-adding. No golden
+            // scenario currently drives a terminal job through this fake, but
+            // without this the fake would throw `remove is not a function`
+            // rather than reproduce real BullMQ Job behavior if one ever did.
+            remove: async (): Promise<void> => {
+              queued.delete(jobId);
+            },
+          }
+        : null,
   } as unknown as OnboardingServiceDeps['catalogSeedQueue'];
   return { calls, queue };
 }
