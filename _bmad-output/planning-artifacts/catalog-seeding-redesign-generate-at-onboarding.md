@@ -1,6 +1,6 @@
 # Slice proposal: retire Stage 0, generate the M5 chip set from stated preferences
 
-Status: proposal — open decisions below, not ready-for-dev
+Status: decisions resolved 2026-08-13 — decomposed into 16-s1 / 16-s2 / 16-s3
 Authored: 2026-08-13
 Origin: live onboarding run surfaced a chip list where ~16 of 20 options were rice-based
 
@@ -101,10 +101,13 @@ Collapse three stages into one well-informed generation, and stop seeding recipe
 onboarding entirely.
 
 ```
-M5 entry  → LLM generates ~30 chip suggestions from M1–M4
-             (children, declared allergens, stated taste/cuisine, bag composition)
-          → deterministic allergen filter  (see open decision 1)
-          → "Lumi is putting together some ideas…" then render chips
+M3 exit   → enqueue generation from M1–M3
+             (children, declared allergens, STATED taste/cuisine + dietary enforcement)
+          → LLM returns ~30 chip suggestions
+          → deterministic allergen filter + block logging  (decision 1: KEEP)
+M5 entry  → if ready: render the full set (decision 3: blocking)
+             if not:  "Lumi is putting together some ideas…", poll, then render
+             if failed / too few survive: curated 50 fallback (decision 2)
 onboarding complete
           → seed recipes ONCE, with the full picture including the chips actually tapped
 ```
@@ -128,7 +131,7 @@ onboarding complete
 Not personalisation — its "personalisation" is a `cuisine_tags &&` overlap filter over 50
 fixed rows, which cannot express vegan × Mediterranean × halal × regional availability.
 Its one real function is **guaranteeing M5 is never empty**. That guarantee must be
-preserved by whatever replaces it (open decision 2), because:
+preserved by whatever replaces it (decision 2: curated 50 stays as a read-only fallback), because:
 
 - the LLM call can time out (30s budget), and
 - the allergy guardrail can block most of a response — `STAGE2_MASS_BLOCK_RATIO = 0.5`
@@ -136,9 +139,20 @@ preserved by whatever replaces it (open decision 2), because:
 
 ---
 
-## Open decisions
+## Decisions — ALL RESOLVED 2026-08-13
 
-### 1. Deterministic allergen filter on chip suggestions — KEEP or DROP
+| # | Decision | Outcome |
+|---|---|---|
+| 1 | Allergen filter on generated chips | **KEEP**, and log every blocked suggestion with its reason |
+| 2 | Fallback when generation fails | **Curated 50 as read-only fallback**, never materialised into `recipes` |
+| 3 | Rendering | **Blocking** — generating state, then the full set |
+| 4 | Trigger | **M3 exit**, reusing the existing enqueue-early / poll-at-M5 / cold-start path |
+| 5 | Stage 1 / Stage 2 | **Repurpose**, do not delete — see below |
+
+Slices authored from these: `16-s1`, `16-s2`, `16-s3` (registered in sprint-status.yaml).
+Original rationale for each decision is preserved below.
+
+### 1. Deterministic allergen filter — RESOLVED: KEEP, and log what it blocks
 
 **Proposed during design:** rely on the LLM's own allergen checks for chips, on the
 grounds that a chip is only a suggestion and a parent will not tap something unsuitable
@@ -168,7 +182,7 @@ app was not listening about the thing that matters most.
 and rejects good suggestions): instrument first. Run the filter in shadow mode, log what it
 *would* have blocked, and review the real rate before removing it from the path.
 
-### 2. Fallback when generation fails or is gutted by the filter
+### 2. Fallback — RESOLVED: option (a), curated 50 as read-only fallback
 
 M5 must never render empty. Options:
 
@@ -180,20 +194,20 @@ M5 must never render empty. Options:
 (a) is the smallest change and reuses work already committed. (c) is arguably the most
 honest but leans hardest on the model mid-onboarding.
 
-### 3. Blocking vs progressive rendering
+### 3. Rendering — RESOLVED: blocking
 
 Wait for the full set before showing anything, or stream chips as they arrive? Blocking is
 simpler and matches the agreed "advise the parent, then show". Progressive adds a partial-
 state to design and test.
 
-### 4. Trigger point — M5 entry vs M3 exit
+### 4. Trigger — RESOLVED: M3 exit
 
 M3 exit buys roughly two moments of generation time, hiding most of the wait, at the cost
 of not knowing bag composition (M4). M4 likely does not change *which lunches a household
 likes*, so M3 exit may be strictly better UX for near-zero information loss. Needs a
 product call.
 
-### 5. Fate of Stage 1 and Stage 2
+### 5. Stage 1 / Stage 2 — RESOLVED: repurpose, do not delete
 
 If generation moves to M5/M3 and recipe seeding moves to post-onboarding, the current
 Stage 1 trigger and the Stage 2 recovery path both need re-scoping or removal. Stage 2's

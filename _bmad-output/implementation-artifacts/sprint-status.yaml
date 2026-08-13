@@ -640,5 +640,22 @@ development_status:
   # dropped anyway, run the filter in shadow mode first and review the real
   # block rate.
   # ==========================================================================
+  # DECISIONS RESOLVED 2026-08-13 — decomposed into the 3 slices below.
+  #   1. Allergen filter on generated chips: KEEP + log every block with reason.
+  #   2. Fallback: curated 50 stays as a READ-ONLY chip source, never
+  #      materialized into recipes. Invisible unless generation fails.
+  #   3. Rendering: BLOCKING — generating state, then the full set.
+  #   4. Trigger: M3 EXIT, reusing the existing enqueue-early / poll-at-M5 /
+  #      cold-start machinery rather than inventing a new wait path.
+  #   5. Stage 1 / Stage 2: REPURPOSE, do not delete. Stage 1 already owns
+  #      snapshot building, Zod parsing, guardrail filtering, timeout + retry —
+  #      it becomes the chip generator minus the recipes write. Stage 2's
+  #      floors move to guard the post-onboarding seed.
+  # ORDERING IS LOAD-BEARING: 16-s1 must land before 16-s3. s3 stops writing
+  # recipes during onboarding, and until s1 has moved chips off the seeded
+  # catalog that would leave M5 with nothing to render.
   epic-16: backlog
+  16-s1-chips-from-generation-not-catalog: backlog    # WALL: the pivot. Generate chip suggestions at M3 exit from STATED preferences (M1-M3), deterministic allergen filter + block logging, curated-50 read-only fallback. Chip source moves off the seeded catalog entirely. Stage 0 still materializes (harmless, now unused for chips) so this slice is independently revertable. DEMO: a vegan Mediterranean household and a halal South Asian household get visibly different chip sets from the same build.
+  16-s2-generating-state-ui: backlog                  # Blocking generating state at M5 — explanatory copy while the poll runs, then the full set. Reuses coldStartTriggered + the 5s poll. DEMO: parent sees "Lumi is putting together some ideas…" instead of a silent wait or a bare chip grid.
+  16-s3-retire-stage0-defer-seeding: backlog          # Stop Stage 0 materializing at household creation AND at M3 exit; defer ALL recipe seeding until onboarding completes, seeded once with the declared favourites included; re-scope Stage 2's floors (35 rows / 0.5 block ratio) to guard the post-onboarding seed instead of a mid-onboarding catalog. DEMO: zero recipes rows for a household mid-interview; one well-informed seed after.
   epic-16-retrospective: optional
