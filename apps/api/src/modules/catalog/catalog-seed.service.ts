@@ -39,16 +39,24 @@ import type { Stage2Trigger } from './catalog-recovery.service.js';
 //   5. Persist survivors via RecipesRepository.seedFromCatalogBaseline
 //   6. Set stage1_completed_at (success path only)
 //
-// NEVER throws. The job worker treats this as fire-and-forget — any failure
-// is logged and stage1_completed_at stays NULL so 2.6-s4's polling window
-// elapses and the cold-start fallback runs.
+// THROWS on retryable failure. It used to swallow everything, which meant the
+// worker's `attempts: 2` retry config never fired — the job always resolved
+// "successfully" and a single LLM timeout stranded the household on the Stage 0
+// baseline permanently. Terminal failures (unreadable allergen data) still
+// return quietly: retrying a deterministic failure only burns the queue.
+// stage1_completed_at stays NULL on every failure path, so the M5 surface's
+// poll + cold-start fallback behave exactly as before.
 
 // Confidence for Stage 1 LLM-seeded rows — slightly less trusted than the
 // hand-curated baseline's 60.
 const STAGE1_CONFIDENCE_SCORE = 50;
-// LLM call hard timeout. The brief sets a 5s p95 SLA on the worker; the
-// 5000ms AbortSignal keeps the LLM portion bounded.
-const STAGE1_LLM_TIMEOUT_MS = 5_000;
+// LLM call hard timeout. This was 5s, borrowed from the M5 chip poll's 5s
+// window — but those are unrelated budgets. Nothing blocks on this call: it is
+// a background BullMQ job, and the M5 surface polls `stage1_completed_at`
+// independently and falls back on its own schedule. Asking gpt-4o for up to
+// 4,000 tokens of JSON inside 5s routinely aborted, which is the single most
+// likely reason a household ends up stranded on the Stage 0 baseline.
+const STAGE1_LLM_TIMEOUT_MS = 30_000;
 const STAGE1_LLM_MODEL = 'gpt-4o';
 const STAGE1_LLM_TEMPERATURE = 0.7;
 const STAGE1_LLM_MAX_TOKENS = 4_000;
@@ -97,6 +105,21 @@ const CatalogSeedResponseSchema = z.object({
 
 const VALID_SLOTS = new Set(['main', 'snack', 'extra']);
 type ValidSlot = 'main' | 'snack' | 'extra';
+
+/**
+ * A Stage 1 failure worth retrying — an LLM timeout, a transport error, or a
+ * malformed response. Already logged at its call site; the top-level handler
+ * rethrows it so BullMQ retries rather than marking the job done.
+ *
+ * Deliberately NOT used for terminal failures like unreadable allergen data:
+ * those are deterministic, and retrying them just burns queue capacity.
+ */
+class Stage1RetryableError extends Error {
+  constructor(readonly reason: string) {
+    super(`stage 1 seeding failed: ${reason}`);
+    this.name = 'Stage1RetryableError';
+  }
+}
 
 export interface CatalogSeedServiceDeps {
   openai: OpenAI;
@@ -295,7 +318,7 @@ export class CatalogSeedService {
           'stage 1 LLM call failed — stage1_completed_at left NULL',
         );
         this.enqueueRecovery(householdId, requestId, 'stage1_failure');
-        return;
+        throw new Stage1RetryableError(isAbort ? 'llm_timeout' : 'llm_error');
       } finally {
         clearTimeout(timeoutHandle);
       }
@@ -316,7 +339,7 @@ export class CatalogSeedService {
           'stage 1 LLM emitted non-JSON output — stage1_completed_at left NULL',
         );
         this.enqueueRecovery(householdId, requestId, 'stage1_failure');
-        return;
+        throw new Stage1RetryableError('response_not_json');
       }
 
       const responseParse = CatalogSeedResponseSchema.safeParse(parsedJson);
@@ -335,7 +358,7 @@ export class CatalogSeedService {
           'stage 1 LLM response failed schema parse — stage1_completed_at left NULL',
         );
         this.enqueueRecovery(householdId, requestId, 'stage1_failure');
-        return;
+        throw new Stage1RetryableError('response_schema_invalid');
       }
 
       const candidateCount = responseParse.data.items.length;
@@ -608,19 +631,34 @@ export class CatalogSeedService {
         );
       }
     } catch (err) {
-      // Catch-all so the BullMQ worker never sees an exception. Treat as a
-      // failure path — leave stage1_completed_at NULL.
-      this.logger.error(
-        {
-          module: 'catalog',
-          action: 'catalog.stage1.failed',
-          household_id: householdId,
-          request_id: requestId,
-          reason: 'unexpected_error',
-          err,
-        },
-        'stage 1 catalog seeding failed — stage1_completed_at left NULL',
-      );
+      // Retryable failures were already logged at their own call site with a
+      // precise action string; rethrow so the worker's `attempts: 2` engages.
+      // Before this, the service swallowed everything, the job always resolved
+      // "successfully", and the retry config was decorative.
+      const reason =
+        err instanceof Stage1RetryableError ? err.reason : 'unexpected_error';
+      if (!(err instanceof Stage1RetryableError)) {
+        this.logger.error(
+          {
+            module: 'catalog',
+            action: 'catalog.stage1.failed',
+            household_id: householdId,
+            request_id: requestId,
+            reason,
+            err,
+          },
+          'stage 1 catalog seeding failed — stage1_completed_at left NULL',
+        );
+      }
+      // Best-effort breadcrumb so stuck households are queryable:
+      //   SELECT id, stage1_attempts, stage1_last_error
+      //   FROM households WHERE stage1_completed_at IS NULL;
+      try {
+        await this.householdsRepo.setStage1LastError(householdId, reason);
+      } catch {
+        // Never let the breadcrumb write mask the original failure.
+      }
+      throw err instanceof Error ? err : new Error(String(err));
     }
   }
 
@@ -654,15 +692,21 @@ export class CatalogSeedService {
     }
     for (const p of map.cultural.active) culturalTags.add(p.key);
 
-    const dietaryFlags = new Set<string>();
-    for (const tag of map.household.dietary_preferences) dietaryFlags.add(tag);
-    for (const d of map.dietary) dietaryFlags.add(d.tag);
+    // Slice 16-s1 — split on enforcement instead of flattening to bare tags.
+    // The M5 projection filter drops items violating a non_negotiable dietary
+    // tag, so folding those in with soft leanings meant the prompt could be
+    // asked for dishes that were then silently discarded downstream.
+    const dietaryNonNegotiable = new Set<string>();
+    for (const d of map.dietary) {
+      if (d.enforcement === 'non_negotiable') dietaryNonNegotiable.add(d.tag);
+    }
 
-    const cuisineTags = new Set<string>();
-    // KitchenMap doesn't carry a top-level cuisine_tags array — cuisine
-    // emerges from cultural priors. Use cultural keys as the cuisine seed;
-    // the LLM treats culturals as broad and cuisines as specific.
-    for (const p of map.cultural.active) cuisineTags.add(p.key);
+    const dietaryFlags = new Set<string>();
+    // The legacy household column carries no enforcement, so it stays soft.
+    for (const tag of map.household.dietary_preferences) dietaryFlags.add(tag);
+    for (const d of map.dietary) {
+      if (!dietaryNonNegotiable.has(d.tag)) dietaryFlags.add(d.tag);
+    }
 
     const foodPreferences: string[] = [];
     for (const fp of map.food_preferences) {
@@ -684,7 +728,7 @@ export class CatalogSeedService {
       children: map.children.map((c) => ({ name: c.name, age_band: c.age_band })),
       allergen_exclusions: [...declaredAllergens],
       cultural_tags: [...culturalTags],
-      cuisine_tags: [...cuisineTags],
+      dietary_non_negotiable: [...dietaryNonNegotiable],
       dietary_flags: [...dietaryFlags],
       food_preferences: foodPreferences,
       bag_composition_slots: [...bagSlots],

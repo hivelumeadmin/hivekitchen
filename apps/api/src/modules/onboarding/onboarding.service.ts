@@ -5,6 +5,7 @@ import { OPENING_GREETING, M1_HINT_CHIPS, BagCompositionPatternSchema, type Chip
 import type { VocabularySnapshot } from '@hivekitchen/types';
 import {
   buildM2AllergenChips,
+  buildM2AttributionChips,
   buildM3TasteChips,
   buildM4BagChips,
   RATIFICATION_CHIPS,
@@ -13,6 +14,7 @@ import {
 } from './onboarding-chips.js';
 import {
   CATALOG_SEED_JOB_OPTS,
+  CATALOG_SEED_QUEUE,
   type CatalogSeedJobData,
 } from '../../jobs/catalog-seed.job.js';
 import { ConflictError, UpstreamError } from '../../common/errors.js';
@@ -31,6 +33,7 @@ import type { FoodPreferencesRepository } from '../food-preferences/food-prefere
 import type { SignalsService } from '../signals/signals.service.js';
 import type { RecipesRepository } from '../recipe/recipes.repository.js';
 import type { HouseholdRulesRepository } from '../household-rules/household-rules.repository.js';
+import type { HouseholdsRepository } from '../households/households.repository.js';
 import type { HouseholdsService } from '../households/households.service.js';
 import type { CuratedBaselineMaterializationService } from '../catalog/curated-baseline.service.js';
 import type { CatalogProjectionService } from '../catalog/catalog-projection.service.js';
@@ -109,6 +112,10 @@ export interface OnboardingServiceDeps {
   // M5 personalization — reads declared allergens so allergen-conflicting
   // recipes are excluded from the chip set before it is shown to the parent.
   householdAllergensRepository?: HouseholdAllergensRepository;
+  // Stage 1 retry accounting for the idempotent ensure (stage1_completed_at /
+  // stage1_attempts). Optional: without it the ensure degrades to the old
+  // fire-once behaviour rather than failing the turn.
+  householdsRepository?: HouseholdsRepository;
 }
 
 export interface SubmitTextTurnInput {
@@ -210,6 +217,11 @@ const M3_CHIP_KEYS = new Set([...M3_DIETARY_CHIP_KEYS, ...M3_CUISINE_CHIP_KEYS])
 // M4 bag chip keys — derived from BagCompositionPatternSchema so any new enum
 // value lights up the safety net without a second hand-edit (P2, 2.7-s5 CR).
 const M4_BAG_CHIP_KEYS: Set<string> = new Set(BagCompositionPatternSchema.options);
+
+// Bounds the idempotent Stage 1 ensure. Two checkpoints per interview (M2 exit,
+// M5 entry) means a healthy household enqueues once and the second checkpoint
+// no-ops; this cap only bites when seeding keeps failing.
+const STAGE1_MAX_ATTEMPTS = 3;
 
 // Slice 2.7-s7 — the M3 enforcement-ratification chip keys, derived from the
 // RATIFICATION_CHIPS source. Tapping one of these is the parent's M3 answer
@@ -354,6 +366,8 @@ export class OnboardingService {
   private readonly catalogProjection?: CatalogProjectionService;
   // M5 personalization — allergen filter
   private readonly householdAllergensRepository?: HouseholdAllergensRepository;
+  // Stage 1 retry accounting for the idempotent ensure
+  private readonly householdsRepository?: HouseholdsRepository;
   // Slice 2.7-s6 — deterministic FSM. Pure, stateless; safe to share one
   // instance across all turns. Runs in shadow (transition comparison + log)
   // and owns the AC3 slot-derived household-name chip swap.
@@ -385,6 +399,7 @@ export class OnboardingService {
     this.catalogSeedQueue = deps.catalogSeedQueue;
     this.catalogProjection = deps.catalogProjection;
     this.householdAllergensRepository = deps.householdAllergensRepository;
+    this.householdsRepository = deps.householdsRepository;
     this.turnRunner = new OnboardingTurnRunner({
       agent: this.agent,
       logger: this.logger,
@@ -412,6 +427,111 @@ export class OnboardingService {
   // filter), then projects the per-household chip set. Returns the chips +
   // coldStartReason for the caller to fold into the persisted state; never
   // throws (a projection failure surfaces as `failed`, leaving chip_config null).
+  /**
+   * Idempotent Stage 1 enqueue. Safe to call at any checkpoint: it no-ops when
+   * Stage 1 has already completed, and bounds itself with `stage1_attempts` so
+   * a household whose seeding permanently fails cannot spin the queue.
+   *
+   * Fire-and-forget by contract — awaiting it would put an LLM-backed
+   * background job on the interview's critical path. Every exit is logged;
+   * the one thing this must never do is fail silently, which is exactly what
+   * the previous `if (queue !== undefined)` guard did when the queue was
+   * missing (no else, no log, household stranded forever).
+   */
+  private async ensureStage1Seeded(householdId: string): Promise<void> {
+    if (this.catalogSeedQueue === undefined) {
+      this.logger.error(
+        { module: 'onboarding', action: 'stage1.queue_unavailable', household_id: householdId },
+        'Stage 1 catalog seed queue is not wired — household will be stuck on the Stage 0 baseline',
+      );
+      return;
+    }
+
+    let attempts = 0;
+    if (this.householdsRepository !== undefined) {
+      try {
+        const status = await this.householdsRepository.getStage1Status(householdId);
+        if (status === null) return;
+        if (status.completedAt !== null) return; // already seeded — nothing to do
+        if (status.attempts >= STAGE1_MAX_ATTEMPTS) {
+          this.logger.warn(
+            {
+              module: 'onboarding',
+              action: 'stage1.attempts_exhausted',
+              household_id: householdId,
+              attempts: status.attempts,
+            },
+            'Stage 1 seeding has failed repeatedly — leaving the household on the Stage 0 baseline',
+          );
+          return;
+        }
+        attempts = status.attempts;
+      } catch (err) {
+        // A status read failure must not block the enqueue: seeding twice is
+        // harmless (the service is idempotent on stage1_completed_at), never
+        // seeding is not.
+        this.logger.warn(
+          { err, module: 'onboarding', action: 'stage1.status_read_failed', household_id: householdId },
+          'Stage 1 status read failed — enqueueing anyway',
+        );
+      }
+    }
+
+    try {
+      // Slice 16-s1 — household-scoped dedup. Two checkpoints (m3_taste exit,
+      // m5_starting_line entry) fire per interview and BullMQ will not dedup on
+      // its own, so without this a healthy household enqueues twice.
+      const jobId = `${CATALOG_SEED_QUEUE}:${householdId}`;
+      const existing = await this.catalogSeedQueue.getJob(jobId);
+      if (existing !== undefined && existing !== null) {
+        const state = await existing.getState();
+        // Still in flight — the first checkpoint's job will do the work. Return
+        // WITHOUT incrementing: an attempt must track a job we actually created,
+        // or the second checkpoint silently halves the retry budget.
+        if (state !== 'completed' && state !== 'failed') {
+          this.logger.info(
+            {
+              module: 'onboarding',
+              action: 'stage1.enqueue_deduped',
+              household_id: householdId,
+              job_state: state,
+            },
+            'Stage 1 catalog seed already in flight — skipping duplicate enqueue',
+          );
+          return;
+        }
+        // Terminal. `removeOnComplete`/`removeOnFail` retain finished jobs, so
+        // the id stays occupied; drop it or a household whose seed failed could
+        // never be retried under the same jobId. STAGE1_MAX_ATTEMPTS still bounds
+        // the loop.
+        await existing.remove();
+      }
+
+      await this.catalogSeedQueue.add(
+        'seed-catalog',
+        { household_id: householdId, request_id: randomUUID() },
+        { ...CATALOG_SEED_JOB_OPTS, jobId },
+      );
+      // Count the ENQUEUE, not the run: a job the worker never picks up must
+      // still consume an attempt, or a dead worker means an unbounded loop.
+      await this.householdsRepository?.incrementStage1Attempts(householdId, attempts + 1);
+      this.logger.info(
+        {
+          module: 'onboarding',
+          action: 'stage1.enqueued',
+          household_id: householdId,
+          attempt: attempts + 1,
+        },
+        'Stage 1 catalog seed enqueued',
+      );
+    } catch (err) {
+      this.logger.error(
+        { err, module: 'onboarding', action: 'stage1.enqueue_failed', household_id: householdId },
+        'Stage 1 catalog seed job enqueue failed — onboarding turn not blocked',
+      );
+    }
+  }
+
   private async runM5Projection(
     householdId: string,
     currentMoment: CurrentMoment,
@@ -502,6 +622,8 @@ export class OnboardingService {
     ratificationRequested: boolean;
     coldStartTriggered: boolean;
     favoriteLunchCount: number;
+    /** Children to offer as M2 attribution options; empty when nothing is pending. */
+    attributionChildren: ReadonlyArray<{ id: string; name: string }>;
   }): ChipConfig | null {
     let chip_config: ChipConfig | null = momentToChipConfig(
       args.nextCurrentMoment,
@@ -538,6 +660,16 @@ export class OnboardingService {
     // enforcement ratification → show the 3-option action chips (no skip).
     if (args.ratificationRequested) {
       chip_config = RATIFICATION_CHIPS;
+    }
+
+    // M2 "who is this for?" — replaces the allergen chip set for the one turn
+    // the follow-up is outstanding. Last of the M2-relevant overrides so it
+    // wins over the base config; the controller has held the moment at m2_safe.
+    if (
+      args.controllerSlots?.m2AttributionPending === true &&
+      args.attributionChildren.length > 0
+    ) {
+      chip_config = buildM2AttributionChips(args.attributionChildren);
     }
 
     // Slice 2.5-s9 / 2.6-s6 — inject the override_fewer control chip once the
@@ -813,6 +945,8 @@ export class OnboardingService {
     const agentUsage = exec.agentUsage;
     const householdDisplayName = exec.householdDisplayName;
     const ratificationRequested = exec.ratificationRequested;
+    const m2AttributionFromTurn = exec.m2AttributionPending;
+    const attributionChildren = exec.m2AttributionChildren ?? [];
     const tracedKitchenMapBlock = exec.blocks.kitchenMap;
     const tracedMomentStateBlock = exec.blocks.momentState;
     const tracedVocabularyBlock = exec.blocks.vocabulary;
@@ -906,6 +1040,18 @@ export class OnboardingService {
           preTurnMomentState?.required_set_status.m2_allergen_response === true ||
           m2AnsweredThisTurn;
 
+        // "Who is this for?" — set when an ambiguous allergen tap deferred its
+        // declare, cleared when the parent answers. undefined from the runner
+        // means this turn said nothing about it, so carry the pre-turn value.
+        // A free-text turn while an ask is pending clears it: the parent
+        // answered in prose, the model owns the declare, and holding the gate
+        // on a question they already addressed would trap them in M2.
+        const carriedAttribution =
+          preTurnMomentState?.required_set_status.m2_attribution_pending ?? [];
+        const m2_attribution_pending =
+          m2AttributionFromTurn ??
+          (previousMoment === 'm2_safe' && userMessage.trim().length > 0 ? [] : carriedAttribution);
+
         // M3 (optional) — answered via cuisine/dietary chips or an explicit skip,
         // this turn or a prior turn (reproduces the deleted M3 chip auto-advance).
         // A ratification turn (request_ratification on the tool result) is NOT an
@@ -962,6 +1108,7 @@ export class OnboardingService {
           m1HouseholdName: counts.household_name_set,
           m1ChildDeclared: counts.child_count > 0,
           m2AllergenResponse: m2_allergen_response,
+          m2AttributionPending: m2_attribution_pending.length > 0,
           m3Answered,
           m4Answered,
           m5Complete: m5_complete,
@@ -969,17 +1116,21 @@ export class OnboardingService {
 
         // The controller is authoritative for current_moment (AC2/AC3). With no
         // prior moment row (fresh / resumed / reset) it reconstructs from slot
-        // state — re-anchoring past the OPTIONAL M3 when M1+M2 are already
-        // satisfied; otherwise it advances forward-only from the prior moment.
+        // state; otherwise it advances forward-only from the prior moment. Since
+        // 13-s6 M3 is a REQUIRED moment, so re-anchor lands an M1+M2-complete
+        // household ON m3_taste rather than skipping past it.
         // It caps at `summary` (finalize is the endpoint's responsibility).
         nextCurrentMoment =
           preTurnMomentState === null
             ? this.controller.reconstructMoment(controllerSlots)
             : this.controller.nextMoment(previousMoment, controllerSlots);
 
-        // Stage-1 catalog seed fires once when the controller leaves m2_safe.
-        const advancedOutOfM2 =
-          previousMoment === 'm2_safe' && nextCurrentMoment !== 'm2_safe';
+        // Slice 16-s1 — the Stage 1 seed fires when the controller leaves
+        // m3_taste, NOT m2_safe. The old M2 edge ran the generation before the
+        // parent had stated any taste, so the "personalised" catalog was built
+        // from declared allergens plus an inferred cultural template only.
+        const advancedOutOfM3 =
+          previousMoment === 'm3_taste' && nextCurrentMoment !== 'm3_taste';
 
         // Slice 2.6-s6 — run the catalog projection BEFORE upsertState so a
         // fresh cold-start trigger this turn flows into the persisted flag and
@@ -1009,6 +1160,7 @@ export class OnboardingService {
           m3_answered:
             m3Answered ||
             preTurnMomentState?.required_set_status.m3_answered === true,
+          m2_attribution_pending,
           m5_favorite_count: counts.favorite_lunch_count,
           m5_complete,
         };
@@ -1040,42 +1192,23 @@ export class OnboardingService {
           );
         }
 
-        // Slice 2.6-s3 — Stage 1 trigger: parent just advanced OUT of m2_safe.
-        // Fire-and-forget BullMQ enqueue — do NOT await. queue.add is
-        // synchronous from the JS event loop's perspective; wrap in try/catch
-        // so a queue.add error logs and lets the onboarding turn proceed
-        // (M2 advance is the user-visible signal; Stage 1 is best-effort and
-        // its absence falls through to the cold-start fallback in 2.6-s4).
-        if (advancedOutOfM2 && this.catalogSeedQueue !== undefined) {
-          try {
-            this.catalogSeedQueue
-              .add(
-                'seed-catalog',
-                { household_id: input.householdId, request_id: randomUUID() },
-                CATALOG_SEED_JOB_OPTS,
-              )
-              .catch((err: unknown) => {
-                this.logger.error(
-                  {
-                    module: 'onboarding',
-                    action: 'stage1.enqueue_failed',
-                    household_id: input.householdId,
-                    err,
-                  },
-                  'Stage 1 catalog seed job enqueue failed (async) — M2 completion not blocked',
-                );
-              });
-          } catch (err) {
-            this.logger.error(
-              {
-                module: 'onboarding',
-                action: 'stage1.enqueue_failed',
-                household_id: input.householdId,
-                err,
-              },
-              'Stage 1 catalog seed job enqueue failed — M2 completion not blocked',
-            );
-          }
+        // Stage 1 catalog seeding. Checked at TWO points, not one: leaving
+        // m3_taste (the earliest moment the parent's STATED taste is known) and
+        // entering m5_starting_line (the moment the chips are actually needed).
+        // A single edge-trigger means one missed edge — a reconstructed moment
+        // that never stepped through the edge, an undefined queue, an LLM
+        // timeout — strands the household on the Stage 0 rice baseline
+        // permanently: nothing reconciles `stage1_completed_at IS NULL`, and
+        // Stage 2 recovery cannot help because it skips any household already
+        // holding >= 35 seeded rows, which the 50-row Stage 0 baseline always
+        // satisfies. The two edges are deduped at the queue on a
+        // household-scoped jobId, so a healthy interview enqueues exactly once.
+        const stage1Checkpoint =
+          advancedOutOfM3 ||
+          (previousMoment !== 'm5_starting_line' &&
+            nextCurrentMoment === 'm5_starting_line');
+        if (stage1Checkpoint) {
+          void this.ensureStage1Seeded(input.householdId);
         }
 
         // Slice 2.6-s2 — Trigger 2: parent just advanced OUT of m3_taste.
@@ -1182,6 +1315,7 @@ export class OnboardingService {
       ratificationRequested,
       coldStartTriggered,
       favoriteLunchCount,
+      attributionChildren: attributionChildren,
     });
 
     // 7. Slice 2.7-s7 — completion eligibility is now the deterministic slot

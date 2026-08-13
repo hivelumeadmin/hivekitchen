@@ -48,9 +48,12 @@ without a data migration.
    re-check is the only guarantee those households get chips at all.
 
 2. **Generation runs at most once per household.** With two checkpoints,
-   `ensureStage1Seeded` can enqueue twice: its only guard is
-   `stage1_completed_at !== null`, which is still NULL while a job is queued or in flight.
-   `CATALOG_SEED_JOB_OPTS` (`jobs/catalog-seed.job.ts:25-30`) carries **no `jobId`**, so
+   `ensureStage1Seeded` (`onboarding.service.ts:440-505`) can enqueue twice. It has four
+   guards in the working tree — queue-unavailable, `getStage1Status() === null`,
+   `completedAt !== null`, and `attempts >= STAGE1_MAX_ATTEMPTS` — but **none of them
+   dedups an in-flight job**: `completedAt` is still NULL while a job is queued, and the
+   attempt counter is incremented by the first call, so the second sees `1 < MAX` and
+   proceeds. `CATALOG_SEED_JOB_OPTS` (`jobs/catalog-seed.job.ts:25-30`) carries **no `jobId`**, so
    BullMQ does not dedup. Add household-scoped dedup —
    `jobId: \`seed-catalog:${householdId}\`` — mirroring what
    `CatalogSeedService.enqueueRecovery()` already does for the recovery queue
@@ -58,23 +61,46 @@ without a data migration.
    `catalogSeedCalls` golden (2 vs 1); a test must assert one enqueue across an interview
    that crosses both checkpoints.
 
-3. **The snapshot carries STATED preferences at full fidelity.** Two verified, specific
-   defects in `buildSnapshot` (`catalog-seed.service.ts:674-730`), both of which survive a
-   trigger move and must be fixed explicitly:
-   - **Cuisine is aliased to culture.** `cuisineTags` is populated from
-     `map.cultural.active[].key` — the same source as `culturalTags` (lines 699-704). There
-     is no distinct cuisine axis, so the prompt's `cuisine_tags` and `cultural_tags` lines
-     are identical strings.
-   - **Enforcement is discarded.** `map.dietary[]` carries `enforcement`
-     (`KitchenMapDietarySchema`, `packages/contracts/src/kitchen-map.ts:232-242`), but
-     line 695-698 flattens to bare tags. The M5 projection filter *does* read
-     `enforcement === 'non_negotiable'` (`onboarding.service.ts:550-556`), so today the
-     prompt can be asked for dishes the filter will then silently discard.
+3. **The snapshot carries STATED preferences at full fidelity.** Two verified defects in
+   `buildSnapshot` (`catalog-seed.service.ts:674-730`), both of which survive a trigger
+   move and must be fixed explicitly:
 
-   The snapshot must carry non-negotiable dietary tags distinctly from soft ones, and a
-   cuisine axis distinct from the cultural one. Test: a household whose M3 answers differ
-   from its inferred cultural template produces a prompt containing the M3 answers, and a
-   `non_negotiable` dietary tag appears in the prompt as a hard exclusion.
+   - **Enforcement is discarded.** `map.dietary[]` carries `enforcement`
+     (`KitchenMapDietarySchema`, `packages/contracts/src/kitchen-map.ts:228-242`), but
+     lines 695-697 flatten it to bare tags, merged with the legacy
+     `map.household.dietary_preferences` strings. The M5 projection filter *does* read
+     `enforcement === 'non_negotiable'` (`onboarding.service.ts:555`), so today the
+     prompt can be asked for dishes the filter will then silently discard. **This half is
+     fully implementable from existing data — do it.**
+
+   - **Cuisine is aliased to culture, and the alias is in the DATA MODEL, not just the
+     snapshot.** `cuisineTags` and `culturalTags` are both populated from
+     `map.cultural.active[].key` (lines 693 and 703), so the prompt's `cuisine_tags` and
+     `cultural_tags` lines are byte-identical. This is NOT a snapshot bug you can fix in
+     `buildSnapshot` — verified 2026-08-13:
+     - `cuisine.declare` and `cultural.note` **both** call
+       `culturalPriorRepository.noteSuggested()` (`onboarding.tools.ts:698` and `:250`) —
+       the same method, the same `cultural_priors` table.
+     - `cultural_priors` has **no discriminator column**
+       (`20260515000000_create_cultural_priors.sql:6-23`) and is `UNIQUE (household_id,
+       key)`, so a key noted culturally and declared as cuisine collapse into one row.
+     - `buildSnapshot` already carries an inline comment stating this
+       ("KitchenMap doesn't carry a top-level cuisine_tags array — cuisine emerges from
+       cultural priors"). It is an acknowledged design choice, not an oversight.
+
+     **Therefore: do NOT invent a third axis, and do NOT add a migration in this slice.**
+     Drop the duplicate `cuisine_tags` line from the prompt and route STATED taste through
+     `map.food_preferences` — which is genuinely distinct M3 data (`food_preference.declare`
+     writes its own table), is already in the snapshot as `food_preferences`, and is already
+     valence-filtered to `loves`/`likes` (lines 706-712). Render it as the stated-taste axis
+     and `cultural_tags` as the inferred axis. If a true cuisine axis is wanted later it
+     needs a `cultural_priors` discriminator + vocabulary work — that is its own slice, not
+     this one.
+
+   Test: a household whose M3 `food_preference.declare` answers differ from its inferred
+   cultural template produces a prompt containing those M3 answers; a `non_negotiable`
+   dietary tag appears in the prompt as a hard exclusion; and the prompt contains no two
+   identical tag lines.
 
    NOTE: `cultural_priors` and `dietary_preferences` both have `kitchen_map_version`
    bump triggers (`20260820000000`, `20260903000900`), so the Redis-cached
@@ -195,24 +221,33 @@ without a data migration.
 
 ## Tasks / Subtasks
 
-- [ ] 1. Move the trigger (AC 1, 2)
-  - [ ] 1.1 Replace the `advancedOutOfM2` half of `stage1Checkpoint`
+- [x] 1. Move the trigger (AC 1, 2)
+  - [x] 1.1 Replace the `advancedOutOfM2` half of `stage1Checkpoint`
         (`onboarding.service.ts:1171-1174`) with an M3-exit edge. **Keep the M5-entry
         half** — M3 is optional and its exit edge can never fire for a re-anchored
         household. Do not "simplify" this to one trigger.
-  - [ ] 1.2 Add `jobId: \`seed-catalog:${householdId}\`` to the enqueue in
+  - [x] 1.2 Add `jobId: \`seed-catalog:${householdId}\`` to the enqueue in
         `ensureStage1Seeded` (line 480). Test: one enqueue across an interview crossing
         both checkpoints.
-  - [ ] 1.3 Confirm `stage1_attempts` / `stage1_last_error` accounting still bounds retries
-        at the new trigger point. NOTE: this accounting arrived in unreleased work; check
-        the working tree, not just `HEAD`. Watch the interaction with 1.2 — a deduped
-        `add` that BullMQ no-ops must not still consume an attempt.
-- [ ] 2. Extend the snapshot (AC 3)
-  - [ ] 2.1 Give `CatalogSeedSnapshot` a cuisine axis distinct from `cultural_tags`, and
-        split dietary into non-negotiable vs soft. Update `buildCatalogSeedPrompt` to
-        render the hard exclusions as exclusions.
-  - [ ] 2.2 Test: inferred template ≠ M3 answers → prompt contains the M3 answers.
-  - [ ] 2.3 Test: a `non_negotiable` dietary tag renders as a hard exclusion in the prompt.
+  - [x] 1.3 **Gate the attempt increment on the enqueue actually creating a job.**
+        `incrementStage1Attempts` fires unconditionally right after `.add()`
+        (`onboarding.service.ts:486`), with a comment justifying it ("Count the ENQUEUE, not
+        the run"). That reasoning is correct WITHOUT dedup and wrong WITH it: BullMQ's
+        `.add()` with a duplicate `jobId` resolves successfully, returning the existing job
+        rather than throwing — so the second checkpoint burns an attempt against a job it
+        did not create, halving the real retry budget under `STAGE1_MAX_ATTEMPTS`. Compare
+        the returned job's id (or check for the pre-existing job) and only increment when a
+        new job was created. Test: two checkpoints → one enqueue AND `stage1_attempts == 1`.
+- [x] 2. Extend the snapshot (AC 3)
+  - [x] 2.1 Split `CatalogSeedSnapshot`'s dietary into non-negotiable vs soft, preserving
+        `map.dietary[].enforcement`. Update `buildCatalogSeedPrompt` to render the hard
+        exclusions as exclusions.
+  - [x] 2.2 Drop the duplicate `cuisine_tags` line; render `food_preferences` as the
+        stated-taste axis. **No migration, no new cuisine axis** — see AC 3 for why
+        `cultural_priors` cannot distinguish the two today.
+  - [x] 2.3 Test: M3 `food_preference.declare` answers ≠ inferred cultural template →
+        prompt contains the M3 answers, and no two tag lines are identical.
+  - [x] 2.4 Test: a `non_negotiable` dietary tag renders as a hard exclusion in the prompt.
 - [ ] 3. Generated-suggestion path (AC 4, 5)
   - [ ] 3.1 Create `onboarding_chip_suggestions` (see Dev Notes for the resolved shape) and
         its repository. Migration + a `kitchen_map_version` decision (it does NOT need a
@@ -275,8 +310,13 @@ Stage 0 still materialises. Recipe seeding is untouched. Both are 16-s3.
   re-check added by unreleased retry work. Neither edge is deduped at the queue.
 - `buildSnapshot` (`catalog-seed.service.ts:674-730`) sets `cuisine_tags` and
   `cultural_tags` from the *same* source — `map.cultural.active[].key`. Dietary
-  `enforcement` is present on the KitchenMap and thrown away at line 695-698. This is why
+  `enforcement` is present on the KitchenMap and thrown away at lines 695-697. This is why
   AC 3 exists, and it is not fixed by moving the trigger.
+- The cuisine/cultural alias goes deeper than the snapshot: `cuisine.declare` and
+  `cultural.note` both write `cultural_priors` via the same `noteSuggested()`, and that
+  table has no discriminator and is `UNIQUE (household_id, key)`. There is no stored fact
+  that separates them. Do not try to recover a cuisine axis in this slice — AC 3 routes
+  stated taste through `food_preferences` instead.
 - **M3 is optional.** `controller.reconstructMoment()` re-anchors past `m3_taste` when
   M1+M2 are satisfied (`onboarding.service.ts:1092-1095`), so `previousMoment === 'm3_taste'`
   is not a reliable edge. This is the single most likely way to ship this slice broken.
@@ -390,8 +430,17 @@ Tests that WILL break and must be updated, not deleted:
 - **The onboarding golden evals are currently RED** on `catalogSeedCalls` (2 vs 1) from
   unreleased Stage-1 retry work. Do not read that as a regression from this slice, and do
   not "fix" it by changing the trigger count without checking that work first.
-- `apps/api/src/modules/onboarding/onboarding.service.ts` carries ~135 uncommitted lines
-  and currently fails `turbo lint` at line 463. Coordinate before editing it.
+- `apps/api/src/modules/onboarding/onboarding.service.ts` carries ~135 uncommitted lines.
+  Coordinate before editing it.
+- **The `turbo lint` failure at `onboarding.service.ts:463` is a FALSE POSITIVE — do not
+  "fix" it by rewording the string.** The custom `hivekitchen/no-assistant-filler` rule
+  (AR-14 / §3.5) is matching a **Pino log message** ("Stage 1 seeding has failed
+  repeatedly — leaving the household on the Stage 0 baseline"), not user-facing Lumi copy.
+  The rule is meant to police what the parent reads. Mangling a structured log line to
+  appease it destroys operational signal for exactly the retry path this slice touches.
+  The correct fix is to scope the rule off logger calls, or a targeted
+  `eslint-disable-next-line` with that reason. Verified by running `pnpm lint` in
+  `apps/api` on 2026-08-13 — it is the ONLY lint error in the package.
 
 ### References
 
@@ -407,11 +456,113 @@ Tests that WILL break and must be updated, not deleted:
 
 ### Agent Model Used
 
+claude-opus-5[1m]
+
 ### Debug Log References
+
+- `pnpm --filter @hivekitchen/api test` → 2611 passed, **1 failed**:
+  `voice-transcript.repository.test.ts > defaults retention_until to ~now + 90 days`.
+  Pre-existing and unrelated — the delta is exactly 3,600,000 ms (a one-hour DST boundary
+  in the 90-day retention arithmetic), in a module this slice does not touch.
+- `pnpm --filter @hivekitchen/api lint` → 1 error, `onboarding.service.ts:464`. The SAME
+  pre-existing `no-assistant-filler` false positive documented in Watch Out (it moved
+  463 → 464 because task 1 added one import line). Deliberately NOT "fixed" by rewording
+  the Pino log string. Outstanding for task 8.2.
+- `pnpm --filter @hivekitchen/api typecheck` → clean.
 
 ### Completion Notes List
 
+**Task 1 complete (AC 1, AC 2).**
+
+- **The red `catalogSeedCalls` golden is now GREEN**, exactly as AC 2 predicted — the
+  2-vs-1 count was the two checkpoints double-enqueueing, fixed by the jobId dedup. No
+  golden was edited to achieve this.
+
+- **AC 1's stated rationale is wrong, and the conclusion survives anyway.** The story says
+  "M3 is OPTIONAL and `reconstructMoment()` re-anchors past `m3_taste`, so the M3-exit edge
+  can never fire for a real household." The code says the opposite: 13-s6 promoted M3 to
+  REQUIRED and changed re-anchor to land ON `m3_taste`
+  (`onboarding.controller.ts:65-67` and `:106-108`; `reconstructMoment` line 112 returns
+  `'m3_taste'` when M3 is incomplete). The M3-exit edge therefore fires reliably. Both
+  edges were kept anyway, on the independent grounds the existing code comment gives
+  (missed edge from an undefined queue, an LLM timeout, or a resumed session). A stale
+  comment in `onboarding.service.ts` still called M3 "OPTIONAL" — it sat directly above the
+  trigger line being changed and is the likely source of the story's claim, so it was
+  corrected in place.
+
+- **jobId uses `CATALOG_SEED_QUEUE`, not the literal `seed-catalog`.** AC 2 says to mirror
+  `enqueueRecovery`, which builds `${CATALOG_RECOVERY_QUEUE}:${householdId}` from the queue
+  constant. `CATALOG_SEED_QUEUE` is `'catalog.seed.stage1'`; the story's `seed-catalog:` is
+  the JOB name, not the queue name. Followed the precedent over the literal.
+
+- **Dedup could not be "skip if a job exists" (hazard not in the story).**
+  `CATALOG_SEED_JOB_OPTS` sets `removeOnComplete`/`removeOnFail`, so FINISHED jobs stay
+  discoverable under the same id. Skipping on mere existence would have permanently blocked
+  retries for any household whose seed failed — silently undoing the retry work this slice
+  builds on. Implemented as: skip while `waiting`/`active`/`delayed`; `remove()` then
+  re-add when `completed`/`failed`. `STAGE1_MAX_ATTEMPTS` still bounds the loop.
+
+- **Two harness gaps closed.** `buildService` mocked only `add` and never wired
+  `householdsRepository`, so the entire Stage 1 retry-accounting block was untested; the
+  eval fake had the same hole and, left as `getJob → null`, would not have modelled dedup
+  at all (the goldens would have kept reporting 2).
+
+- **One of my own tests was passing vacuously.** `ensureStage1Seeded` is fire-and-forget
+  (`void`), so negative assertions ran before the async work did. Both negative tests now
+  wait on `getJob` having been called (`vi.waitFor`, not a sleep) before asserting.
+
+- **Three goldens updated, not deleted**, from `expectedCatalogSeedCount: 1` → `0`:
+  `m3-elevation-strict` (ends with a ratification outstanding, which HOLDS at `m3_taste`),
+  `resume-in-progress` and `finalize-gate-negative` (both end on entry to `m3_taste`). None
+  crosses the M3 exit or reaches M5, so zero enqueues is the intended new behaviour —
+  generation now waits for the taste answer. Verified scenario-by-scenario before editing.
+
+**Task 2 complete (AC 3).**
+
+- **Dietary enforcement is preserved.** `CatalogSeedSnapshot` gains
+  `dietary_non_negotiable` alongside the (now explicitly soft) `dietary_flags`.
+  `buildSnapshot` splits on `map.dietary[].enforcement === 'non_negotiable'` instead of
+  flattening. A tag present as non-negotiable is excluded from the soft list so it cannot
+  render twice. `map.household.dietary_preferences` (the legacy column, which carries no
+  enforcement) stays soft — it has no basis to be treated as absolute.
+
+- **The prompt now states the consequence, not just the fact.** `dietary_non_negotiable` is
+  rendered as "every item MUST comply", and the SYSTEM_PROMPT's DIETARY COMPLIANCE rule now
+  tells the model to OMIT a violating item entirely — the same discipline the allergen rule
+  already uses — rather than emit it and let the M5 projection filter discard it silently.
+
+- **The duplicated axis is gone.** `cuisine_tags` is removed from the snapshot outright
+  rather than being given a fake source. Verified first that the field was referenced ONLY
+  by the prompt type and `buildSnapshot`; every other `cuisine_tags` in the codebase is
+  item-level or recipe-level and untouched. Two SYSTEM_PROMPT rules referenced the removed
+  axis and were repointed at `cultural_tags` (the CUISINE SPREAD rule, and the item-level
+  output field left as-is). Nothing is lost by the removal: M3's cuisine answers arrive via
+  `cuisine.declare` → `cultural_priors`, so they are already inside `cultural_tags`.
+
+- **`food_preferences` is now labelled as the stated-taste axis** ("the parent's own words
+  — weight these heavily"). It was already in the snapshot and already valence-filtered to
+  `loves`/`likes`; the added test is a regression guard proving a `refuses` item never
+  reaches the prompt as a hint.
+
+- Three tests added; the full API suite is 2614 passing with the same single pre-existing
+  voice/DST failure, and lint still shows only the pre-existing false positive.
+
 ### File List
+
+- `apps/api/src/agents/prompts/catalog-seed.prompt.ts` — modified (snapshot gains
+  `dietary_non_negotiable`, loses `cuisine_tags`; prompt lines + 2 SYSTEM_PROMPT rules)
+- `apps/api/src/modules/catalog/catalog-seed.service.ts` — modified (`buildSnapshot`
+  splits dietary on enforcement, drops the aliased cuisine axis)
+- `apps/api/src/modules/catalog/catalog-seed.service.test.ts` — modified (3 AC 3 tests)
+- `apps/api/src/modules/onboarding/onboarding.service.ts` — modified (trigger moved to the
+  M3 exit; jobId dedup + terminal-job clearing; attempt increment gated; stale
+  "OPTIONAL M3" comment corrected; `CATALOG_SEED_QUEUE` import)
+- `apps/api/src/modules/onboarding/onboarding.service.test.ts` — modified (harness gains
+  `getJob` + `householdsRepository` fakes; old m2_safe-exit test retargeted; 5 new tests)
+- `apps/api/src/agents/eval/onboarding-eval.harness.ts` — modified (queue fake models
+  jobId dedup)
+- `apps/api/src/agents/eval/onboarding-eval.fixtures.ts` — modified (3 scenario seed
+  counts corrected for the new trigger)
 
 ---
 
@@ -422,3 +573,6 @@ Tests that WILL break and must be updated, not deleted:
 | 2026-08-13 | Story authored from the Epic 16 brief after all five design decisions were resolved. |
 | 2026-08-13 | M5 re-entry resolved: already-tapped favourites stay visible — pinned, uncapped, deduped, free-text declarations included (AC 13). |
 | 2026-08-13 | Context pass against the working tree: M3-optional trigger hazard, queue dedup, chip-key resolution path, snapshot enforcement/cuisine defects, `CHIP_FLOOR`/count-gate values, and the suggestion-store decision all pinned to verified line references. |
+| 2026-08-13 | Task 2 implemented (AC 3): snapshot splits dietary on `enforcement` (`dietary_non_negotiable` vs soft `dietary_flags`) and the prompt renders hard ones as omit-entirely exclusions; the duplicated `cuisine_tags` axis removed outright (M3 cuisine answers already arrive via `cultural_tags`); `food_preferences` labelled as the stated-taste axis. |
+| 2026-08-13 | Task 1 implemented (AC 1, AC 2): Stage 1 trigger moved from the m2_safe exit to the m3_taste exit with the m5_starting_line re-check retained; household-scoped jobId dedup added, with terminal jobs cleared so a failed seed can still retry; `incrementStage1Attempts` gated on a job actually being created. The previously-red `catalogSeedCalls` golden is GREEN without editing it. Story's AC 1 rationale corrected — M3 is REQUIRED since 13-s6, not optional. |
+| 2026-08-13 | Validation pass. AC 3 rewritten: the cuisine/cultural alias is a DATA-MODEL fact (`cuisine.declare` and `cultural.note` share `noteSuggested()` on an undiscriminated, key-unique `cultural_priors`), so the "distinct cuisine axis" was unimplementable as written — stated taste now routes through `food_preferences`, no migration. AC 2 corrected: `ensureStage1Seeded` has four guards, none of which dedup in-flight. Task 1.3 upgraded from a caution to a concrete defect — the unconditional `incrementStage1Attempts` at line 486 burns an attempt on a dedup-no-op `add`. Lint error at line 463 identified as a false positive on a Pino log string. |

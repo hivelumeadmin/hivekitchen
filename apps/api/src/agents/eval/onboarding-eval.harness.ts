@@ -756,10 +756,19 @@ interface CatalogSeedQueueFake {
 
 function makeCatalogSeedQueueFake(): CatalogSeedQueueFake {
   const calls: Array<{ jobName: string; payload: unknown }> = [];
+  // Slice 16-s1 — the enqueue is deduped on a household-scoped jobId, and the
+  // goldens count enqueues across a whole interview that crosses BOTH
+  // checkpoints. A fake that always answers "no such job" would not model the
+  // dedup at all and would keep reporting two seeds, so it tracks added ids and
+  // reports them as still-queued.
+  const queued = new Set<string>();
   const queue = {
-    add: async (jobName: string, payload: unknown): Promise<void> => {
+    add: async (jobName: string, payload: unknown, opts?: { jobId?: string }): Promise<void> => {
+      if (opts?.jobId !== undefined) queued.add(opts.jobId);
       calls.push({ jobName, payload });
     },
+    getJob: async (jobId: string): Promise<{ getState: () => Promise<string> } | null> =>
+      queued.has(jobId) ? { getState: async (): Promise<string> => 'waiting' } : null,
   } as unknown as OnboardingServiceDeps['catalogSeedQueue'];
   return { calls, queue };
 }

@@ -20,10 +20,20 @@ export interface CatalogSeedSnapshot {
   // shellfish, sesame) AND household-declared allergens. The LLM MUST omit
   // any item that could contain any of these.
   readonly allergen_exclusions: readonly string[];
+  // Slice 16-s1 — the household's food identity, from cultural priors. There is
+  // deliberately no separate cuisine axis: `cuisine.declare` and `cultural.note`
+  // both write `cultural_priors`, which has no discriminator column, so the two
+  // were byte-identical and the prompt rendered the same list twice. Recovering
+  // a real cuisine axis needs a schema change and is out of this slice.
   readonly cultural_tags: readonly string[];
-  readonly cuisine_tags: readonly string[];
+  // Dietary identity the model MUST obey — enforcement 'non_negotiable'. Kept
+  // apart from the soft flags because the M5 projection filter drops items that
+  // violate these, so asking for them at all wastes the generation.
+  readonly dietary_non_negotiable: readonly string[];
+  // Softer dietary leanings — honoured where possible, not absolute.
   readonly dietary_flags: readonly string[];
-  // Open-vocabulary food likes/dislikes — informational only.
+  // Open-vocabulary food likes — the parent's OWN words, the most direct signal
+  // of stated taste this snapshot carries.
   readonly food_preferences: readonly string[];
   // Distinct slot keys (main / snack / extra) the household actually uses,
   // derived from children's bag_composition_pattern.
@@ -69,11 +79,11 @@ STARCH / FORMAT HARD CAPS (count across ALL 50 items):
 - Protein-forward (grilled protein + salad/veg, skewers, stuffed peppers — no dominant carb): MAX 8 items.
 - Remaining items: salads, soups, finger foods, baked items, snack boxes, other formats.
 
-CUISINE SPREAD: Every cuisine in the snapshot's cuisine_tags must appear with items in AT LEAST 2 different starch/format categories. If the snapshot lists 4 cuisines, each must contribute items in at least 2 formats. Do not let one cuisine dominate the rice cap.
+CUISINE SPREAD: Every entry in the snapshot's cultural_tags must appear with items in AT LEAST 2 different starch/format categories. If the snapshot lists 4, each must contribute items in at least 2 formats. Do not let one dominate the rice cap.
 
 NO NEAR-DUPLICATES: Two items are near-duplicates if they share the same protein AND the same starch (e.g., "Greek chicken rice" and "Caribbean chicken rice" are the same — chicken + rice — and only ONE version may appear). Vary the protein OR vary the format, not just the cuisine adjective. "Chicken wrap" and "chicken fried rice" are acceptable as a pair (different format). "Greek chicken rice" and "Senegalese chicken rice" are NOT acceptable.
 
-DIETARY COMPLIANCE: Respect dietary_flags from the snapshot across all items.
+DIETARY COMPLIANCE: Every entry in dietary_non_negotiable is absolute — an item that violates one is as unusable as an allergen violation, so OMIT IT ENTIRELY rather than emitting it. Respect dietary_flags (soft leanings) wherever it does not cost diversity.
 
 DO NOT EMIT:
 - recipe-level fields (ingredients, instructions, prep_time, cook_time)
@@ -101,13 +111,17 @@ export function buildCatalogSeedPrompt(
     `allergen_exclusions (must be ABSENT from every item): ${formatList(snapshot.allergen_exclusions)}`,
   );
   userLines.push(`cultural_tags: ${formatList(snapshot.cultural_tags)}`);
-  userLines.push(`cuisine_tags: ${formatList(snapshot.cuisine_tags)}`);
-  userLines.push(`dietary_flags: ${formatList(snapshot.dietary_flags)}`);
-  userLines.push(`food_preferences: ${formatList(snapshot.food_preferences)}`);
+  userLines.push(
+    `dietary_non_negotiable (every item MUST comply): ${formatList(snapshot.dietary_non_negotiable)}`,
+  );
+  userLines.push(`dietary_flags (soft leanings): ${formatList(snapshot.dietary_flags)}`);
+  userLines.push(
+    `food_preferences (the parent's own words — weight these heavily): ${formatList(snapshot.food_preferences)}`,
+  );
   userLines.push(`bag_composition_slots: ${formatList(snapshot.bag_composition_slots)}`);
   userLines.push('');
   userLines.push(
-    'Generate ~50 school lunch ideas for this household. DIVERSITY IS THE PRIMARY SUCCESS CRITERION — the parent will see ~20 of these as selectable chips and needs to discover options that surprise and resonate. Hard caps: ≤4 rice-based dishes total across all 50 items. NO near-duplicates — "chicken rice" appearing in two cuisines (e.g. Greek chicken rice + Caribbean chicken rice) counts as ONE dish; pick the most representative form and vary the format for the second entry. Cover every declared cuisine with items in at least 2 different format categories (wrap, noodle, legume bowl, protein-forward, soup, etc.). Return the JSON object only.',
+    'Generate ~50 school lunch ideas for this household. DIVERSITY IS THE PRIMARY SUCCESS CRITERION — the parent will see ~20 of these as selectable chips and needs to discover options that surprise and resonate. Hard caps: ≤4 rice-based dishes total across all 50 items. NO near-duplicates — "chicken rice" appearing in two cuisines (e.g. Greek chicken rice + Caribbean chicken rice) counts as ONE dish; pick the most representative form and vary the format for the second entry. Cover every entry in cultural_tags with items in at least 2 different format categories (wrap, noodle, legume bowl, protein-forward, soup, etc.). Return the JSON object only.',
   );
   return { system: SYSTEM_PROMPT, user: userLines.join('\n') };
 }

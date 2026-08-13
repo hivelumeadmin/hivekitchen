@@ -158,7 +158,11 @@ export const SCENARIOS: Scenario[] = [
         ],
       },
     ],
-    expectedCatalogSeedCount: 1,
+    // Slice 16-s1 — was 1 under the old m2_safe-exit trigger. The scenario ends
+    // with a ratification outstanding, which holds the controller AT m3_taste,
+    // so the M3-exit edge never fires and M5 is never reached. Generation
+    // deliberately waits for the taste answer.
+    expectedCatalogSeedCount: 0,
   },
 
   {
@@ -279,7 +283,10 @@ export const SCENARIOS: Scenario[] = [
         llmSteps: [],
       },
     ],
-    expectedCatalogSeedCount: 1,
+    // Slice 16-s1 — was 1 under the old m2_safe-exit trigger. This interview
+    // stops on entry to m3_taste, so neither the M3-exit edge nor the
+    // m5_starting_line re-check has fired yet.
+    expectedCatalogSeedCount: 0,
   },
 
   {
@@ -327,6 +334,8 @@ export const SCENARIOS: Scenario[] = [
         llmSteps: [],
       },
     ],
-    expectedCatalogSeedCount: 1,
+    // Slice 16-s1 — was 1 under the old m2_safe-exit trigger. This interview
+    // stops on entry to m3_taste, so no seed has been enqueued yet.
+    expectedCatalogSeedCount: 0,
   },
 ];

@@ -12,6 +12,7 @@ import {
 import { renderMomentStateBlock } from './onboarding-turn-runner.js';
 import type { MomentState } from './onboarding-moment.repository.js';
 import { ConflictError } from '../../common/errors.js';
+import { CATALOG_SEED_QUEUE } from '../../jobs/catalog-seed.job.js';
 
 // ===========================================================================
 // Slice 2.5-s4 — OnboardingService new-behavior tests
@@ -73,9 +74,19 @@ interface BuildOpts {
     | ReturnType<typeof vi.fn>
     | (() => Promise<unknown>);
   // Story 3-S38 (Task 2) — wire a mock catalog-seed BullMQ queue so the guard
-  // test can assert the Stage 1 seed is enqueued at m2_safe exit (the ordering
-  // anchor that keeps seeding ahead of the first plan composition).
+  // test can assert the Stage 1 seed is enqueued. Slice 16-s1 moved the trigger
+  // from the m2_safe exit to the m3_taste exit and added household-scoped jobId
+  // dedup, so the queue fake now also answers getJob().
   wireCatalogSeedQueue?: boolean;
+  // Slice 16-s1 — state of the job getJob() resolves to, modelling a seed that
+  // is already queued or has already finished. `undefined` means no such job.
+  existingSeedJobState?: 'waiting' | 'active' | 'delayed' | 'completed' | 'failed';
+  // Slice 16-s1 — wire the households repository so the Stage 1 retry
+  // accounting (getStage1Status / incrementStage1Attempts) is exercised. Left
+  // unwired by default: most tests predate the retry work, and the service
+  // skips the whole block when the repo is absent.
+  wireHouseholdsRepository?: boolean;
+  stage1Status?: { completedAt: string | null; attempts: number } | null;
   // Slice 2.7-s5 — recorded tool-call summaries the agent mock returns. Used by
   // the ratification-via-tool tests to assert the M3 ratification chip renders
   // from a dietary.declare / cuisine.declare RESULT (not a prose sentinel).
@@ -157,8 +168,36 @@ function buildService(opts: BuildOpts) {
         }
       : undefined;
 
+  // Slice 16-s1 — the seed enqueue is deduped on a household-scoped jobId, so
+  // the fake has to answer getJob(). A job in a terminal state is removable and
+  // must NOT block a retry; one still in flight must suppress the enqueue.
+  const existingSeedJob =
+    opts.existingSeedJobState === undefined
+      ? null
+      : {
+          getState: vi.fn().mockResolvedValue(opts.existingSeedJobState),
+          remove: vi.fn().mockResolvedValue(undefined),
+        };
+
   const catalogSeedQueue = opts.wireCatalogSeedQueue
-    ? { add: vi.fn().mockResolvedValue(undefined) }
+    ? {
+        add: vi.fn().mockResolvedValue(undefined),
+        getJob: vi.fn().mockResolvedValue(existingSeedJob),
+      }
+    : undefined;
+
+  const householdsRepository = opts.wireHouseholdsRepository
+    ? {
+        getStage1Status: vi
+          .fn()
+          .mockResolvedValue(
+            opts.stage1Status === undefined
+              ? { completedAt: null, attempts: 0 }
+              : opts.stage1Status,
+          ),
+        incrementStage1Attempts: vi.fn().mockResolvedValue(undefined),
+        setStage1LastError: vi.fn().mockResolvedValue(undefined),
+      }
     : undefined;
 
   const deps: OnboardingServiceDeps = {
@@ -172,10 +211,21 @@ function buildService(opts: BuildOpts) {
       catalogProjection as unknown as OnboardingServiceDeps['catalogProjection'],
     catalogSeedQueue:
       catalogSeedQueue as unknown as OnboardingServiceDeps['catalogSeedQueue'],
+    householdsRepository:
+      householdsRepository as unknown as OnboardingServiceDeps['householdsRepository'],
   };
 
   const service = new OnboardingService(deps);
-  return { service, threads, agent, momentRepository, catalogProjection, catalogSeedQueue };
+  return {
+    service,
+    threads,
+    agent,
+    momentRepository,
+    catalogProjection,
+    catalogSeedQueue,
+    householdsRepository,
+    existingSeedJob,
+  };
 }
 
 describe('renderMomentStateBlock', () => {
@@ -200,6 +250,7 @@ describe('renderMomentStateBlock', () => {
         m1_child_declared: true,
         m2_allergen_response: true,
         m3_answered: true,
+        m2_attribution_pending: [],
         m5_favorite_count: 10,
         m5_complete: true,
       },
@@ -220,6 +271,7 @@ describe('renderMomentStateBlock', () => {
         m1_child_declared: true,
         m2_allergen_response: true,
         m3_answered: true,
+        m2_attribution_pending: [],
         m5_favorite_count: 8,
         m5_complete: false,
       },
@@ -239,6 +291,7 @@ describe('renderMomentStateBlock', () => {
         m1_child_declared: true,
         m2_allergen_response: true,
         m3_answered: true,
+        m2_attribution_pending: [],
         m5_favorite_count: 0,
         m5_complete: false,
       },
@@ -257,6 +310,7 @@ describe('renderMomentStateBlock', () => {
         m1_child_declared: false,
         m2_allergen_response: false,
         m3_answered: false,
+        m2_attribution_pending: [],
         m5_favorite_count: 0,
         m5_complete: false,
       },
@@ -353,6 +407,7 @@ describe('OnboardingService.submitTextTurn — moment_key in response (Slice 2.5
           m1_child_declared: true,
           m2_allergen_response: false,
           m3_answered: false,
+          m2_attribution_pending: [],
           m5_favorite_count: 0,
           m5_complete: false,
         },
@@ -368,15 +423,50 @@ describe('OnboardingService.submitTextTurn — moment_key in response (Slice 2.5
   });
 });
 
-// Story 3-S38 (Task 2) — catalog-seed ordering guard. The Stage 1 catalog seed
-// is enqueued (fire-and-forget) when the parent advances OUT of m2_safe during
-// onboarding. This is the structural anchor that keeps seeding ahead of the
-// first plan composition: the first compose only ever happens post-onboarding
-// (on-demand "compose now", 3-S34; the auto-compose Friday cron, 3-S35, requires
-// ≥1 prior plan so it never produces a household's first plan). These tests lock
-// that enqueue so the cold-start discover storm can't silently return.
-describe('OnboardingService.submitTextTurn — catalog-seed enqueue at m2_safe exit (3-S38)', () => {
-  it('enqueues the Stage 1 catalog seed when advancing OUT of m2_safe', async () => {
+// Story 3-S38 (Task 2) — catalog-seed ordering guard, RETARGETED by slice 16-s1.
+// The Stage 1 seed used to fire on the m2_safe exit, which meant the LLM
+// generated a "personalised" catalog knowing declared allergens but NOT the
+// parent's stated taste. 16-s1 moves the trigger to the m3_taste exit so the
+// generation snapshot carries M1-M3, and keeps the m5_starting_line re-check as
+// a missed-edge safety net. These tests lock both edges plus the household-scoped
+// jobId dedup that stops the two checkpoints double-enqueueing.
+describe('OnboardingService.submitTextTurn — catalog-seed enqueue at m3_taste exit (16-s1)', () => {
+  it('enqueues the Stage 1 catalog seed when advancing OUT of m3_taste', async () => {
+    const { service, catalogSeedQueue } = buildService({
+      agentText: 'Noted — south Indian it is.',
+      preTurnMomentState: {
+        current_moment: 'm3_taste',
+        required_set_status: {
+          m1_household_name: true,
+          m1_child_declared: true,
+          m2_allergen_response: true,
+          m3_answered: false,
+          m2_attribution_pending: [],
+          m5_favorite_count: 0,
+          m5_complete: false,
+        },
+      },
+      countsOverride: { household_name_set: true, child_count: 1 },
+      wireCatalogSeedQueue: true,
+    });
+
+    await service.submitTextTurn({
+      userId: USER_ID,
+      householdId: HOUSEHOLD_ID,
+      message: '[Chips selected: south_indian]',
+    });
+
+    expect(catalogSeedQueue?.add).toHaveBeenCalledTimes(1);
+    const [jobName, payload] = catalogSeedQueue!.add.mock.calls[0];
+    expect(jobName).toBe('seed-catalog');
+    expect(payload).toMatchObject({ household_id: HOUSEHOLD_ID });
+  });
+
+  // 16-s1 — the OLD trigger. Leaving m2_safe now lands on m3_taste (M3 is a
+  // REQUIRED moment since 13-s6, and reconstructMoment anchors ON it rather
+  // than skipping it), so the seed must NOT fire yet: the whole point of the
+  // move is that the snapshot waits for the taste answer.
+  it('does NOT enqueue on the m2_safe exit when the turn lands on m3_taste', async () => {
     const { service, catalogSeedQueue } = buildService({
       agentText: 'All noted. [NEXT_MOMENT:m3_taste]',
       preTurnMomentState: {
@@ -385,7 +475,8 @@ describe('OnboardingService.submitTextTurn — catalog-seed enqueue at m2_safe e
           m1_household_name: true,
           m1_child_declared: true,
           m2_allergen_response: true,
-          m3_answered: true,
+          m3_answered: false,
+          m2_attribution_pending: [],
           m5_favorite_count: 0,
           m5_complete: false,
         },
@@ -400,10 +491,150 @@ describe('OnboardingService.submitTextTurn — catalog-seed enqueue at m2_safe e
       message: 'no known allergens',
     });
 
+    expect(catalogSeedQueue?.add).not.toHaveBeenCalled();
+  });
+
+  // The safety net. A household that never stepped through the m3_taste exit
+  // edge — resumed session, undefined queue on the earlier turn, a turn that
+  // cascaded straight past M3 — still gets its chips.
+  it('enqueues on m5_starting_line entry as the missed-edge re-check', async () => {
+    const { service, catalogSeedQueue } = buildService({
+      agentText: 'Here is a starting line.',
+      preTurnMomentState: {
+        current_moment: 'm4_bag',
+        required_set_status: {
+          m1_household_name: true,
+          m1_child_declared: true,
+          m2_allergen_response: true,
+          m3_answered: true,
+          m2_attribution_pending: [],
+          m5_favorite_count: 0,
+          m5_complete: false,
+        },
+      },
+      countsOverride: { household_name_set: true, child_count: 1 },
+      wireCatalogSeedQueue: true,
+    });
+
+    await service.submitTextTurn({
+      userId: USER_ID,
+      householdId: HOUSEHOLD_ID,
+      message: '[Chips selected: main_plus_snack]',
+    });
+
     expect(catalogSeedQueue?.add).toHaveBeenCalledTimes(1);
-    const [jobName, payload] = catalogSeedQueue!.add.mock.calls[0];
-    expect(jobName).toBe('seed-catalog');
-    expect(payload).toMatchObject({ household_id: HOUSEHOLD_ID });
+  });
+
+  it('scopes the enqueue to a household jobId so the two checkpoints cannot double-enqueue', async () => {
+    const { service, catalogSeedQueue } = buildService({
+      agentText: 'Noted.',
+      preTurnMomentState: {
+        current_moment: 'm3_taste',
+        required_set_status: {
+          m1_household_name: true,
+          m1_child_declared: true,
+          m2_allergen_response: true,
+          m3_answered: false,
+          m2_attribution_pending: [],
+          m5_favorite_count: 0,
+          m5_complete: false,
+        },
+      },
+      countsOverride: { household_name_set: true, child_count: 1 },
+      wireCatalogSeedQueue: true,
+    });
+
+    await service.submitTextTurn({
+      userId: USER_ID,
+      householdId: HOUSEHOLD_ID,
+      message: '[Chips selected: vegetarian]',
+    });
+
+    // Mirrors CatalogSeedService.enqueueRecovery's `${QUEUE}:${householdId}`
+    // convention rather than hard-coding the job name.
+    const [, , jobOpts] = catalogSeedQueue!.add.mock.calls[0];
+    expect(jobOpts).toMatchObject({ jobId: `${CATALOG_SEED_QUEUE}:${HOUSEHOLD_ID}` });
+  });
+
+  it('does NOT enqueue, and does NOT consume a retry attempt, while a seed job is still in flight', async () => {
+    const { service, catalogSeedQueue, householdsRepository } = buildService({
+      agentText: 'Noted.',
+      preTurnMomentState: {
+        current_moment: 'm3_taste',
+        required_set_status: {
+          m1_household_name: true,
+          m1_child_declared: true,
+          m2_allergen_response: true,
+          m3_answered: false,
+          m2_attribution_pending: [],
+          m5_favorite_count: 0,
+          m5_complete: false,
+        },
+      },
+      countsOverride: { household_name_set: true, child_count: 1 },
+      wireCatalogSeedQueue: true,
+      wireHouseholdsRepository: true,
+      existingSeedJobState: 'waiting',
+    });
+
+    await service.submitTextTurn({
+      userId: USER_ID,
+      householdId: HOUSEHOLD_ID,
+      message: '[Chips selected: vegetarian]',
+    });
+
+    // ensureStage1Seeded is fire-and-forget, so wait for the dedup decision to
+    // actually happen before asserting the negatives — otherwise both
+    // assertions pass vacuously against work that has not run yet.
+    await vi.waitFor(() => {
+      expect(catalogSeedQueue?.getJob).toHaveBeenCalledWith(
+        `${CATALOG_SEED_QUEUE}:${HOUSEHOLD_ID}`,
+      );
+    });
+
+    expect(catalogSeedQueue?.add).not.toHaveBeenCalled();
+    // The regression this guards: incrementStage1Attempts used to fire
+    // unconditionally after add(). Under jobId dedup a no-op add would still
+    // burn an attempt, halving the real retry budget against STAGE1_MAX_ATTEMPTS.
+    expect(householdsRepository?.incrementStage1Attempts).not.toHaveBeenCalled();
+  });
+
+  // removeOnComplete keeps the last 100 finished jobs, so a FINISHED job stays
+  // discoverable under the same jobId. Skipping on its mere existence would
+  // permanently block retries for a household whose seed failed.
+  it('clears a finished seed job and re-enqueues so a failed seed can still retry', async () => {
+    const { service, catalogSeedQueue, householdsRepository, existingSeedJob } = buildService({
+      agentText: 'Noted.',
+      preTurnMomentState: {
+        current_moment: 'm3_taste',
+        required_set_status: {
+          m1_household_name: true,
+          m1_child_declared: true,
+          m2_allergen_response: true,
+          m3_answered: false,
+          m2_attribution_pending: [],
+          m5_favorite_count: 0,
+          m5_complete: false,
+        },
+      },
+      countsOverride: { household_name_set: true, child_count: 1 },
+      wireCatalogSeedQueue: true,
+      wireHouseholdsRepository: true,
+      existingSeedJobState: 'failed',
+      stage1Status: { completedAt: null, attempts: 1 },
+    });
+
+    await service.submitTextTurn({
+      userId: USER_ID,
+      householdId: HOUSEHOLD_ID,
+      message: '[Chips selected: vegetarian]',
+    });
+
+    await vi.waitFor(() => {
+      expect(existingSeedJob?.remove).toHaveBeenCalledTimes(1);
+      expect(catalogSeedQueue?.add).toHaveBeenCalledTimes(1);
+    });
+    expect(householdsRepository?.incrementStage1Attempts).toHaveBeenCalledWith(HOUSEHOLD_ID, 2);
   });
 
   it('does NOT enqueue the seed on a turn that does not leave m2_safe', async () => {
@@ -421,6 +652,7 @@ describe('OnboardingService.submitTextTurn — catalog-seed enqueue at m2_safe e
           m1_child_declared: false,
           m2_allergen_response: false,
           m3_answered: false,
+          m2_attribution_pending: [],
           m5_favorite_count: 0,
           m5_complete: false,
         },
@@ -533,6 +765,7 @@ describe('OnboardingService.submitTextTurn — chip_config passthrough', () => {
           m1_child_declared: false,
           m2_allergen_response: false,
           m3_answered: false,
+          m2_attribution_pending: [],
           m5_favorite_count: 0,
           m5_complete: false,
         },
@@ -564,6 +797,7 @@ describe('OnboardingService.submitTextTurn — chip_config passthrough', () => {
           m1_child_declared: true,
           m2_allergen_response: true,
           m3_answered: true,
+          m2_attribution_pending: [],
           m5_favorite_count: 0,
           m5_complete: false,
         },
@@ -602,6 +836,7 @@ describe('OnboardingService.submitTextTurn — chip_config passthrough', () => {
           m1_child_declared: true,
           m2_allergen_response: true,
           m3_answered: true,
+          m2_attribution_pending: [],
           m5_favorite_count: 4,
           m5_complete: false,
         },
@@ -637,6 +872,7 @@ describe('OnboardingService.submitTextTurn — chip_config passthrough', () => {
           m1_child_declared: true,
           m2_allergen_response: true,
           m3_answered: true,
+          m2_attribution_pending: [],
           m5_favorite_count: 0,
           m5_complete: false,
         },
@@ -663,6 +899,7 @@ describe('OnboardingService.submitTextTurn — chip_config passthrough', () => {
           m1_child_declared: true,
           m2_allergen_response: true,
           m3_answered: true,
+          m2_attribution_pending: [],
           m5_favorite_count: 0,
           m5_complete: false,
         },
@@ -707,6 +944,7 @@ describe('OnboardingService.submitTextTurn — backward transition rejection', (
           m1_child_declared: true,
           m2_allergen_response: true,
           m3_answered: true,
+          m2_attribution_pending: [],
           m5_favorite_count: 0,
           m5_complete: false,
         },
@@ -739,6 +977,7 @@ describe('OnboardingService.submitTextTurn — moment state advance', () => {
           m1_child_declared: true,
           m2_allergen_response: false,
           m3_answered: false,
+          m2_attribution_pending: [],
           m5_favorite_count: 0,
           m5_complete: false,
         },
@@ -768,6 +1007,7 @@ describe('OnboardingService.submitTextTurn — moment state advance', () => {
           m1_child_declared: true,
           m2_allergen_response: true,
           m3_answered: true,
+          m2_attribution_pending: [],
           m5_favorite_count: 10,
           m5_complete: true,
         },
@@ -802,6 +1042,7 @@ describe('OnboardingService.submitTextTurn — moment state advance', () => {
           m1_child_declared: true,
           m2_allergen_response: false,
           m3_answered: false,
+          m2_attribution_pending: [],
           m5_favorite_count: 0,
           m5_complete: false,
         },
@@ -851,6 +1092,7 @@ describe('OnboardingService.submitTextTurn — moment state advance', () => {
           m1_child_declared: true,
           m2_allergen_response: true,
           m3_answered: true,
+          m2_attribution_pending: [],
           m5_favorite_count: 9,
           m5_complete: false,
         },
@@ -879,6 +1121,7 @@ describe('OnboardingService.submitTextTurn — moment state advance', () => {
           m1_child_declared: true,
           m2_allergen_response: true,
           m3_answered: true,
+          m2_attribution_pending: [],
           m5_favorite_count: 10,
           m5_complete: true,
         },
@@ -945,6 +1188,7 @@ describe('OnboardingService.submitTextTurn — ratification via tool result (Sli
       m1_child_declared: true,
       m2_allergen_response: true,
       m3_answered: true,
+      m2_attribution_pending: [],
       m5_favorite_count: 0,
       m5_complete: false,
     },
@@ -1066,6 +1310,7 @@ describe('OnboardingService.submitTextTurn — required_set_complete surface (Sl
           m1_child_declared: true,
           m2_allergen_response: true,
           m3_answered: true,
+          m2_attribution_pending: [],
           m5_favorite_count: 10,
           m5_complete: true,
         },
@@ -1098,6 +1343,7 @@ describe('OnboardingService.submitTextTurn — required_set_complete surface (Sl
           m1_child_declared: true,
           m2_allergen_response: true,
           m3_answered: true,
+          m2_attribution_pending: [],
           m5_favorite_count: 4,
           m5_complete: false,
         },
@@ -1132,6 +1378,7 @@ describe('OnboardingService.submitTextTurn — required_set_complete surface (Sl
           m1_child_declared: true,
           m2_allergen_response: true,
           m3_answered: false,
+          m2_attribution_pending: [],
           m5_favorite_count: 10,
           m5_complete: true,
         },
@@ -1168,6 +1415,7 @@ describe('OnboardingService.submitTextTurn — m5 override + sticky m5_complete 
           m1_child_declared: true,
           m2_allergen_response: true,
           m3_answered: true,
+          m2_attribution_pending: [],
           m5_favorite_count: 6,
           m5_complete: false,
         },
@@ -1205,6 +1453,7 @@ describe('OnboardingService.submitTextTurn — m5 override + sticky m5_complete 
           m1_child_declared: true,
           m2_allergen_response: true,
           m3_answered: true,
+          m2_attribution_pending: [],
           m5_favorite_count: 4,
           m5_complete: false,
         },
@@ -1239,6 +1488,7 @@ describe('OnboardingService.submitTextTurn — m5 override + sticky m5_complete 
           m1_child_declared: true,
           m2_allergen_response: true,
           m3_answered: true,
+          m2_attribution_pending: [],
           m5_favorite_count: 6,
           m5_complete: true,
         },
@@ -1358,6 +1608,7 @@ describe('OnboardingService.finalizeTextOnboarding — required-set gate (Slice 
           m1_child_declared: true,
           m2_allergen_response: true,
           m3_answered: true,
+          m2_attribution_pending: [],
           m5_favorite_count: 10,
           m5_complete: true,
         },
@@ -1381,6 +1632,7 @@ describe('OnboardingService.finalizeTextOnboarding — required-set gate (Slice 
           m1_child_declared: true,
           m2_allergen_response: true,
           m3_answered: true,
+          m2_attribution_pending: [],
           m5_favorite_count: 4,
           m5_complete: false,
         },
@@ -1401,6 +1653,7 @@ describe('OnboardingService.finalizeTextOnboarding — required-set gate (Slice 
           m1_child_declared: true,
           m2_allergen_response: true,
           m3_answered: false,
+          m2_attribution_pending: [],
           m5_favorite_count: 10,
           m5_complete: true,
         },
@@ -1421,6 +1674,7 @@ describe('OnboardingService.finalizeTextOnboarding — required-set gate (Slice 
           m1_child_declared: true,
           m2_allergen_response: true,
           m3_answered: true,
+          m2_attribution_pending: [],
           m5_favorite_count: 10,
           m5_complete: true,
         },
@@ -1454,6 +1708,7 @@ describe('OnboardingService.submitTextTurn — cold-start fallback (Slice 2.6-s6
           m1_child_declared: true,
           m2_allergen_response: true,
           m3_answered: true,
+          m2_attribution_pending: [],
           m5_favorite_count: 0,
           m5_complete: false,
         },
@@ -1487,6 +1742,7 @@ describe('OnboardingService.submitTextTurn — cold-start fallback (Slice 2.6-s6
           m1_child_declared: true,
           m2_allergen_response: true,
           m3_answered: true,
+          m2_attribution_pending: [],
           m5_favorite_count: 2,
           m5_complete: false,
         },
@@ -1520,6 +1776,7 @@ describe('OnboardingService.submitTextTurn — cold-start fallback (Slice 2.6-s6
           m1_child_declared: true,
           m2_allergen_response: true,
           m3_answered: true,
+          m2_attribution_pending: [],
           m5_favorite_count: 2,
           m5_complete: false,
         },
@@ -1553,6 +1810,7 @@ describe('OnboardingService.submitTextTurn — cold-start fallback (Slice 2.6-s6
           m1_child_declared: true,
           m2_allergen_response: true,
           m3_answered: true,
+          m2_attribution_pending: [],
           m5_favorite_count: 1,
           m5_complete: false,
         },
@@ -1605,6 +1863,7 @@ describe('OnboardingService.submitTextTurn — ONBOARDING_TRACE_DIR (Slice 2.7-s
           m1_child_declared: true,
           m2_allergen_response: false,
           m3_answered: false,
+          m2_attribution_pending: [],
           m5_favorite_count: 0,
           m5_complete: false,
         },

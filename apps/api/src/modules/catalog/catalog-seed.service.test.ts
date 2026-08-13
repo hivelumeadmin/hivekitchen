@@ -285,7 +285,11 @@ describe('CatalogSeedService — seedForHousehold', () => {
     const deps = buildDeps();
     deps.openai.chat.completions.create.mockRejectedValue(new Error('openai down'));
 
-    await buildService(deps, logger).seedForHousehold(HOUSEHOLD_ID, REQUEST_ID);
+    // Retryable failures now REJECT so the worker's `attempts: 2` engages;
+    // the service used to swallow them, making the retry config decorative.
+    await expect(
+      buildService(deps, logger).seedForHousehold(HOUSEHOLD_ID, REQUEST_ID),
+    ).rejects.toThrow();
 
     expect(deps.recipesRepo.seedFromCatalogBaseline).not.toHaveBeenCalled();
     expect(deps.householdsRepo.setStage1CompletedAt).not.toHaveBeenCalled();
@@ -303,7 +307,11 @@ describe('CatalogSeedService — seedForHousehold', () => {
     abortErr.name = 'AbortError';
     deps.openai.chat.completions.create.mockRejectedValue(abortErr);
 
-    await buildService(deps, logger).seedForHousehold(HOUSEHOLD_ID, REQUEST_ID);
+    // Retryable failures now REJECT so the worker's `attempts: 2` engages;
+    // the service used to swallow them, making the retry config decorative.
+    await expect(
+      buildService(deps, logger).seedForHousehold(HOUSEHOLD_ID, REQUEST_ID),
+    ).rejects.toThrow();
 
     expect(deps.householdsRepo.setStage1CompletedAt).not.toHaveBeenCalled();
     const errCalls = (logger.error as ReturnType<typeof vi.fn>).mock.calls;
@@ -320,7 +328,11 @@ describe('CatalogSeedService — seedForHousehold', () => {
       choices: [{ message: { content: 'sorry, I cannot do that' } }],
     });
 
-    await buildService(deps, logger).seedForHousehold(HOUSEHOLD_ID, REQUEST_ID);
+    // Retryable failures now REJECT so the worker's `attempts: 2` engages;
+    // the service used to swallow them, making the retry config decorative.
+    await expect(
+      buildService(deps, logger).seedForHousehold(HOUSEHOLD_ID, REQUEST_ID),
+    ).rejects.toThrow();
 
     expect(deps.householdsRepo.setStage1CompletedAt).not.toHaveBeenCalled();
     const errCalls = (logger.error as ReturnType<typeof vi.fn>).mock.calls;
@@ -339,7 +351,11 @@ describe('CatalogSeedService — seedForHousehold', () => {
       choices: [{ message: { content: JSON.stringify({ wrong_shape: true }) } }],
     });
 
-    await buildService(deps, logger).seedForHousehold(HOUSEHOLD_ID, REQUEST_ID);
+    // Retryable failures now REJECT so the worker's `attempts: 2` engages;
+    // the service used to swallow them, making the retry config decorative.
+    await expect(
+      buildService(deps, logger).seedForHousehold(HOUSEHOLD_ID, REQUEST_ID),
+    ).rejects.toThrow();
 
     expect(deps.householdsRepo.setStage1CompletedAt).not.toHaveBeenCalled();
     const errCalls = (logger.error as ReturnType<typeof vi.fn>).mock.calls;
@@ -578,7 +594,11 @@ describe('CatalogSeedService — seedForHousehold', () => {
     abortErr.name = 'AbortError';
     deps.openai.chat.completions.create.mockRejectedValue(abortErr);
 
-    await buildService(deps).seedForHousehold(HOUSEHOLD_ID, REQUEST_ID);
+    // Retryable failures now REJECT so the worker's `attempts: 2` engages;
+    // the service used to swallow them, making the retry config decorative.
+    await expect(
+      buildService(deps).seedForHousehold(HOUSEHOLD_ID, REQUEST_ID),
+    ).rejects.toThrow();
 
     expect(deps.recoveryQueue!.add).toHaveBeenCalledTimes(1);
     const callArgs = deps.recoveryQueue!.add.mock.calls[0]!;
@@ -600,7 +620,11 @@ describe('CatalogSeedService — seedForHousehold', () => {
       choices: [{ message: { content: 'not json' } }],
     });
 
-    await buildService(deps).seedForHousehold(HOUSEHOLD_ID, REQUEST_ID);
+    // Retryable failures now REJECT so the worker's `attempts: 2` engages;
+    // the service used to swallow them, making the retry config decorative.
+    await expect(
+      buildService(deps).seedForHousehold(HOUSEHOLD_ID, REQUEST_ID),
+    ).rejects.toThrow();
 
     expect(deps.recoveryQueue!.add).toHaveBeenCalledTimes(1);
     expect(deps.recoveryQueue!.add.mock.calls[0]![1]).toMatchObject({
@@ -614,7 +638,11 @@ describe('CatalogSeedService — seedForHousehold', () => {
       choices: [{ message: { content: JSON.stringify({ wrong: 'shape' }) } }],
     });
 
-    await buildService(deps).seedForHousehold(HOUSEHOLD_ID, REQUEST_ID);
+    // Retryable failures now REJECT so the worker's `attempts: 2` engages;
+    // the service used to swallow them, making the retry config decorative.
+    await expect(
+      buildService(deps).seedForHousehold(HOUSEHOLD_ID, REQUEST_ID),
+    ).rejects.toThrow();
 
     expect(deps.recoveryQueue!.add).toHaveBeenCalledTimes(1);
     expect(deps.recoveryQueue!.add.mock.calls[0]![1]).toMatchObject({
@@ -789,5 +817,111 @@ describe('CatalogSeedService — seedForHousehold', () => {
         (ctx as { action?: string }).action === 'catalog.stage2.enqueue_failed',
     );
     expect(enqueueFailed).toBeDefined();
+  });
+});
+
+// ===========================================================================
+// Slice 16-s1 (AC 3) — snapshot fidelity.
+//
+// Moving the generation trigger to the M3 exit is worthless if the snapshot
+// then throws away what M3 collected. Two defects, both of which survive a
+// trigger move:
+//   - dietary `enforcement` was flattened away, so the prompt could be asked
+//     for dishes the M5 projection filter would later silently discard;
+//   - `cuisine_tags` and `cultural_tags` were populated from the SAME source
+//     (`map.cultural.active[].key`), rendering two byte-identical prompt lines.
+// ===========================================================================
+describe('CatalogSeedService — snapshot carries stated preferences (16-s1 AC 3)', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  function userPromptFrom(deps: Deps): string {
+    const call = deps.openai.chat.completions.create.mock.calls[0]![0] as {
+      messages: Array<{ role: string; content: string }>;
+    };
+    const user = call.messages.find((m) => m.role === 'user');
+    if (user === undefined) throw new Error('no user message in the seed prompt');
+    return user.content;
+  }
+
+  it('renders the parent\'s STATED food preferences, not only the inferred cultural template', async () => {
+    const map = buildKitchenMap();
+    // Inferred template says south_asian; the parent actually said they love
+    // pasta. The old snapshot dropped this distinction on the floor.
+    map.food_preferences = [
+      {
+        child_id: null,
+        item: 'pasta',
+        valence: 'loves',
+        enforcement: 'soft',
+        source: 'onboarding_declared',
+      },
+      {
+        child_id: null,
+        item: 'okra',
+        valence: 'refuses',
+        enforcement: 'soft',
+        source: 'onboarding_declared',
+      },
+    ];
+    const deps = buildDeps();
+    deps.kitchenMapService.get.mockResolvedValue(map);
+
+    await buildService(deps).seedForHousehold(HOUSEHOLD_ID, REQUEST_ID);
+
+    const user = userPromptFrom(deps);
+    expect(user).toContain('pasta');
+    // Only loves/likes are forwarded — a refused item must not read as a hint.
+    expect(user).not.toContain('okra');
+  });
+
+  it('never emits two identical tag lines (cuisine was aliased to culture)', async () => {
+    const deps = buildDeps();
+
+    await buildService(deps).seedForHousehold(HOUSEHOLD_ID, REQUEST_ID);
+
+    const lines = userPromptFrom(deps)
+      .split('\n')
+      .map((l) => l.trim())
+      .filter((l) => l.includes(':') && l.endsWith('south_asian'));
+    // Previously `cultural_tags: south_asian` and `cuisine_tags: south_asian`
+    // were both rendered from map.cultural.active[].key.
+    expect(lines.length).toBeLessThanOrEqual(1);
+  });
+
+  it('renders a non_negotiable dietary tag as a hard exclusion, separately from soft ones', async () => {
+    const map = buildKitchenMap();
+    map.dietary = [
+      {
+        child_id: null,
+        tag: 'halal',
+        enforcement: 'non_negotiable',
+        source: 'onboarding_declared',
+      },
+      {
+        child_id: null,
+        tag: 'low_sugar',
+        enforcement: 'soft',
+        source: 'onboarding_declared',
+      },
+    ];
+    const deps = buildDeps();
+    deps.kitchenMapService.get.mockResolvedValue(map);
+
+    await buildService(deps).seedForHousehold(HOUSEHOLD_ID, REQUEST_ID);
+
+    const user = userPromptFrom(deps);
+    const hardLine = user
+      .split('\n')
+      .find((l) => l.startsWith('dietary_non_negotiable'));
+    expect(hardLine).toBeDefined();
+    expect(hardLine).toContain('halal');
+    // The soft one must NOT be presented as a hard rule.
+    expect(hardLine).not.toContain('low_sugar');
+    expect(user).toContain('low_sugar');
   });
 });
