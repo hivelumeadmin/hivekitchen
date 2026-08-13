@@ -121,6 +121,9 @@ type Deps = {
   guardrailRepo: { getRulesForHousehold: ReturnType<typeof vi.fn> };
   curatedBaselineRepo: { findAllActive: ReturnType<typeof vi.fn> };
   recoveryQueue: { add: ReturnType<typeof vi.fn> } | undefined;
+  // Slice 16-s1 (AC 6, 7) — chip-suggestion persistence, parallel to
+  // recipesRepo.seedFromCatalogBaseline, from the SAME filtered survivors.
+  onboardingChipSuggestionRepo: { insertMany: ReturnType<typeof vi.fn> };
 };
 
 function buildDeps(overrides: Partial<Deps> = {}): Deps {
@@ -168,6 +171,9 @@ function buildDeps(overrides: Partial<Deps> = {}): Deps {
       findAllActive: vi.fn().mockResolvedValue([]),
     },
     recoveryQueue: { add: vi.fn().mockResolvedValue(undefined) },
+    onboardingChipSuggestionRepo: {
+      insertMany: vi.fn().mockResolvedValue([]),
+    },
     ...overrides,
   };
 }
@@ -187,6 +193,8 @@ function buildService(deps: Deps, logger = buildLogger()): CatalogSeedService {
         : (deps.recoveryQueue as unknown as NonNullable<
             CatalogSeedServiceDeps['recoveryQueue']
           >),
+    onboardingChipSuggestionRepo:
+      deps.onboardingChipSuggestionRepo as unknown as CatalogSeedServiceDeps['onboardingChipSuggestionRepo'],
     logger,
   });
 }
@@ -200,6 +208,7 @@ describe('CatalogSeedService — seedForHousehold', () => {
   });
 
   it('happy path: LLM emits 50 → 2 name-prefilter dropped → 5 guardrail-blocked dropped → 43 persisted', async () => {
+    const logger = buildLogger();
     const deps = buildDeps();
     // Guardrail 1.4.0 — only parent_declared rules block, so the household
     // declares peanut. FALCPA rows still satisfy the baseline-presence check
@@ -257,7 +266,7 @@ describe('CatalogSeedService — seedForHousehold', () => {
     });
     deps.recipesRepo.seedFromCatalogBaseline.mockResolvedValue(43);
 
-    await buildService(deps).seedForHousehold(HOUSEHOLD_ID, REQUEST_ID);
+    await buildService(deps, logger).seedForHousehold(HOUSEHOLD_ID, REQUEST_ID);
 
     expect(deps.recipesRepo.seedFromCatalogBaseline).toHaveBeenCalledTimes(1);
     const [callHouseholdId, callItems, , callConfidence] =
@@ -267,6 +276,83 @@ describe('CatalogSeedService — seedForHousehold', () => {
     // Stage 1 confidence MUST be 50 (not 60 — that's curated baseline).
     expect(callConfidence).toBe(50);
     expect(deps.householdsRepo.setStage1CompletedAt).toHaveBeenCalledWith(HOUSEHOLD_ID);
+
+    // AC 6 — the SAME 43 filtered survivors, not a separately-forked filter,
+    // also land in onboarding_chip_suggestions.
+    expect(deps.onboardingChipSuggestionRepo.insertMany).toHaveBeenCalledTimes(1);
+    const [chipHouseholdId, chipItems] =
+      deps.onboardingChipSuggestionRepo.insertMany.mock.calls[0]!;
+    expect(chipHouseholdId).toBe(HOUSEHOLD_ID);
+    expect(chipItems).toHaveLength(43);
+    expect(chipItems[0]).toMatchObject({
+      label: 'safe lunch 1',
+      cuisine_tags: ['south_asian'],
+    });
+
+    // AC 7 — every blocked suggestion logged with label + matched allergen +
+    // match source, distinguishing the name pre-filter (FALCPA_KEYS ∪
+    // declared, source can't be told apart there beyond the bare token) from
+    // the guardrail engine (which — guardrail 1.4.0+ — only ever blocks on a
+    // declared/hard rule, never a bare FALCPA floor).
+    const blockedLogs = (logger.info as ReturnType<typeof vi.fn>).mock.calls
+      .map(([ctx]) => ctx as Record<string, unknown>)
+      .filter((ctx) => ctx['action'] === 'catalog.chips.blocked');
+    expect(blockedLogs).toHaveLength(7); // 2 prefilter + 5 guardrail
+
+    const prefilterBlocked = blockedLogs.filter((c) => c['label'] === 'peanut brittle 1');
+    expect(prefilterBlocked).toHaveLength(1);
+    expect(prefilterBlocked[0]).toMatchObject({ allergen: 'peanut', source: 'declared' });
+
+    const guardrailBlocked = blockedLogs.filter((c) => c['label'] === 'groundnut wraps 1');
+    expect(guardrailBlocked).toHaveLength(1);
+    expect(guardrailBlocked[0]).toMatchObject({ allergen: 'peanut', source: 'declared' });
+  });
+
+  it('AC 7 — a suggestion blocked ONLY by the FALCPA floor (no household declaration) logs source: falcpa', async () => {
+    const logger = buildLogger();
+    const deps = buildDeps();
+    // No parent_declared/household_rule_hard rows — FALCPA rules only.
+    deps.guardrailRepo.getRulesForHousehold.mockResolvedValue(FALCPA_RULES);
+    deps.openai.chat.completions.create.mockResolvedValue({
+      choices: [
+        {
+          message: {
+            content: JSON.stringify({
+              items: [
+                {
+                  // Bare 'dairy' token — FALCPA_KEYS member, no household
+                  // declaration behind it — dropped by the name pre-filter.
+                  canonical_name: 'dairy smoothie',
+                  allergen_flags: ['dairy'],
+                  dietary_flags: [],
+                  cultural_tags: [],
+                  cuisine_tags: [],
+                  applicable_slots: ['main'],
+                },
+              ],
+            }),
+          },
+        },
+      ],
+    });
+
+    await buildService(deps, logger).seedForHousehold(HOUSEHOLD_ID, REQUEST_ID);
+
+    const blockedLogs = (logger.info as ReturnType<typeof vi.fn>).mock.calls
+      .map(([ctx]) => ctx as Record<string, unknown>)
+      .filter((ctx) => ctx['action'] === 'catalog.chips.blocked');
+    expect(blockedLogs).toHaveLength(1);
+    expect(blockedLogs[0]).toMatchObject({
+      label: 'dairy smoothie',
+      allergen: 'dairy',
+      source: 'falcpa',
+    });
+    // FALCPA-only block: still excluded from the chip set (decision 1 —
+    // deterministic filter is not optional), but never a parent_declared row.
+    expect(deps.onboardingChipSuggestionRepo.insertMany).toHaveBeenCalledWith(
+      HOUSEHOLD_ID,
+      [],
+    );
   });
 
   it('idempotent no-op when stage1_completed_at is already set', async () => {

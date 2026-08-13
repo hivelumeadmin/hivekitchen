@@ -4,6 +4,7 @@ import type { FastifyPluginAsync } from 'fastify';
 import type { Job, Queue } from 'bullmq';
 import { AllergyGuardrailRepository } from '../modules/allergy-guardrail/allergy-guardrail.repository.js';
 import { CuratedBaselineRepository } from '../modules/catalog/curated-baseline.repository.js';
+import { OnboardingChipSuggestionRepository } from '../modules/catalog/onboarding-chip-suggestion.repository.js';
 import { CatalogSeedService } from '../modules/catalog/catalog-seed.service.js';
 import { HouseholdsRepository } from '../modules/households/households.repository.js';
 import { RecipesRepository } from '../modules/recipe/recipes.repository.js';
@@ -65,6 +66,7 @@ const catalogSeedPlugin: FastifyPluginAsync = async (fastify) => {
   const guardrailRepo = new AllergyGuardrailRepository(fastify.supabase, kek);
   const recipesRepo = new RecipesRepository(fastify.supabase);
   const curatedBaselineRepo = new CuratedBaselineRepository(fastify.supabase);
+  const onboardingChipSuggestionRepo = new OnboardingChipSuggestionRepository(fastify.supabase);
 
   // Slice 2.6-s5 — recovery queue for Stage 2 enqueues from Stage 1 completion.
   // Queue is created lazily via bullmq.getQueue; idempotent across plugins.
@@ -80,14 +82,18 @@ const catalogSeedPlugin: FastifyPluginAsync = async (fastify) => {
     recipesRepo,
     curatedBaselineRepo,
     recoveryQueue,
+    onboardingChipSuggestionRepo,
     logger: fastify.log,
   });
 
   const worker = fastify.bullmq.getWorker(
     CATALOG_SEED_QUEUE,
     async (job: Job<CatalogSeedJobData>) => {
-      // CatalogSeedService NEVER throws; the worker won't surface failures via
-      // BullMQ's retry path. Logged events inside the service tell the story.
+      // The service now THROWS on retryable failures (LLM timeout, malformed
+      // response) so this worker's `attempts: 2` actually engages. Terminal
+      // failures still return quietly. Letting the rejection propagate is the
+      // point — BullMQ owns the retry policy, and `worker.on('failed')` below
+      // logs the final give-up.
       await service.seedForHousehold(job.data.household_id, job.data.request_id);
     },
   );

@@ -266,10 +266,15 @@ without a data migration.
         persisted turn / agent input. `favorite_lunch.add` → `declareForHousehold` itself is
         pre-existing, untouched by this task, and already covered in
         `onboarding.tools.test.ts` — AC 10 (no regression) holds by construction.
-- [ ] 4. Filter + logging (AC 6, 7)
-  - [ ] 4.1 Reuse Stage 1's `evaluate()` + `catalogItemToPlanItem` + `FALCPA_KEYS` path; do
+- [x] 4. Filter + logging (AC 6, 7)
+  - [x] 4.1 Reuse Stage 1's `evaluate()` + `catalogItemToPlanItem` + `FALCPA_KEYS` path; do
         not fork the logic and do not substitute the projection's `allergen_flags.includes`.
-  - [ ] 4.2 Structured block log with reason and match source.
+        Implemented as: the SAME `survivors` array that already feeds
+        `recipesRepo.seedFromCatalogBaseline` also feeds
+        `onboardingChipSuggestionRepo.insertMany` — one filter pass, two persist targets.
+  - [x] 4.2 Structured block log with reason and match source. `catalog.chips.blocked` added
+        at both existing block sites (name pre-filter, guardrail `verdict === 'blocked'`)
+        alongside the pre-existing logs, not replacing them.
 - [ ] 5. Fallback (AC 8, 9)
   - [ ] 5.1 Read `curated_baseline_items` directly for chips; no materialisation.
   - [ ] 5.2 `CHIP_FLOOR = 12`; apply allergen + dietary filtering to fallback too.
@@ -731,13 +736,55 @@ claude-opus-5[1m]
 - 8 new tests, full API suite 2623 passing (same single pre-existing voice/DST failure),
   typecheck clean, lint unchanged at its one pre-existing false positive.
 
+**Task 4 complete (AC 6, AC 7).**
+
+- **No forked filter.** The `survivors` array `seedForHousehold` already builds for
+  `recipesRepo.seedFromCatalogBaseline` — post name-prefilter, post `evaluateGuardrail()` via
+  `catalogItemToPlanItem` — is the exact same array now ALSO passed to
+  `onboardingChipSuggestionRepo.insertMany`. One filter pass, two persist targets, per AC 6's
+  explicit "do not fork" instruction.
+
+- **AC 7's "declared vs FALCPA floor" distinction required tracing WHERE each check actually
+  blocks**, since the guardrail's own history (comments at the top of
+  `allergy-rules.engine.ts`, 1.4.0→1.5.0) states the FALCPA-9 floor no longer hard-blocks
+  anything — `evaluate()` only ever blocks on a `parent_declared`/`household_rule_hard` rule
+  (exported as `isHardRule()`, reused rather than reimplemented). So the two block sites have
+  different natural sources:
+  - The **name pre-filter** matches against `allergenExclusionSet`, which is a MERGED set
+    (`FALCPA_KEYS` ∪ declared, from `buildSnapshot`). A matched token here can genuinely be
+    either — resolved by checking a separate `declaredOnlyTokens` set (built from
+    `rules.filter(isHardRule)`) at log time.
+  - The **guardrail block** (`verdict === 'blocked'`) is, by the engine's own documented
+    invariant, always a declared/hard-rule match — computed via the same `declaredOnlyTokens`
+    check rather than hardcoded, so this stays correct if that invariant ever changes rather
+    than silently drifting from reality.
+  - Added a dedicated test (`AC 7 — a suggestion blocked ONLY by the FALCPA floor`) proving
+    the `'falcpa'` source label is actually reachable, not just theoretically correct — a
+    household with no declared allergens, only the FALCPA baseline, whose suggestion contains
+    a bare `dairy` token.
+
+- **The chip suggestion table has no `primary_starch`/`primary_protein` yet** (both null on
+  insert) — `CatalogSeedItemSchema` doesn't carry those fields; adding them is explicitly
+  task 6 (AC 12). Wiring the column now and populating it later avoids a second migration.
+
+- **Chip-suggestion persist failure does not undo a successful recipes persist.** Wrapped in
+  its own try/catch, logged as `catalog.chips.persist_failed`, not rethrown. Recipe seeding
+  is the pre-existing, load-bearing guarantee until 16-s3 retires it; the new suggestion
+  store is additive and must not regress it.
+
+- 10 new tests (2 in `catalog-seed.service.test.ts` extending/adding to the existing
+  block-scenario fixture), full API suite 2624 passing (same single pre-existing voice/DST
+  failure), typecheck clean, lint unchanged at its one pre-existing false positive.
+
 ### File List
 
 - `apps/api/src/agents/prompts/catalog-seed.prompt.ts` — modified (snapshot gains
   `dietary_non_negotiable`, loses `cuisine_tags`; prompt lines + 2 SYSTEM_PROMPT rules)
-- `apps/api/src/modules/catalog/catalog-seed.service.ts` — modified (`buildSnapshot`
-  splits dietary on enforcement, drops the aliased cuisine axis)
-- `apps/api/src/modules/catalog/catalog-seed.service.test.ts` — modified (3 AC 3 tests)
+- `apps/api/src/modules/catalog/catalog-seed.service.ts` — modified (task 2: `buildSnapshot`
+  splits dietary on enforcement, drops the aliased cuisine axis; task 4: chip-block logging
+  at both filter sites, survivors also persist to `onboarding_chip_suggestions`)
+- `apps/api/src/modules/catalog/catalog-seed.service.test.ts` — modified (task 2: 3 AC 3
+  tests; task 4: 2 tests extending/adding to the block-scenario fixture)
 - `apps/api/src/modules/onboarding/onboarding.service.ts` — modified (trigger moved to the
   M3 exit; jobId dedup + terminal-job clearing; attempt increment gated; stale
   "OPTIONAL M3" comment corrected; `CATALOG_SEED_QUEUE` import)
@@ -763,6 +810,8 @@ claude-opus-5[1m]
   logs `onboarding.m5_chip_uuid_unresolved`)
 - `apps/api/src/modules/onboarding/onboarding.service.test.ts` — modified (harness gains
   `recipesRepository` + `onboardingChipSuggestionRepository` fakes; 4 new AC 5 tests)
+- `apps/api/src/jobs/catalog-seed.job.ts` — modified (constructs
+  `OnboardingChipSuggestionRepository`, wires it into `CatalogSeedService`)
 
 ---
 
@@ -778,3 +827,4 @@ claude-opus-5[1m]
 | 2026-08-13 | Validation pass. AC 3 rewritten: the cuisine/cultural alias is a DATA-MODEL fact (`cuisine.declare` and `cultural.note` share `noteSuggested()` on an undiscriminated, key-unique `cultural_priors`), so the "distinct cuisine axis" was unimplementable as written — stated taste now routes through `food_preferences`, no migration. AC 2 corrected: `ensureStage1Seeded` has four guards, none of which dedup in-flight. Task 1.3 upgraded from a caution to a concrete defect — the unconditional `incrementStage1Attempts` at line 486 burns an attempt on a dedup-no-op `add`. Lint error at line 463 identified as a false positive on a Pino log string. |
 | 2026-08-13 | Three-layer adversarial code review of commit `50ef972` (Tasks 1-2): 23 raw findings → 2 decision-needed (both resolved "leave bundled as-is" — an M2 attribution feature and a Stage 1 retry/throw redesign were both swept into the commit as pre-existing uncommitted work), 10 patch (8 applied — attempts-counter fragility on read failure, misreported post-enqueue log, dual-rendered dietary tag, a vacuous test, 2 coverage gaps, an eval-harness gap, a fragile assertion; 2 left as open action items needing product/architecture judgment), 6 defer (logged to `deferred-work.md`), 4 dismissed (2 refuted against the full repo, 2 already self-disclosed). |
 | 2026-08-13 | Task 3 implemented (AC 4, AC 5): `onboarding_chip_suggestions` table + repository created; `CatalogProjectionService` repointed at it with `recipesRepository` removed entirely (AC 4's negative control is structural — no code path to `recipes` exists); AC 5's chip-key resolution now checks the suggestion store before the recipes fallback, and a key unresolved in BOTH stores now logs `onboarding.m5_chip_uuid_unresolved` instead of failing silently. `findCatalogProjectionForHousehold` on `RecipesRepository` deliberately left in place, unused, pending likely reuse by 16-s7's favourites union. |
+| 2026-08-13 | Task 4 implemented (AC 6, AC 7): `seedForHousehold`'s existing filtered `survivors` array (name pre-filter + `evaluateGuardrail()`, unchanged) now also persists to `onboarding_chip_suggestions` — one filter pass, two persist targets, per AC 6's "do not fork" instruction. `catalog.chips.blocked` logging added at both block sites with label + matched allergen + source ('declared' vs 'falcpa'), the latter resolved via the guardrail's own exported `isHardRule()` rather than reimplemented, and verified reachable with a dedicated FALCPA-only test. `primary_starch`/`primary_protein` inserted as null pending task 6's schema addition. Chip-persist failure is caught and logged, never undoes a successful recipes persist. |

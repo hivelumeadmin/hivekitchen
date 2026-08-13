@@ -8,11 +8,13 @@ import {
 } from '../allergy-guardrail/allergy-guardrail.repository.js';
 import {
   evaluate as evaluateGuardrail,
+  isHardRule,
   type AllergyRule,
 } from '../allergy-guardrail/allergy-rules.engine.js';
 import type { HouseholdsRepository } from '../households/households.repository.js';
 import type { KitchenMapService } from '../kitchen-map/kitchen-map.service.js';
 import type { RecipesRepository } from '../recipe/recipes.repository.js';
+import type { OnboardingChipSuggestionRepository } from './onboarding-chip-suggestion.repository.js';
 import { catalogItemToPlanItem } from './catalog-guardrail-helper.js';
 import {
   buildCatalogSeedPrompt,
@@ -142,6 +144,9 @@ export interface CatalogSeedServiceDeps {
   // Slice 2.6-s5 — Stage 2 recovery queue. Optional so legacy tests that don't
   // wire it continue to compile; absence is logged as a warn at trigger time.
   recoveryQueue?: Queue<CatalogRecoveryJobData>;
+  // Slice 16-s1 (AC 6) — the SAME filtered survivors that seed `recipes` also
+  // persist here, from the same array, no forked filter.
+  onboardingChipSuggestionRepo: OnboardingChipSuggestionRepository;
   logger: FastifyBaseLogger;
 }
 
@@ -153,6 +158,7 @@ export class CatalogSeedService {
   private readonly guardrailRepo: AllergyGuardrailRepository;
   private readonly curatedBaselineRepo: CatalogSeedServiceDeps['curatedBaselineRepo'];
   private readonly recoveryQueue: Queue<CatalogRecoveryJobData> | undefined;
+  private readonly onboardingChipSuggestionRepo: OnboardingChipSuggestionRepository;
   private readonly logger: FastifyBaseLogger;
 
   constructor(deps: CatalogSeedServiceDeps) {
@@ -163,6 +169,7 @@ export class CatalogSeedService {
     this.guardrailRepo = deps.guardrailRepo;
     this.curatedBaselineRepo = deps.curatedBaselineRepo;
     this.recoveryQueue = deps.recoveryQueue;
+    this.onboardingChipSuggestionRepo = deps.onboardingChipSuggestionRepo;
     this.logger = deps.logger;
   }
 
@@ -368,6 +375,13 @@ export class CatalogSeedService {
       const allergenExclusionSet = new Set<string>(
         snapshot.allergen_exclusions.map((a) => a.toLowerCase()),
       );
+      // Slice 16-s1 (AC 7) — distinguishes a block's SOURCE for the chip
+      // block log. allergenExclusionSet merges FALCPA_KEYS with declared
+      // allergens (buildSnapshot); this narrower set is declared-only, so a
+      // matched token found here is 'declared', otherwise it's 'falcpa'.
+      const declaredOnlyTokens = new Set<string>(
+        rules.filter(isHardRule).map((r) => r.allergen.toLowerCase()),
+      );
 
       type Survivor = {
         canonical_name: string;
@@ -408,10 +422,10 @@ export class CatalogSeedService {
         // hard-excluded allergen token. The guardrail does this too, but
         // pre-filtering reduces noise in the guardrail logs.
         const nameLower = item.canonical_name.toLowerCase();
-        const containsExcluded = [...allergenExclusionSet].some((tok) =>
+        const matchedToken = [...allergenExclusionSet].find((tok) =>
           nameLower.includes(tok),
         );
-        if (containsExcluded) {
+        if (matchedToken !== undefined) {
           this.logger.info(
             {
               module: 'catalog',
@@ -421,6 +435,21 @@ export class CatalogSeedService {
               item_index: i,
             },
             'stage 1 item dropped — canonical_name contains a household allergen token',
+          );
+          // Slice 16-s1 (AC 7) — evidence base for revisiting decision 1: the
+          // label IS the payload here (the suggestion was never shown to a
+          // parent, unlike a recipe row).
+          this.logger.info(
+            {
+              module: 'catalog',
+              action: 'catalog.chips.blocked',
+              household_id: householdId,
+              request_id: requestId,
+              label: item.canonical_name,
+              allergen: matchedToken,
+              source: declaredOnlyTokens.has(matchedToken) ? 'declared' : 'falcpa',
+            },
+            'chip suggestion blocked — canonical_name contains a household allergen token',
           );
           continue;
         }
@@ -511,8 +540,27 @@ export class CatalogSeedService {
           continue;
         }
         // verdict === 'blocked' — expected outcome for items that trip a
-        // household-specific allergen rule. Silently skip; counted in metric.
+        // household-specific allergen rule. Counted in metric AND logged for
+        // chips (AC 7) — conflicts is non-empty by schema (min(1)).
         guardrailBlocked += 1;
+        const matchedAllergen = verdict.conflicts[0]!.allergen.toLowerCase();
+        this.logger.info(
+          {
+            module: 'catalog',
+            action: 'catalog.chips.blocked',
+            household_id: householdId,
+            request_id: requestId,
+            label: item.canonical_name,
+            allergen: matchedAllergen,
+            // Guardrail 1.4.0+ only ever blocks on a parent_declared/
+            // household_rule_hard rule (FALCPA is vocabulary + baseline-
+            // presence only, not a blocking mechanism here) — but compute
+            // from declaredOnlyTokens rather than hardcode 'declared', so
+            // this stays correct if that invariant ever changes.
+            source: declaredOnlyTokens.has(matchedAllergen) ? 'declared' : 'falcpa',
+          },
+          'chip suggestion blocked — allergy guardrail',
+        );
       }
 
       // Slice 2.6-s5 — mass-block detection. Fires BEFORE persist so Stage 2
@@ -558,6 +606,38 @@ export class CatalogSeedService {
         },
         STAGE1_CONFIDENCE_SCORE,
       );
+
+      // Slice 16-s1 (AC 4, 6) — the SAME survivors also become the M5 chip
+      // source. Failure here must not undo the recipes persist that just
+      // succeeded — recipe seeding is the pre-existing, load-bearing
+      // guarantee until 16-s3 retires it; the chip suggestion store is new
+      // and additive. Caught and logged, not rethrown.
+      try {
+        await this.onboardingChipSuggestionRepo.insertMany(
+          householdId,
+          survivors.map((s) => ({
+            label: s.canonical_name,
+            cuisine_tags: s.cuisine_tags,
+            dietary_flags: s.dietary_flags,
+            allergen_flags: s.allergen_flags,
+            // Slice 16-s1 (AC 12, task 6) — populated once the generated-item
+            // schema carries starch/protein for diversity bucketing.
+            primary_starch: null,
+            primary_protein: null,
+          })),
+        );
+      } catch (err) {
+        this.logger.error(
+          {
+            err,
+            module: 'catalog',
+            action: 'catalog.chips.persist_failed',
+            household_id: householdId,
+            request_id: requestId,
+          },
+          'chip suggestion persist failed — recipes catalog seeding still succeeded',
+        );
+      }
 
       // ---- Step 8: log completion + set timestamp -------------------------
       this.logger.info(
